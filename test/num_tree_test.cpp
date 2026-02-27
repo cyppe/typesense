@@ -17,28 +17,28 @@ TEST(NumTreeTest, Searches) {
     size_t ids_len;
 
     tree.search(NUM_COMPARATOR::EQUALS, -1750, &ids, ids_len);
-    ASSERT_EQ(1, ids_len);
-    ASSERT_EQ(1, ids[0]);
+    ASSERT_EQ(uint32_t{1}, ids_len);
+    ASSERT_EQ(static_cast<uint32_t>(1), ids[0]);
     delete [] ids;
     ids = nullptr;
 
     tree.search(NUM_COMPARATOR::GREATER_THAN_EQUALS, -1200, &ids, ids_len);
-    ASSERT_EQ(6, ids_len);
+    ASSERT_EQ(uint32_t{6}, ids_len);
     delete [] ids;
     ids = nullptr;
 
     tree.search(NUM_COMPARATOR::GREATER_THAN, -1200, &ids, ids_len);
-    ASSERT_EQ(4, ids_len);
+    ASSERT_EQ(uint32_t{4}, ids_len);
     delete [] ids;
     ids = nullptr;
 
     tree.search(NUM_COMPARATOR::LESS_THAN_EQUALS, 100, &ids, ids_len);
-    ASSERT_EQ(6, ids_len);
+    ASSERT_EQ(uint32_t{6}, ids_len);
     delete [] ids;
     ids = nullptr;
 
     tree.search(NUM_COMPARATOR::LESS_THAN, 100, &ids, ids_len);
-    ASSERT_EQ(4, ids_len);
+    ASSERT_EQ(uint32_t{4}, ids_len);
     delete [] ids;
     ids = nullptr;
 }
@@ -61,8 +61,8 @@ TEST(NumTreeTest, EraseFullList) {
     size_t ids_len;
 
     tree.search(NUM_COMPARATOR::EQUALS, 0, &ids, ids_len);
-    ASSERT_EQ(1, ids_len);
-    ASSERT_EQ(199, ids[0]);
+    ASSERT_EQ(uint32_t{1}, ids_len);
+    ASSERT_EQ(uint32_t{199}, ids[0]);
     delete [] ids;
     ids = nullptr;
 
@@ -131,7 +131,7 @@ TEST(NumTreeTest, Iterator) {
     iterator.reset();
     iterator.skip_to(1);
     ASSERT_TRUE(iterator.is_valid);
-    ASSERT_EQ(5, iterator.seq_id);
+    ASSERT_EQ(uint32_t{5}, iterator.seq_id);
 
     iterator.skip_to(10);
     ASSERT_FALSE(iterator.is_valid);
@@ -164,7 +164,7 @@ TEST(NumTreeTest, Iterator) {
     iterator.reset();
     iterator.skip_to(50);
     ASSERT_TRUE(iterator.is_valid);
-    ASSERT_EQ(50, iterator.seq_id);
+    ASSERT_EQ(uint32_t{50}, iterator.seq_id);
     iterator.skip_to(100);
     ASSERT_FALSE(iterator.is_valid);
 }

@@ -1,0 +1,395 @@
+module(
+    name = "typesense",
+    version = "0.0.0",
+)
+
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_pkg", version = "1.2.0")
+bazel_dep(name = "rules_perl", version = "0.5.0")
+bazel_dep(name = "rules_cuda", version = "0.3.0")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+
+# Keep legacy repository names to avoid broad label churn during migration.
+bazel_dep(name = "protobuf", version = "33.5", repo_name = "com_google_protobuf")
+bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
+bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
+bazel_dep(name = "glog", version = "0.7.1.bcr.1", repo_name = "com_github_google_glog")
+bazel_dep(name = "gflags", version = "2.2.2.bcr.1", repo_name = "com_github_gflags_gflags")
+bazel_dep(name = "zlib", version = "1.3.2", repo_name = "com_github_madler_zlib")
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
+new_git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "new_git_repository")
+
+cuda_home_repository = use_repo_rule("//bazel:onnxruntime_cuda_defs.bzl", "cuda_home_repository")
+output_base_util_repository = use_repo_rule("//bazel:compdb_output_base_util.bzl", "output_base_util_repository")
+
+cuda_home_repository(name = "cuda_home_repo")
+output_base_util_repository(name = "com_grail_bazel_output_base_util")
+
+git_repository(
+    name = "com_grail_bazel_compdb",
+    commit = "58672f5eecd70a2d3ed50016a3abf907701404e0",
+    remote = "https://github.com/grailbio/bazel-compilation-database.git",
+)
+
+# brpc and related dependencies.
+git_repository(
+    name = "com_github_brpc_brpc",
+    commit = "37efd2e2b26aa6408fd308490acf14d86713c3fc",
+    patches = ["//bazel/brpc:0001_dynamic_annotations_guards.patch"],
+    patch_args = ["-p1"],
+    remote = "https://github.com/apache/brpc.git",
+)
+
+new_git_repository(
+    name = "onnx_runtime",
+    commit = "058787ceead760166e3c50a0a4cba8a833a6f53f",
+    build_file = "//bazel:onnxruntime.BUILD",
+    remote = "https://github.com/microsoft/onnxruntime",
+    patches = ["//bazel:onnxruntime.patch"],
+    patch_args = ["-p1"],
+    patch_cmds = [
+        "git submodule update --init cmake/external/onnx",
+        "sed -i 's/#if !defined(__ANDROID__)$/#if !defined(__ANDROID__) \\&\\& !defined(__clang__)/' onnxruntime/core/common/cpuid_info.cc",
+        "sed -i 's/#elif defined(__linux__)$/#elif defined(__linux__) \\&\\& !defined(__clang__)/' onnxruntime/core/common/spin_pause.cc",
+    ],
+)
+
+new_git_repository(
+    name = "clip_tokenizer",
+    commit = "0ca1e2e2e7418108725eaa7fb93e029516ae63fa",
+    remote = "https://github.com/typesense/clip_tokenizer_cpp.git",
+    build_file = "//bazel:clip_tokenizer.BUILD",
+)
+
+new_git_repository(
+    name = "onnx_runtime_extensions",
+    build_file = "//bazel:onnxruntime_extensions.BUILD",
+    commit = "1f9d7ee0c80b4f94946ee5650cb242aa01dd6278",
+    remote = "https://github.com/microsoft/onnxruntime-extensions",
+    patches = ["//bazel:onnx_ext.patch"],
+    patch_args = ["-p1"],
+    patch_cmds = [
+        "sed -i '/#include \"string_tensor.h\"/d' operators/tokenizer/basic_tokenizer.cc",
+        "sed -i '84,$ d' operators/tokenizer/basic_tokenizer.cc",
+        "sed -i '307,$ d' operators/tokenizer/bert_tokenizer.cc",
+        "sed -i '1 a\\#include \"string_utils.h\"' operators/tokenizer/bert_tokenizer.cc",
+        """cat > base/ortx_stubs.h << 'STUBEOF'
+#pragma once
+#include <stdexcept>
+#include <string>
+#ifndef ORT_RUNTIME_EXCEPTION
+#define ORT_RUNTIME_EXCEPTION 1
+#endif
+#ifndef ORTX_CXX_API_THROW
+#define ORTX_CXX_API_THROW(msg, code) throw std::runtime_error(std::to_string(code) + ": " + std::string(msg))
+#endif
+STUBEOF""",
+        "sed -i '1 a\\#include \"ortx_stubs.h\"' operators/tokenizer/bert_tokenizer.cc",
+        "sed -i '/#include \"ort_c_to_cpp.h\"/d' base/string_utils.h",
+        "sed -i '/OrtTensorDimensions/,+2d' base/string_utils.h",
+        "sed -i '/^template <>$/{N;/^template <>\\n$/d}' base/string_utils.h",
+        "sed -i '/#include <string_view>/a\\#include <string>' base/ustring.h",
+        "sed -i '/#include <string>/a\\#include <cstddef>' base/ustring.h",
+    ],
+)
+
+new_git_repository(
+    name = "sentencepiece",
+    build_file = "//bazel:sentencepiece.BUILD",
+    commit = "31646a467d2051eb904e0b45de3a73e91fe1c1e3",
+    remote = "https://github.com/google/sentencepiece",
+    patch_cmds = [
+        "rm -rf third_party/absl",
+        "find . -type f \\( -name '*.h' -o -name '*.cc' -o -name 'CMakeLists.txt' \\) -exec sed -i 's|third_party/absl/|absl/|g' {} +",
+        "sed -i '/include_directories.*absl)/d' CMakeLists.txt",
+        "sed -i 's|absl/strings ||g' third_party/CMakeLists.txt",
+        "sed -i 's|../absl/flags/flag.cc||g' src/CMakeLists.txt",
+    ],
+)
+
+git_repository(
+    name = "com_github_brpc_braft",
+    commit = "ab0017f0b98d429138d83a04d3ed351197d671a9",
+    patches = [
+        "//bazel/braft:0001.patch",
+        "//bazel/braft:0002_ipv6_node_manager.patch",
+        "//bazel/braft:0002_ipv6_configuration.patch",
+        "//bazel/braft:0002_ipv6_node.patch",
+        "//bazel/braft:0004_util_namespace.patch",
+        "//bazel/braft:0005_bazel9_string_view.patch",
+    ],
+    patch_cmds = [
+        "sed -i 's|@zlib//:zlib|@com_github_madler_zlib//:zlib|g' BUILD",
+        "grep -q '@rules_cc//cc:defs.bzl' BUILD || sed -i '1iload(\"@rules_cc//cc:defs.bzl\", \"cc_library\")' BUILD",
+        """cat > bazel/braft.bzl << 'BZLEOF'
+load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
+load("@rules_proto//proto:defs.bzl", "proto_library")
+
+def braft_proto_library(name, srcs, deps=[], include=None, visibility=None, testonly=0):
+    native.filegroup(name=name + "_proto_srcs",
+                     srcs=srcs,
+                     visibility=visibility,)
+
+    proto_name = name + "_proto"
+    proto_library(
+        name = proto_name,
+        srcs = srcs,
+        strip_import_prefix = include if include else "",
+        visibility = visibility,
+        testonly = testonly,
+    )
+
+    cc_proto_library(
+        name = name,
+        deps = [":" + proto_name],
+        visibility = visibility,
+        testonly = testonly,
+    )
+BZLEOF""",
+    ],
+    remote = "https://github.com/baidu/braft.git",
+)
+
+http_archive(
+    name = "com_github_google_leveldb",
+    build_file = "//bazel/leveldb:leveldb.BUILD",
+    integrity = "sha256-Mb8F+5rW3TOoV2kMjmMMJxuokNQrFU12X1fnw2ism9E=",
+    strip_prefix = "leveldb-ac691084fdc5546421a55b25e7653d450e5a25fb",
+    urls = [
+        "https://github.com/google/leveldb/archive/ac691084fdc5546421a55b25e7653d450e5a25fb.tar.gz",
+    ],
+)
+
+http_archive(
+    name = "com_github_google_crc32c",
+    build_file = "//bazel:crc32c.BUILD",
+    sha256 = "ac07840513072b7fcebda6e821068aa04889018f24e10e46181068fb214d7e56",
+    strip_prefix = "crc32c-1.1.2",
+    urls = ["https://github.com/google/crc32c/archive/1.1.2.tar.gz"],
+)
+
+http_archive(
+    name = "com_github_google_snappy",
+    build_file = "//bazel:snappy.BUILD",
+    sha256 = "3dfa02e873ff51a11ee02b9ca391807f0c8ea0529a4924afa645fbf97163f9d4",
+    strip_prefix = "snappy-1.1.7",
+    urls = [
+        "https://storage.googleapis.com/mirror.tensorflow.org/github.com/google/snappy/archive/1.1.7.tar.gz",
+        "https://github.com/google/snappy/archive/1.1.7.tar.gz",
+    ],
+)
+
+http_archive(
+    name = "lz4",
+    build_file = "//bazel:lz4.BUILD",
+    sha256 = "537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b",
+    strip_prefix = "lz4-1.10.0",
+    urls = ["https://github.com/lz4/lz4/releases/download/v1.10.0/lz4-1.10.0.tar.gz"],
+)
+
+http_archive(
+    name = "zstd",
+    build_file = "//bazel:zstd.BUILD",
+    sha256 = "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3",
+    strip_prefix = "zstd-1.5.7",
+    urls = ["https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz"],
+)
+
+new_git_repository(
+    name = "for",
+    build_file = "//bazel:libfor.BUILD",
+    commit = "49611808d08d4e47116aa2a3ddcabeb418f405f7",
+    remote = "https://github.com/cruppstahl/libfor.git",
+)
+
+new_git_repository(
+    name = "lrucache",
+    build_file = "//bazel:lrucache.BUILD",
+    commit = "13f30ad33a227a3e9682578c450777380ecddfcf",
+    remote = "https://github.com/goldsborough/lru-cache.git",
+)
+
+new_git_repository(
+    name = "kakasi",
+    build_file = "//bazel:kakasi.BUILD",
+    commit = "77f2d1ce0146d15199ae0db1e61e0b699b0b55f6",
+    remote = "https://github.com/typesense/kakasi.git",
+)
+
+new_git_repository(
+    name = "hnsw",
+    build_file = "//bazel:hnsw.BUILD",
+    commit = "687d981753f8bafcd16421cbd2a166d0b62bc520",
+    remote = "https://github.com/typesense/hnswlib.git",
+)
+
+new_git_repository(
+    name = "rocksdb",
+    build_file = "//bazel:rocksdb.BUILD",
+    commit = "4595a5e95ae8525c42e172a054435782b3479c57",
+    remote = "https://github.com/facebook/rocksdb.git",
+)
+
+http_archive(
+    name = "curl",
+    build_file = "//bazel:curl.BUILD",
+    sha256 = "41cf1305f8f802616a27474ecf68135faeac38beccbe4e5f15a8c7e6f05a15a9",
+    strip_prefix = "curl-curl-7_87_0",
+    urls = ["https://github.com/curl/curl/archive/refs/tags/curl-7_87_0.tar.gz"],
+)
+
+new_git_repository(
+    name = "h2o",
+    build_file = "//bazel/h2o:BUILD",
+    commit = "725e54bc932fbe0c6e208db4e71eb1df79ec43ff",
+    patches = ["//bazel/h2o:h2o_725e54bc932fbe0c6e208db4e71eb1df79ec43ff.patch"],
+    remote = "https://github.com/h2o/h2o.git",
+)
+
+http_archive(
+    name = "openssl",
+    build_file = "//bazel:openssl3.BUILD",
+    sha256 = "b28c91532a8b65a1f983b4c28b7488174e4a01008e29ce8e69bd789f28bc2a89",
+    strip_prefix = "openssl-3.5.5",
+    urls = ["https://github.com/openssl/openssl/releases/download/openssl-3.5.5/openssl-3.5.5.tar.gz"],
+)
+
+http_archive(
+    name = "jemalloc",
+    build_file = "//bazel:jemalloc.BUILD",
+    sha256 = "2db82d1e7119df3e71b7640219b6dfe84789bc0537983c3b7ac4f7189aecfeaa",
+    strip_prefix = "jemalloc-5.3.0",
+    urls = ["https://github.com/jemalloc/jemalloc/releases/download/5.3.0/jemalloc-5.3.0.tar.bz2"],
+)
+
+http_archive(
+    name = "s2geometry",
+    build_file = "//bazel/s2geometry:BUILD",
+    sha256 = "c09ec751c3043965a0d441e046a73c456c995e6063439a72290f661c1054d611",
+    strip_prefix = "s2geometry-0.12.0",
+    urls = ["https://github.com/google/s2geometry/archive/refs/tags/v0.12.0.tar.gz"],
+    patch_cmds = [
+        "find . -mindepth 2 \\( -name BUILD -o -name BUILD.bazel \\) -delete",
+        "sed -i -E 's/absl::Nonnull<([^>]+)>/\\1/g' src/s2/s2edge_tessellator.h src/s2/s2density_tree.h src/s2/s2density_tree.cc",
+        "sed -i '/VERSION 0.12.0)/a if(NOT MSVC)\\n  add_compile_options(-fsized-deallocation)\\nendif()' CMakeLists.txt",
+        """cat > absl_stubs.cmake << 'STUBEOF'
+include_directories(SYSTEM ${ABSL_INCLUDE_DIR})
+set(_S2_ABSL_STUBS base btree check config core_headers dynamic_annotations endian
+    fixed_array flags flags_reflection flat_hash_map flat_hash_set hash
+    inlined_vector int128 log log_severity memory random_random span status
+    str_format strings synchronization type_traits utility vlog_is_on)
+foreach(_n ${_S2_ABSL_STUBS})
+    if(NOT TARGET absl::${_n})
+        add_library(absl::${_n} INTERFACE IMPORTED)
+    endif()
+endforeach()
+STUBEOF""",
+        "sed -i 's|find_package(absl REQUIRED)|include(absl_stubs.cmake)|' CMakeLists.txt",
+    ],
+)
+
+http_archive(
+    name = "icu",
+    build_file = "//bazel/icu:BUILD",
+    sha256 = "3e99687b5c435d4b209630e2d2ebb79906c984685e78635078b672e03c89df35",
+    strip_prefix = "icu",
+    urls = ["https://github.com/unicode-org/icu/releases/download/release-78.2/icu4c-78.2-sources.tgz"],
+    patches = ["//bazel/icu:icu.patch"],
+    patch_cmds = [
+        """cat > source/configure_wrapper << 'WEOF'
+#!/bin/sh
+PREFIX="" PLATFORM="" ARGS=""
+for arg; do
+  case "$arg" in
+    --prefix=*) PREFIX="$arg" ;;
+    -*) ARGS="$ARGS $arg" ;;
+    *) [ -z "$PLATFORM" ] && PLATFORM="$arg" || ARGS="$ARGS $arg" ;;
+  esac
+done
+exec "$(dirname "$0")/runConfigureICU" $PLATFORM $PREFIX $ARGS
+WEOF
+chmod +x source/configure_wrapper""",
+    ],
+)
+
+new_git_repository(
+    name = "libart",
+    build_file = "//bazel:libart.BUILD",
+    commit = "bbbf588bca55bce095538ee8ca8b422904baebc5",
+    remote = "https://github.com/kishorenc/libart.git",
+)
+
+new_git_repository(
+    name = "picotls_openssl",
+    build_file = "//bazel/picotls_openssl:BUILD",
+    commit = "4e443c11eb48949e597911b1b772a9d2588b4769",
+    remote = "https://github.com/h2o/picotls.git",
+)
+
+new_git_repository(
+    name = "quicly",
+    build_file = "//bazel/quicly:BUILD",
+    commit = "fd724e0362c67af87a0e486424a6f507fca547b4",
+    remote = "https://github.com/h2o/quicly.git",
+)
+
+new_git_repository(
+    name = "klib",
+    build_file = "//bazel/klib:BUILD",
+    commit = "de09fb7dff67be7c1a58e5be9fee4b4a9ca3a265",
+    remote = "https://github.com/attractivechaos/klib.git",
+)
+
+http_archive(
+    name = "iconv",
+    build_file = "//bazel:iconv.BUILD",
+    sha256 = "8f74213b56238c85a50a5329f77e06198771e70dd9a739779f4c02f65d971313",
+    strip_prefix = "libiconv-1.17",
+    urls = ["https://dl.typesense.org/deps/libiconv-1.17.tar.gz"],
+)
+
+http_file(
+    name = "token_offsets",
+    downloaded_file_path = "token_offsets.txt",
+    sha256 = "55c1c510ca6335c049f5696f3b94ac7be61e84f3e27cd8169021929b3db99651",
+    urls = ["https://gist.githubusercontent.com/kishorenc/1d330714eb07019f210f16ccb3991217/raw/bd52e05375d305d5aaa7ac06219af999726933a4/token_offsets.log"],
+)
+
+http_archive(
+    name = "elfutils",
+    build_file = "//bazel:elfutils.BUILD",
+    sha256 = "df76db71366d1d708365fc7a6c60ca48398f14367eb2b8954efc8897147ad871",
+    strip_prefix = "elfutils-0.191",
+    urls = ["https://dl.typesense.org/deps/elfutils-0.191.tar.bz2"],
+)
+
+new_git_repository(
+    name = "whisper.cpp",
+    build_file = "//bazel:whisper.BUILD",
+    commit = "022756a87204cd06c5d58f67b3708b550dcc38b0",
+    remote = "https://github.com/ggerganov/whisper.cpp.git",
+    patches = ["//bazel:whisper.patch"],
+    patch_args = ["-p1"],
+)
+
+new_git_repository(
+    name = "snowball",
+    build_file = "//bazel:snowball.BUILD",
+    commit = "2d2e312df56f2ede014a4ffb3e91e6dea43c24be",
+    remote = "https://github.com/snowballstem/snowball.git",
+    patch_cmds = ["printf '#!/bin/sh\\nexit 0\\n' > configure && chmod +x configure"],
+)
+
+http_archive(
+    name = "archive",
+    build_file = "//bazel:archive.BUILD",
+    sha256 = "4cc540a3e9a1eebdefa1045d2e4184831100667e6d7d5b315bb1cbc951f8ddff",
+    strip_prefix = "libarchive-3.7.7",
+    urls = ["https://github.com/libarchive/libarchive/releases/download/v3.7.7/libarchive-3.7.7.tar.gz"],
+)

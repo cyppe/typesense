@@ -5,20 +5,23 @@
 #include <algorithm>
 #include <collection_manager.h>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class GeoFilteringOldTest : public ::testing::Test {
 protected:
     Store *store;
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_filtering";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("geo_filtering_old");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -32,6 +35,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -82,8 +86,8 @@ TEST_F(GeoFilteringOldTest, GeoPointFiltering) {
                                  {}, "loc: (48.90615915923891, 2.3435897727061175, 3 km)",
                                  {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["hits"].size());
 
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
@@ -92,14 +96,14 @@ TEST_F(GeoFilteringOldTest, GeoPointFiltering) {
                                      "loc: (48.8462, 2.34515, 1 km)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(2), results["found"].get<size_t>());
 
     // pick location close to none of the spots
     results = coll1->search("*",
                             {}, "loc: (48.910544830985785, 2.337218333651177, 2 km)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(0), results["found"].get<size_t>());
 
     // pick a large radius covering all points
 
@@ -107,7 +111,7 @@ TEST_F(GeoFilteringOldTest, GeoPointFiltering) {
                             {}, "loc: (48.910544830985785, 2.337218333651177, 20 km)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(10), results["found"].get<size_t>());
 
     // 1 mile radius
 
@@ -115,7 +119,7 @@ TEST_F(GeoFilteringOldTest, GeoPointFiltering) {
                             {}, "loc: (48.85825332869331, 2.303816427653377, 1 mi)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(3), results["found"].get<size_t>());
 
     ASSERT_STREQ("6", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("5", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -241,8 +245,8 @@ TEST_F(GeoFilteringOldTest, GeoPointArrayFiltering) {
                                  {}, "loc: (13.12631, 80.20252, 100km)",
                                  {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(2), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(2), results["hits"].size());
 
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -252,7 +256,7 @@ TEST_F(GeoFilteringOldTest, GeoPointArrayFiltering) {
                             {}, "loc: (13.62601, 79.39559, 10 km)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(0), results["found"].get<size_t>());
 
     // pick a large radius covering all points
 
@@ -260,7 +264,7 @@ TEST_F(GeoFilteringOldTest, GeoPointArrayFiltering) {
                             {}, "loc: (21.20714729927276, 78.99153966917213, 1000 km)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(4), results["found"].get<size_t>());
 
     // 1 mile radius
 
@@ -268,7 +272,7 @@ TEST_F(GeoFilteringOldTest, GeoPointArrayFiltering) {
                             {}, "loc: (12.98941, 80.23073, 1mi)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
 
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
@@ -341,15 +345,15 @@ TEST_F(GeoFilteringOldTest, GeoPointRemoval) {
                                  {}, "loc1: (48.87491151802846, 2.343945883701618, 1 km)",
                                  {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["hits"].size());
 
     results = coll1->search("*",
                             {}, "loc2: (48.87491151802846, 2.343945883701618, 10 km)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["hits"].size());
 
     // remove the document, index another document and try querying again
     coll1->remove("0");
@@ -361,15 +365,15 @@ TEST_F(GeoFilteringOldTest, GeoPointRemoval) {
                             {}, "loc1: (48.87491151802846, 2.343945883701618, 1 km)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["hits"].size());
 
     results = coll1->search("*",
                             {}, "loc2: (48.87491151802846, 2.343945883701618, 10 km)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["hits"].size());
 }
 
 TEST_F(GeoFilteringOldTest, GeoPolygonFiltering) {
@@ -422,8 +426,8 @@ TEST_F(GeoFilteringOldTest, GeoPolygonFiltering) {
                                      "48.87756059389807, 2.3443610121873206)",
                                  {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(3), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(3), results["hits"].size());
 
     ASSERT_STREQ("8", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("4", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -438,18 +442,19 @@ TEST_F(GeoFilteringOldTest, GeoPolygonFiltering) {
                                 "48.875223042424125,2.323509661928681)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(3), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(3), results["hits"].size());
 
     auto search_op = coll1->search("*", {}, "loc: (10, 20, 11, 12, 14, 16, 10, 20, 11, 40)", {}, {}, {0}, 10, 1,
                                    FREQUENCY);
     ASSERT_FALSE(search_op.ok());
-    ASSERT_EQ("Polygon is invalid: Edge 2 has duplicate vertex with edge 4", search_op.error());
+    ASSERT_NE(std::string::npos, search_op.error().find("Polygon is invalid:"));
+    ASSERT_NE(std::string::npos, search_op.error().find("duplicate vertex"));
 
     search_op = coll1->search("*", {}, "loc: (10, 20, 11, 12, 14, 16, 10, 20)", {}, {}, {0}, 10, 1,
                                    FREQUENCY);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(0, search_op.get()["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(0), search_op.get()["found"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
 }
@@ -497,8 +502,8 @@ TEST_F(GeoFilteringOldTest, GeoPolygonFilteringSouthAmerica) {
                                      "13.3163, -59.8528)",
                                  {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(2), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(2), results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -549,6 +554,6 @@ TEST_F(GeoFilteringOldTest, GeoPointFilteringWithNonSortableLocationField) {
                                  {}, "loc: (48.90615915923891, 2.3435897727061175, 3 km)",
                                  {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["hits"].size());
 }

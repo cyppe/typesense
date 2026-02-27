@@ -387,16 +387,31 @@ We also post updates to our Twitter account about releases and additional topics
 
 We use [Bazel](https://bazel.build) to build Typesense.
 
-Typesense requires the following dependencies: 
+Preferred (reproducible) flow: run Bazel in the repo's Dockerized CI toolchain.
 
-* C++11 compatible compiler (GCC >= 4.9.0, Apple Clang >= 8.0, Clang >= 3.9.0)
+```shell
+scripts/bazel_in_docker.sh --build-image-only
+scripts/bazel_in_docker.sh build //:typesense-server
+```
+
+If you want to build on your host directly, Typesense requires the following dependencies: 
+
+* C++20 compatible compiler (recommended: GCC >= 14)
 * Snappy
 * zlib
 * OpenSSL (>=1.0.2)
 * curl
 * ICU
 
+You can check local host prerequisites with:
+
+```shell
+scripts/check_local_toolchain.sh
+```
+
 Please refer to the [CI build steps](.github/workflows/tests.yml) for the latest set of dependencies.
+
+For a practical local + CI-parity test workflow, see [TESTING_RUNBOOK.md](TESTING_RUNBOOK.md).
 
 Once you've installed them, run the following from the root of the repo:
 

@@ -20,3 +20,6 @@ typesense-data
 /dist
 /tmp
 *.tar.gz
+/hf_cache/
+/typesense-server-binary/
+/api_tests/tmp/

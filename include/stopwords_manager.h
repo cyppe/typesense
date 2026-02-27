@@ -1,6 +1,6 @@
 #pragma once
 
-#include "sparsepp.h"
+#include "sparsepp_wrapper.h"
 #include "option.h"
 #include "json.hpp"
 #include "shared_mutex"

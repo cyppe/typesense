@@ -1,4 +1,5 @@
 #include "string_utils.h"
+#include <iomanip>
 #include <iostream>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
@@ -186,7 +187,7 @@ void StringUtils::split_to_values(const std::string& vals_str, std::vector<std::
 
 std::string StringUtils::float_to_str(float value) {
     std::ostringstream os;
-    os << value;
+    os << std::setprecision(6) << value;
     return os.str();
 }
 
@@ -201,7 +202,7 @@ std::string StringUtils::unicode_nfkd(const std::string& text) {
         dst.toUTF8String(output);
         return output;
     } else {
-        LOG(ERROR) << "Unicode error during parsing: " << errcode;
+        TS_LOG(ERROR) << "Unicode error during parsing: " << errcode;
         return text;
     }
 }
@@ -224,10 +225,9 @@ void StringUtils::erase_char(std::string& str, const char c) {
 
 std::string StringUtils::trim_curly_spaces(const std::string& str) {
     std::string left_trimmed;
-    int i = 0;
     bool inside_curly = false;
 
-    while(i < str.size()) {
+    for(size_t i = 0; i < str.size(); i++) {
         switch (str[i]) {
             case '{':
                 left_trimmed += str[i];
@@ -250,39 +250,35 @@ std::string StringUtils::trim_curly_spaces(const std::string& str) {
                 left_trimmed += str[i];
                 inside_curly = false;
         }
-
-        i++;
     }
 
     std::string right_trimmed;
-    i = left_trimmed.size()-1;
     inside_curly = false;
 
-    while(i >= 0) {
-        switch (left_trimmed[i]) {
+    for(size_t i = left_trimmed.size(); i > 0; i--) {
+        const char current_char = left_trimmed[i - 1];
+        switch (current_char) {
             case '}':
-                right_trimmed += left_trimmed[i];
+                right_trimmed += current_char;
                 inside_curly = true;
                 break;
 
             case '{':
-                right_trimmed += left_trimmed[i];
+                right_trimmed += current_char;
                 inside_curly = false;
                 break;
 
             case ' ':
                 if(!inside_curly) {
-                    right_trimmed += left_trimmed[i];
+                    right_trimmed += current_char;
                     inside_curly = false;
                 }
                 break;
 
             default:
-                right_trimmed += left_trimmed[i];
+                right_trimmed += current_char;
                 inside_curly = false;
         }
-
-        i--;
     }
 
     std::reverse(right_trimmed.begin(), right_trimmed.end());

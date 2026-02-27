@@ -5,7 +5,7 @@ CLIPImageProcessor::CLIPImageProcessor(const std::string& model_path, const std:
     Ort::SessionOptions session_options;
     session_options.EnableOrtCustomOps();
     auto processor_path = model_path + "/" + processor_filename;
-    LOG(INFO) << "Loading image processor from " << processor_path;
+    TS_LOG(INFO) << "Loading image processor from " << processor_path;
     session_ = std::make_unique<Ort::Session>(env_, processor_path.c_str(), session_options);
 }
 
@@ -33,7 +33,7 @@ Option<processed_image_t> CLIPImageProcessor::process_image(const std::string& i
 
     // Run inference
     std::vector<Ort::Value> output_tensors;
-    // LOG(INFO) << "Running image processor";
+    // TS_LOG(INFO) << "Running image processor";
     try {
         output_tensors = session_->Run(Ort::RunOptions{nullptr}, input_names.data(), &input_tensor, 1, output_names.data(), output_names.size());
     } catch (...) {
@@ -46,22 +46,26 @@ Option<processed_image_t> CLIPImageProcessor::process_image(const std::string& i
     // Convert output tensor to processed_image_t
     auto output_shape = output_tensors.front().GetTensorTypeAndShapeInfo().GetShape();
     if (output_shape.size() != 4) {
-        LOG(INFO) << "Output tensor shape is not 4D";
+        TS_LOG(INFO) << "Output tensor shape is not 4D";
         return Option<processed_image_t>(400, "Error while processing image");
     }
     processed_image_t output;
 
-    for (size_t i = 0; i < output_shape[0]; i++) {
-        for (size_t j = 0; j < output_shape[1]; j++) {
-            for (size_t k = 0; k < output_shape[2]; k++) {
-                for (size_t l = 0; l < output_shape[3]; l++) {
-                    output.push_back(output_tensor[i * output_shape[1] * output_shape[2] * output_shape[3] + j * output_shape[2] * output_shape[3] + k * output_shape[3] + l]);
+    const size_t batch_size = static_cast<size_t>(output_shape[0]);
+    const size_t channels = static_cast<size_t>(output_shape[1]);
+    const size_t height = static_cast<size_t>(output_shape[2]);
+    const size_t width = static_cast<size_t>(output_shape[3]);
+    for (size_t i = 0; i < batch_size; i++) {
+        for (size_t j = 0; j < channels; j++) {
+            for (size_t k = 0; k < height; k++) {
+                for (size_t l = 0; l < width; l++) {
+                    output.push_back(output_tensor[i * channels * height * width + j * height * width + k * width + l]);
                 }
             }
         }
     }
 
-    // LOG(INFO) << "Image processed";
+    // TS_LOG(INFO) << "Image processed";
 
     return Option<processed_image_t>(std::move(output));
 }

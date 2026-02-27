@@ -7,6 +7,8 @@
 #include <map>
 #include <collection_manager.h>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionSortingTest : public ::testing::Test {
 protected:
@@ -16,11 +18,12 @@ protected:
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
+    std::string state_dir_path;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_sorting";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_sorting");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -34,6 +37,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -63,7 +67,7 @@ TEST_F(CollectionSortingTest, SortingOrder) {
     std::vector<std::string> facets;
     sort_fields = { sort_by("points", "ASC") };
     nlohmann::json results = coll_mul_fields->search("the", query_fields, "", facets, sort_fields, {0}, 15, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(10, results["hits"].size());
+    ASSERT_EQ(size_t{10}, results["hits"].size());
 
     std::vector<std::string> ids = {"17", "13", "10", "4", "0", "1", "8", "6", "16", "11"};
 
@@ -77,7 +81,7 @@ TEST_F(CollectionSortingTest, SortingOrder) {
     // limiting results to just 5, "ASC" keyword must be case insensitive
     sort_fields = { sort_by("points", "asc") };
     results = coll_mul_fields->search("the", query_fields, "", facets, sort_fields, {0}, 5, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     ids = {"17", "13", "10", "4", "0"};
 
@@ -92,7 +96,7 @@ TEST_F(CollectionSortingTest, SortingOrder) {
 
     sort_fields = { sort_by("points", "dEsc") };
     results = coll_mul_fields->search("the", query_fields, "", facets, sort_fields, {0}, 15, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(10, results["hits"].size());
+    ASSERT_EQ(size_t{10}, results["hits"].size());
 
     ids = {"11", "16", "6", "8", "1", "0", "10", "4", "13", "17"};
 
@@ -107,7 +111,7 @@ TEST_F(CollectionSortingTest, SortingOrder) {
     // should be ordered desc on the default sorting field, since the match score will be the same for all records.
     sort_fields = { };
     results = coll_mul_fields->search("of", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     ids = {"11", "12", "5", "4", "17"};
 
@@ -181,8 +185,8 @@ TEST_F(CollectionSortingTest, NoDefaultSortingField) {
     // without a default sorting field, matches should be sorted by (text_match, seq_id)
     auto results = coll1->search("rocket", {"title"}, "", {}, {}, {1}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ(24, results["out_of"]);
 
     std::vector<std::string> ids = {"16", "15", "7", "0"};
@@ -197,8 +201,8 @@ TEST_F(CollectionSortingTest, NoDefaultSortingField) {
 
     results = coll1->search("*", {}, "", {}, {}, {1}, 30, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(23, results["found"].get<size_t>());
-    ASSERT_EQ(23, results["hits"].size());
+    ASSERT_EQ(size_t{23}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{23}, results["hits"].size());
     ASSERT_EQ(23, results["out_of"]);
 
     for(size_t i=23; i >= 1; i--) {
@@ -241,7 +245,7 @@ TEST_F(CollectionSortingTest, FrequencyOrderedTokensWithoutDefaultSortingField) 
     auto results = coll1->search("e", {"title"}, "", {}, {}, {0}, 100, 1, NOT_SET, {true}).get();
 
     // [11 + 10 + 9 + 8] + 7 + 6 + 5 + 4 + 3 + 2
-    ASSERT_EQ(38, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{38}, results["found"].get<size_t>());
 
     // we have to ensure that no result contains the word "end" since it occurs least number of times
     bool found_end = false;
@@ -259,7 +263,7 @@ TEST_F(CollectionSortingTest, FrequencyOrderedTokensWithoutDefaultSortingField) 
                             off, 2).get();
 
     // [11 + 10] + 9 + 8 + 7 + 6 + 5 + 4 + 3 + 2
-    ASSERT_EQ(21, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{21}, results["found"].get<size_t>());
 
     ASSERT_FALSE(found_end);
 }
@@ -324,7 +328,7 @@ TEST_F(CollectionSortingTest, Int64AsDefaultSortingField) {
     std::vector<std::string> facets;
     sort_fields = { sort_by("points", "ASC") };
     nlohmann::json results = coll_mul_fields->search("foo", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     std::vector<std::string> ids = {"3", "1", "0", "2"};
 
@@ -338,7 +342,7 @@ TEST_F(CollectionSortingTest, Int64AsDefaultSortingField) {
     // DESC
     sort_fields = { sort_by("points", "desc") };
     results = coll_mul_fields->search("foo", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"2", "0", "1", "3"};
 
@@ -378,7 +382,7 @@ TEST_F(CollectionSortingTest, SortOnFloatFields) {
     query_fields = {"title"};
     std::vector<std::string> facets;
     nlohmann::json results = coll_float_fields->search("Jeremy", query_fields, "", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(7, results["hits"].size());
+    ASSERT_EQ(size_t{7}, results["hits"].size());
 
     std::vector<std::string> ids = {"2", "0", "3", "1", "5", "4", "6"};
 
@@ -391,7 +395,7 @@ TEST_F(CollectionSortingTest, SortOnFloatFields) {
 
     std::vector<sort_by> sort_fields_asc = { sort_by("score", "ASC"), sort_by("average", "ASC") };
     results = coll_float_fields->search("Jeremy", query_fields, "", facets, sort_fields_asc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(7, results["hits"].size());
+    ASSERT_EQ(size_t{7}, results["hits"].size());
 
     ids = {"6", "4", "5", "1", "3", "0", "2"};
 
@@ -406,7 +410,7 @@ TEST_F(CollectionSortingTest, SortOnFloatFields) {
 
     std::vector<sort_by> sort_fields_asc_desc = { sort_by("score", "ASC"), sort_by("average", "DESC") };
     results = coll_float_fields->search("Jeremy", query_fields, "", facets, sort_fields_asc_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(7, results["hits"].size());
+    ASSERT_EQ(size_t{7}, results["hits"].size());
 
     ids = {"5", "4", "6", "1", "3", "0", "2"};
 
@@ -500,7 +504,7 @@ TEST_F(CollectionSortingTest, ThreeSortFieldsTextMatchLast) {
                              spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                              "", 10).get();
 
-    ASSERT_EQ(2, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["found"].get<size_t>());
     ASSERT_STREQ("1", res["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", res["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -544,8 +548,8 @@ TEST_F(CollectionSortingTest, SingleFieldTextMatchScoreDefault) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 10).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("2", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -582,7 +586,7 @@ TEST_F(CollectionSortingTest, NegativeInt64Value) {
     auto res = coll1->search("*", query_fields, "points:>=1577836800", {}, sort_fields_desc, {0}, 10, 1, FREQUENCY,
                              {false}).get();
 
-    ASSERT_EQ(0, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, res["found"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
 }
@@ -638,7 +642,7 @@ TEST_F(CollectionSortingTest, GeoPointSorting) {
                             {}, "loc: (48.84442912268208, 2.3490714964332353, 20km)",
                             {}, geo_sort_fields, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
 
     std::vector<std::string> expected_ids = {
         "9", "7", "4", "5", "3", "8", "0", "6", "1", "2"
@@ -661,7 +665,7 @@ TEST_F(CollectionSortingTest, GeoPointSorting) {
                             {}, "",
                             {}, geo_sort_fields, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
 
     for(size_t i=0; i < expected_ids.size(); i++) {
         ASSERT_STREQ(expected_ids[expected_ids.size() - 1 - i].c_str(), results["hits"][i]["document"]["id"].get<std::string>().c_str());
@@ -802,7 +806,7 @@ TEST_F(CollectionSortingTest, GeoPointSortingWithExcludeRadius) {
                                  {}, "loc: (32.24348, 77.1893, 20 km)",
                                  {}, geo_sort_fields, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(6, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, results["found"].get<size_t>());
 
     std::vector<std::string> expected_ids = {
         "2", "1", "0", "3", "4", "5"
@@ -823,7 +827,7 @@ TEST_F(CollectionSortingTest, GeoPointSortingWithExcludeRadius) {
                             {}, "loc: (32.24348, 77.1893, 20 km)",
                             {}, geo_sort_fields, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(6, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, results["found"].get<size_t>());
 
     expected_ids = {
         "1", "2", "0", "3", "4", "5"
@@ -942,7 +946,7 @@ TEST_F(CollectionSortingTest, GeoPointSortingWithPrecision) {
                                  {}, "loc: (32.24348, 77.1893, 20 km)",
                                  {}, geo_sort_fields, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(8, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{8}, results["found"].get<size_t>());
 
     std::vector<std::string> expected_ids = {
         "6", "2", "1", "0", "3", "4", "7", "5"
@@ -951,7 +955,7 @@ TEST_F(CollectionSortingTest, GeoPointSortingWithPrecision) {
 
     for (size_t i = 0; i < expected_ids.size(); i++) {
         auto const& hit = results["hits"][i];
-        ASSERT_EQ(expected_ids[i], hit["document"]["id"]);
+        ASSERT_EQ(expected_ids[i], hit["document"]["id"].get<std::string>());
         ASSERT_FLOAT_EQ(geo_distance_meters[i], hit["geo_distance_meters"]["loc"]);
     }
 
@@ -1036,7 +1040,7 @@ TEST_F(CollectionSortingTest, GeoPointAsOptionalField) {
                                  {}, "loc: (32.24348, 77.1893, 20 km)",
                                  {}, geo_sort_fields, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(7, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{7}, results["found"].get<size_t>());
     collectionManager.drop_collection("coll1");
 }
 
@@ -1108,8 +1112,8 @@ TEST_F(CollectionSortingTest, GeoPointArraySorting) {
                                  {}, "loc: (13.12631, 80.20252, 100 km)",
                                  {}, geo_sort_fields, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("1", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -1125,7 +1129,7 @@ TEST_F(CollectionSortingTest, GeoPointArraySorting) {
                             {}, "loc: (13.03388, 79.25868, 1000 km)",
                             {}, geo_sort_fields, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
 
     ASSERT_STREQ("2", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("1", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -1196,7 +1200,7 @@ TEST_F(CollectionSortingTest, SortByTitle) {
 
     auto results = coll1->search("*", {}, "", {}, sort_fields, {0}, 20, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(12, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{12}, results["found"].get<size_t>());
 
     for(size_t i = 0; i < results["hits"].size(); i++) {
         ASSERT_EQ(expected_order[i], results["hits"][i]["document"]["title"].get<std::string>());
@@ -1209,7 +1213,7 @@ TEST_F(CollectionSortingTest, SortByTitle) {
 
     results = coll1->search("*", {}, "", {}, sort_fields, {0}, 20, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(12, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{12}, results["found"].get<size_t>());
 
     for(size_t i = 0; i < results["hits"].size(); i++) {
         ASSERT_EQ(expected_order[expected_order.size() - i - 1], results["hits"][i]["document"]["title"].get<std::string>());
@@ -1335,14 +1339,14 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigFirstField) {
         sort_by("title(missing_values: first)", "ASC"),
     };
     auto results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     sort_fields = {
         sort_by("title(missing_values: last)", "ASC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     // descending
@@ -1350,14 +1354,14 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigFirstField) {
         sort_by("title(missing_values: first)", "DESC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     sort_fields = {
         sort_by("title(missing_values: last)", "DESC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     // without explicit arg, missing values will be deemed as having largest value (same as SQL)
@@ -1365,14 +1369,14 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigFirstField) {
         sort_by("title", "asc"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     sort_fields = {
         sort_by("title", "desc"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     // natural order
@@ -1380,14 +1384,14 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigFirstField) {
         sort_by("title(missing_values: normal)", "asc"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     sort_fields = {
         sort_by("title(missing_values: normal)", "desc"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     // bad syntax
@@ -1436,7 +1440,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigSecondField) {
         sort_by("title(missing_values: first)", "ASC"),
     };
     auto results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     sort_fields = {
@@ -1444,7 +1448,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigSecondField) {
         sort_by("title(missing_values: last)", "ASC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     // descending
@@ -1453,7 +1457,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigSecondField) {
         sort_by("title(missing_values: first)", "DESC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     sort_fields = {
@@ -1461,7 +1465,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigSecondField) {
         sort_by("title(missing_values: last)", "DESC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     // without explicit arg, missing values will be deemed as having largest value (same as SQL)
@@ -1470,7 +1474,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigSecondField) {
         sort_by("title", "ASC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     sort_fields = {
@@ -1478,7 +1482,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigSecondField) {
         sort_by("title", "DESC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -1513,7 +1517,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigThirdField) {
         sort_by("title(missing_values: first)", "ASC"),
     };
     auto results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     sort_fields = {
@@ -1522,7 +1526,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigThirdField) {
         sort_by("title(missing_values: last)", "ASC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     // descending
@@ -1532,7 +1536,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigThirdField) {
         sort_by("title(missing_values: first)", "DESC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     sort_fields = {
@@ -1541,7 +1545,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigThirdField) {
         sort_by("title(missing_values: last)", "DESC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     // without explicit arg, missing values will be deemed as having largest value (same as SQL)
@@ -1551,7 +1555,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigThirdField) {
         sort_by("title", "ASC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"].get<std::string>());
 
     sort_fields = {
@@ -1560,7 +1564,7 @@ TEST_F(CollectionSortingTest, SortByStringEmptyValuesConfigThirdField) {
         sort_by("title", "DESC"),
     };
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {0}, 10, 1, MAX_SCORE, {true}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -1611,7 +1615,7 @@ TEST_F(CollectionSortingTest, SortByStringAccentedChars) {
 
     auto results = coll1->search("*", {}, "", {}, sort_fields, {0}, 20, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(5, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, results["found"].get<size_t>());
 
     for(size_t i = 0; i < results["hits"].size(); i++) {
         ASSERT_EQ(expected_order[i], results["hits"][i]["document"]["title"].get<std::string>());
@@ -1624,7 +1628,7 @@ TEST_F(CollectionSortingTest, SortByStringAccentedChars) {
 
     results = coll1->search("*", {}, "", {}, sort_fields, {0}, 20, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(5, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, results["found"].get<size_t>());
 
     for(size_t i = 0; i < results["hits"].size(); i++) {
         ASSERT_EQ(expected_order[expected_order.size() - i - 1], results["hits"][i]["document"]["title"].get<std::string>());
@@ -1666,7 +1670,7 @@ TEST_F(CollectionSortingTest, TextMatchBucketRanking) {
                                  "<mark>", "</mark>", {3}, 1000, true).get();
 
     // when there are more buckets than results, no bucketing will happen
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1683,7 +1687,7 @@ TEST_F(CollectionSortingTest, TextMatchBucketRanking) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {3}, 1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1704,7 +1708,7 @@ TEST_F(CollectionSortingTest, TextMatchBucketRanking) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {3}, 1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1790,7 +1794,7 @@ TEST_F(CollectionSortingTest, TextMatchMoreDocsThanBuckets) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {1}, 1000, true).get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -1869,7 +1873,7 @@ TEST_F(CollectionSortingTest, BucketingWithGroupByNoDuplicates) {
                     std::cout << ", " << pages[i];
                 }
                 std::cout << "] in iteration " << iteration << std::endl;
-                ASSERT_EQ(1, pages.size()) 
+                ASSERT_EQ(size_t{1}, pages.size()) 
                     << "Group key '" << group_key << "' appears on multiple pages in the same request";
             }
         }
@@ -1878,13 +1882,13 @@ TEST_F(CollectionSortingTest, BucketingWithGroupByNoDuplicates) {
         
         if(iteration == 0) {
             for(const auto& [group_key, pages] : group_to_pages) {
-                ASSERT_EQ(1, pages.size()) << "Group should appear on exactly one page";
+                ASSERT_EQ(size_t{1}, pages.size()) << "Group should appear on exactly one page";
                 expected_group_to_page[group_key] = pages[0];
             }
         } else {
             // same groups should appear on same pages across requests
             for(const auto& [group_key, pages] : group_to_pages) {
-                ASSERT_EQ(1, pages.size()) << "Group should appear on exactly one page";
+                ASSERT_EQ(size_t{1}, pages.size()) << "Group should appear on exactly one page";
                 if(expected_group_to_page.find(group_key) != expected_group_to_page.end()) {
                     size_t expected_page = expected_group_to_page[group_key];
                     if(pages[0] != expected_page) {
@@ -1947,16 +1951,16 @@ TEST_F(CollectionSortingTest, RepeatingTokenRanking) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {3}, 1000, true).get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("3", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][3]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(1157451471583709209, results["hits"][0]["text_match"].get<size_t>());
-    ASSERT_EQ(1157451471575320601, results["hits"][1]["text_match"].get<size_t>());
-    ASSERT_EQ(1157451471575320601, results["hits"][2]["text_match"].get<size_t>());
-    ASSERT_EQ(1157451471575320601, results["hits"][3]["text_match"].get<size_t>());
+    ASSERT_EQ(size_t{1157451471583709209}, results["hits"][0]["text_match"].get<size_t>());
+    ASSERT_EQ(size_t{1157451471575320601}, results["hits"][1]["text_match"].get<size_t>());
+    ASSERT_EQ(size_t{1157451471575320601}, results["hits"][2]["text_match"].get<size_t>());
+    ASSERT_EQ(size_t{1157451471575320601}, results["hits"][3]["text_match"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1982,12 +1986,12 @@ TEST_F(CollectionSortingTest, SortingDoesNotHaveTextMatchComponent) {
     };
 
     auto results = coll1->search("test", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(0, results["hits"][0].count("text_match"));
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0].count("text_match"));
 
     results = coll1->search("*", {}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(0, results["hits"][0].count("text_match"));
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0].count("text_match"));
 
     collectionManager.drop_collection("coll1");
 }
@@ -2088,8 +2092,8 @@ TEST_F(CollectionSortingTest, WildcardSearchSequenceIdSort) {
     };
 
     auto res = coll1->search("*", {"category"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(10, res["hits"].size());
-    ASSERT_EQ(30, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, res["hits"].size());
+    ASSERT_EQ(size_t{30}, res["found"].get<size_t>());
 }
 
 TEST_F(CollectionSortingTest, DefaultSortingFieldStringNotIndexed) {
@@ -2169,7 +2173,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingWildcard) {
 
     auto results = coll1->search("*", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     std::vector<std::string> expected_ids = {"3", "0", "4", "2", "1"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
@@ -2182,7 +2186,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingWildcard) {
     };
 
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     expected_ids = {"0", "4", "3", "2", "1"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
@@ -2195,7 +2199,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingWildcard) {
     };
 
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     expected_ids = {"3", "0", "1", "4", "2"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
@@ -2210,7 +2214,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingWildcard) {
 
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     expected_ids = {"4", "3", "2", "1", "0"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
@@ -2231,7 +2235,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingWildcard) {
     };
 
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
 
     expected_ids = {"3", "0", "4", "2", "1", "5"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
@@ -2245,7 +2249,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingWildcard) {
     };
 
     results = coll1->search("*", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
 
     expected_ids = {"3", "0", "4", "2", "1", "5"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
@@ -2302,7 +2306,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingWildcard) {
     ASSERT_TRUE(search_op.ok());
     results = nlohmann::json::parse(json_res);
 
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     expected_ids = {"5", "4", "3", "2", "1", "0"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
@@ -2387,14 +2391,14 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingWildcard) {
             })"_json
     };
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2409,36 +2413,36 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingWildcard) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
 
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("stocks"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"].count("26"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"]["26"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"]["26"].count("rec"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("stocks"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"].count("26"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"]["26"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"]["26"].count("rec"));
     ASSERT_TRUE(res_obj["hits"][0]["document"]["stocks"]["26"]["rec"]);
 
     ASSERT_EQ("product_d", res_obj["hits"][1]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("stocks"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["stocks"].size());
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["stocks"].count("26"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["stocks"]["26"].size());
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["stocks"]["26"].count("rec"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("stocks"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["stocks"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["stocks"].count("26"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["stocks"]["26"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["stocks"]["26"].count("rec"));
     ASSERT_FALSE(res_obj["hits"][1]["document"]["stocks"]["26"]["rec"]);
 
     ASSERT_EQ("product_b", res_obj["hits"][2]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][2]["document"].count("stocks"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["stocks"].size());
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["stocks"].count("26"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["stocks"]["26"].size());
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["stocks"]["26"].count("rec"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"].count("stocks"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["stocks"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["stocks"].count("26"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["stocks"]["26"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["stocks"]["26"].count("rec"));
     ASSERT_FALSE(res_obj["hits"][2]["document"]["stocks"]["26"]["rec"]);
 
     ASSERT_EQ("product_c", res_obj["hits"][3]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][3]["document"].count("stocks"));
-    ASSERT_EQ(0, res_obj["hits"][3]["document"]["stocks"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"].count("stocks"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][3]["document"]["stocks"].size());
 }
 
 TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSearch) {
@@ -2472,7 +2476,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSearch) {
 
     auto results = coll1->search("title", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     std::vector<std::string> expected_ids = {"3", "0", "4", "2", "1"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
@@ -2485,7 +2489,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSearch) {
     };
 
     results = coll1->search("title", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     std::map<std::string, std::string> req_params = {
             {"collection", "coll1"},
@@ -2501,7 +2505,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSearch) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     results = nlohmann::json::parse(json_res);
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     expected_ids = {"0", "4", "3", "2", "1"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
@@ -2516,7 +2520,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSearch) {
 
     results = coll1->search("title", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     expected_ids = {"4", "3", "2", "1", "0"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
@@ -2543,7 +2547,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSearch) {
     ASSERT_TRUE(search_op.ok());
     results = nlohmann::json::parse(json_res);
 
-    ASSERT_EQ(4, results["hits"].size()); // 3 Adidas 1 Puma documents
+    ASSERT_EQ(size_t{4}, results["hits"].size()); // 3 Adidas 1 Puma documents
     // Because of `_eval`, Puma document will be on top even when having a lower text match score than Adidas documents.
     expected_ids = {"5", "4", "2", "1"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
@@ -2623,7 +2627,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSecondThirdParams) {
 
     auto results = coll1->search("title", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     std::vector<std::string> expected_ids = {"3", "0", "4", "2", "1"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
@@ -2637,7 +2641,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSecondThirdParams) {
     };
 
     results = coll1->search("title", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
     }
@@ -2650,7 +2654,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSecondThirdParams) {
     expected_ids = {"4", "2", "1","3", "0"};
 
     results = coll1->search("title", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
     }
@@ -2662,7 +2666,7 @@ TEST_F(CollectionSortingTest, OptionalFilteringViaSortingSecondThirdParams) {
     };
 
     results = coll1->search("title", {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
     }
@@ -2710,7 +2714,7 @@ TEST_F(CollectionSortingTest, AscendingVectorDistance) {
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "points:([8.0, 15.0])").get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     std::vector<std::string> expected_ids = {"2", "1", "4", "0", "3"};
     for(size_t i = 0; i < expected_ids.size(); i++) {
         ASSERT_EQ(expected_ids[i], results["hits"][i]["document"]["id"].get<std::string>());
@@ -2759,7 +2763,7 @@ TEST_F(CollectionSortingTest, DescendingVectorDistance) {
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "points:([8.0, 15.0])").get();
     
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     std::vector<std::string> expected_ids = {"3", "0", "4", "1", "2"};
 
     for(size_t i = 0; i < expected_ids.size(); i++) {
@@ -2850,7 +2854,7 @@ TEST_F(CollectionSortingTest, TestSortByVectorQuery) {
                                 4, {off}, 32767, 32767, 2,
                                 false, true, "").get();
     
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", results["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", results["hits"][2]["document"]["id"]);
@@ -2866,7 +2870,7 @@ TEST_F(CollectionSortingTest, TestSortByVectorQuery) {
                            "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                            4, {off}, 32767, 32767, 2,
                            false, true, "").get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", results["hits"][1]["document"]["id"]);
     ASSERT_EQ("2", results["hits"][2]["document"]["id"]);
@@ -2883,7 +2887,7 @@ TEST_F(CollectionSortingTest, TestSortByVectorQuery) {
                            4, {off}, 32767, 32767, 2,
                            false, true, "").get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", results["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", results["hits"][2]["document"]["id"]);
@@ -2899,7 +2903,7 @@ TEST_F(CollectionSortingTest, TestVectorQueryQsSorting) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
 
@@ -2924,7 +2928,7 @@ TEST_F(CollectionSortingTest, TestVectorQueryQsSorting) {
                            "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                            4, {off}, 32767, 32767, 2,
                            false, true, "").get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"]);
     ASSERT_EQ("0", results["hits"][1]["document"]["id"]);
 
@@ -2940,7 +2944,7 @@ TEST_F(CollectionSortingTest, TestVectorQueryQsSorting) {
                            4, {off}, 32767, 32767, 2,
                            false, true, "").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", results["hits"][1]["document"]["id"]);
 }
@@ -2968,7 +2972,7 @@ TEST_F(CollectionSortingTest, TestVectorQueryDistanceThresholdSorting) {
             ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto coll_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(coll_op.ok());
@@ -2997,7 +3001,7 @@ TEST_F(CollectionSortingTest, TestVectorQueryDistanceThresholdSorting) {
 
     auto res = nlohmann::json::parse(json_res);
 
-    ASSERT_EQ(2, res["hits"].size());
+    ASSERT_EQ(size_t{2}, res["hits"].size());
     ASSERT_EQ("Mobile Phone", res["hits"][0]["document"]["product_name"]);
     ASSERT_EQ(0.07853113859891891, res["hits"][0]["vector_distance"].get<float>());
     ASSERT_EQ("Cell Phone", res["hits"][1]["document"]["product_name"]);
@@ -3030,7 +3034,7 @@ TEST_F(CollectionSortingTest, TestSortByRandomOrder) {
     };
 
     auto results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"]);
     ASSERT_EQ("4", results["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", results["hits"][2]["document"]["id"]);
@@ -3045,7 +3049,7 @@ TEST_F(CollectionSortingTest, TestSortByRandomOrder) {
 
     results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"]);
     ASSERT_EQ("3", results["hits"][1]["document"]["id"]);
     ASSERT_EQ("4", results["hits"][2]["document"]["id"]);
@@ -3059,14 +3063,14 @@ TEST_F(CollectionSortingTest, TestSortByRandomOrder) {
     };
 
     results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     sort_fields = {
             sort_by("_rand", "asc"),
     };
 
     results = coll->search("*", {}, "", {}, sort_fields, {0}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     //should work with other sort params as tie breaker for first param
     sort_fields = {
@@ -3074,7 +3078,7 @@ TEST_F(CollectionSortingTest, TestSortByRandomOrder) {
             sort_by("_rand(5)", "asc")
     };
     results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"]);
     ASSERT_EQ("4", results["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", results["hits"][2]["document"]["id"]);
@@ -3086,7 +3090,7 @@ TEST_F(CollectionSortingTest, TestSortByRandomOrder) {
             sort_by("_rand(8)", "asc")
     };
     results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"]);
     ASSERT_EQ("3", results["hits"][1]["document"]["id"]);
     ASSERT_EQ("4", results["hits"][2]["document"]["id"]);
@@ -3140,7 +3144,7 @@ TEST_F(CollectionSortingTest, DiffFunctionSort) {
 
     std::vector<std::string> products = {"Samsung Smartphone", "Vivo SmartPhone", "Oneplus Smartphone", "Pixel Smartphone", "Moto Smartphone"};
     nlohmann::json doc;
-    for (auto i = 0; i < products.size(); ++i) {
+    for (size_t i = 0; i < products.size(); ++i) {
         doc["name"] = products[i];
         doc["timestamp"] = 1728383250 + i * 1000;
         ASSERT_TRUE(coll->add(doc.dump()).ok());
@@ -3152,17 +3156,17 @@ TEST_F(CollectionSortingTest, DiffFunctionSort) {
     };
 
     auto results = coll->search("*", {}, "", {}, sort_fields, {0}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1728386250, results["hits"][0]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728386250}, results["hits"][0]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("4", results["hits"][1]["document"]["id"]);
-    ASSERT_EQ(1728387250, results["hits"][1]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728387250}, results["hits"][1]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"]);
-    ASSERT_EQ(1728385250, results["hits"][2]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728385250}, results["hits"][2]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("1", results["hits"][3]["document"]["id"]);
-    ASSERT_EQ(1728384250, results["hits"][3]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728384250}, results["hits"][3]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("0", results["hits"][4]["document"]["id"]);
-    ASSERT_EQ(1728383250, results["hits"][4]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728383250}, results["hits"][4]["document"]["timestamp"].get<size_t>());
 
 
     //desc sort
@@ -3171,17 +3175,17 @@ TEST_F(CollectionSortingTest, DiffFunctionSort) {
     };
 
     results = coll->search("*", {}, "", {}, sort_fields, {0}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1728383250, results["hits"][0]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728383250}, results["hits"][0]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"]);
-    ASSERT_EQ(1728384250, results["hits"][1]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728384250}, results["hits"][1]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("4", results["hits"][2]["document"]["id"]);
-    ASSERT_EQ(1728387250, results["hits"][2]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728387250}, results["hits"][2]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("2", results["hits"][3]["document"]["id"]);
-    ASSERT_EQ(1728385250, results["hits"][3]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728385250}, results["hits"][3]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("3", results["hits"][4]["document"]["id"]);
-    ASSERT_EQ(1728386250, results["hits"][4]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728386250}, results["hits"][4]["document"]["timestamp"].get<size_t>());
 }
 
 TEST_F(CollectionSortingTest, DecayFunctionsValidation) {
@@ -3200,7 +3204,7 @@ TEST_F(CollectionSortingTest, DecayFunctionsValidation) {
 
     std::vector<std::string> products = {"Samsung Smartphone", "Vivo SmartPhone", "Oneplus Smartphone", "Pixel Smartphone", "Moto Smartphone"};
     nlohmann::json doc;
-    for (auto i = 0; i < products.size(); ++i) {
+    for (size_t i = 0; i < products.size(); ++i) {
         doc["name"] = products[i];
         doc["timestamp"] = 1728383250 + i * 1000;
         ASSERT_TRUE(coll->add(doc.dump()).ok());
@@ -3302,7 +3306,7 @@ TEST_F(CollectionSortingTest, DecayFunctionsTest) {
 
     std::vector<std::string> products = {"Samsung Smartphone", "Vivo SmartPhone", "Oneplus Smartphone", "Pixel Smartphone", "Moto Smartphone"};
     nlohmann::json doc;
-    for (auto i = 0; i < products.size(); ++i) {
+    for (size_t i = 0; i < products.size(); ++i) {
         doc["product_name"] = products[i];
         doc["timestamp"] = 1728383250 + i * 1000;
         ASSERT_TRUE(coll->add(doc.dump()).ok());
@@ -3313,18 +3317,18 @@ TEST_F(CollectionSortingTest, DecayFunctionsTest) {
     };
 
     auto results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     //score reduces by half respecting gaussian curve with scale value from origin
     ASSERT_EQ("2", results["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1728385250, results["hits"][0]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728385250}, results["hits"][0]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("3", results["hits"][1]["document"]["id"]);
-    ASSERT_EQ(1728386250, results["hits"][1]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728386250}, results["hits"][1]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"]);
-    ASSERT_EQ(1728384250, results["hits"][2]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728384250}, results["hits"][2]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("4", results["hits"][3]["document"]["id"]);
-    ASSERT_EQ(1728387250, results["hits"][3]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728387250}, results["hits"][3]["document"]["timestamp"].get<size_t>());
     ASSERT_EQ("0", results["hits"][4]["document"]["id"]);
-    ASSERT_EQ(1728383250, results["hits"][4]["document"]["timestamp"].get<size_t>());
+    ASSERT_EQ(size_t{1728383250}, results["hits"][4]["document"]["timestamp"].get<size_t>());
 }
 
 TEST_F(CollectionSortingTest, TextMatchBucketSizeRanking) {
@@ -3390,7 +3394,7 @@ TEST_F(CollectionSortingTest, TextMatchBucketSizeRanking) {
                                  "<mark>", "</mark>", {3}, 1000, true).get();
 
     //two buckets will be formed and results will rank as per points among buckets
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("5", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3411,7 +3415,7 @@ TEST_F(CollectionSortingTest, TextMatchBucketSizeRanking) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {3}, 1000, true).get();
 
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("5", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3432,7 +3436,7 @@ TEST_F(CollectionSortingTest, TextMatchBucketSizeRanking) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {3}, 1000, true).get();
 
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("5", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3483,7 +3487,7 @@ TEST_F(CollectionSortingTest, VectorSearchBucketRanking) {
 
 
     // when there are more buckets than results, no bucketing will happen
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3501,7 +3505,7 @@ TEST_F(CollectionSortingTest, VectorSearchBucketRanking) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.85, 0.5, 0.1])").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
@@ -3523,7 +3527,7 @@ TEST_F(CollectionSortingTest, VectorSearchBucketRanking) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.85, 0.5, 0.1])").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3644,7 +3648,7 @@ TEST_F(CollectionSortingTest, VectorSearchBucketSizeRanking) {
                                 false, true, "vec:([0.85, 0.5, 0.1])").get();
 
     //two buckets will be formed and results will rank as per points among buckets
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("5", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3666,7 +3670,7 @@ TEST_F(CollectionSortingTest, VectorSearchBucketSizeRanking) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.85, 0.5, 0.1])").get();
 
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("5", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3688,7 +3692,7 @@ TEST_F(CollectionSortingTest, VectorSearchBucketSizeRanking) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.85, 0.5, 0.1])").get();
 
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("5", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3743,7 +3747,7 @@ TEST_F(CollectionSortingTest, VectorSearchBucketRankingTwoBuckets) {
                                 false, true, "vec:([0.85, 0.5, 0.1])").get();
 
     // when there are more buckets than results, no bucketing will happen
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3795,7 +3799,7 @@ TEST_F(CollectionSortingTest, EvalExpressionWithBackticks) {
                                 4, {off}, 32767, 32767, 2,
                                 false, true, "").get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     sort_fields = {
@@ -3811,7 +3815,7 @@ TEST_F(CollectionSortingTest, EvalExpressionWithBackticks) {
                            4, {off}, 32767, 32767, 2,
                            false, true, "").get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3823,7 +3827,7 @@ TEST_F(CollectionSortingTest, EvalExpressionWithBackticks) {
                            4, {off}, 32767, 32767, 2,
                            false, true, "").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     std::map<std::string, std::string> req_params = {
@@ -3842,7 +3846,7 @@ TEST_F(CollectionSortingTest, EvalExpressionWithBackticks) {
     ASSERT_TRUE(search_op.ok());
     
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("test");
@@ -3901,7 +3905,7 @@ TEST_F(CollectionSortingTest, EvalExpressionWithIdField) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(5, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("3", res_obj["hits"][2]["document"]["id"].get<std::string>());
@@ -3954,5 +3958,5 @@ TEST_F(CollectionSortingTest, IgnoreInvalidFieldsIfNotValidateFieldNames) {
                                 false, true, "", true, 0UL, max_score, 100UL, 0UL, 0UL, 0UL, "exhaustive", 3000UL, 2UL, "", {},
                                 {}, "right_to_left", true, true, false, "", "", "", "", true, true, false, false, 0U, false, true, DEFAULT_FILTER_BY_CANDIDATES, false, false);
     ASSERT_TRUE(results.ok());
-    ASSERT_EQ(2, results.get()["hits"].size());
+    ASSERT_EQ(size_t{2}, results.get()["hits"].size());
 }

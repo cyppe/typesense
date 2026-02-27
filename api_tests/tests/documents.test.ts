@@ -55,6 +55,35 @@ const SearchResponse = z.object({
   union_request_params: z.array(z.record(z.any())).optional(),
 });
 
+type Document = z.infer<typeof DocumentSchema>;
+
+async function waitForMultiNodeDocument(
+  node: number,
+  id: string,
+  predicate: (doc: Document) => boolean,
+  timeoutMs = 5000,
+): Promise<Document> {
+  const deadline = Date.now() + timeoutMs;
+  let lastDoc: Document | null = null;
+
+  while (Date.now() < deadline) {
+    const response = await fetchMultiNode(node, `/collections/companies_docs_multi/documents/${id}`, { method: "GET" });
+    if (response.ok) {
+      const parsed = DocumentSchema.safeParse(await response.json());
+      if (parsed.success) {
+        lastDoc = parsed.data;
+        if (predicate(parsed.data)) {
+          return parsed.data;
+        }
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(`Timed out waiting for document ${id}. Last value: ${JSON.stringify(lastDoc)}`);
+}
+
 describe(Phases.SINGLE_FRESH, () => {
   it("create documents", async () => {
     let res = await fetchSingleNode("/collections", {
@@ -261,17 +290,11 @@ describe(Phases.MULTI_FRESH, () => {
     );
     expect(res.ok).toBe(true);
 
-    let getRes = await fetchMultiNode(2, "/collections/companies_docs_multi/documents/m1", { method: "GET" });
-    expect(getRes.ok).toBe(true);
-    let doc1 = DocumentSchema.safeParse(await getRes.json());
-    expect(doc1.success).toBe(true);
-    expect(doc1.data?.num_employees).toBe(6000);
+    const doc1 = await waitForMultiNodeDocument(2, "m1", (doc) => doc.num_employees === 6000);
+    expect(doc1.num_employees).toBe(6000);
 
-    getRes = await fetchMultiNode(3, "/collections/companies_docs_multi/documents/m3", { method: "GET" });
-    expect(getRes.ok).toBe(true);
-    const doc3 = DocumentSchema.safeParse(await getRes.json());
-    expect(doc3.success).toBe(true);
-    expect(doc3.data?.company_name).toBe("Cyberdyne Systems");
+    const doc3 = await waitForMultiNodeDocument(3, "m3", (doc) => doc.company_name === "Cyberdyne Systems");
+    expect(doc3.company_name).toBe("Cyberdyne Systems");
   });
 
   it("delete document across nodes", async () => {
@@ -311,5 +334,4 @@ describe(Phases.MULTI_SNAPSHOT, () => {
     expect(d.data?.id).toBe("m2");
   });
 });
-
 

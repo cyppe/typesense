@@ -1,4 +1,5 @@
 #include "conversation_model_manager.h"
+#include "logger.h"
 #include "conversation_model.h"
 #include "conversation_manager.h"
 
@@ -142,7 +143,7 @@ Option<int> ConversationModelManager::init(Store* store) {
     store->scan_fill(std::string(MODEL_KEY_PREFIX) + "_", std::string(MODEL_KEY_PREFIX) + "`", model_strs);
 
     if(!model_strs.empty()) {
-        LOG(INFO) << "Found " << model_strs.size() << " conversation model(s).";
+        TS_LOG(INFO) << "Found " << model_strs.size() << " conversation model(s).";
     }
 
     int loaded_models = 0;
@@ -157,7 +158,7 @@ Option<int> ConversationModelManager::init(Store* store) {
         // write to disk only when a migration has been done on model data
         auto add_op = add_model(model_json, model_id, has_migration);
         if(!add_op.ok()) {
-            LOG(ERROR) << "Error while loading conversation model: " << model_id << ", error: " << add_op.error();
+            TS_LOG(ERROR) << "Error while loading conversation model: " << model_id << ", error: " << add_op.error();
             continue;
         }
 
@@ -167,7 +168,7 @@ Option<int> ConversationModelManager::init(Store* store) {
     return Option<int>(loaded_models);
 }
 
-const std::string ConversationModelManager::get_model_key(const std::string& model_id) {
+std::string ConversationModelManager::get_model_key(const std::string& model_id) {
     return std::string(MODEL_KEY_PREFIX) + "_" + model_id;
 }
 
@@ -230,7 +231,7 @@ bool ConversationModelManager::migrate_model(nlohmann::json& model) {
     if(model.count("history_collection") == 0) {
         auto default_collection_op = create_default_history_collection(model_id);
         if(!default_collection_op.ok()) {
-            LOG(INFO) << "Error while creating default history collection for model " << model_id << ": "
+            TS_LOG(INFO) << "Error while creating default history collection for model " << model_id << ": "
                       << default_collection_op.error();
             return false;
         }

@@ -35,11 +35,11 @@ class ConversationModelManager
         static inline std::unordered_map<std::string, nlohmann::json> models;
         static inline std::shared_mutex models_mutex;
 
-        static constexpr char* MODEL_NEXT_ID = "$CVMN";
-        static constexpr char* MODEL_KEY_PREFIX = "$CVMP";
+        static constexpr const char* MODEL_NEXT_ID = "$CVMN";
+        static constexpr const char* MODEL_KEY_PREFIX = "$CVMP";
         static inline int64_t DEFAULT_HISTORY_COLLECTION_SUFFIX = 0;
         static inline Store* store;
-        static const std::string get_model_key(const std::string& model_id);
+        static std::string get_model_key(const std::string& model_id);
         static Option<Collection*> create_default_history_collection(const std::string& model_id);
         static Option<nlohmann::json> delete_model_unsafe(const std::string& model_id);
 

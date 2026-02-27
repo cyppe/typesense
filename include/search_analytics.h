@@ -25,18 +25,6 @@ struct search_event_t {
     tag_str = tag;
   }
 
-  search_event_t& operator=(const search_event_t& other) {
-    if (this != &other) {
-      query = other.query;
-      event_type = other.event_type;
-      timestamp = other.timestamp;
-      user_id = other.user_id;
-      filter_str = other.filter_str;
-      tag_str = other.tag_str;
-    }
-    return *this;
-  }
-
   bool operator==(const search_event_t& other) const {
     return query == other.query && filter_str == other.filter_str && tag_str == other.tag_str;
   }
@@ -155,5 +143,3 @@ public:
   size_t get_log_prefix_queries_size();
   void dispose();
 };
-
-

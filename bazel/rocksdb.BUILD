@@ -36,12 +36,21 @@ cmake(
         "-DWITH_TESTS=OFF",
         "-DWITH_TOOLS=OFF",
         "-DUSE_RTTI=1",
+        "-DFAIL_ON_WARNINGS=OFF",
+        "-DCMAKE_CXX_STANDARD=20",
+        "-DWITH_LZ4=ON",
+        "-DWITH_ZSTD=ON",
+        "-DWITH_ZLIB=OFF",
     ] + select({
          "@platforms//os:macos": ["-DCMAKE_CXX_FLAGS=-Wno-error=uninitialized"],
          "//conditions:default": ["-DCMAKE_CXX_FLAGS=-Wno-error=maybe-uninitialized"],
     }),
-    lib_source = "//:all_srcs",
+    lib_source = ":all_srcs",
     targets = ["rocksdb"],
     out_static_libs = ["librocksdb.a"],
-    deps = ["@com_github_google_snappy//:snappy"],
+    deps = [
+        "@com_github_google_snappy//:snappy",
+        "@lz4//:lz4",
+        "@zstd//:zstd",
+    ],
 )

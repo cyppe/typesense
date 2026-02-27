@@ -1,4 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+load("@rules_cc//cc:defs.bzl", "cc_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -28,23 +29,26 @@ cmake(
         "--target sentencepiece-static",
     ],
     install = False,
+    build_data = ["@com_google_protobuf//:protoc"],
     cache_entries = {
+        'SPM_PROTOBUF_PROVIDER': 'package',
         'SPM_USE_BUILTIN_PROTOBUF': 'OFF',
-        'Protobuf_LIBRARY': '$$BUILD_TMPDIR$$/../../com_google_protobuf/libprotobuf.a',
-        'Protobuf_LITE_LIBRARY': '$$BUILD_TMPDIR$$/../../com_google_protobuf/libprotobuf-lite.a',
-        'Protobuf_PROTOC_EXECUTABLE': '$$BUILD_TMPDIR$$/../../com_google_protobuf/protoc',
-        'Protobuf_INCLUDE_DIR': '$EXT_BUILD_ROOT/external/com_google_protobuf/src',
-        'CMAKE_POLICY_DEFAULT_CMP0111':'OLD'
+        'Protobuf_LIBRARY': '$$EXT_BUILD_DEPS/lib/libprotobuf.a',
+        'Protobuf_LITE_LIBRARY': '$$EXT_BUILD_DEPS/lib/libprotobuf_lite.a',
+        'Protobuf_PROTOC_EXECUTABLE': '$(execpath @com_google_protobuf//:protoc)',
+        'Protobuf_INCLUDE_DIR': '$$EXT_BUILD_ROOT/external/protobuf+/src',
+        'CMAKE_POLICY_DEFAULT_CMP0111': 'OLD',
+        'CMAKE_CXX_FLAGS': '-I$$EXT_BUILD_ROOT/external/abseil-cpp+ -I$$EXT_BUILD_ROOT/external/protobuf+/third_party/utf8_range',
     },
     deps = [
-        "@com_google_protobuf//:protoc",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_protobuf//:protobuf_lite",
         "@com_google_protobuf//:protobuf",
         "@com_google_protobuf//:protobuf_headers",
     ],
     tags = ["no-sandbox"],
-    postfix_script= """
+    postfix_script = """
         echo "Installing sentencepiece"
-        cp $BUILD_TMPDIR/src/libsentencepiece.a $INSTALLDIR/lib/libsentencepiece.a
-    """
+        cp $$BUILD_TMPDIR/src/libsentencepiece.a $$INSTALLDIR/lib/libsentencepiece.a
+    """,
 )

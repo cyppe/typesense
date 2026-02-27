@@ -41,7 +41,7 @@ cached_resource_stat_t::get_resource_status(const std::string& data_dir_path, co
 
     double disk_used_percentage = (double(disk_used_bytes)/double(disk_total_bytes)) * 100;
     if(disk_used_percentage > disk_used_max_percentage) {
-        LOG(INFO) << "disk_total_bytes: " << disk_total_bytes << ", disk_used_bytes: " << disk_used_bytes
+        TS_LOG(INFO) << "disk_total_bytes: " << disk_total_bytes << ", disk_used_bytes: " << disk_used_bytes
                   << ", disk_used_percentage: " << disk_used_percentage;
 
         return cached_resource_stat_t::OUT_OF_DISK;
@@ -50,7 +50,7 @@ cached_resource_stat_t::get_resource_status(const std::string& data_dir_path, co
     uint64_t memory_total_bytes = SystemMetrics::get_instance().get_memory_total_bytes();
     uint64_t memory_used_bytes = SystemMetrics::get_instance().get_memory_used_bytes();
 
-    //LOG(INFO) << "memory_total_bytes: " << memory_total_bytes << ", memory_used_bytes: " << memory_used_bytes;
+    //TS_LOG(INFO) << "memory_total_bytes: " << memory_total_bytes << ", memory_used_bytes: " << memory_used_bytes;
 
     if(memory_used_bytes == 0) {
         // if there is an error in fetching the stat, we will return `OK`
@@ -68,7 +68,7 @@ cached_resource_stat_t::get_resource_status(const std::string& data_dir_path, co
 
     if(free_mem < memory_free_min_bytes) {
         auto memory_available_bytes = (memory_total_bytes - memory_used_bytes);
-        LOG(INFO) << "memory_total: " << memory_total_bytes << ", memory_available: " << memory_available_bytes
+        TS_LOG(INFO) << "memory_total: " << memory_total_bytes << ", memory_available: " << memory_available_bytes
                   << ", all_memory_used: " << memory_used_bytes << ", free_mem: " << free_mem
                   << ", memory_free_min: " << memory_free_min_bytes;
         HouseKeeper::get_instance().log_running_queries();

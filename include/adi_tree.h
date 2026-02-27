@@ -1,6 +1,6 @@
 #pragma once
 #include <string>
-#include "sparsepp.h"
+#include "sparsepp_wrapper.h"
 
 struct adi_node_t;
 

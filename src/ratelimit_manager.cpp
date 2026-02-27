@@ -377,9 +377,9 @@ Option<nlohmann::json> RateLimitManager::edit_rule(const uint64_t id, const nloh
     // Remove rule from rate limit rule pointer
     for(const auto &entity : old_rule.entities) {
         auto& vec = rate_limit_entities.at(entity);
-        std::remove_if(vec.begin(), vec.end(), [&](const auto &rule) {
+        vec.erase(std::remove_if(vec.begin(), vec.end(), [&](const auto &rule) {
             return rule->id == id;
-        });
+        }), vec.end());
     }
     // Insert new rule to rule store
     lock.unlock();
@@ -543,8 +543,8 @@ Option<bool> RateLimitManager::init(Store *store) {
         std::string key = ban_status.entity.entity_id + "_" + (ban_status.and_entity.ok() ? ban_status.and_entity.get().entity_id : ".*");
         throttled_entities.insert({key, ban_status});
     }
-    LOG(INFO) << "Loaded " << rule_store.size() << " rate limit rules.";
-    LOG(INFO) << "Loaded " << throttled_entities.size() << " rate limit bans.";
+    TS_LOG(INFO) << "Loaded " << rule_store.size() << " rate limit rules.";
+    TS_LOG(INFO) << "Loaded " << throttled_entities.size() << " rate limit bans.";
     return Option<bool>(true);
 }
 
@@ -705,4 +705,3 @@ bool RateLimitManager::delete_throttle_by_id(const uint32_t id) {
     rate_limit_exceeds.erase(iterator);
     return true;
 }
-

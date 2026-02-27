@@ -172,6 +172,65 @@ const COLLECTION_DIMENSIONS = {
   matryoshka_multi_1024: 1024,
 } as const;
 
+async function waitForSingleNodeDocumentEmbedding(
+  collectionName: string,
+  documentId: string,
+  expectedDim: number,
+  timeoutMs = 10_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let lastDoc: unknown = null;
+
+  while (Date.now() < deadline) {
+    const response = await fetchSingleNode(`/collections/${collectionName}/documents/${documentId}`);
+    if (response.ok) {
+      const parsed = DocumentWithEmbedding.safeParse(await response.json());
+      if (parsed.success) {
+        lastDoc = parsed.data;
+        if (Array.isArray(parsed.data.embedding) && parsed.data.embedding.length === expectedDim) {
+          return parsed.data;
+        }
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(
+    `Timed out waiting for single-node embedding for ${collectionName}/${documentId}. Last value: ${JSON.stringify(lastDoc)}`,
+  );
+}
+
+async function waitForMultiNodeDocumentEmbedding(
+  node: number,
+  collectionName: string,
+  documentId: string,
+  expectedDim: number,
+  timeoutMs = 10_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let lastDoc: unknown = null;
+
+  while (Date.now() < deadline) {
+    const response = await fetchMultiNode(node, `/collections/${collectionName}/documents/${documentId}`);
+    if (response.ok) {
+      const parsed = DocumentWithEmbedding.safeParse(await response.json());
+      if (parsed.success) {
+        lastDoc = parsed.data;
+        if (Array.isArray(parsed.data.embedding) && parsed.data.embedding.length === expectedDim) {
+          return parsed.data;
+        }
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(
+    `Timed out waiting for multi-node embedding for ${collectionName}/${documentId} on node ${node}. Last value: ${JSON.stringify(lastDoc)}`,
+  );
+}
+
 describe(Phases.SINGLE_FRESH, () => {
   it(`${Filters.SECRETS} create a collection with openai embedding`, async () => {
     const res = await fetchSingleNode("/collections", {
@@ -478,16 +537,9 @@ describe(Phases.SINGLE_FRESH, () => {
       });
 
       expect(addRes.ok).toBe(true);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      const getDocRes = await fetchSingleNode(`/collections/${name}/documents/1`);
-      expect(getDocRes.ok).toBe(true);
-      const docData = DocumentWithEmbedding.safeParse(await getDocRes.json());
-      expect(docData.success).toBe(true);
-      if (docData.success && docData.data.embedding) {
-        expect(Array.isArray(docData.data.embedding)).toBe(true);
-        expect(docData.data.embedding.length).toBe(expectedDim);
-      }
+      const document = await waitForSingleNodeDocumentEmbedding(name, "1", expectedDim);
+      expect(Array.isArray(document.embedding)).toBe(true);
+      expect(document.embedding?.length).toBe(expectedDim);
     }
   });
 
@@ -537,7 +589,7 @@ describe(Phases.SINGLE_FRESH, () => {
       expect(addData.data.id).toBe("1");
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const doc512 = await waitForSingleNodeDocumentEmbedding("matryoshka_search_512", "1", 512);
 
     const searchRes = await fetchSingleNode(
       `/collections/matryoshka_search_512/documents/search?q=*&vector_query=${encodeURIComponent(
@@ -553,14 +605,8 @@ describe(Phases.SINGLE_FRESH, () => {
       expect(searchData.data.found).toBeGreaterThanOrEqual(0);
     }
 
-    const getDocRes = await fetchSingleNode("/collections/matryoshka_search_512/documents/1");
-    expect(getDocRes.ok).toBe(true);
-    const docData = DocumentWithEmbedding.safeParse(await getDocRes.json());
-    expect(docData.success).toBe(true);
-    if (docData.success && docData.data.embedding) {
-      expect(Array.isArray(docData.data.embedding)).toBe(true);
-      expect(docData.data.embedding.length).toBe(512);
-    }
+    expect(Array.isArray(doc512.embedding)).toBe(true);
+    expect(doc512.embedding?.length).toBe(512);
 
     const createRes2 = await fetchSingleNode("/collections", {
       method: "POST",
@@ -604,7 +650,7 @@ describe(Phases.SINGLE_FRESH, () => {
       expect(addData2.data.id).toBe("1");
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    const doc1024 = await waitForSingleNodeDocumentEmbedding("matryoshka_search_1024", "1", 1024);
 
     const searchRes2 = await fetchSingleNode(
       `/collections/matryoshka_search_1024/documents/search?q=*&vector_query=${encodeURIComponent(
@@ -620,14 +666,8 @@ describe(Phases.SINGLE_FRESH, () => {
       expect(searchData2.data.found).toBeGreaterThanOrEqual(0);
     }
 
-    const getDocRes2 = await fetchSingleNode("/collections/matryoshka_search_1024/documents/1");
-    expect(getDocRes2.ok).toBe(true);
-    const docData2 = DocumentWithEmbedding.safeParse(await getDocRes2.json());
-    expect(docData2.success).toBe(true);
-    if (docData2.success && docData2.data.embedding) {
-      expect(Array.isArray(docData2.data.embedding)).toBe(true);
-      expect(docData2.data.embedding.length).toBe(1024);
-    }
+    expect(Array.isArray(doc1024.embedding)).toBe(true);
+    expect(doc1024.embedding?.length).toBe(1024);
 
     const getRes1 = await fetchSingleNode("/collections/matryoshka_search_512");
     const getData1 = CreateCollectionResponse.safeParse(await getRes1.json());
@@ -966,16 +1006,9 @@ describe(Phases.MULTI_FRESH, () => {
       });
 
       expect(addRes.ok).toBe(true);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-
-      const getDocRes = await fetchMultiNode(1, `/collections/${collectionName}/documents/1`);
-      expect(getDocRes.ok).toBe(true);
-      const docData = DocumentWithEmbedding.safeParse(await getDocRes.json());
-      expect(docData.success).toBe(true);
-      if (docData.success && docData.data.embedding) {
-        expect(Array.isArray(docData.data.embedding)).toBe(true);
-        expect(docData.data.embedding.length).toBe(expectedDim);
-      }
+      const document = await waitForMultiNodeDocumentEmbedding(1, collectionName, "1", expectedDim);
+      expect(Array.isArray(document.embedding)).toBe(true);
+      expect(document.embedding?.length).toBe(expectedDim);
     }
   });
 

@@ -1,4 +1,5 @@
 #include "batched_indexer.h"
+#include "logger.h"
 #include "core_api.h"
 #include "thread_local_vars.h"
 #include "cached_resource_stat.h"
@@ -8,7 +9,7 @@ BatchedIndexer::BatchedIndexer(HttpServer* server, Store* store, Store* meta_sto
                                const Config& config, const std::atomic<bool>& skip_writes):
                                server(server), store(store), meta_store(meta_store), num_threads(num_threads),
                                last_gc_run(std::chrono::high_resolution_clock::now()), quit(false),
-                               config(config), skip_writes(skip_writes) {
+                               skip_writes(skip_writes), config(config) {
     queues.resize(num_threads);
     qmutuxes = new await_t[num_threads];
     skip_index_iter_upper_bound = new rocksdb::Slice(skip_index_upper_bound_key);
@@ -41,7 +42,7 @@ void BatchedIndexer::enqueue(const std::shared_ptr<http_req>& req, const std::sh
     // NOTE: it's ok to access `req` and `res` in this function without synchronization
     // because the read thread for *this* request is paused now and resumes only messaged at the end
 
-    //LOG(INFO) << "BatchedIndexer::enqueue";
+    //TS_LOG(INFO) << "BatchedIndexer::enqueue";
     uint32_t chunk_sequence = 0;
 
     {
@@ -65,7 +66,7 @@ void BatchedIndexer::enqueue(const std::shared_ptr<http_req>& req, const std::sh
     const std::string& req_key_prefix = get_req_prefix_key(req->start_ts);
     const std::string& request_chunk_key = req_key_prefix + StringUtils::serialize_uint32_t(chunk_sequence);
 
-    //LOG(INFO) << "request_chunk_key: " << req->start_ts << "_" << chunk_sequence << ", req body: " << req->body;
+    //TS_LOG(INFO) << "request_chunk_key: " << req->start_ts << "_" << chunk_sequence << ", req body: " << req->body;
 
     store->insert(request_chunk_key, req->to_json());
 
@@ -74,7 +75,7 @@ void BatchedIndexer::enqueue(const std::shared_ptr<http_req>& req, const std::sh
     bool is_live_req = res->is_alive;
 
     if(req->last_chunk_aggregate) {
-        //LOG(INFO) << "Last chunk for req_id: " << req->start_ts;
+        //TS_LOG(INFO) << "Last chunk for req_id: " << req->start_ts;
         queued_writes += (chunk_sequence + 1);
 
         {
@@ -193,12 +194,12 @@ std::string BatchedIndexer::get_collection_name(const std::shared_ptr<http_req>&
 }
 
 void BatchedIndexer::run() {
-    LOG(INFO) << "Starting batch indexer with " << num_threads << " threads.";
+    TS_LOG(INFO) << "Starting batch indexer with " << num_threads << " threads.";
     ThreadPool* thread_pool = new ThreadPool(num_threads);
     skip_index_iter = meta_store->scan(SKIP_INDICES_PREFIX, skip_index_iter_upper_bound);
     populate_skip_index();
 
-    LOG(INFO) << "BatchedIndexer skip_index: " << skip_index;
+    TS_LOG(INFO) << "BatchedIndexer skip_index: " << skip_index;
 
     for(size_t i = 0; i < num_threads; i++) {
         thread_pool->enqueue([this, i]() {
@@ -220,7 +221,7 @@ void BatchedIndexer::run() {
                 std::unique_lock mlk(mutex);
                 auto req_res_map_it = req_res_map.find(req_id);
                 if(req_res_map_it == req_res_map.end()) {
-                    LOG(ERROR) << "Req ID " << req_id << " not found in req_res_map.";
+                    TS_LOG(ERROR) << "Req ID " << req_id << " not found in req_res_map.";
                     continue;
                 }
 
@@ -262,22 +263,22 @@ void BatchedIndexer::run() {
                     write_log_index = orig_req->log_index;
 
                     if(write_log_index == skip_index) {
-                        LOG(ERROR) << "Skipping write log index " << write_log_index
+                        TS_LOG(ERROR) << "Skipping write log index " << write_log_index
                                    << " which seems to have triggered a crash previously.";
                         populate_skip_index();
                     }
 
                     else {
-                        //LOG(INFO) << "index req " << req_id << ", chunk index: " << orig_req_res.next_chunk_index;
+                        //TS_LOG(INFO) << "index req " << req_id << ", chunk index: " << orig_req_res.next_chunk_index;
                         auto resource_check = cached_resource_stat_t::get_instance()
                                               .has_enough_resources(config.get_data_dir(),
                                                                     config.get_disk_used_max_percentage(),
                                                                     config.get_memory_used_max_percentage());
 
                         if (resource_check != cached_resource_stat_t::OK && orig_req->do_resource_check()) {
-                            const std::string& err_msg = "Rejecting write: running out of resource type: " +
-                                                          std::string(magic_enum::enum_name(resource_check));
-                            LOG(ERROR) << err_msg;
+                            const std::string err_msg = std::string("Rejecting write: running out of resource type: ") +
+                                                        cached_resource_stat_t::to_string(resource_check);
+                            TS_LOG(ERROR) << err_msg;
                             orig_res->set_422(err_msg);
                             orig_res->final = true;
                             async_req_res_t* async_req_res = new async_req_res_t(orig_req, orig_res, true);
@@ -299,8 +300,8 @@ void BatchedIndexer::run() {
                                 found_rpath->handler(orig_req, orig_res);
                             } catch(const std::exception& e) {
                                 const std::string& api_action = found_rpath->_get_action();
-                                LOG(ERROR) << "Exception while calling handler " << api_action;
-                                LOG(ERROR) << "Raw error: " << e.what();
+                                TS_LOG(ERROR) << "Exception while calling handler " << api_action;
+                                TS_LOG(ERROR) << "Raw error: " << e.what();
                                 // bad request gets a response immediately
                                 orig_res->set_400("Bad request.");
                                 orig_res->final = true;
@@ -333,7 +334,7 @@ void BatchedIndexer::run() {
                     }
                 }
 
-                //LOG(INFO) << "Erasing request data from disk and memory for request " << req_id;
+                //TS_LOG(INFO) << "Erasing request data from disk and memory for request " << req_id;
 
                 // we can delete the buffered request content
                 store->delete_range(req_key_prefix, req_key_prefix + StringUtils::serialize_uint32_t(UINT32_MAX));
@@ -350,7 +351,7 @@ void BatchedIndexer::run() {
 
     std::thread ref_sequence_thread([&]() {
         // Waits for dependent requests that are ahead to finish before pushing a request onto main indexing queue.
-        LOG(INFO) << "Starting reference sequence thread.";
+        TS_LOG(INFO) << "Starting reference sequence thread.";
 
         while(!quit) {
             std::unique_lock ref_qlk(refq_wait.mcv);
@@ -429,7 +430,7 @@ void BatchedIndexer::run() {
         if(seconds_elapsed > GC_INTERVAL_SECONDS) {
 
             std::unique_lock lk(mutex);
-            LOG(INFO) << "Running GC for aborted requests, req map size: " << req_res_map.size()
+            TS_LOG(INFO) << "Running GC for aborted requests, req map size: " << req_res_map.size()
                       << ", reference_q.size: " << reference_q.size();
 
             if(req_res_map.size() > 0 && prev_count == req_res_map.size()) {
@@ -438,7 +439,7 @@ void BatchedIndexer::run() {
                     size_t max_loop = 0;
                     for(const auto& it : req_res_map) {
                         max_loop++;
-                        LOG(INFO) << "Stuck req_key: " << it.first;
+                        TS_LOG(INFO) << "Stuck req_key: " << it.first;
                         if(max_loop == 5) {
                             break;
                         }
@@ -458,11 +459,11 @@ void BatchedIndexer::run() {
                 uint64_t seconds_since_batch_update = std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count() - it->second.last_updated;
 
-                //LOG(INFO) << "GC checking on req id: " << it->first;
-                //LOG(INFO) << "Seconds since last batch update: " << seconds_since_batch_update;
+                //TS_LOG(INFO) << "GC checking on req id: " << it->first;
+                //TS_LOG(INFO) << "Seconds since last batch update: " << seconds_since_batch_update;
 
                 if(!it->second.is_complete && seconds_since_batch_update > GC_PRUNE_MAX_SECONDS) {
-                    LOG(INFO) << "Deleting partial upload for req id " << it->second.start_ts;
+                    TS_LOG(INFO) << "Deleting partial upload for req id " << it->second.start_ts;
 
                     const std::string& req_key_prefix = get_req_prefix_key(it->second.start_ts);
                     store->delete_range(req_key_prefix, req_key_prefix + StringUtils::serialize_uint32_t(UINT32_MAX));
@@ -483,17 +484,17 @@ void BatchedIndexer::run() {
         }
     }
 
-    LOG(INFO) << "Notifying batch indexer threads about shutdown...";
+    TS_LOG(INFO) << "Notifying batch indexer threads about shutdown...";
     for(size_t i = 0; i < num_threads; i++) {
         await_t& queue_mutex = qmutuxes[i];
         queue_mutex.cv.notify_one();
     }
 
-    LOG(INFO) << "Notifying reference sequence thread about shutdown...";
+    TS_LOG(INFO) << "Notifying reference sequence thread about shutdown...";
     refq_wait.cv.notify_one();
     ref_sequence_thread.join();
 
-    LOG(INFO) << "Batched indexer threadpool shutdown...";
+    TS_LOG(INFO) << "Batched indexer threadpool shutdown...";
     thread_pool->shutdown();
     delete thread_pool;
 }
@@ -536,7 +537,7 @@ void BatchedIndexer::populate_skip_index() {
 }
 
 void BatchedIndexer::persist_applying_index() {
-    LOG(INFO) << "Saving currently applying index: " << write_log_index;
+    TS_LOG(INFO) << "Saving currently applying index: " << write_log_index;
     std::string key = SKIP_INDICES_PREFIX + std::to_string(write_log_index);
     meta_store->insert(key, std::to_string(write_log_index));
 }
@@ -562,7 +563,7 @@ void BatchedIndexer::serialize_state(nlohmann::json& state) {
         req_res["prev_req_body"] = kv.second.prev_req_body;
         num_reqs_stored++;
 
-        //LOG(INFO) << "req_key: " << req_key << ", next_chunk_index: " << kv.second.next_chunk_index;
+        //TS_LOG(INFO) << "req_key: " << req_key << ", next_chunk_index: " << kv.second.next_chunk_index;
     }
 
     state["reference_q"] = nlohmann::json::array();
@@ -573,7 +574,7 @@ void BatchedIndexer::serialize_state(nlohmann::json& state) {
         state["reference_q"].push_back(ref_req_obj);
     }
 
-    LOG(INFO) << "Serialized " << num_reqs_stored << " in-flight requests for snapshot.";
+    TS_LOG(INFO) << "Serialized " << num_reqs_stored << " in-flight requests for snapshot.";
 }
 
 void BatchedIndexer::load_state(const nlohmann::json& state) {
@@ -629,7 +630,7 @@ void BatchedIndexer::load_state(const nlohmann::json& state) {
         qmutuxes[queue_id].cv.notify_one();
     }
 
-    LOG(INFO) << "Restored " << num_reqs_restored << " in-flight requests from snapshot.";
+    TS_LOG(INFO) << "Restored " << num_reqs_restored << " in-flight requests from snapshot.";
 }
 
 std::shared_mutex& BatchedIndexer::get_pause_mutex() {

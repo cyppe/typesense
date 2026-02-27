@@ -6,6 +6,8 @@
 #include <collection_manager.h>
 #include "collection.h"
 #include <join.h>
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionJoinTest : public ::testing::Test {
 protected:
@@ -15,11 +17,12 @@ protected:
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
-    std::string state_dir_path = "/tmp/typesense_test/collection_join";
+    std::string state_dir_path;
 
     void setupCollection() {
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_join");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -33,6 +36,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -133,18 +137,18 @@ TEST_F(CollectionJoinTest, SchemaReferenceField) {
     auto collection = collection_create_op.get();
     auto schema = collection->get_schema();
 
-    ASSERT_EQ(schema.count("customer_name"), 1);
+    ASSERT_EQ(schema.count("customer_name"), size_t{1});
     ASSERT_TRUE(schema.at("customer_name").reference.empty());
-    ASSERT_EQ(schema.count("product_id"), 1);
+    ASSERT_EQ(schema.count("product_id"), size_t{1});
     ASSERT_FALSE(schema.at("product_id").reference.empty());
 
     auto reference_fields = collection->get_reference_fields();
-    ASSERT_EQ(reference_fields.count("product_id"), 1);
+    ASSERT_EQ(reference_fields.count("product_id"), size_t{1});
     ASSERT_EQ(reference_fields.at("product_id").collection, "Products");
     ASSERT_EQ(reference_fields.at("product_id").field, "product_id");
 
     // Add a `foo_sequence_id` field in the schema for `foo` reference field.
-    ASSERT_EQ(schema.count("product_id_sequence_id"), 1);
+    ASSERT_EQ(schema.count("product_id_sequence_id"), size_t{1});
     ASSERT_TRUE(schema.at("product_id_sequence_id").index);
 
     collectionManager.drop_collection("Customers");
@@ -266,7 +270,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     for (auto const &json: products){
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -291,7 +295,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     for (auto const &json: products){
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -316,8 +320,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
 
     auto customer_doc = customer_collection->get("0").get();
     ASSERT_EQ(0, customer_doc.at("reference_id_sequence_id"));
-    ASSERT_EQ(1, customer_doc.count(".ref"));
-    ASSERT_EQ(1, customer_doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, customer_doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, customer_doc[".ref"].size());
     ASSERT_EQ("reference_id_sequence_id", customer_doc[".ref"].at(0));
 
     nlohmann::json product_doc;
@@ -326,7 +330,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
                                                                 customer_doc["reference_id_sequence_id"].get<uint32_t>(),
                                                                 product_doc);
     ASSERT_TRUE(get_op.ok());
-    ASSERT_EQ(product_doc.count("product_id"), 1);
+    ASSERT_EQ(product_doc.count("product_id"), size_t{1});
     ASSERT_EQ(product_doc["product_id"], "product_a");
     ASSERT_EQ(product_doc["product_name"], "shampoo");
 
@@ -391,8 +395,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
 
     auto doc = id_ref_collection->get("0").get();
     ASSERT_EQ(0, doc["id_reference_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("id_reference_sequence_id", doc[".ref"].at(0));
 
     id_ref_json = R"({
@@ -402,10 +406,10 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = id_ref_collection->get("1").get();
-    ASSERT_EQ(1, doc["multi_id_reference_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc["multi_id_reference_sequence_id"].size());
     ASSERT_EQ(1, doc["multi_id_reference_sequence_id"][0]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("multi_id_reference_sequence_id", doc[".ref"][0]);
 
     id_ref_json = R"({
@@ -415,7 +419,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = id_ref_collection->get("2").get();
-    ASSERT_EQ(2, doc["multi_id_reference_sequence_id"].size());
+    ASSERT_EQ(size_t{2}, doc["multi_id_reference_sequence_id"].size());
     ASSERT_EQ(0, doc["multi_id_reference_sequence_id"][0]);
     ASSERT_EQ(1, doc["multi_id_reference_sequence_id"][1]);
 
@@ -426,9 +430,9 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = id_ref_collection->get("3").get();
-    ASSERT_EQ(0, doc.count("id_reference_sequence_id"));
-    ASSERT_EQ(0, doc.count("multi_id_reference_sequence_id"));
-    ASSERT_EQ(0, doc.count(".ref"));
+    ASSERT_EQ(size_t{0}, doc.count("id_reference_sequence_id"));
+    ASSERT_EQ(size_t{0}, doc.count("multi_id_reference_sequence_id"));
+    ASSERT_EQ(size_t{0}, doc.count(".ref"));
 
     id_ref_json = R"({
                         "multi_id_reference": [null]
@@ -439,12 +443,12 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
 
     // Reference helper field is not returned in the search response.
     auto result = id_ref_collection->search("*", {}, "", {}, {}, {0}).get();
-    ASSERT_EQ(4, result["found"].get<size_t>());
-    ASSERT_EQ(4, result["hits"].size());
-    ASSERT_EQ(0, result["hits"][0]["document"].count("id_reference_sequence_id"));
-    ASSERT_EQ(0, result["hits"][1]["document"].count("multi_id_reference_sequence_id"));
-    ASSERT_EQ(0, result["hits"][2]["document"].count("multi_id_reference_sequence_id"));
-    ASSERT_EQ(0, result["hits"][3]["document"].count("id_reference_sequence_id"));
+    ASSERT_EQ(size_t{4}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, result["hits"].size());
+    ASSERT_EQ(size_t{0}, result["hits"][0]["document"].count("id_reference_sequence_id"));
+    ASSERT_EQ(size_t{0}, result["hits"][1]["document"].count("multi_id_reference_sequence_id"));
+    ASSERT_EQ(size_t{0}, result["hits"][2]["document"].count("multi_id_reference_sequence_id"));
+    ASSERT_EQ(size_t{0}, result["hits"][3]["document"].count("id_reference_sequence_id"));
 
     collectionManager.drop_collection("Customers");
     collectionManager.drop_collection("Products");
@@ -612,10 +616,10 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("0").get();
-    ASSERT_EQ(1, doc.count("ref_string_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("ref_string_field_sequence_id"));
     ASSERT_EQ(1, doc["ref_string_field_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("ref_string_field_sequence_id", doc[".ref"][0]);
 
     doc_json = R"({
@@ -625,11 +629,11 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("1").get();
-    ASSERT_EQ(0, doc.count("ref_string_field_sequence_id"));
-    ASSERT_EQ(0, doc.count(".ref"));
+    ASSERT_EQ(size_t{0}, doc.count("ref_string_field_sequence_id"));
+    ASSERT_EQ(size_t{0}, doc.count(".ref"));
 
     result = coll2->search("*", {}, "", {}, {}, {0}).get();
-    ASSERT_EQ(0, result["hits"][0]["document"]["ref_string_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{0}, result["hits"][0]["document"]["ref_string_array_field_sequence_id"].size());
 
     doc_json = R"({
                     "ref_string_array_field": ["b"]
@@ -638,8 +642,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("2").get();
-    ASSERT_EQ(1, doc.count("ref_string_array_field_sequence_id"));
-    ASSERT_EQ(1, doc["ref_string_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc.count("ref_string_array_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc["ref_string_array_field_sequence_id"].size());
     ASSERT_EQ(0, doc["ref_string_array_field_sequence_id"][0]);
 
     doc_json = R"({
@@ -649,8 +653,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("3").get();
-    ASSERT_EQ(1, doc.count("ref_string_array_field_sequence_id"));
-    ASSERT_EQ(2, doc["ref_string_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc.count("ref_string_array_field_sequence_id"));
+    ASSERT_EQ(size_t{2}, doc["ref_string_array_field_sequence_id"].size());
     ASSERT_EQ(0, doc["ref_string_array_field_sequence_id"][0]);
     ASSERT_EQ(1, doc["ref_string_array_field_sequence_id"][1]);
 
@@ -744,10 +748,10 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("0").get();
-    ASSERT_EQ(1, doc.count("ref_int32_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("ref_int32_field_sequence_id"));
     ASSERT_EQ(4, doc["ref_int32_field_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("ref_int32_field_sequence_id", doc[".ref"][0]);
 
     doc_json = R"({
@@ -757,8 +761,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("1").get();
-    ASSERT_EQ(1, doc.count("ref_int32_array_field_sequence_id"));
-    ASSERT_EQ(1, doc["ref_int32_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc.count("ref_int32_array_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc["ref_int32_array_field_sequence_id"].size());
     ASSERT_EQ(3, doc["ref_int32_array_field_sequence_id"][0]);
 
     doc_json = R"({
@@ -768,8 +772,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("2").get();
-    ASSERT_EQ(1, doc.count("ref_int32_array_field_sequence_id"));
-    ASSERT_EQ(2, doc["ref_int32_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc.count("ref_int32_array_field_sequence_id"));
+    ASSERT_EQ(size_t{2}, doc["ref_int32_array_field_sequence_id"].size());
     ASSERT_EQ(3, doc["ref_int32_array_field_sequence_id"][0]);
     ASSERT_EQ(4, doc["ref_int32_array_field_sequence_id"][1]);
 
@@ -780,8 +784,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("3").get();
-    ASSERT_EQ(1, doc.count("ref_int32_array_field_sequence_id"));
-    ASSERT_EQ(1, doc["ref_int32_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc.count("ref_int32_array_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc["ref_int32_array_field_sequence_id"].size());
     ASSERT_EQ(3, doc["ref_int32_array_field_sequence_id"][0]);
 
     // int64/int64[] reference fields
@@ -867,10 +871,10 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("0").get();
-    ASSERT_EQ(1, doc.count("ref_int64_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("ref_int64_field_sequence_id"));
     ASSERT_EQ(7, doc["ref_int64_field_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("ref_int64_field_sequence_id", doc[".ref"][0]);
 
     doc_json = R"({
@@ -880,8 +884,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("1").get();
-    ASSERT_EQ(1, doc.count("ref_int64_array_field_sequence_id"));
-    ASSERT_EQ(1, doc["ref_int64_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc.count("ref_int64_array_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc["ref_int64_array_field_sequence_id"].size());
     ASSERT_EQ(6, doc["ref_int64_array_field_sequence_id"][0]);
 
     doc_json = R"({
@@ -891,8 +895,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("2").get();
-    ASSERT_EQ(1, doc.count("ref_int64_array_field_sequence_id"));
-    ASSERT_EQ(2, doc["ref_int64_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc.count("ref_int64_array_field_sequence_id"));
+    ASSERT_EQ(size_t{2}, doc["ref_int64_array_field_sequence_id"].size());
     ASSERT_EQ(6, doc["ref_int64_array_field_sequence_id"][0]);
     ASSERT_EQ(7, doc["ref_int64_array_field_sequence_id"][1]);
 
@@ -903,8 +907,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("3").get();
-    ASSERT_EQ(1, doc.count("ref_int64_array_field_sequence_id"));
-    ASSERT_EQ(1, doc["ref_int64_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc.count("ref_int64_array_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc["ref_int64_array_field_sequence_id"].size());
     ASSERT_EQ(6, doc["ref_int64_array_field_sequence_id"][0]);
 
     // reference field inside object/object[]
@@ -1004,12 +1008,12 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("0").get();
-    ASSERT_EQ(1, doc.count("object.ref_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("object.ref_field_sequence_id"));
     ASSERT_EQ(1, doc["object.ref_field_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("object.ref_field_sequence_id", doc[".ref"][0]);
-    ASSERT_EQ(1, coll2->get_object_reference_fields().count("object.ref_field"));
+    ASSERT_EQ(size_t{1}, coll2->get_object_reference_fields().count("object.ref_field"));
 
     doc_json = R"({
                     "object": {
@@ -1020,8 +1024,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("1").get();
-    ASSERT_EQ(1, doc.count("object.ref_array_field_sequence_id"));
-    ASSERT_EQ(1, doc["object.ref_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc.count("object.ref_array_field_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc["object.ref_array_field_sequence_id"].size());
     ASSERT_EQ(0, doc["object.ref_array_field_sequence_id"][0]);
 
     doc_json = R"({
@@ -1038,16 +1042,16 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingReferenceField) {
     ASSERT_TRUE(add_doc_op.ok());
 
     doc = coll2->get("2").get();
-    ASSERT_EQ(1, doc.count("object_array.ref_array_field_sequence_id"));
-    ASSERT_EQ(2, doc["object_array.ref_array_field_sequence_id"].size());
-    ASSERT_EQ(2, doc["object_array.ref_array_field_sequence_id"][0].size());
+    ASSERT_EQ(size_t{1}, doc.count("object_array.ref_array_field_sequence_id"));
+    ASSERT_EQ(size_t{2}, doc["object_array.ref_array_field_sequence_id"].size());
+    ASSERT_EQ(size_t{2}, doc["object_array.ref_array_field_sequence_id"][0].size());
     ASSERT_EQ(0, doc["object_array.ref_array_field_sequence_id"][0][0]);
     ASSERT_EQ(0, doc["object_array.ref_array_field_sequence_id"][0][1]);
-    ASSERT_EQ(2, doc["object_array.ref_array_field_sequence_id"][1].size());
+    ASSERT_EQ(size_t{2}, doc["object_array.ref_array_field_sequence_id"][1].size());
     ASSERT_EQ(1, doc["object_array.ref_array_field_sequence_id"][1][0]);
     ASSERT_EQ(1, doc["object_array.ref_array_field_sequence_id"][1][1]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("object_array.ref_array_field_sequence_id", doc[".ref"][0]);
 
     // float/float[] reference fields
@@ -1154,7 +1158,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1162,13 +1166,13 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     for (auto i = 0; i < 3; i++) {
         auto const doc_id = std::to_string(i);
         auto doc = collection_create_op.get()->get(doc_id).get();
-        ASSERT_EQ(doc_id, doc["id"]);
+        ASSERT_EQ(doc_id, doc["id"].get<std::string>());
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("product_id_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("product_id_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("product_id_sequence_id"));
         // Referenced documents don't exist yet, so dummy value is present in the reference helper field.
         ASSERT_EQ(UINT32_MAX, doc["product_id_sequence_id"]);
     }
@@ -1213,7 +1217,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1221,19 +1225,19 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     for (auto i = 0; i < 3; i++) {
         auto const doc_id = std::to_string(i);
         auto doc = collection_create_op.get()->get(doc_id).get();
-        ASSERT_EQ(doc_id, doc["id"]);
+        ASSERT_EQ(doc_id, doc["id"].get<std::string>());
 
         if (i == 0) {
-            ASSERT_EQ(0, doc.count(".ref"));
-            ASSERT_EQ(0, doc.count("object.reference_sequence_id"));
+            ASSERT_EQ(size_t{0}, doc.count(".ref"));
+            ASSERT_EQ(size_t{0}, doc.count("object.reference_sequence_id"));
             continue;
         }
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("object.reference_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("object.reference_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("object.reference_sequence_id"));
         // Referenced documents don't exist yet, so dummy value is present in the reference helper field.
         ASSERT_EQ(UINT32_MAX, doc["object.reference_sequence_id"]);
     }
@@ -1267,7 +1271,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1288,14 +1292,14 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(0, res_obj["hits"][0]["document"].count("Customers"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"].count("Customers"));
 
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("Customers"));
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("Customers"));
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["Customers"].size());
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["Customers"][0]["id"]);
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["Customers"][1]["id"]);
 
@@ -1309,22 +1313,22 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
 
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"].count("Products"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"].count("Products"));
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"]["object"]["Products"]["product_id"]);
 
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ(0, res_obj["hits"][1]["document"]["object"].count("Products"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["object"].count("reference"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"]["object"].count("Products"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["object"].count("reference"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"]["object"]["reference"]);
-    ASSERT_EQ(0, res_obj["hits"][1]["document"].count("Products"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"].count("Products"));
 
     ASSERT_EQ("0", res_obj["hits"][2]["document"]["id"]);
-    ASSERT_EQ(0, res_obj["hits"][2]["document"].count("Products"));
-    ASSERT_EQ(0, res_obj["hits"][2]["document"]["object"].count("reference"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"].count("Products"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"]["object"].count("reference"));
 
     auto doc_json = R"({
                         "product_id": "product_b",
@@ -1347,20 +1351,20 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
 
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Customers"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Customers"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["Customers"][0]["id"]);
 
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ(0, res_obj["hits"][1]["document"].count("Customers"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"].count("Customers"));
 
     ASSERT_EQ("0", res_obj["hits"][2]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][2]["document"].count("Customers"));
-    ASSERT_EQ(2, res_obj["hits"][2]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"].count("Customers"));
+    ASSERT_EQ(size_t{2}, res_obj["hits"][2]["document"]["Customers"].size());
     ASSERT_EQ("0", res_obj["hits"][2]["document"]["Customers"][0]["id"]);
     ASSERT_EQ("2", res_obj["hits"][2]["document"]["Customers"][1]["id"]);
 
@@ -1379,11 +1383,11 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
         auto doc = customers->get("3").get();
         ASSERT_EQ("3", doc["id"]);
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("product_id_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("product_id_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("product_id_sequence_id"));
         // When referenced document is already present, reference helper field should be initialized to its seq_id.
         ASSERT_EQ(2, doc["product_id_sequence_id"]);
     }
@@ -1400,21 +1404,21 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
 
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Customers"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Customers"));
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["Customers"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["Customers"][0]["id"]);
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["Customers"][1]["id"]);
 
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ(0, res_obj["hits"][1]["document"].count("Customers"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"].count("Customers"));
 
     ASSERT_EQ("0", res_obj["hits"][2]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][2]["document"].count("Customers"));
-    ASSERT_EQ(2, res_obj["hits"][2]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"].count("Customers"));
+    ASSERT_EQ(size_t{2}, res_obj["hits"][2]["document"]["Customers"].size());
     ASSERT_EQ("0", res_obj["hits"][2]["document"]["Customers"][0]["id"]);
     ASSERT_EQ("2", res_obj["hits"][2]["document"]["Customers"][1]["id"]);
 
@@ -1433,11 +1437,11 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
         auto doc = coll1->get("3").get();
         ASSERT_EQ("3", doc["id"]);
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("object.reference_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("object.reference_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("object.reference_sequence_id"));
         // product_d doesn't exist yet, so dummy value is present in the reference helper field.
         ASSERT_EQ(UINT32_MAX, doc["object.reference_sequence_id"]);
 
@@ -1454,11 +1458,11 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
         doc = coll1->get("3").get();
         ASSERT_EQ("3", doc["id"]);
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("object.reference_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("object.reference_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("object.reference_sequence_id"));
         // product_d was not indexed, reference helper field should remain unchanged.
         ASSERT_EQ(UINT32_MAX, doc["object.reference_sequence_id"]);
 
@@ -1477,11 +1481,11 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
         doc = coll1->get("2").get();
         ASSERT_EQ("2", doc["id"]);
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("object.reference_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("object.reference_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("object.reference_sequence_id"));
         // product_a already existed, reference helper field should remain unchanged.
         ASSERT_EQ(0, doc["object.reference_sequence_id"]);
 
@@ -1497,11 +1501,11 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
         doc = coll1->get("3").get();
         ASSERT_EQ("3", doc["id"]);
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("object.reference_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("object.reference_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("object.reference_sequence_id"));
         ASSERT_EQ(5, doc["object.reference_sequence_id"]);
     }
 
@@ -1522,7 +1526,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1530,23 +1534,23 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     {
         auto doc = collection_create_op.get()->get("0").get();
         ASSERT_EQ("0", doc["id"]);
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("genres_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("genres_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("genres_sequence_id"));
         ASSERT_TRUE(doc["genres"].size() == doc["genres_sequence_id"].size());
-        ASSERT_EQ(0, doc["genres_sequence_id"].size());
+        ASSERT_EQ(size_t{0}, doc["genres_sequence_id"].size());
 
         doc = collection_create_op.get()->get("1").get();
         ASSERT_EQ("1", doc["id"]);
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("genres_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("genres_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("genres_sequence_id"));
         ASSERT_TRUE(doc["genres"].size() == doc["genres_sequence_id"].size());
-        ASSERT_EQ(1, doc["genres_sequence_id"].size());
+        ASSERT_EQ(size_t{1}, doc["genres_sequence_id"].size());
         ASSERT_EQ(UINT32_MAX, doc["genres_sequence_id"][0]);
     }
 
@@ -1567,7 +1571,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1582,15 +1586,15 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
 
     ASSERT_EQ("Corduroy", res_obj["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["genre"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["genre"].size());
     ASSERT_EQ("Arena rock", res_obj["hits"][0]["document"]["genre"][0]["name"]);
 
     ASSERT_EQ("Dil De Rani", res_obj["hits"][1]["document"]["title"].get<std::string>());
-    ASSERT_EQ(0, res_obj["hits"][1]["document"]["genre"].size());
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"]["genre"].size());
 
     {
         // Insert individual document.
@@ -1602,13 +1606,13 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
 
         auto doc = songs_coll->get("2").get();
         ASSERT_EQ("2", doc["id"]);
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("genres_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("genres_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("genres_sequence_id"));
         ASSERT_TRUE(doc["genres"].size() == doc["genres_sequence_id"].size());
-        ASSERT_EQ(3, doc["genres_sequence_id"].size());
+        ASSERT_EQ(size_t{3}, doc["genres_sequence_id"].size());
 
         ASSERT_EQ("3", doc["genres"][0]);
         ASSERT_EQ(UINT32_MAX, doc["genres_sequence_id"][0]);
@@ -1623,13 +1627,13 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
 
         doc = songs_coll->get("2").get();
         ASSERT_EQ("2", doc["id"]);
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("genres_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("genres_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("genres_sequence_id"));
         ASSERT_TRUE(doc["genres"].size() == doc["genres_sequence_id"].size());
-        ASSERT_EQ(2, doc["genres_sequence_id"].size());
+        ASSERT_EQ(size_t{2}, doc["genres_sequence_id"].size());
         ASSERT_EQ("3", doc["genres"][0]);
         ASSERT_EQ(UINT32_MAX, doc["genres_sequence_id"][0]);
 
@@ -1642,13 +1646,13 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
 
         doc = songs_coll->get("2").get();
         ASSERT_EQ("2", doc["id"]);
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("genres_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("genres_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("genres_sequence_id"));
         ASSERT_TRUE(doc["genres"].size() == doc["genres_sequence_id"].size());
-        ASSERT_EQ(2, doc["genres_sequence_id"].size());
+        ASSERT_EQ(size_t{2}, doc["genres_sequence_id"].size());
         ASSERT_EQ("3", doc["genres"][0]);
         ASSERT_EQ(UINT32_MAX, doc["genres_sequence_id"][0]);
 
@@ -1666,19 +1670,19 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
 
     ASSERT_EQ("Achilles Last Stand", res_obj["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["genre"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["genre"].size());
     ASSERT_EQ("Blues", res_obj["hits"][0]["document"]["genre"][0]["name"]);
 
     ASSERT_EQ("Corduroy", res_obj["hits"][1]["document"]["title"].get<std::string>());
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["genre"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["genre"].size());
     ASSERT_EQ("Arena rock", res_obj["hits"][1]["document"]["genre"][0]["name"]);
 
     ASSERT_EQ("Dil De Rani", res_obj["hits"][2]["document"]["title"].get<std::string>());
-    ASSERT_EQ(0, res_obj["hits"][2]["document"]["genre"].size());
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"]["genre"].size());
 
     collectionManager.dispose();
     delete store;
@@ -1688,7 +1692,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     auto load_op = collectionManager.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
     ASSERT_TRUE(load_op.ok());
 
@@ -1702,31 +1706,31 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
 
     ASSERT_EQ("Achilles Last Stand", res_obj["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["genre"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["genre"].size());
     ASSERT_EQ("Blues", res_obj["hits"][0]["document"]["genre"][0]["name"]);
 
     ASSERT_EQ("Corduroy", res_obj["hits"][1]["document"]["title"].get<std::string>());
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["genre"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["genre"].size());
     ASSERT_EQ("Arena rock", res_obj["hits"][1]["document"]["genre"][0]["name"]);
 
     ASSERT_EQ("Dil De Rani", res_obj["hits"][2]["document"]["title"].get<std::string>());
-    ASSERT_EQ(0, res_obj["hits"][2]["document"]["genre"].size());
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"]["genre"].size());
 
     {
         auto const& songs_coll = collectionManager.get_collection_unsafe("songs");
         auto doc = songs_coll->get("2").get();
         ASSERT_EQ("2", doc["id"]);
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("genres_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("genres_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("genres_sequence_id"));
         ASSERT_TRUE(doc["genres"].size() == doc["genres_sequence_id"].size());
-        ASSERT_EQ(2, doc["genres_sequence_id"].size());
+        ASSERT_EQ(size_t{2}, doc["genres_sequence_id"].size());
         ASSERT_EQ("3", doc["genres"][0]);
         ASSERT_EQ(UINT32_MAX, doc["genres_sequence_id"][0]);
 
@@ -1740,13 +1744,13 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
 
         doc = songs_coll->get("2").get();
         ASSERT_EQ("2", doc["id"]);
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("genres_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("genres_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("genres_sequence_id"));
         ASSERT_TRUE(doc["genres"].size() == doc["genres_sequence_id"].size());
-        ASSERT_EQ(2, doc["genres_sequence_id"].size());
+        ASSERT_EQ(size_t{2}, doc["genres_sequence_id"].size());
         ASSERT_EQ("3", doc["genres"][0]);
         ASSERT_EQ(3, doc["genres_sequence_id"][0]);
 
@@ -1784,7 +1788,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
             auto json = nlohmann::json::object({ {"coll_B_id", std::to_string(i)} });
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -1804,7 +1808,7 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
             auto json = nlohmann::json::object({ {"id", std::to_string(i)} });
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -1823,8 +1827,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(0, res_obj["found"].get<size_t>());
-    ASSERT_EQ(0, res_obj["hits"].size());
+    ASSERT_EQ(size_t{0}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, res_obj["hits"].size());
 
     req_params = {
             {"collection", "coll_A"},
@@ -1836,8 +1840,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("99", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("99", res_obj["hits"][0]["document"]["coll_B"]["id"]);
 
@@ -1851,8 +1855,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["coll_B"]["id"]);
 
@@ -1866,8 +1870,8 @@ TEST_F(CollectionJoinTest, IndexDocumentHavingAsyncReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(0, res_obj["found"].get<size_t>());
-    ASSERT_EQ(0, res_obj["hits"].size());
+    ASSERT_EQ(size_t{0}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, res_obj["hits"].size());
 }
 
 TEST_F(CollectionJoinTest, RecreateAsyncReferencedCollection) {
@@ -1914,7 +1918,7 @@ TEST_F(CollectionJoinTest, RecreateAsyncReferencedCollection) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1948,7 +1952,7 @@ TEST_F(CollectionJoinTest, RecreateAsyncReferencedCollection) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1957,13 +1961,13 @@ TEST_F(CollectionJoinTest, RecreateAsyncReferencedCollection) {
     for (size_t i = 0; i < expected.size(); i++) {
         auto const doc_id = std::to_string(i);
         auto doc = coll->get(doc_id).get();
-        ASSERT_EQ(doc_id, doc["id"]);
+        ASSERT_EQ(doc_id, doc["id"].get<std::string>());
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("product_id_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("product_id_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("product_id_sequence_id"));
         ASSERT_EQ(expected[i], doc["product_id_sequence_id"]);
     }
 
@@ -1974,13 +1978,13 @@ TEST_F(CollectionJoinTest, RecreateAsyncReferencedCollection) {
     for (size_t i = 0; i < expected.size(); i++) {
         auto const doc_id = std::to_string(i);
         auto doc = coll->get(doc_id).get();
-        ASSERT_EQ(doc_id, doc["id"]);
+        ASSERT_EQ(doc_id, doc["id"].get<std::string>());
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("product_id_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("product_id_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("product_id_sequence_id"));
         ASSERT_EQ(expected[i], doc["product_id_sequence_id"]);
     }
 
@@ -2019,7 +2023,7 @@ TEST_F(CollectionJoinTest, RecreateAsyncReferencedCollection) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2029,13 +2033,13 @@ TEST_F(CollectionJoinTest, RecreateAsyncReferencedCollection) {
     for (size_t i = 0; i < expected.size(); i++) {
         auto const doc_id = std::to_string(i);
         auto doc = coll->get(doc_id).get();
-        ASSERT_EQ(doc_id, doc["id"]);
+        ASSERT_EQ(doc_id, doc["id"].get<std::string>());
 
-        ASSERT_EQ(1, doc.count(".ref"));
-        ASSERT_EQ(1, doc[".ref"].size());
+        ASSERT_EQ(size_t{1}, doc.count(".ref"));
+        ASSERT_EQ(size_t{1}, doc[".ref"].size());
         ASSERT_EQ("product_id_sequence_id", doc[".ref"][0]);
 
-        ASSERT_EQ(1, doc.count("product_id_sequence_id"));
+        ASSERT_EQ(size_t{1}, doc.count("product_id_sequence_id"));
         ASSERT_EQ(expected[i], doc["product_id_sequence_id"]);
     }
 }
@@ -2132,8 +2136,8 @@ TEST_F(CollectionJoinTest, UpdateDocumentHavingReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
 
@@ -2151,26 +2155,26 @@ TEST_F(CollectionJoinTest, UpdateDocumentHavingReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(0, res_obj["hits"][0]["document"].at("product_price"));
 
     auto doc = coll->get("4").get();
-    ASSERT_EQ(0, doc.count("product_id_sequence_id"));
+    ASSERT_EQ(size_t{0}, doc.count("product_id_sequence_id"));
 
     update_op = coll->update_matching_filter("id: 4", R"({"product_id": "product_a"})", dirty_values);
     ASSERT_TRUE(update_op.ok());
 
     doc = coll->get("4").get();
-    ASSERT_EQ(1, doc.count("product_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("product_id_sequence_id"));
     ASSERT_EQ(0, doc["product_id_sequence_id"]);
 
     update_op = coll->update_matching_filter("id: 4", R"({"product_id": "product_b"})", dirty_values);
     ASSERT_TRUE(update_op.ok());
 
     doc = coll->get("4").get();
-    ASSERT_EQ(1, doc.count("product_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("product_id_sequence_id"));
     ASSERT_EQ(1, doc["product_id_sequence_id"]);
 
     schema_json =
@@ -2228,9 +2232,9 @@ TEST_F(CollectionJoinTest, UpdateDocumentHavingReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["Users"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["Users"].size());
     ASSERT_EQ("Joe", res_obj["hits"][0]["document"]["Users"][0]["name"]);
     ASSERT_EQ("Dan", res_obj["hits"][0]["document"]["Users"][1]["name"]);
 
@@ -2250,9 +2254,9 @@ TEST_F(CollectionJoinTest, UpdateDocumentHavingReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Users"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Users"].size());
     ASSERT_EQ("Dan", res_obj["hits"][0]["document"]["Users"][0]["name"]);
 }
 
@@ -2318,8 +2322,8 @@ TEST_F(CollectionJoinTest, JoinAfterUpdateOfArrayField) {
     ASSERT_TRUE(search_op.ok());
 
     auto res = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res["hits"][0]["document"]["bodyParts"].size());
-    ASSERT_EQ(3, res["hits"][0]["document"]["parts"].size());
+    ASSERT_EQ(size_t{3}, res["hits"][0]["document"]["bodyParts"].size());
+    ASSERT_EQ(size_t{3}, res["hits"][0]["document"]["parts"].size());
 
     // now update document to remove an array element
     exercise_doc = R"({
@@ -2336,8 +2340,8 @@ TEST_F(CollectionJoinTest, JoinAfterUpdateOfArrayField) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
 
     res = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res["hits"][0]["document"]["bodyParts"].size());
-    ASSERT_EQ(2, res["hits"][0]["document"]["parts"].size());
+    ASSERT_EQ(size_t{2}, res["hits"][0]["document"]["bodyParts"].size());
+    ASSERT_EQ(size_t{2}, res["hits"][0]["document"]["parts"].size());
 
     // remove both elements
     exercise_doc["bodyParts"] = nullptr;
@@ -2352,8 +2356,8 @@ TEST_F(CollectionJoinTest, JoinAfterUpdateOfArrayField) {
     ASSERT_TRUE(search_op.ok());
 
     res = nlohmann::json::parse(json_res);
-    ASSERT_EQ(0, res["hits"][0]["document"]["bodyParts"].size());
-    ASSERT_EQ(0, res["hits"][0]["document"]["parts"].size());
+    ASSERT_EQ(size_t{0}, res["hits"][0]["document"]["bodyParts"].size());
+    ASSERT_EQ(size_t{0}, res["hits"][0]["document"]["parts"].size());
 
     exercise_doc["bodyParts"] = {"abcd1"};
     ASSERT_TRUE(exercise_coll->add(exercise_doc.dump(), UPDATE).ok());
@@ -2367,8 +2371,8 @@ TEST_F(CollectionJoinTest, JoinAfterUpdateOfArrayField) {
     ASSERT_TRUE(search_op.ok());
 
     res = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res["hits"][0]["document"]["bodyParts"].size());
-    ASSERT_EQ(1, res["hits"][0]["document"]["parts"].size());
+    ASSERT_EQ(size_t{1}, res["hits"][0]["document"]["bodyParts"].size());
+    ASSERT_EQ(size_t{1}, res["hits"][0]["document"]["parts"].size());
 
     exercise_doc["bodyParts"] = nlohmann::json::array();
     ASSERT_TRUE(exercise_coll->add(exercise_doc.dump(), UPDATE).ok());
@@ -2382,8 +2386,8 @@ TEST_F(CollectionJoinTest, JoinAfterUpdateOfArrayField) {
     ASSERT_TRUE(search_op.ok());
 
     res = nlohmann::json::parse(json_res);
-    ASSERT_EQ(0, res["hits"][0]["document"]["bodyParts"].size());
-    ASSERT_EQ(0, res["hits"][0]["document"]["parts"].size());
+    ASSERT_EQ(size_t{0}, res["hits"][0]["document"]["bodyParts"].size());
+    ASSERT_EQ(size_t{0}, res["hits"][0]["document"]["parts"].size());
 }
 
 TEST_F(CollectionJoinTest, FilterByReference_SingleMatch) {
@@ -2416,7 +2420,7 @@ TEST_F(CollectionJoinTest, FilterByReference_SingleMatch) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2462,7 +2466,7 @@ TEST_F(CollectionJoinTest, FilterByReference_SingleMatch) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2507,8 +2511,8 @@ TEST_F(CollectionJoinTest, FilterByReference_SingleMatch) {
     auto result = coll->search("s", {"product_name"}, "$Customers(customer_id:=customer_a && product_price:<100)", {},
                                {}, {0}, 10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD).get();
 
-    ASSERT_EQ(1, result["found"].get<size_t>());
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("soap", result["hits"][0]["document"]["product_name"].get<std::string>());
 
     std::map<std::string, std::string> req_params = {
@@ -2539,8 +2543,8 @@ TEST_F(CollectionJoinTest, FilterByReference_SingleMatch) {
     ASSERT_TRUE(search_op_bool.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product_name"].get<std::string>());
 
     req_params = {
@@ -2555,8 +2559,8 @@ TEST_F(CollectionJoinTest, FilterByReference_SingleMatch) {
     ASSERT_TRUE(search_op_bool.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product_name"].get<std::string>());
 
     req_params = {
@@ -2571,8 +2575,8 @@ TEST_F(CollectionJoinTest, FilterByReference_SingleMatch) {
 
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(1, res_obj["found"]);
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(6, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product_name"]);
     ASSERT_EQ("customer_a", res_obj["hits"][0]["document"]["Customers"]["customer_id"]);
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"]["Customers"]["product_price"]);
@@ -2589,15 +2593,15 @@ TEST_F(CollectionJoinTest, FilterByReference_SingleMatch) {
 
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(6, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product_name"]);
     ASSERT_EQ("customer_a", res_obj["hits"][0]["document"]["Customers"]["customer_id"]);
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"]["Customers"]["product_price"]);
 
-    ASSERT_EQ(6, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{6}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"]["product_name"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["Customers"].size());
     ASSERT_EQ("customer_a", res_obj["hits"][1]["document"]["Customers"][0]["customer_id"]);
     ASSERT_EQ(75, res_obj["hits"][1]["document"]["Customers"][1]["product_price"]);
 
@@ -2608,13 +2612,13 @@ TEST_F(CollectionJoinTest, FilterByReference_SingleMatch) {
     filter_result_t filter_result;
     collectionManager.get_collection_unsafe("Products")->get_filter_ids("id:* || $Customers(id:*)", filter_result);
     ASSERT_NE(nullptr, filter_result.coll_to_references);
-    ASSERT_EQ(2, filter_result.count);
-    ASSERT_EQ(0, filter_result.docs[0]);
+    ASSERT_EQ(uint32_t{2}, filter_result.count);
+    ASSERT_EQ(uint32_t{0}, filter_result.docs[0]);
     ASSERT_TRUE(filter_result.coll_to_references[0].empty());
 
-    ASSERT_EQ(1, filter_result.docs[1]);
-    ASSERT_EQ(1, filter_result.coll_to_references[1].count("Customers"));
-    ASSERT_EQ(2, filter_result.coll_to_references[1]["Customers"].count); // Doc 1 and 3 reference product_b.
+    ASSERT_EQ(uint32_t{1}, filter_result.docs[1]);
+    ASSERT_EQ(size_t{1}, filter_result.coll_to_references[1].count("Customers"));
+    ASSERT_EQ(uint32_t{2}, filter_result.coll_to_references[1]["Customers"].count); // Doc 1 and 3 reference product_b.
 
     collectionManager.drop_collection("Customers");
     collectionManager.drop_collection("Products");
@@ -2652,7 +2656,7 @@ TEST_F(CollectionJoinTest, FilterByReference_MultipleMatch) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2684,7 +2688,7 @@ TEST_F(CollectionJoinTest, FilterByReference_MultipleMatch) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2741,7 +2745,7 @@ TEST_F(CollectionJoinTest, FilterByReference_MultipleMatch) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2752,8 +2756,8 @@ TEST_F(CollectionJoinTest, FilterByReference_MultipleMatch) {
     auto result = coll->search("R", {"user_name"}, "$Links(repo_id:=repo_b)", {}, {}, {0},
                                10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD).get();
 
-    ASSERT_EQ(2, result["found"].get<size_t>());
-    ASSERT_EQ(2, result["hits"].size());
+    ASSERT_EQ(size_t{2}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, result["hits"].size());
     ASSERT_EQ("user_b", result["hits"][0]["document"]["user_id"].get<std::string>());
     ASSERT_EQ("user_a", result["hits"][1]["document"]["user_id"].get<std::string>());
 
@@ -2784,7 +2788,7 @@ TEST_F(CollectionJoinTest, AndFilterResults_NoReference) {
     filter_result_t result;
     filter_result_t::and_filter_results(a, b, result);
 
-    ASSERT_EQ(2, result.count);
+    ASSERT_EQ(uint32_t{2}, result.count);
     ASSERT_EQ(nullptr, result.coll_to_references);
 
     std::vector<uint32_t> docs = {3, 6};
@@ -2830,10 +2834,10 @@ TEST_F(CollectionJoinTest, AndFilterResults_WithReferences) {
     filter_result_t result;
     filter_result_t::and_filter_results(a, b, result);
 
-    ASSERT_EQ(2, result.count);
-    ASSERT_EQ(2, result.coll_to_references[0].size());
-    ASSERT_EQ(1, result.coll_to_references[0].count("foo"));
-    ASSERT_EQ(1, result.coll_to_references[0].count("bar"));
+    ASSERT_EQ(uint32_t{2}, result.count);
+    ASSERT_EQ(size_t{2}, result.coll_to_references[0].size());
+    ASSERT_EQ(size_t{1}, result.coll_to_references[0].count("foo"));
+    ASSERT_EQ(size_t{1}, result.coll_to_references[0].count("bar"));
 
     std::vector<uint32_t> docs = {3, 6}, foo_reference = {7, 4}, bar_reference = {6, 12};
 
@@ -2841,9 +2845,9 @@ TEST_F(CollectionJoinTest, AndFilterResults_WithReferences) {
         ASSERT_EQ(docs[i], result.docs[i]);
 
         // result should contain correct references to the foo and bar collection.
-        ASSERT_EQ(1, result.coll_to_references[i].at("foo").count);
+        ASSERT_EQ(uint32_t{1}, result.coll_to_references[i].at("foo").count);
         ASSERT_EQ(foo_reference[i], result.coll_to_references[i].at("foo").docs[0]);
-        ASSERT_EQ(1, result.coll_to_references[i].at("bar").count);
+        ASSERT_EQ(uint32_t{1}, result.coll_to_references[i].at("bar").count);
         ASSERT_EQ(bar_reference[i], result.coll_to_references[i].at("bar").docs[0]);
     }
 }
@@ -2862,7 +2866,7 @@ TEST_F(CollectionJoinTest, OrFilterResults_NoReference) {
     // a.docs: [3, 6, 9], b.docs: []
     filter_result_t result1;
     filter_result_t::or_filter_results(a, b, result1);
-    ASSERT_EQ(3, result1.count);
+    ASSERT_EQ(uint32_t{3}, result1.count);
     ASSERT_EQ(nullptr, result1.coll_to_references);
 
     std::vector<uint32_t> expected = {3, 6, 9};
@@ -2879,7 +2883,7 @@ TEST_F(CollectionJoinTest, OrFilterResults_NoReference) {
     // a.docs: [3, 6, 9], b.docs: [0..8]
     filter_result_t result2;
     filter_result_t::or_filter_results(a, b, result2);
-    ASSERT_EQ(10, result2.count);
+    ASSERT_EQ(uint32_t{10}, result2.count);
     ASSERT_EQ(nullptr, result2.coll_to_references);
 
     expected = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
@@ -2899,7 +2903,7 @@ TEST_F(CollectionJoinTest, OrFilterResults_NoReference) {
 
     // b.docs: [0..8], c.docs: [0, 4, 5]
     filter_result_t::or_filter_results(b, c, result3);
-    ASSERT_EQ(9, result3.count);
+    ASSERT_EQ(uint32_t{9}, result3.count);
     ASSERT_EQ(nullptr, result3.coll_to_references);
 
     expected = {0, 1, 2, 3, 4, 5, 6, 7, 8};
@@ -2930,15 +2934,15 @@ TEST_F(CollectionJoinTest, OrFilterResults_WithReferences) {
     filter_result_t result1;
     filter_result_t::or_filter_results(a, b, result1);
 
-    ASSERT_EQ(3, result1.count);
-    ASSERT_EQ(1, result1.coll_to_references[0].size());
-    ASSERT_EQ(1, result1.coll_to_references[0].count("foo"));
+    ASSERT_EQ(uint32_t{3}, result1.count);
+    ASSERT_EQ(size_t{1}, result1.coll_to_references[0].size());
+    ASSERT_EQ(size_t{1}, result1.coll_to_references[0].count("foo"));
 
     std::vector<uint32_t> expected = {3, 6, 9}, foo_reference = {6, 12, 18};
     for (size_t i = 0; i < result1.count; i++) {
         ASSERT_EQ(expected[i], result1.docs[i]);
 
-        ASSERT_EQ(1, result1.coll_to_references[i].at("foo").count);
+        ASSERT_EQ(uint32_t{1}, result1.coll_to_references[i].at("foo").count);
         ASSERT_EQ(foo_reference[i], result1.coll_to_references[i].at("foo").docs[0]);
     }
 
@@ -2957,7 +2961,7 @@ TEST_F(CollectionJoinTest, OrFilterResults_WithReferences) {
     // a.docs: [3, 6, 9], b.docs: [0..8]
     filter_result_t result2;
     filter_result_t::or_filter_results(a, b, result2);
-    ASSERT_EQ(10, result2.count);
+    ASSERT_EQ(uint32_t{10}, result2.count);
 
     expected = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
@@ -2968,18 +2972,18 @@ TEST_F(CollectionJoinTest, OrFilterResults_WithReferences) {
         ASSERT_EQ(expected[i], result2.docs[i]);
 
         if (foo_map.count(i) != 0) {
-            ASSERT_EQ(1, result2.coll_to_references[i].at("foo").count);
+            ASSERT_EQ(uint32_t{1}, result2.coll_to_references[i].at("foo").count);
             ASSERT_EQ(foo_map[i], result2.coll_to_references[i].at("foo").docs[0]);
         } else {
             // foo didn't have any reference to current doc.
-            ASSERT_EQ(0, result2.coll_to_references[i].count("foo"));
+            ASSERT_EQ(size_t{0}, result2.coll_to_references[i].count("foo"));
         }
 
         if (bar_map.count(i) != 0) {
-            ASSERT_EQ(1, result2.coll_to_references[i].at("bar").count);
+            ASSERT_EQ(uint32_t{1}, result2.coll_to_references[i].at("bar").count);
             ASSERT_EQ(bar_map[i], result2.coll_to_references[i].at("bar").docs[0]);
         } else {
-            ASSERT_EQ(0, result2.coll_to_references[i].count("bar"));
+            ASSERT_EQ(size_t{0}, result2.coll_to_references[i].count("bar"));
         }
     }
 
@@ -3001,24 +3005,24 @@ TEST_F(CollectionJoinTest, OrFilterResults_WithReferences) {
 
     // b.docs: [0..8], c.docs: [0, 4, 5]
     filter_result_t::or_filter_results(b, c, result3);
-    ASSERT_EQ(9, result3.count);
+    ASSERT_EQ(uint32_t{9}, result3.count);
 
     expected = {0, 1, 2, 3, 4, 5, 6, 7, 8};
     for (size_t i = 0; i < result3.count; i++) {
         ASSERT_EQ(expected[i], result3.docs[i]);
 
         if (bar_map.count(i) != 0) {
-            ASSERT_EQ(1, result3.coll_to_references[i].at("bar").count);
+            ASSERT_EQ(uint32_t{1}, result3.coll_to_references[i].at("bar").count);
             ASSERT_EQ(bar_map[i], result3.coll_to_references[i].at("bar").docs[0]);
         } else {
-            ASSERT_EQ(0, result3.coll_to_references[i].count("bar"));
+            ASSERT_EQ(size_t{0}, result3.coll_to_references[i].count("bar"));
         }
 
         if (baz_map.count(i) != 0) {
-            ASSERT_EQ(1, result3.coll_to_references[i].at("baz").count);
+            ASSERT_EQ(uint32_t{1}, result3.coll_to_references[i].at("baz").count);
             ASSERT_EQ(baz_map[i], result3.coll_to_references[i].at("baz").docs[0]);
         } else {
-            ASSERT_EQ(0, result3.coll_to_references[i].count("baz"));
+            ASSERT_EQ(size_t{0}, result3.coll_to_references[i].count("baz"));
         }
     }
 }
@@ -3055,7 +3059,7 @@ TEST_F(CollectionJoinTest, FilterByNReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3095,7 +3099,7 @@ TEST_F(CollectionJoinTest, FilterByNReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3152,7 +3156,7 @@ TEST_F(CollectionJoinTest, FilterByNReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3177,7 +3181,7 @@ TEST_F(CollectionJoinTest, FilterByNReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3210,7 +3214,7 @@ TEST_F(CollectionJoinTest, FilterByNReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3221,8 +3225,8 @@ TEST_F(CollectionJoinTest, FilterByNReferences) {
     auto result = coll->search("R", {"user_name"}, "$Participants(org_id:=org_a) && $Links(repo_id:=repo_b)", {}, {}, {0},
                                10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD).get();
 
-    ASSERT_EQ(2, result["found"].get<size_t>());
-    ASSERT_EQ(2, result["hits"].size());
+    ASSERT_EQ(size_t{2}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, result["hits"].size());
     ASSERT_EQ("user_b", result["hits"][0]["document"]["user_id"].get<std::string>());
     ASSERT_EQ("user_a", result["hits"][1]["document"]["user_id"].get<std::string>());
 
@@ -3252,7 +3256,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3283,7 +3287,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3318,7 +3322,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3341,16 +3345,16 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     //              coll_b_1 <- coll_c_1
     // coll_a_0  <
     //             coll_b_2 <- coll_c_3
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("coll_a_0", res_obj["hits"][0]["document"]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["Coll_B"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["Coll_B"].size());
     ASSERT_EQ("coll_b_1", res_obj["hits"][0]["document"]["Coll_B"][0]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_B"][0]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_B"][0]["Coll_C"].size());
     ASSERT_EQ("coll_c_1", res_obj["hits"][0]["document"]["Coll_B"][0]["Coll_C"][0]["title"]);
     ASSERT_EQ("coll_b_2", res_obj["hits"][0]["document"]["Coll_B"][1]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_B"][1]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_B"][1]["Coll_C"].size());
     ASSERT_EQ("coll_c_3", res_obj["hits"][0]["document"]["Coll_B"][1]["Coll_C"][0]["title"]);
 
     req_params = {
@@ -3368,23 +3372,23 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     //             coll_b_1 <- coll_c_1, coll_c_2
     // coll_a_0  <
     //             coll_b_2 <- coll_c_3
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("coll_a_1", res_obj["hits"][0]["document"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_B"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_B"].size());
     ASSERT_EQ("coll_b_0", res_obj["hits"][0]["document"]["Coll_B"][0]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_B"][0]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_B"][0]["Coll_C"].size());
     ASSERT_EQ("coll_c_2", res_obj["hits"][0]["document"]["Coll_B"][0]["Coll_C"][0]["title"]);
 
     ASSERT_EQ("coll_a_0", res_obj["hits"][1]["document"]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["Coll_B"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["Coll_B"].size());
     ASSERT_EQ("coll_b_1", res_obj["hits"][1]["document"]["Coll_B"][0]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["Coll_B"][0]["Coll_C"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["Coll_B"][0]["Coll_C"].size());
     ASSERT_EQ("coll_c_1", res_obj["hits"][1]["document"]["Coll_B"][0]["Coll_C"][0]["title"]);
     ASSERT_EQ("coll_c_2", res_obj["hits"][1]["document"]["Coll_B"][0]["Coll_C"][1]["title"]);
     ASSERT_EQ("coll_b_2", res_obj["hits"][1]["document"]["Coll_B"][1]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["Coll_B"][1]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["Coll_B"][1]["Coll_C"].size());
     ASSERT_EQ("coll_c_3", res_obj["hits"][1]["document"]["Coll_B"][1]["Coll_C"][0]["title"]);
 
     req_params = {
@@ -3402,27 +3406,27 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     // coll_c_2 -> coll_b_1 -> coll_a_0
     //
     // coll_c_1 -> coll_b_1 -> coll_a_0
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("coll_c_3", res_obj["hits"][0]["document"]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["Coll_B"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["Coll_B"].size());
     ASSERT_EQ("coll_b_2", res_obj["hits"][0]["document"]["Coll_B"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_B"]["Coll_A"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_B"]["Coll_A"].size());
     ASSERT_EQ("coll_a_0", res_obj["hits"][0]["document"]["Coll_B"]["Coll_A"]["title"]);
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("coll_c_2", res_obj["hits"][1]["document"]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["Coll_B"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["Coll_B"].size());
     ASSERT_EQ("coll_b_1", res_obj["hits"][1]["document"]["Coll_B"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["Coll_B"]["Coll_A"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["Coll_B"]["Coll_A"].size());
     ASSERT_EQ("coll_a_0", res_obj["hits"][1]["document"]["Coll_B"]["Coll_A"]["title"]);
 
-    ASSERT_EQ(2, res_obj["hits"][2]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][2]["document"].size());
     ASSERT_EQ("coll_c_1", res_obj["hits"][2]["document"]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][2]["document"]["Coll_B"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][2]["document"]["Coll_B"].size());
     ASSERT_EQ("coll_b_1", res_obj["hits"][2]["document"]["Coll_B"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["Coll_B"]["Coll_A"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["Coll_B"]["Coll_A"].size());
     ASSERT_EQ("coll_a_0", res_obj["hits"][2]["document"]["Coll_B"]["Coll_A"]["title"]);
 
     schema_json =
@@ -3452,7 +3456,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3474,31 +3478,31 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     //             coll_c_2 <- coll_d_2
     //
     // coll_b_0 <- coll_c_2 <- coll_d_2
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("coll_b_2", res_obj["hits"][0]["document"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_C"].size());
     ASSERT_EQ("coll_c_3", res_obj["hits"][0]["document"]["Coll_C"][0]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["Coll_C"][0]["Coll_D"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["Coll_C"][0]["Coll_D"].size());
     ASSERT_EQ("coll_d_1", res_obj["hits"][0]["document"]["Coll_C"][0]["Coll_D"][0]["title"]);
     ASSERT_EQ("coll_d_2", res_obj["hits"][0]["document"]["Coll_C"][0]["Coll_D"][1]["title"]);
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("coll_b_1", res_obj["hits"][1]["document"]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["Coll_C"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["Coll_C"].size());
     ASSERT_EQ("coll_c_1", res_obj["hits"][1]["document"]["Coll_C"][0]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["Coll_C"][0]["Coll_D"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["Coll_C"][0]["Coll_D"].size());
     ASSERT_EQ("coll_d_1", res_obj["hits"][1]["document"]["Coll_C"][0]["Coll_D"][0]["title"]);
     ASSERT_EQ("coll_c_2", res_obj["hits"][1]["document"]["Coll_C"][1]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["Coll_C"][1]["Coll_D"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["Coll_C"][1]["Coll_D"].size());
     ASSERT_EQ("coll_d_2", res_obj["hits"][1]["document"]["Coll_C"][1]["Coll_D"][0]["title"]);
 
-    ASSERT_EQ(2, res_obj["hits"][2]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][2]["document"].size());
     ASSERT_EQ("coll_b_0", res_obj["hits"][2]["document"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["Coll_C"].size());
     ASSERT_EQ("coll_c_2", res_obj["hits"][2]["document"]["Coll_C"][0]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["Coll_C"][0]["Coll_D"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["Coll_C"][0]["Coll_D"].size());
     ASSERT_EQ("coll_d_2", res_obj["hits"][2]["document"]["Coll_C"][0]["Coll_D"][0]["title"]);
 
     req_params = {
@@ -3514,21 +3518,21 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     // coll_d_2 -> coll_c_2 -> coll_b_0, coll_b_1
     //
     // coll_d_1 -> coll_c_1 -> coll_b_1
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("coll_d_2", res_obj["hits"][0]["document"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_C"].size());
     ASSERT_EQ("coll_c_2", res_obj["hits"][0]["document"]["Coll_C"][0]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["Coll_C"][0]["Coll_B"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["Coll_C"][0]["Coll_B"].size());
     ASSERT_EQ("coll_b_0", res_obj["hits"][0]["document"]["Coll_C"][0]["Coll_B"][0]["title"]);
     ASSERT_EQ("coll_b_1", res_obj["hits"][0]["document"]["Coll_C"][0]["Coll_B"][1]["title"]);
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("coll_d_1", res_obj["hits"][1]["document"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["Coll_C"].size());
     ASSERT_EQ("coll_c_1", res_obj["hits"][1]["document"]["Coll_C"][0]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["Coll_C"][0]["Coll_B"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["Coll_C"][0]["Coll_B"].size());
     ASSERT_EQ("coll_b_1", res_obj["hits"][1]["document"]["Coll_C"][0]["Coll_B"][0]["title"]);
 
     auto doc = R"({
@@ -3537,7 +3541,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
             })"_json;
     auto doc_add_op = collectionManager.get_collection("Coll_B")->add(doc.dump());
     if (!doc_add_op.ok()) {
-        LOG(INFO) << doc_add_op.error();
+        TS_LOG(INFO) << doc_add_op.error();
     }
     ASSERT_TRUE(doc_add_op.ok());
 
@@ -3547,7 +3551,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
             })"_json;
     doc_add_op = collectionManager.get_collection("Coll_C")->add(doc.dump());
     if (!doc_add_op.ok()) {
-        LOG(INFO) << doc_add_op.error();
+        TS_LOG(INFO) << doc_add_op.error();
     }
     ASSERT_TRUE(doc_add_op.ok());
 
@@ -3557,7 +3561,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
             })"_json;
     doc_add_op = collectionManager.get_collection("Coll_D")->add(doc.dump());
     if (!doc_add_op.ok()) {
-        LOG(INFO) << doc_add_op.error();
+        TS_LOG(INFO) << doc_add_op.error();
     }
     ASSERT_TRUE(doc_add_op.ok());
 
@@ -3575,18 +3579,18 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
 
     res_obj = nlohmann::json::parse(json_res);
     // coll_d_3 -> coll_c_4 -> coll_b_3 -> coll_a_0
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("coll_d_3", res_obj["hits"][0]["document"]["title"]);
 
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_C"].size());
     ASSERT_EQ("coll_c_4", res_obj["hits"][0]["document"]["Coll_C"]["title"]);
 
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_B"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_B"].size());
     ASSERT_EQ("coll_b_3", res_obj["hits"][0]["document"]["Coll_B"][0]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_B"][0].count("Coll_A"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_B"][0]["Coll_A"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_B"][0].count("Coll_A"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_B"][0]["Coll_A"].size());
     ASSERT_EQ("coll_a_0", res_obj["hits"][0]["document"]["Coll_B"][0]["Coll_A"]["title"]);
 
     schema_json =
@@ -3604,7 +3608,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
             })"_json;
     doc_add_op = collectionManager.get_collection("Coll_E")->add(doc.dump());
     if (!doc_add_op.ok()) {
-        LOG(INFO) << doc_add_op.error();
+        TS_LOG(INFO) << doc_add_op.error();
     }
     ASSERT_TRUE(doc_add_op.ok());
 
@@ -3620,17 +3624,17 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("coll_d_3", res_obj["hits"][0]["document"]["title"]);
 
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_C"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_C"].size());
     ASSERT_EQ("coll_c_4", res_obj["hits"][0]["document"]["Coll_C"]["title"]);
 
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Coll_B"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Coll_B"].size());
     ASSERT_EQ("coll_b_3", res_obj["hits"][0]["document"]["Coll_B"][0]["title"]);
-    ASSERT_EQ(0, res_obj["hits"][0]["document"]["Coll_B"][0].count("Coll_E"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"]["Coll_B"][0].count("Coll_E"));
 
     schema_json =
             R"({
@@ -3652,7 +3656,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3688,7 +3692,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3720,7 +3724,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3801,7 +3805,7 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3816,41 +3820,41 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["product_variants"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["product_variants"].size());
 
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["product_variants"][0]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"].size());
     ASSERT_EQ(11, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["qty"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["retailers"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["retailers"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["retailers"]["id"]);
     ASSERT_EQ("retailer 3", res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["retailers"]["title"]);
 
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["product_variants"][1]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["product_variants"][1]["inventory"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["product_variants"][1]["inventory"].size());
     ASSERT_EQ(12, res_obj["hits"][0]["document"]["product_variants"][1]["inventory"]["qty"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["product_variants"][1]["inventory"]["retailers"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["product_variants"][1]["inventory"]["retailers"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["product_variants"][1]["inventory"]["retailers"]["id"]);
     ASSERT_EQ("retailer 3", res_obj["hits"][0]["document"]["product_variants"][1]["inventory"]["retailers"]["title"]);
 
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"]["title"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["product_variants"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["product_variants"].size());
 
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["product_variants"][0]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"].size());
     ASSERT_EQ(9, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["qty"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["retailers"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["retailers"].size());
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["retailers"]["id"]);
     ASSERT_EQ("retailer 3", res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["retailers"]["title"]);
 
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["product_variants"][1]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["product_variants"][1]["inventory"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["product_variants"][1]["inventory"].size());
     ASSERT_EQ(10, res_obj["hits"][1]["document"]["product_variants"][1]["inventory"]["qty"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["product_variants"][1]["inventory"]["retailers"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["product_variants"][1]["inventory"]["retailers"].size());
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["product_variants"][1]["inventory"]["retailers"]["id"]);
     ASSERT_EQ("retailer 3", res_obj["hits"][1]["document"]["product_variants"][1]["inventory"]["retailers"]["title"]);
 
@@ -3865,22 +3869,22 @@ TEST_F(CollectionJoinTest, FilterByNestedReferences) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["title"]);
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["product_variants"]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["product_variants"]["inventory"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["product_variants"]["inventory"].size());
     ASSERT_EQ(4, res_obj["hits"][0]["document"]["product_variants"]["inventory"]["qty"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["product_variants"]["inventory"]["retailers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["product_variants"]["inventory"]["retailers"].size());
     ASSERT_EQ("retailer 1", res_obj["hits"][0]["document"]["product_variants"]["inventory"]["retailers"]["title"]);
 
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"]["title"]);
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["product_variants"]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["product_variants"]["inventory"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["product_variants"]["inventory"].size());
     ASSERT_EQ(5, res_obj["hits"][1]["document"]["product_variants"]["inventory"]["qty"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["product_variants"]["inventory"]["retailers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["product_variants"]["inventory"]["retailers"].size());
     ASSERT_EQ("retailer 2", res_obj["hits"][1]["document"]["product_variants"]["inventory"]["retailers"]["title"]);
 }
 
@@ -3892,7 +3896,7 @@ protected:
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
-    std::string state_dir_path = "/tmp/typesense_test/collection_join";
+    std::string state_dir_path;
 
     Collection* products = nullptr;
     Collection* customers = nullptr;
@@ -3904,8 +3908,9 @@ protected:
     long now_ts = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
     void setupCollection() {
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_join_include_exclude_fields");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -3937,7 +3942,7 @@ protected:
             })"_json
         };
 
-        EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+        EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
         auto collection_create_op = collectionManager.create_collection(schema_json);
         ASSERT_TRUE(collection_create_op.ok());
@@ -3946,7 +3951,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = products->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -3994,7 +3999,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = customers->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -4030,7 +4035,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -4070,7 +4075,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -4127,7 +4132,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -4158,7 +4163,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -4191,7 +4196,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -4233,7 +4238,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -4281,7 +4286,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -4294,6 +4299,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -4334,23 +4340,23 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields are mentioned in `include_fields`, should include all fields of Products and Customers by default.
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
     // Default strategy of reference includes is nest. No alias was provided, collection name becomes the field name.
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["Customers"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("customer_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("product_price"));
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("product_price"));
 
     req_params = {
             {"collection", "Products"},
@@ -4363,23 +4369,23 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields are mentioned in `include_fields`, should include all fields of Products and Customers by default.
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
     // In nest_array strategy we return the referenced docs in an array.
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"][0].count("customer_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"][0].count("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"][0].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"][0].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"][0].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"][0].count("customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"][0].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"][0].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"][0].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"][0].count("product_price"));
 
     req_params = {
             {"collection", "Products"},
@@ -4392,19 +4398,19 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(11, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Customers.customer_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Customers.customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Customers.id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Customers.product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{11}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Customers.customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Customers.customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Customers.id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Customers.product_price"));
 
     req_params = {
             {"collection", "Products"},
@@ -4417,16 +4423,16 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields of Products collection are mentioned in `include_fields`, should include all of its fields by default.
-    ASSERT_EQ(6, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{6}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
 
     req_params = {
             {"collection", "Products"},
@@ -4439,10 +4445,10 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
 
     req_params = {
@@ -4456,12 +4462,12 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(8, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{8}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("customer_id"));
     ASSERT_EQ("customer_a", res_obj["hits"][0]["document"].at("customer_id"));
 
     req_params = {
@@ -4475,10 +4481,10 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // 6 fields in Products document and 2 fields from Customers document
-    ASSERT_EQ(8, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{8}, res_obj["hits"][0]["document"].size());
 
     req_params = {
             {"collection", "Products"},
@@ -4491,11 +4497,11 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // 6 fields in Products document and 1 field from Customers document
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
 
     req_params = {
             {"collection", "Products"},
@@ -4509,14 +4515,14 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // 6 fields in Products document and 1 fields from Customers document
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
 
     req_params = {
@@ -4531,12 +4537,12 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(140, res_obj["hits"][0]["document"].at("product_price"));
 
     // Reference include_by without join
@@ -4551,12 +4557,12 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeStrategies) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
 }
 
@@ -4598,12 +4604,12 @@ TEST_F(JoinIncludeExcludeFieldsTest, Alias) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("prod.product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("prod.product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("prod.product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
 
     req_params = {
@@ -4618,13 +4624,13 @@ TEST_F(JoinIncludeExcludeFieldsTest, Alias) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("prod"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["prod"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("prod"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["prod"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["prod"].at("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
 
     req_params = {
@@ -4639,13 +4645,13 @@ TEST_F(JoinIncludeExcludeFieldsTest, Alias) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product_name"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("CustomerPrices"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["CustomerPrices"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("CustomerPrices"));
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["CustomerPrices"].size());
 
     ASSERT_EQ("Joe", res_obj["hits"][0]["document"]["CustomerPrices"].at(0)["customer_name"]);
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"]["CustomerPrices"].at(0)["product_price"]);
@@ -4668,10 +4674,10 @@ TEST_F(JoinIncludeExcludeFieldsTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
 
     // Phrase search
@@ -4687,10 +4693,10 @@ TEST_F(JoinIncludeExcludeFieldsTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
 
     // Combining normal and reference filter
@@ -4706,12 +4712,12 @@ TEST_F(JoinIncludeExcludeFieldsTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(140, res_obj["hits"][0]["document"].at("product_price"));
 
     // Multiple references
@@ -4727,15 +4733,15 @@ TEST_F(JoinIncludeExcludeFieldsTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("customer_name"));
     ASSERT_EQ("Joe", res_obj["hits"][0]["document"].at("customer_name").at(0));
     ASSERT_EQ("Dan", res_obj["hits"][0]["document"].at("customer_name").at(1));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price").at(0));
     ASSERT_EQ(140, res_obj["hits"][0]["document"].at("product_price").at(1));
 
@@ -4752,11 +4758,11 @@ TEST_F(JoinIncludeExcludeFieldsTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
 
     nlohmann::json model_config = R"({
@@ -4782,11 +4788,11 @@ TEST_F(JoinIncludeExcludeFieldsTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
 
     // Hybrid search - Both text match and vector match
@@ -4802,11 +4808,11 @@ TEST_F(JoinIncludeExcludeFieldsTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_NE(0, res_obj["hits"][0].at("text_match"));
     ASSERT_NE(0, res_obj["hits"][0].at("vector_distance"));
@@ -4824,11 +4830,11 @@ TEST_F(JoinIncludeExcludeFieldsTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ(0, res_obj["hits"][0].at("text_match"));
     ASSERT_NE(0, res_obj["hits"][0].at("vector_distance"));
@@ -4847,12 +4853,12 @@ TEST_F(JoinIncludeExcludeFieldsTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
 }
 
@@ -4870,9 +4876,9 @@ TEST_F(JoinIncludeExcludeFieldsTest, MultipleJoins) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"].size());
 
     ASSERT_EQ("user_b", res_obj["hits"][0]["document"].at("user_id"));
     ASSERT_EQ("Ruby", res_obj["hits"][0]["document"].at("user_name"));
@@ -4897,25 +4903,25 @@ TEST_F(JoinIncludeExcludeFieldsTest, OptionalRefrenceField) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("customer_name"));
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("customer_name"));
     ASSERT_EQ("Dan", res_obj["hits"][0]["document"].at("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
 
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("customer_name"));
     ASSERT_EQ("Dan", res_obj["hits"][1]["document"].at("customer_name"));
-    ASSERT_EQ(0, res_obj["hits"][1]["document"].count("product_name"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"].count("product_name"));
 
-    ASSERT_EQ(1, res_obj["hits"][2]["document"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"].count("customer_name"));
     ASSERT_EQ("Joe", res_obj["hits"][2]["document"].at("customer_name"));
-    ASSERT_EQ(0, res_obj["hits"][2]["document"].count("product_name"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"].count("product_name"));
 
-    ASSERT_EQ(1, res_obj["hits"][3]["document"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"].count("customer_name"));
     ASSERT_EQ("Joe", res_obj["hits"][3]["document"].at("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"].count("product_name"));
     ASSERT_EQ("shampoo", res_obj["hits"][3]["document"].at("product_name"));
 
     req_params = {
@@ -4927,27 +4933,27 @@ TEST_F(JoinIncludeExcludeFieldsTest, OptionalRefrenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("customer_name"));
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("customer_name"));
     ASSERT_EQ("Dan", res_obj["hits"][0]["document"].at("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["product"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["product"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product"].at("product_name"));
 
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("customer_name"));
     ASSERT_EQ("Dan", res_obj["hits"][1]["document"].at("customer_name"));
-    ASSERT_EQ(0, res_obj["hits"][1]["document"].count("product"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"].count("product"));
 
-    ASSERT_EQ(1, res_obj["hits"][2]["document"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"].count("customer_name"));
     ASSERT_EQ("Joe", res_obj["hits"][2]["document"].at("customer_name"));
-    ASSERT_EQ(0, res_obj["hits"][2]["document"].count("product"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"].count("product"));
 
-    ASSERT_EQ(1, res_obj["hits"][3]["document"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"].count("customer_name"));
     ASSERT_EQ("Joe", res_obj["hits"][3]["document"].at("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"]["product"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"]["product"].count("product_name"));
     ASSERT_EQ("shampoo", res_obj["hits"][3]["document"]["product"].at("product_name"));
 
 }
@@ -4980,24 +4986,24 @@ TEST_F(JoinIncludeExcludeFieldsTest, UnindexedField) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields are mentioned in `include_fields`, should include all fields of Products and Customers by default.
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
     // Default strategy of reference includes is nest. No alias was provided, collection name becomes the field name.
-    ASSERT_EQ(6, res_obj["hits"][0]["document"]["Customers"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("customer_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("foo"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("product_price"));
+    ASSERT_EQ(size_t{6}, res_obj["hits"][0]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("foo"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("product_price"));
 }
 
 TEST_F(CollectionJoinTest, FilterByReferenceArrayField) {
@@ -5019,7 +5025,7 @@ TEST_F(CollectionJoinTest, FilterByReferenceArrayField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -5042,7 +5048,7 @@ TEST_F(CollectionJoinTest, FilterByReferenceArrayField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -5062,20 +5068,20 @@ TEST_F(CollectionJoinTest, FilterByReferenceArrayField) {
     ASSERT_TRUE(search_op_bool.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
 
     ASSERT_EQ("Achilles Last Stand", res_obj["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["genre.name"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["genre.name"].size());
     ASSERT_EQ("Arena rock", res_obj["hits"][0]["document"]["genre.name"][0]);
     ASSERT_EQ("Blues", res_obj["hits"][0]["document"]["genre.name"][1]);
 
     ASSERT_EQ("Corduroy", res_obj["hits"][1]["document"]["title"].get<std::string>());
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["genre.name"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["genre.name"].size());
     ASSERT_EQ("Grunge", res_obj["hits"][1]["document"]["genre.name"][0]);
 
     ASSERT_EQ("Dil De Rani", res_obj["hits"][2]["document"]["title"].get<std::string>());
-    ASSERT_EQ(0, res_obj["hits"][2]["document"]["genre.name"].size());
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"]["genre.name"].size());
 
     req_params = {
             {"collection", "genres"},
@@ -5087,19 +5093,19 @@ TEST_F(CollectionJoinTest, FilterByReferenceArrayField) {
     ASSERT_TRUE(search_op_bool.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
 
     ASSERT_EQ("Blues", res_obj["hits"][0]["document"]["name"].get<std::string>());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["song.title"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["song.title"].size());
     ASSERT_EQ("Achilles Last Stand", res_obj["hits"][0]["document"]["song.title"][0]);
 
     ASSERT_EQ("Arena rock", res_obj["hits"][1]["document"]["name"].get<std::string>());
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["song.title"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["song.title"].size());
     ASSERT_EQ("Achilles Last Stand", res_obj["hits"][1]["document"]["song.title"][0]);
 
     ASSERT_EQ("Grunge", res_obj["hits"][2]["document"]["name"].get<std::string>());
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["song.title"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["song.title"].size());
     ASSERT_EQ("Corduroy", res_obj["hits"][2]["document"]["song.title"][0]);
 }
 
@@ -5136,7 +5142,7 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -5169,7 +5175,7 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -5188,19 +5194,19 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("b", res_obj["hits"][0]["document"]["coll_id"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["object"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["object"].size());
     ASSERT_EQ("product_c", res_obj["hits"][0]["document"]["object"]["reference"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"].count("Products"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"].count("Products"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"].count("product_id"));
     ASSERT_EQ("product_c", res_obj["hits"][0]["document"]["object"]["Products"]["product_id"]);
-    ASSERT_EQ(3, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("a", res_obj["hits"][1]["document"]["coll_id"]);
-    ASSERT_EQ(0, res_obj["hits"][1]["document"]["object"].size());
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"]["object"].size());
 
     req_params = {
             {"collection", "coll1"},
@@ -5212,20 +5218,20 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("object"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"].count("Products"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("object"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"].count("Products"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"].count("product_id"));
     ASSERT_EQ("product_c", res_obj["hits"][0]["document"]["object"]["Products"]["product_id"]);
-    ASSERT_EQ(3, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("object"));
-    ASSERT_EQ(0, res_obj["hits"][1]["document"]["object"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("object"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"]["object"].size());
 
     req_params = {
             {"collection", "Products"},
@@ -5237,13 +5243,13 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(5, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_c", res_obj["hits"][0]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("coll1"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["coll1"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["coll1"].count("coll_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("coll1"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["coll1"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["coll1"].count("coll_id"));
     ASSERT_EQ("b", res_obj["hits"][0]["document"]["coll1"]["coll_id"]);
 
     schema_json =
@@ -5274,7 +5280,7 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -5288,22 +5294,22 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("b", res_obj["hits"][0]["document"]["coll_id"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["object"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["object"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"]["object"]["reference_array"][0]);
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"]["object"]["reference_array"][1]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"].count("Products"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["object"]["Products"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"][0].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"].count("Products"));
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["object"]["Products"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"][0].count("product_id"));
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"]["object"]["Products"][0]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"][1].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"][1].count("product_id"));
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"]["object"]["Products"][1]["product_id"]);
-    ASSERT_EQ(3, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("a", res_obj["hits"][1]["document"]["coll_id"]);
-    ASSERT_EQ(0, res_obj["hits"][1]["document"]["object"].size());
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"]["object"].size());
 
     req_params = {
             {"collection", "coll2"},
@@ -5315,22 +5321,22 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("object"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"].count("Products"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["object"]["Products"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"][0].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("object"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"].count("Products"));
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["object"]["Products"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"][0].count("product_id"));
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"]["object"]["Products"][0]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"][1].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"][1].count("product_id"));
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"]["object"]["Products"][1]["product_id"]);
-    ASSERT_EQ(3, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("object"));
-    ASSERT_EQ(0, res_obj["hits"][1]["document"]["object"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("object"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"]["object"].size());
 
     req_params = {
             {"collection", "Products"},
@@ -5342,18 +5348,18 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(5, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("coll2"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["coll2"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["coll2"][0].count("coll_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("coll2"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["coll2"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["coll2"][0].count("coll_id"));
     ASSERT_EQ("b", res_obj["hits"][0]["document"]["coll2"][0]["coll_id"]);
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("coll2"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["coll2"].size());
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["coll2"][0].count("coll_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("coll2"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["coll2"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["coll2"][0].count("coll_id"));
     ASSERT_EQ("b", res_obj["hits"][1]["document"]["coll2"][0]["coll_id"]);
 
     schema_json =
@@ -5384,7 +5390,7 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -5398,22 +5404,22 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("b", res_obj["hits"][0]["document"]["coll_id"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["object"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["object"].size());
     ASSERT_EQ("0", res_obj["hits"][0]["document"]["object"]["reference_array"][0]);
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["object"]["reference_array"][1]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"].count("Products"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["object"]["Products"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"][0].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"].count("Products"));
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["object"]["Products"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"][0].count("product_id"));
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"]["object"]["Products"][0]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["object"]["Products"][1].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["object"]["Products"][1].count("product_id"));
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"]["object"]["Products"][1]["product_id"]);
-    ASSERT_EQ(3, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("a", res_obj["hits"][1]["document"]["coll_id"]);
-    ASSERT_EQ(0, res_obj["hits"][1]["document"]["object"].size());
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"]["object"].size());
 
     req_params = {
             {"collection", "Products"},
@@ -5425,18 +5431,18 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(5, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("coll3"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["coll3"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["coll3"][0].count("coll_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("coll3"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["coll3"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["coll3"][0].count("coll_id"));
     ASSERT_EQ("b", res_obj["hits"][0]["document"]["coll3"][0]["coll_id"]);
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("coll3"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["coll3"].size());
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["coll3"][0].count("coll_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("coll3"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["coll3"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["coll3"][0].count("coll_id"));
     ASSERT_EQ("b", res_obj["hits"][1]["document"]["coll3"][0]["coll_id"]);
 
     schema_json =
@@ -5471,7 +5477,7 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -5519,7 +5525,7 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump(), CREATE, "", DIRTY_VALUES::REJECT);
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -5533,25 +5539,25 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("name"));
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("name"));
 
     ASSERT_EQ("Milk", res_obj["hits"][0]["document"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("portions"));
-    ASSERT_EQ(3, res_obj["hits"][0]["document"]["portions"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("portions"));
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"]["portions"].size());
 
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["portions"][0].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["portions"][0].size());
     ASSERT_EQ("portion_b", res_obj["hits"][0]["document"]["portions"][0].at("portion_id"));
     ASSERT_EQ(1 , res_obj["hits"][0]["document"]["portions"][0].at("quantity"));
     ASSERT_EQ("lt", res_obj["hits"][0]["document"]["portions"][0].at("unit"));
     ASSERT_EQ(3 , res_obj["hits"][0]["document"]["portions"][0].at("count"));
 
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["portions"][1].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["portions"][1].size());
     ASSERT_EQ(3 , res_obj["hits"][0]["document"]["portions"][1].at("count"));
 
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["portions"][2].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["portions"][2].size());
     ASSERT_EQ("portion_c", res_obj["hits"][0]["document"]["portions"][2].at("portion_id"));
     ASSERT_EQ(500 , res_obj["hits"][0]["document"]["portions"][2].at("quantity"));
     ASSERT_EQ("ml", res_obj["hits"][0]["document"]["portions"][2].at("unit"));
@@ -5559,10 +5565,10 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
 
 
     ASSERT_EQ("Bread", res_obj["hits"][1]["document"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("portions"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["portions"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("portions"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["portions"].size());
 
-    ASSERT_EQ(5, res_obj["hits"][1]["document"]["portions"][0].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][1]["document"]["portions"][0].size());
     ASSERT_EQ("portion_a", res_obj["hits"][1]["document"]["portions"][0].at("portion_id"));
     ASSERT_EQ(500 , res_obj["hits"][1]["document"]["portions"][0].at("quantity"));
     ASSERT_EQ("g", res_obj["hits"][1]["document"]["portions"][0].at("unit"));
@@ -5578,31 +5584,31 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
 
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("portions"));
-    ASSERT_EQ(3, res_obj["hits"][0]["document"]["portions"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("portions"));
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"]["portions"].size());
 
-    ASSERT_EQ(4, res_obj["hits"][0]["document"]["portions"][0].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"]["portions"][0].size());
     ASSERT_EQ("portion_b", res_obj["hits"][0]["document"]["portions"][0].at("portion_id"));
     ASSERT_EQ(1 , res_obj["hits"][0]["document"]["portions"][0].at("quantity"));
     ASSERT_EQ("lt", res_obj["hits"][0]["document"]["portions"][0].at("unit"));
 
-    ASSERT_EQ(0, res_obj["hits"][0]["document"]["portions"][1].size());
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"]["portions"][1].size());
 
-    ASSERT_EQ(4, res_obj["hits"][0]["document"]["portions"][2].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"]["portions"][2].size());
     ASSERT_EQ("portion_c", res_obj["hits"][0]["document"]["portions"][2].at("portion_id"));
     ASSERT_EQ(500 , res_obj["hits"][0]["document"]["portions"][2].at("quantity"));
     ASSERT_EQ("ml", res_obj["hits"][0]["document"]["portions"][2].at("unit"));
 
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("portions"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["portions"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("portions"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["portions"].size());
 
-    ASSERT_EQ(4, res_obj["hits"][1]["document"]["portions"][0].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][1]["document"]["portions"][0].size());
     ASSERT_EQ("portion_a", res_obj["hits"][1]["document"]["portions"][0].at("portion_id"));
     ASSERT_EQ(500 , res_obj["hits"][1]["document"]["portions"][0].at("quantity"));
     ASSERT_EQ("g", res_obj["hits"][1]["document"]["portions"][0].at("unit"));
@@ -5616,7 +5622,7 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     auto load_op = collectionManager.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
     ASSERT_TRUE(load_op.ok());
 
@@ -5629,25 +5635,25 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("name"));
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("name"));
 
     ASSERT_EQ("Milk", res_obj["hits"][0]["document"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("portions"));
-    ASSERT_EQ(3, res_obj["hits"][0]["document"]["portions"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("portions"));
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"]["portions"].size());
 
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["portions"][0].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["portions"][0].size());
     ASSERT_EQ("portion_b", res_obj["hits"][0]["document"]["portions"][0].at("portion_id"));
     ASSERT_EQ(1 , res_obj["hits"][0]["document"]["portions"][0].at("quantity"));
     ASSERT_EQ("lt", res_obj["hits"][0]["document"]["portions"][0].at("unit"));
     ASSERT_EQ(3 , res_obj["hits"][0]["document"]["portions"][0].at("count"));
 
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["portions"][1].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["portions"][1].size());
     ASSERT_EQ(3 , res_obj["hits"][0]["document"]["portions"][1].at("count"));
 
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["portions"][2].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["portions"][2].size());
     ASSERT_EQ("portion_c", res_obj["hits"][0]["document"]["portions"][2].at("portion_id"));
     ASSERT_EQ(500 , res_obj["hits"][0]["document"]["portions"][2].at("quantity"));
     ASSERT_EQ("ml", res_obj["hits"][0]["document"]["portions"][2].at("unit"));
@@ -5655,10 +5661,10 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
 
 
     ASSERT_EQ("Bread", res_obj["hits"][1]["document"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("portions"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["portions"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("portions"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["portions"].size());
 
-    ASSERT_EQ(5, res_obj["hits"][1]["document"]["portions"][0].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][1]["document"]["portions"][0].size());
     ASSERT_EQ("portion_a", res_obj["hits"][1]["document"]["portions"][0].at("portion_id"));
     ASSERT_EQ(500 , res_obj["hits"][1]["document"]["portions"][0].at("quantity"));
     ASSERT_EQ("g", res_obj["hits"][1]["document"]["portions"][0].at("unit"));
@@ -5687,16 +5693,16 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("name"));
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("name"));
 
     ASSERT_EQ("Milk", res_obj["hits"][0]["document"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("portions"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["portions"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("portions"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["portions"].size());
 
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["portions"][0].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["portions"][0].size());
     ASSERT_EQ("portion_c", res_obj["hits"][0]["document"]["portions"][0].at("portion_id"));
     ASSERT_EQ(500 , res_obj["hits"][0]["document"]["portions"][0].at("quantity"));
     ASSERT_EQ("ml", res_obj["hits"][0]["document"]["portions"][0].at("unit"));
@@ -5704,10 +5710,10 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
 
 
     ASSERT_EQ("Bread", res_obj["hits"][1]["document"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("portions"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["portions"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("portions"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["portions"].size());
 
-    ASSERT_EQ(5, res_obj["hits"][1]["document"]["portions"][0].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][1]["document"]["portions"][0].size());
     ASSERT_EQ("portion_a", res_obj["hits"][1]["document"]["portions"][0].at("portion_id"));
     ASSERT_EQ(500 , res_obj["hits"][1]["document"]["portions"][0].at("quantity"));
     ASSERT_EQ("g", res_obj["hits"][1]["document"]["portions"][0].at("unit"));
@@ -5814,21 +5820,21 @@ TEST_F(CollectionJoinTest, CascadeDeleteOption) {
     }
 
     auto doc = coll_a->get("0").get();
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(2, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{2}, doc[".ref"].size());
     ASSERT_EQ("ref_c_sequence_id", doc[".ref"].at(0));
     ASSERT_EQ("ref_b_sequence_id", doc[".ref"].at(1));
     ASSERT_EQ(1, doc["ref_b_sequence_id"]);
-    ASSERT_EQ(1, doc["ref_c_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc["ref_c_sequence_id"].size());
     ASSERT_EQ(0, doc["ref_c_sequence_id"][0]);
 
     doc = coll_a->get("1").get();
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(2, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{2}, doc[".ref"].size());
     ASSERT_EQ("ref_c_sequence_id", doc[".ref"].at(0));
     ASSERT_EQ("ref_b_sequence_id", doc[".ref"].at(1));
     ASSERT_EQ(0, doc["ref_b_sequence_id"]);
-    ASSERT_EQ(2, doc["ref_c_sequence_id"].size());
+    ASSERT_EQ(size_t{2}, doc["ref_c_sequence_id"].size());
     ASSERT_EQ(1, doc["ref_c_sequence_id"][0]);
     ASSERT_EQ(2, doc["ref_c_sequence_id"][1]);
 
@@ -5847,16 +5853,16 @@ TEST_F(CollectionJoinTest, CascadeDeleteOption) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("b_0", res_obj["hits"][0]["document"]["ref_b"]);
     ASSERT_EQ("b_0", res_obj["hits"][0]["document"]["coll_b"]["id"]);
 
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["ref_c"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["ref_c"].size());
     ASSERT_EQ("c_1", res_obj["hits"][0]["document"]["ref_c"][0]);
     ASSERT_EQ("c_2", res_obj["hits"][0]["document"]["ref_c"][1]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["coll_c"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["coll_c"].size());
     ASSERT_EQ("c_1", res_obj["hits"][0]["document"]["coll_c"][0]["id"]);
     ASSERT_EQ("c_2", res_obj["hits"][0]["document"]["coll_c"][1]["id"]);
 
@@ -5866,23 +5872,23 @@ TEST_F(CollectionJoinTest, CascadeDeleteOption) {
     // With cascade_delete: false, we shouldn't delete any information of referencing document.
     collectionManager.get_collection_unsafe("coll_b")->remove("b_1");
     doc = coll_a->get("0").get();
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(2, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{2}, doc[".ref"].size());
     ASSERT_EQ("ref_c_sequence_id", doc[".ref"].at(0));
     ASSERT_EQ("ref_b_sequence_id", doc[".ref"].at(1));
     // Set to sentinel value when `cascade_delete` is false and referenced document is deleted.
     ASSERT_EQ(Join::reference_helper_sentinel_value, doc["ref_b_sequence_id"]);
-    ASSERT_EQ(1, doc["ref_c_sequence_id"].size());
+    ASSERT_EQ(size_t{1}, doc["ref_c_sequence_id"].size());
     ASSERT_EQ(0, doc["ref_c_sequence_id"][0]);
 
     collectionManager.get_collection_unsafe("coll_c")->remove("c_1");
     doc = coll_a->get("1").get();
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(2, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{2}, doc[".ref"].size());
     ASSERT_EQ("ref_c_sequence_id", doc[".ref"].at(0));
     ASSERT_EQ("ref_b_sequence_id", doc[".ref"].at(1));
     ASSERT_EQ(0, doc["ref_b_sequence_id"]);
-    ASSERT_EQ(2, doc["ref_c_sequence_id"].size());
+    ASSERT_EQ(size_t{2}, doc["ref_c_sequence_id"].size());
     ASSERT_EQ(Join::reference_helper_sentinel_value, doc["ref_c_sequence_id"][0]);
     ASSERT_EQ(2, doc["ref_c_sequence_id"][1]);
 
@@ -5903,12 +5909,12 @@ TEST_F(CollectionJoinTest, CascadeDeleteOption) {
     collectionManager.get_collection_unsafe("coll_b")->remove("b_0");
 
     doc = coll_a->get("1").get();
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(2, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{2}, doc[".ref"].size());
     ASSERT_EQ("ref_c_sequence_id", doc[".ref"].at(0));
     ASSERT_EQ("ref_b_sequence_id", doc[".ref"].at(1));
     ASSERT_EQ(Join::reference_helper_sentinel_value, doc["ref_b_sequence_id"]);
-    ASSERT_EQ(2, doc["ref_c_sequence_id"].size());
+    ASSERT_EQ(size_t{2}, doc["ref_c_sequence_id"].size());
     ASSERT_EQ(Join::reference_helper_sentinel_value, doc["ref_c_sequence_id"][0]);
     ASSERT_EQ(2, doc["ref_c_sequence_id"][1]);
 
@@ -5923,16 +5929,16 @@ TEST_F(CollectionJoinTest, CascadeDeleteOption) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("b_0", res_obj["hits"][0]["document"]["ref_b"]);
-    ASSERT_EQ(0, res_obj["hits"][0]["document"].count("coll_b")); // b_0 has been deleted
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"].count("coll_b")); // b_0 has been deleted
 
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["ref_c"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["ref_c"].size());
     ASSERT_EQ("c_1", res_obj["hits"][0]["document"]["ref_c"][0]);
     ASSERT_EQ("c_2", res_obj["hits"][0]["document"]["ref_c"][1]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["coll_c"].size()); // c_1 has been deleted
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["coll_c"].size()); // c_1 has been deleted
     ASSERT_EQ("c_2", res_obj["hits"][0]["document"]["coll_c"][0]["id"]);
 
     // Referenced document should be included after re-indexing.
@@ -5941,12 +5947,12 @@ TEST_F(CollectionJoinTest, CascadeDeleteOption) {
     ASSERT_TRUE(op.ok());
 
     doc = coll_a->get("1").get();
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(2, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{2}, doc[".ref"].size());
     ASSERT_EQ("ref_c_sequence_id", doc[".ref"].at(0));
     ASSERT_EQ("ref_b_sequence_id", doc[".ref"].at(1));
     ASSERT_EQ(Join::reference_helper_sentinel_value, doc["ref_b_sequence_id"]);
-    ASSERT_EQ(2, doc["ref_c_sequence_id"].size());
+    ASSERT_EQ(size_t{2}, doc["ref_c_sequence_id"].size());
     ASSERT_EQ(3, doc["ref_c_sequence_id"][0]); // c_1 has been re-indexed
     ASSERT_EQ(2, doc["ref_c_sequence_id"][1]);
 
@@ -5962,16 +5968,16 @@ TEST_F(CollectionJoinTest, CascadeDeleteOption) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("b_0", res_obj["hits"][0]["document"]["ref_b"]);
-    ASSERT_EQ(0, res_obj["hits"][0]["document"].count("coll_b")); // b_0 has been deleted
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"].count("coll_b")); // b_0 has been deleted
 
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["ref_c"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["ref_c"].size());
     ASSERT_EQ("c_1", res_obj["hits"][0]["document"]["ref_c"][0]);
     ASSERT_EQ("c_2", res_obj["hits"][0]["document"]["ref_c"][1]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["coll_c"].size()); // c_1 has been re-indexed
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["coll_c"].size()); // c_1 has been re-indexed
     ASSERT_EQ("c_2", res_obj["hits"][0]["document"]["coll_c"][0]["id"]);
     ASSERT_EQ("c_1", res_obj["hits"][0]["document"]["coll_c"][1]["id"]);
 }
@@ -6084,7 +6090,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_idx"));
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"].at("product_idx"));
 
@@ -6096,7 +6102,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"].at("product_id"));
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_id"));
@@ -6110,7 +6116,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_idx"));
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"].at("product_idx"));
 
@@ -6124,7 +6130,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_idx"));
 
     req_params = {
@@ -6135,7 +6141,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
 
@@ -6152,7 +6158,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     }
     delete iter_upper_bound;
     delete it;
-    ASSERT_EQ(2, docs_count);
+    ASSERT_EQ(uint32_t{2}, docs_count);
 
     collectionManager.get_collection_unsafe("Users")->remove("1");
 
@@ -6163,7 +6169,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
     ASSERT_EQ("user_a", res_obj["hits"][0]["document"].at("user_id"));
 
     req_params = {
@@ -6174,7 +6180,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ("user_a", res_obj["hits"][0]["document"].at("user_id"));
 
@@ -6274,7 +6280,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
 
     ASSERT_EQ("3", res_obj["hits"][0]["document"].at("leadId"));
     ASSERT_EQ("2", res_obj["hits"][0]["document"].at("documentId"));
@@ -6295,7 +6301,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
 
     ASSERT_EQ("3", res_obj["hits"][0]["document"].at("leadId"));
     ASSERT_EQ("2", res_obj["hits"][0]["document"].at("documentId"));
@@ -6319,7 +6325,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
 
     ASSERT_EQ("1", res_obj["hits"][0]["document"].at("leadId"));
     ASSERT_EQ("3", res_obj["hits"][0]["document"].at("documentId"));
@@ -6340,7 +6346,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
 
     ASSERT_EQ("3", res_obj["hits"][0]["document"].at("leadId"));
     ASSERT_EQ("2", res_obj["hits"][0]["document"].at("documentId"));
@@ -6405,14 +6411,14 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
 
     ASSERT_EQ("bar", res_obj["hits"][0]["document"].at("name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].at("split_members").size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].at("split_members").size());
     ASSERT_EQ("user_b", res_obj["hits"][0]["document"]["split_members"][0].at("user_id"));
 
     ASSERT_EQ("foo", res_obj["hits"][1]["document"].at("name"));
-    ASSERT_EQ(3, res_obj["hits"][1]["document"].at("split_members").size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"].at("split_members").size());
     ASSERT_EQ("user_a", res_obj["hits"][1]["document"]["split_members"][0].at("user_id"));
     ASSERT_EQ("user_b", res_obj["hits"][1]["document"]["split_members"][1].at("user_id"));
     ASSERT_EQ("user_c", res_obj["hits"][1]["document"]["split_members"][2].at("user_id"));
@@ -6429,10 +6435,10 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
 
     ASSERT_EQ("foo", res_obj["hits"][0]["document"].at("name"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].at("split_members").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].at("split_members").size());
     ASSERT_EQ("user_a", res_obj["hits"][0]["document"]["split_members"][0].at("user_id"));
     ASSERT_EQ("user_c", res_obj["hits"][0]["document"]["split_members"][1].at("user_id"));
 
@@ -6497,7 +6503,7 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -6554,30 +6560,30 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
 
     auto links_collection = collectionManager.get_collection_unsafe("Links");
     auto links_doc = links_collection->get("0").get();
-    ASSERT_EQ(1, links_doc.count(".ref"));
-    ASSERT_EQ(2, links_doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, links_doc.count(".ref"));
+    ASSERT_EQ(size_t{2}, links_doc[".ref"].size());
     ASSERT_EQ("user_id_sequence_id", links_doc[".ref"][0]);
     ASSERT_EQ("repo_id_sequence_id", links_doc[".ref"][1]);
-    ASSERT_EQ(1, links_doc.count("user_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_doc.count("user_id_sequence_id"));
     ASSERT_EQ(1, links_doc["user_id_sequence_id"]);
-    ASSERT_EQ(1, links_doc.count("repo_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_doc.count("repo_id_sequence_id"));
     ASSERT_EQ(0, links_doc["repo_id_sequence_id"]);
 
     links_doc = links_collection->get("1").get();
-    ASSERT_EQ(1, links_doc.count(".ref"));
-    ASSERT_EQ(2, links_doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, links_doc.count(".ref"));
+    ASSERT_EQ(size_t{2}, links_doc[".ref"].size());
     ASSERT_EQ("user_id_sequence_id", links_doc[".ref"][0]);
     ASSERT_EQ("repo_id_sequence_id", links_doc[".ref"][1]);
-    ASSERT_EQ(1, links_doc.count("user_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_doc.count("user_id_sequence_id"));
     ASSERT_EQ(2, links_doc["user_id_sequence_id"]);
-    ASSERT_EQ(1, links_doc.count("repo_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_doc.count("repo_id_sequence_id"));
     ASSERT_EQ(0, links_doc["repo_id_sequence_id"]);
 
     collectionManager.get_collection_unsafe("Repos")->remove("0");
@@ -6585,28 +6591,28 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     // Only optional reference to repos was deleted, so the document will not be deleted.
     links_collection = collectionManager.get_collection_unsafe("Links");
     links_doc = links_collection->get("0").get();
-    ASSERT_EQ(1, links_doc.count(".ref"));
-    ASSERT_EQ(1, links_doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, links_doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, links_doc[".ref"].size());
     ASSERT_EQ("user_id_sequence_id", links_doc[".ref"][0]);
-    ASSERT_EQ(1, links_doc.count("user_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_doc.count("user_id_sequence_id"));
     ASSERT_EQ(1, links_doc["user_id_sequence_id"]);
-    ASSERT_EQ(0, links_doc.count("repo_id_sequence_id"));
+    ASSERT_EQ(size_t{0}, links_doc.count("repo_id_sequence_id"));
 
     links_doc = links_collection->get("1").get();
-    ASSERT_EQ(1, links_doc.count(".ref"));
-    ASSERT_EQ(1, links_doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, links_doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, links_doc[".ref"].size());
     ASSERT_EQ("user_id_sequence_id", links_doc[".ref"][0]);
-    ASSERT_EQ(1, links_doc.count("user_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_doc.count("user_id_sequence_id"));
     ASSERT_EQ(2, links_doc["user_id_sequence_id"]);
-    ASSERT_EQ(0, links_doc.count("repo_id_sequence_id"));
+    ASSERT_EQ(size_t{0}, links_doc.count("repo_id_sequence_id"));
 
     collectionManager.get_collection_unsafe("Users")->remove("2");
 
     links_doc = links_collection->get("0").get();
-    ASSERT_EQ(1, links_doc.count(".ref"));
-    ASSERT_EQ(1, links_doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, links_doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, links_doc[".ref"].size());
     ASSERT_EQ("user_id_sequence_id", links_doc[".ref"][0]);
-    ASSERT_EQ(1, links_doc.count("user_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_doc.count("user_id_sequence_id"));
     ASSERT_EQ(1, links_doc["user_id_sequence_id"]);
 
     // Required reference to users was deleted, so the documents are removed.
@@ -6639,30 +6645,30 @@ TEST_F(CollectionJoinTest, CascadeDeletion) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
 
     auto links_2_collection = collectionManager.get_collection_unsafe("Links_2");
     auto links_2_doc = links_2_collection->get("0").get();
-    ASSERT_EQ(1, links_2_doc.count(".ref"));
-    ASSERT_EQ(2, links_2_doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, links_2_doc.count(".ref"));
+    ASSERT_EQ(size_t{2}, links_2_doc[".ref"].size());
     ASSERT_EQ("user_id_sequence_id", links_2_doc[".ref"][0]);
     ASSERT_EQ("repo_id_sequence_id", links_2_doc[".ref"][1]);
-    ASSERT_EQ(1, links_2_doc.count("user_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_2_doc.count("user_id_sequence_id"));
     ASSERT_EQ(1, links_2_doc["user_id_sequence_id"]);
-    ASSERT_EQ(1, links_2_doc.count("repo_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_2_doc.count("repo_id_sequence_id"));
     ASSERT_EQ(1, links_2_doc["repo_id_sequence_id"]);
 
     collectionManager.get_collection_unsafe("Users")->remove("1");
 
     links_2_doc = links_2_collection->get("0").get();
-    ASSERT_EQ(1, links_2_doc.count(".ref"));
-    ASSERT_EQ(1, links_2_doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, links_2_doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, links_2_doc[".ref"].size());
     ASSERT_EQ("repo_id_sequence_id", links_2_doc[".ref"][0]);
-    ASSERT_EQ(0, links_2_doc.count("user_id_sequence_id"));
-    ASSERT_EQ(1, links_2_doc.count("repo_id_sequence_id"));
+    ASSERT_EQ(size_t{0}, links_2_doc.count("user_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, links_2_doc.count("repo_id_sequence_id"));
     ASSERT_EQ(1, links_2_doc["repo_id_sequence_id"]);
 
     collectionManager.get_collection_unsafe("Repos")->remove("1");
@@ -6681,7 +6687,7 @@ protected:
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
-    std::string state_dir_path = "/tmp/typesense_test/collection_join";
+    std::string state_dir_path;
 
     Collection* products = nullptr;
     Collection* customers = nullptr;
@@ -6692,8 +6698,9 @@ protected:
     long now_ts = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
     void setupCollection() {
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_join_sort");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -6722,7 +6729,7 @@ protected:
             })"_json
         };
 
-        EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+        EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
         auto collection_create_op = collectionManager.create_collection(schema_json);
         ASSERT_TRUE(collection_create_op.ok());
@@ -6816,7 +6823,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -6866,7 +6873,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -6927,7 +6934,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -6950,7 +6957,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -6973,7 +6980,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -6998,7 +7005,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -7027,7 +7034,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -7055,7 +7062,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -7083,7 +7090,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -7114,7 +7121,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -7142,7 +7149,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -7167,7 +7174,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -7190,7 +7197,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -7214,7 +7221,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -7227,6 +7234,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -7340,8 +7348,8 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"].at("product_id"));
@@ -7359,8 +7367,8 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7379,8 +7387,8 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7399,12 +7407,12 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
-    ASSERT_EQ(1, res_obj["hits"][0].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][0]["geo_distance_meters"].count("product_location"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["geo_distance_meters"].count("product_location"));
     ASSERT_EQ(538, res_obj["hits"][0]["geo_distance_meters"]["product_location"]);
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
     ASSERT_EQ(73.5, res_obj["hits"][1]["document"].at("product_price"));
@@ -7422,12 +7430,12 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
-    ASSERT_EQ(1, res_obj["hits"][0].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][0]["geo_distance_meters"].count("product_location"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["geo_distance_meters"].count("product_location"));
     ASSERT_EQ(1356, res_obj["hits"][0]["geo_distance_meters"]["product_location"]);
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][1]["document"].at("product_price"));
@@ -7446,8 +7454,8 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"].at("product_id"));
@@ -7465,8 +7473,8 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7484,8 +7492,8 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7503,9 +7511,9 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"].at("product_name"));
@@ -7522,9 +7530,9 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("shampoo", res_obj["hits"][0]["document"].at("product_name"));
     ASSERT_EQ(75, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("soap", res_obj["hits"][1]["document"].at("product_name"));
@@ -7540,21 +7548,21 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("0", res_obj["hits"][0]["document"].at("id"));
     ASSERT_EQ("Joe", res_obj["hits"][0]["document"].at("customer_name"));
     ASSERT_EQ("shampoo", res_obj["hits"][0]["document"].at("product_name"));
-    ASSERT_EQ(3, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("2", res_obj["hits"][1]["document"].at("id"));
     ASSERT_EQ("Dan", res_obj["hits"][1]["document"].at("customer_name"));
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"].at("product_name"));
-    ASSERT_EQ(3, res_obj["hits"][2]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][2]["document"].size());
     ASSERT_EQ("1", res_obj["hits"][2]["document"].at("id"));
     ASSERT_EQ("Joe", res_obj["hits"][2]["document"].at("customer_name"));
     ASSERT_EQ("soap", res_obj["hits"][2]["document"].at("product_name"));
-    ASSERT_EQ(3, res_obj["hits"][3]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][3]["document"].size());
     ASSERT_EQ("3", res_obj["hits"][3]["document"].at("id"));
     ASSERT_EQ("Dan", res_obj["hits"][3]["document"].at("customer_name"));
     ASSERT_EQ("soap", res_obj["hits"][3]["document"].at("product_name"));
@@ -7570,26 +7578,26 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
     ASSERT_EQ("0", res_obj["hits"][0]["document"].at("id"));
     ASSERT_EQ("bar", res_obj["hits"][0]["document"]["Structures"].at("name"));
-    ASSERT_EQ(0, res_obj["hits"][0]["document"].count("Ads"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"].count("Ads"));
 
     ASSERT_EQ("2", res_obj["hits"][1]["document"].at("id"));
     ASSERT_EQ("foo", res_obj["hits"][1]["document"]["Structures"].at("name"));
-    ASSERT_EQ(0, res_obj["hits"][1]["document"].count("Ads"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"].count("Ads"));
 
     ASSERT_EQ("3", res_obj["hits"][2]["document"].at("id"));
-    ASSERT_EQ(0, res_obj["hits"][2]["document"].count("Structures"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"].count("Ads"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["Ads"].count("Structures"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"].count("Structures"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"].count("Ads"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["Ads"].count("Structures"));
     ASSERT_EQ("foo", res_obj["hits"][2]["document"]["Ads"]["Structures"]["name"]);
 
     ASSERT_EQ("1", res_obj["hits"][3]["document"].at("id"));
-    ASSERT_EQ(0, res_obj["hits"][3]["document"].count("Structures"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"].count("Ads"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"]["Ads"].count("Structures"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][3]["document"].count("Structures"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"].count("Ads"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"]["Ads"].count("Structures"));
     ASSERT_EQ("bar", res_obj["hits"][3]["document"]["Ads"]["Structures"]["name"]);
 
     req_params = {
@@ -7603,8 +7611,8 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(6, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, res_obj["hits"].size());
     ASSERT_EQ("4", res_obj["hits"][0]["document"].at("id"));
     ASSERT_EQ("3", res_obj["hits"][1]["document"].at("id"));
     ASSERT_EQ("2", res_obj["hits"][2]["document"].at("id"));
@@ -7623,8 +7631,8 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(6, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, res_obj["hits"].size());
     ASSERT_EQ("4", res_obj["hits"][0]["document"].at("id"));
     ASSERT_EQ("0", res_obj["hits"][1]["document"].at("id"));
     ASSERT_EQ("3", res_obj["hits"][2]["document"].at("id"));
@@ -7643,8 +7651,8 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(6, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, res_obj["hits"].size());
     ASSERT_EQ("4", res_obj["hits"][0]["document"].at("id"));
     ASSERT_EQ("0", res_obj["hits"][1]["document"].at("id"));
     ASSERT_EQ("3", res_obj["hits"][2]["document"].at("id"));
@@ -7664,38 +7672,38 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["product"].size());
     ASSERT_EQ("Tablet from apple", res_obj["hits"][0]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][0].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][0]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["geo_distance_meters"].size());
     ASSERT_EQ(15310, res_obj["hits"][0]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("5", res_obj["hits"][1]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["product"].size());
     ASSERT_EQ("Tablet from oppo", res_obj["hits"][1]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][1].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][1]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["geo_distance_meters"].size());
     ASSERT_EQ(15492, res_obj["hits"][1]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("0", res_obj["hits"][2]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["product"].size());
     ASSERT_EQ("Generic brand Tablet", res_obj["hits"][2]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][2].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][2]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["geo_distance_meters"].size());
     ASSERT_EQ(15492, res_obj["hits"][2]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("4", res_obj["hits"][3]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"]["product"].size());
     ASSERT_EQ("Tablet from xiaomi", res_obj["hits"][3]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][3].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][3]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["geo_distance_meters"].size());
     ASSERT_EQ(32605, res_obj["hits"][3]["geo_distance_meters"]["location"]);
 
     req_params = {
@@ -7708,71 +7716,71 @@ TEST_F(JoinSortTest, SortByReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(7, res_obj["found"].get<size_t>());
-    ASSERT_EQ(7, res_obj["hits"].size());
+    ASSERT_EQ(size_t{7}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{7}, res_obj["hits"].size());
 
     ASSERT_EQ("5", res_obj["hits"][0]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["product"].size());
     ASSERT_EQ("Tablet from oppo", res_obj["hits"][0]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][0].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][0]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["geo_distance_meters"].size());
     ASSERT_EQ(15492, res_obj["hits"][0]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("2", res_obj["hits"][1]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["product"].size());
     ASSERT_EQ("Tablet from apple", res_obj["hits"][1]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][1].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][1]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["geo_distance_meters"].size());
     ASSERT_EQ(15310, res_obj["hits"][1]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("0", res_obj["hits"][2]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["product"].size());
     ASSERT_EQ("Generic brand Tablet", res_obj["hits"][2]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][2].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][2]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["geo_distance_meters"].size());
     ASSERT_EQ(15492, res_obj["hits"][2]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("4", res_obj["hits"][3]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"]["product"].size());
     ASSERT_EQ("Tablet from xiaomi", res_obj["hits"][3]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][3].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][3]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["geo_distance_meters"].size());
     ASSERT_EQ(32605, res_obj["hits"][3]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("4", res_obj["hits"][3]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][3]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["document"]["product"].size());
     ASSERT_EQ("Tablet from xiaomi", res_obj["hits"][3]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][3].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][3]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][3]["geo_distance_meters"].size());
     ASSERT_EQ(32605, res_obj["hits"][3]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("3", res_obj["hits"][4]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][4]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][4]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][4]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][4]["document"]["product"].size());
     ASSERT_EQ("Tablet from vivo", res_obj["hits"][4]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][4].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][4]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][4].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][4]["geo_distance_meters"].size());
     ASSERT_EQ(2147483647, res_obj["hits"][4]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("1", res_obj["hits"][5]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][5]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][5]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][5]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][5]["document"]["product"].size());
     ASSERT_EQ("Tablet from samsung", res_obj["hits"][5]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][5].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][5]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][5].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][5]["geo_distance_meters"].size());
     ASSERT_EQ(2147483647, res_obj["hits"][5]["geo_distance_meters"]["location"]);
 
     ASSERT_EQ("6", res_obj["hits"][6]["document"].at("id"));
-    ASSERT_EQ(1, res_obj["hits"][6]["document"].count("product"));
-    ASSERT_EQ(1, res_obj["hits"][6]["document"]["product"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][6]["document"].count("product"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][6]["document"]["product"].size());
     ASSERT_EQ("Phone from samsung", res_obj["hits"][6]["document"]["product"]["name"]);
-    ASSERT_EQ(1, res_obj["hits"][6].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][6]["geo_distance_meters"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][6].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][6]["geo_distance_meters"].size());
     ASSERT_EQ(2147483647, res_obj["hits"][6]["geo_distance_meters"]["location"]);
 }
 
@@ -7790,8 +7798,8 @@ TEST_F(JoinSortTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7810,8 +7818,8 @@ TEST_F(JoinSortTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7830,8 +7838,8 @@ TEST_F(JoinSortTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7864,8 +7872,8 @@ TEST_F(JoinSortTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7888,8 +7896,8 @@ TEST_F(JoinSortTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7914,8 +7922,8 @@ TEST_F(JoinSortTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7939,8 +7947,8 @@ TEST_F(JoinSortTest, IntegrationWithOtherFeatures) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
@@ -7960,9 +7968,9 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("user_d", res_obj["hits"][0]["document"].at("user_id"));
     ASSERT_EQ("Aby", res_obj["hits"][0]["document"].at("user_name"));
     ASSERT_EQ("body4", res_obj["hits"][0]["document"].at("repo_content"));
@@ -7990,9 +7998,9 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("user_b", res_obj["hits"][0]["document"].at("user_id"));
     ASSERT_EQ("Ruby", res_obj["hits"][0]["document"].at("user_name"));
     ASSERT_EQ("body1", res_obj["hits"][0]["document"].at("repo_content"));
@@ -8021,30 +8029,30 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("user_b", res_obj["hits"][0]["document"].at("user_id"));
     ASSERT_EQ("Ruby", res_obj["hits"][0]["document"].at("user_name"));
     ASSERT_EQ("body1", res_obj["hits"][0]["document"].at("repo_content"));
-    ASSERT_EQ(1, res_obj["hits"][0].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][0]["geo_distance_meters"].count("repo_location"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["geo_distance_meters"].count("repo_location"));
     ASSERT_EQ(15310, res_obj["hits"][0]["geo_distance_meters"]["repo_location"]);
 
-    ASSERT_EQ(4, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("user_c", res_obj["hits"][1]["document"].at("user_id"));
     ASSERT_EQ("Joe", res_obj["hits"][1]["document"].at("user_name"));
     ASSERT_EQ("body1", res_obj["hits"][1]["document"].at("repo_content"));
-    ASSERT_EQ(1, res_obj["hits"][1].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][1]["geo_distance_meters"].count("repo_location"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["geo_distance_meters"].count("repo_location"));
     ASSERT_EQ(15310, res_obj["hits"][1]["geo_distance_meters"]["repo_location"]);
 
-    ASSERT_EQ(4, res_obj["hits"][2]["document"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][2]["document"].size());
     ASSERT_EQ("user_d", res_obj["hits"][2]["document"].at("user_id"));
     ASSERT_EQ("Aby", res_obj["hits"][2]["document"].at("user_name"));
     ASSERT_EQ("body4", res_obj["hits"][2]["document"].at("repo_content"));
-    ASSERT_EQ(1, res_obj["hits"][2].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][2]["geo_distance_meters"].count("repo_location"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["geo_distance_meters"].count("repo_location"));
     ASSERT_EQ(32605, res_obj["hits"][2]["geo_distance_meters"]["repo_location"]);
 
     {
@@ -8085,30 +8093,30 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("user_c", res_obj["hits"][0]["document"].at("user_id"));
     ASSERT_EQ("Joe", res_obj["hits"][0]["document"].at("user_name"));
     ASSERT_EQ("body1", res_obj["hits"][0]["document"].at("repo_content"));
-    ASSERT_EQ(1, res_obj["hits"][0].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][0]["geo_distance_meters"].count("repo_location"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["geo_distance_meters"].count("repo_location"));
     ASSERT_EQ(15310, res_obj["hits"][0]["geo_distance_meters"]["repo_location"]);
 
-    ASSERT_EQ(4, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("user_a", res_obj["hits"][1]["document"].at("user_id"));
     ASSERT_EQ("Roshan", res_obj["hits"][1]["document"].at("user_name"));
     ASSERT_EQ("body2", res_obj["hits"][1]["document"].at("repo_content"));
-    ASSERT_EQ(1, res_obj["hits"][1].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][1]["geo_distance_meters"].count("repo_location"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["geo_distance_meters"].count("repo_location"));
     ASSERT_EQ(15492, res_obj["hits"][1]["geo_distance_meters"]["repo_location"]);
 
-    ASSERT_EQ(4, res_obj["hits"][2]["document"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][2]["document"].size());
     ASSERT_EQ("user_e", res_obj["hits"][2]["document"].at("user_id"));
     ASSERT_EQ("Andy", res_obj["hits"][2]["document"].at("user_name"));
     ASSERT_EQ("body4", res_obj["hits"][2]["document"].at("repo_content"));
-    ASSERT_EQ(1, res_obj["hits"][2].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][2]["geo_distance_meters"].count("repo_location"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["geo_distance_meters"].count("repo_location"));
     ASSERT_EQ(32605, res_obj["hits"][2]["geo_distance_meters"]["repo_location"]);
 
     req_params = {
@@ -8122,27 +8130,27 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"].at("id"));
-    ASSERT_EQ(0, res_obj["hits"][0]["document"].count("Structures"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Ads"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Ads"].count("Structures"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"].count("Structures"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Ads"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Ads"].count("Structures"));
     ASSERT_EQ("bar", res_obj["hits"][0]["document"]["Ads"]["Structures"]["name"]);
 
     ASSERT_EQ("3", res_obj["hits"][1]["document"].at("id"));
-    ASSERT_EQ(0, res_obj["hits"][1]["document"].count("Structures"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("Ads"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["Ads"].count("Structures"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][1]["document"].count("Structures"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("Ads"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["Ads"].count("Structures"));
     ASSERT_EQ("foo", res_obj["hits"][1]["document"]["Ads"]["Structures"]["name"]);
 
     ASSERT_EQ("2", res_obj["hits"][2]["document"].at("id"));
     ASSERT_EQ("foo", res_obj["hits"][2]["document"]["Structures"].at("name"));
-    ASSERT_EQ(0, res_obj["hits"][2]["document"].count("Ads"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"].count("Ads"));
 
     ASSERT_EQ("0", res_obj["hits"][3]["document"].at("id"));
     ASSERT_EQ("bar", res_obj["hits"][3]["document"]["Structures"].at("name"));
-    ASSERT_EQ(0, res_obj["hits"][3]["document"].count("Ads"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][3]["document"].count("Ads"));
 
     {
         std::vector<nlohmann::json> documents = {
@@ -8161,7 +8169,7 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
         for (auto const &json: documents) {
             auto add_op = products_coll->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -8191,11 +8199,10 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
         auto collection_create_op = collectionManager.create_collection(schema_json);
         ASSERT_TRUE(collection_create_op.ok());
 
-        auto c = collection_create_op.get();
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -8213,21 +8220,21 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
 
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Orders"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Orders"));
     ASSERT_EQ(1000, res_obj["hits"][0]["document"]["Orders"]["amount"]);
 
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("Orders"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("Orders"));
     ASSERT_EQ(100, res_obj["hits"][1]["document"]["Orders"]["amount"]);
 
     ASSERT_EQ("product_d", res_obj["hits"][2]["document"]["product_id"]);
-    ASSERT_EQ(0, res_obj["hits"][2]["document"].count("Orders"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][2]["document"].count("Orders"));
     ASSERT_EQ("product_c", res_obj["hits"][3]["document"]["product_id"]);
-    ASSERT_EQ(0, res_obj["hits"][3]["document"].count("Orders"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][3]["document"].count("Orders"));
 
     // Sort by nested reference geopoint field
     req_params = {
@@ -8241,15 +8248,15 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Products"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Products"].count("Customers"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Products"]["Customers"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Products"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Products"].count("Customers"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Products"]["Customers"].count("product_price"));
     ASSERT_EQ(75, res_obj["hits"][0]["document"]["Products"]["Customers"]["product_price"]);
-    ASSERT_EQ(1, res_obj["hits"][0].count("geo_distance_meters"));
-    ASSERT_EQ(1, res_obj["hits"][0]["geo_distance_meters"].count("product_location"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0].count("geo_distance_meters"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["geo_distance_meters"].count("product_location"));
     ASSERT_EQ(538, res_obj["hits"][0]["geo_distance_meters"]["product_location"]);
 
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product"));
@@ -8268,8 +8275,8 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
 
     ASSERT_EQ(1, res_obj["hits"][0]["document"]["sort_in_collection"]);
     ASSERT_EQ("x_y_1_1", res_obj["hits"][0]["document"]["reference"]);
@@ -8311,71 +8318,71 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     res_obj = nlohmann::json::parse(json_res);
 
     // Andy references repos having 945 and 95 stars. Since sort order is ascending, using 95 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("user_e", res_obj["hits"][0]["document"].at("user_id"));
     ASSERT_EQ("Andy", res_obj["hits"][0]["document"].at("user_name"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["repo_content"].size());
     ASSERT_EQ("body3", res_obj["hits"][0]["document"]["repo_content"][0]);
     ASSERT_EQ("body4", res_obj["hits"][0]["document"]["repo_content"][1]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["repo_stars"].size());
     ASSERT_EQ(945, res_obj["hits"][0]["document"]["repo_stars"][0]);
     ASSERT_EQ(95, res_obj["hits"][0]["document"]["repo_stars"][1]);
 
     // Aby references repos having 4562, 945 and 95 stars. Since sort order is ascending, using 95 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("user_d", res_obj["hits"][1]["document"].at("user_id"));
     ASSERT_EQ("Aby", res_obj["hits"][1]["document"].at("user_name"));
-    ASSERT_EQ(3, res_obj["hits"][1]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"]["repo_content"].size());
     ASSERT_EQ("body2", res_obj["hits"][1]["document"]["repo_content"][0]);
     ASSERT_EQ("body3", res_obj["hits"][1]["document"]["repo_content"][1]);
     ASSERT_EQ("body4", res_obj["hits"][1]["document"]["repo_content"][2]);
-    ASSERT_EQ(3, res_obj["hits"][1]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"]["repo_stars"].size());
     ASSERT_EQ(4562, res_obj["hits"][1]["document"]["repo_stars"][0]);
     ASSERT_EQ(945, res_obj["hits"][1]["document"]["repo_stars"][1]);
     ASSERT_EQ(95, res_obj["hits"][1]["document"]["repo_stars"][2]);
 
     // Joe references repos having 431 and 945 stars. Since sort order is ascending, using 431 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][2]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][2]["document"].size());
     ASSERT_EQ("user_c", res_obj["hits"][2]["document"].at("user_id"));
     ASSERT_EQ("Joe", res_obj["hits"][2]["document"].at("user_name"));
-    ASSERT_EQ(2, res_obj["hits"][2]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][2]["document"]["repo_content"].size());
     ASSERT_EQ("body1", res_obj["hits"][2]["document"]["repo_content"][0]);
     ASSERT_EQ("body3", res_obj["hits"][2]["document"]["repo_content"][1]);
-    ASSERT_EQ(2, res_obj["hits"][2]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][2]["document"]["repo_stars"].size());
     ASSERT_EQ(431, res_obj["hits"][2]["document"]["repo_stars"][0]);
     ASSERT_EQ(945, res_obj["hits"][2]["document"]["repo_stars"][1]);
 
     // Ruby references repos having 431, 4562 and 945 stars. Since sort order is ascending, using 431 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][3]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][3]["document"].size());
     ASSERT_EQ("user_b", res_obj["hits"][3]["document"].at("user_id"));
     ASSERT_EQ("Ruby", res_obj["hits"][3]["document"].at("user_name"));
-    ASSERT_EQ(3, res_obj["hits"][3]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][3]["document"]["repo_content"].size());
     ASSERT_EQ("body1", res_obj["hits"][3]["document"]["repo_content"][0]);
     ASSERT_EQ("body2", res_obj["hits"][3]["document"]["repo_content"][1]);
     ASSERT_EQ("body3", res_obj["hits"][3]["document"]["repo_content"][2]);
-    ASSERT_EQ(3, res_obj["hits"][3]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][3]["document"]["repo_stars"].size());
     ASSERT_EQ(431, res_obj["hits"][3]["document"]["repo_stars"][0]);
     ASSERT_EQ(4562, res_obj["hits"][3]["document"]["repo_stars"][1]);
     ASSERT_EQ(945, res_obj["hits"][3]["document"]["repo_stars"][2]);
 
     // Roshan references repos having 4562 and 945 stars. Since sort order is ascending, using 945 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][4]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][4]["document"].size());
     ASSERT_EQ("user_a", res_obj["hits"][4]["document"].at("user_id"));
     ASSERT_EQ("Roshan", res_obj["hits"][4]["document"].at("user_name"));
-    ASSERT_EQ(2, res_obj["hits"][4]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][4]["document"]["repo_content"].size());
     ASSERT_EQ("body2", res_obj["hits"][4]["document"]["repo_content"][0]);
     ASSERT_EQ("body3", res_obj["hits"][4]["document"]["repo_content"][1]);
-    ASSERT_EQ(2, res_obj["hits"][4]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][4]["document"]["repo_stars"].size());
     ASSERT_EQ(4562, res_obj["hits"][4]["document"]["repo_stars"][0]);
     ASSERT_EQ(945, res_obj["hits"][4]["document"]["repo_stars"][1]);
 
@@ -8393,71 +8400,71 @@ TEST_F(JoinSortTest, SortByNestedReferencedCollField) {
     res_obj = nlohmann::json::parse(json_res);
 
     // Aby references repos having 4562, 945 and 95 stars. Since sort order is descending, using 4562 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("user_d", res_obj["hits"][0]["document"].at("user_id"));
     ASSERT_EQ("Aby", res_obj["hits"][0]["document"].at("user_name"));
-    ASSERT_EQ(3, res_obj["hits"][0]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"]["repo_content"].size());
     ASSERT_EQ("body2", res_obj["hits"][0]["document"]["repo_content"][0]);
     ASSERT_EQ("body3", res_obj["hits"][0]["document"]["repo_content"][1]);
     ASSERT_EQ("body4", res_obj["hits"][0]["document"]["repo_content"][2]);
-    ASSERT_EQ(3, res_obj["hits"][0]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"]["repo_stars"].size());
     ASSERT_EQ(4562, res_obj["hits"][0]["document"]["repo_stars"][0]);
     ASSERT_EQ(945, res_obj["hits"][0]["document"]["repo_stars"][1]);
     ASSERT_EQ(95, res_obj["hits"][0]["document"]["repo_stars"][2]);
 
     // Ruby references repos having 431, 4562 and 945 stars. Since sort order is descending, using 4562 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("user_b", res_obj["hits"][1]["document"].at("user_id"));
     ASSERT_EQ("Ruby", res_obj["hits"][1]["document"].at("user_name"));
-    ASSERT_EQ(3, res_obj["hits"][1]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"]["repo_content"].size());
     ASSERT_EQ("body1", res_obj["hits"][1]["document"]["repo_content"][0]);
     ASSERT_EQ("body2", res_obj["hits"][1]["document"]["repo_content"][1]);
     ASSERT_EQ("body3", res_obj["hits"][1]["document"]["repo_content"][2]);
-    ASSERT_EQ(3, res_obj["hits"][1]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"]["repo_stars"].size());
     ASSERT_EQ(431, res_obj["hits"][1]["document"]["repo_stars"][0]);
     ASSERT_EQ(4562, res_obj["hits"][1]["document"]["repo_stars"][1]);
     ASSERT_EQ(945, res_obj["hits"][1]["document"]["repo_stars"][2]);
 
     // Roshan references repos having 4562 and 945 stars. Since sort order is descending, using 4562 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][2]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][2]["document"].size());
     ASSERT_EQ("user_a", res_obj["hits"][2]["document"].at("user_id"));
     ASSERT_EQ("Roshan", res_obj["hits"][2]["document"].at("user_name"));
-    ASSERT_EQ(2, res_obj["hits"][2]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][2]["document"]["repo_content"].size());
     ASSERT_EQ("body2", res_obj["hits"][2]["document"]["repo_content"][0]);
     ASSERT_EQ("body3", res_obj["hits"][2]["document"]["repo_content"][1]);
-    ASSERT_EQ(2, res_obj["hits"][2]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][2]["document"]["repo_stars"].size());
     ASSERT_EQ(4562, res_obj["hits"][2]["document"]["repo_stars"][0]);
     ASSERT_EQ(945, res_obj["hits"][2]["document"]["repo_stars"][1]);
 
     // Andy references repos having 945 and 95 stars. Since sort order is descending, using 945 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][3]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][3]["document"].size());
     ASSERT_EQ("user_e", res_obj["hits"][3]["document"].at("user_id"));
     ASSERT_EQ("Andy", res_obj["hits"][3]["document"].at("user_name"));
-    ASSERT_EQ(2, res_obj["hits"][3]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][3]["document"]["repo_content"].size());
     ASSERT_EQ("body3", res_obj["hits"][3]["document"]["repo_content"][0]);
     ASSERT_EQ("body4", res_obj["hits"][3]["document"]["repo_content"][1]);
-    ASSERT_EQ(2, res_obj["hits"][3]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][3]["document"]["repo_stars"].size());
     ASSERT_EQ(945, res_obj["hits"][3]["document"]["repo_stars"][0]);
     ASSERT_EQ(95, res_obj["hits"][3]["document"]["repo_stars"][1]);
 
     // Joe references repos having 431 and 945 stars. Since sort order is descending, using 945 to sort.
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
-    ASSERT_EQ(4, res_obj["hits"][4]["document"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][4]["document"].size());
     ASSERT_EQ("user_c", res_obj["hits"][4]["document"].at("user_id"));
     ASSERT_EQ("Joe", res_obj["hits"][4]["document"].at("user_name"));
-    ASSERT_EQ(2, res_obj["hits"][4]["document"]["repo_content"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][4]["document"]["repo_content"].size());
     ASSERT_EQ("body1", res_obj["hits"][4]["document"]["repo_content"][0]);
     ASSERT_EQ("body3", res_obj["hits"][4]["document"]["repo_content"][1]);
-    ASSERT_EQ(2, res_obj["hits"][4]["document"]["repo_stars"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][4]["document"]["repo_stars"].size());
     ASSERT_EQ(431, res_obj["hits"][4]["document"]["repo_stars"][0]);
     ASSERT_EQ(945, res_obj["hits"][4]["document"]["repo_stars"][1]);
 }
@@ -8476,29 +8483,29 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
-    ASSERT_EQ(3, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("Ruby", res_obj["hits"][0]["document"].at("user_name"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].at("Repos").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].at("Repos").size());
     ASSERT_EQ("body1", res_obj["hits"][0]["document"]["Repos"][0].at("repo_content"));
     ASSERT_EQ("body2", res_obj["hits"][0]["document"]["Repos"][1].at("repo_content"));
     ASSERT_EQ(15310, res_obj["hits"][0]["geo_distance_meters"]["repo_location"]);
 
-    ASSERT_EQ(3, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("Joe", res_obj["hits"][1]["document"].at("user_name"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].at("Repos").size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].at("Repos").size());
     ASSERT_EQ("body1", res_obj["hits"][1]["document"]["Repos"][0].at("repo_content"));
     ASSERT_EQ(15310, res_obj["hits"][1]["geo_distance_meters"]["repo_location"]);
 
-    ASSERT_EQ(3, res_obj["hits"][2]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"][2]["document"].size());
     ASSERT_EQ("Roshan", res_obj["hits"][2]["document"].at("user_name"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"].at("Repos").size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"].at("Repos").size());
     ASSERT_EQ("body2", res_obj["hits"][2]["document"]["Repos"][0].at("repo_content"));
     ASSERT_EQ(15492, res_obj["hits"][2]["geo_distance_meters"]["repo_location"]);
 
     ASSERT_EQ("Aby", res_obj["hits"][3]["document"].at("user_name"));
-    ASSERT_EQ(2, res_obj["hits"][3]["document"].at("Repos").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][3]["document"].at("Repos").size());
     ASSERT_EQ("body2", res_obj["hits"][3]["document"]["Repos"][0].at("repo_content"));
     ASSERT_EQ("body4", res_obj["hits"][3]["document"]["Repos"][1].at("repo_content"));
     ASSERT_EQ(15492, res_obj["hits"][3]["geo_distance_meters"]["repo_location"]);
@@ -8515,16 +8522,16 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].at("Customers").size());
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(140, res_obj["hits"][0]["document"]["Customers"][1].at("product_price"));
 
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].at("Customers").size());
     ASSERT_EQ(143, res_obj["hits"][1]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(75, res_obj["hits"][1]["document"]["Customers"][1].at("product_price"));
 
@@ -8541,16 +8548,16 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].at("Customers").size());
     ASSERT_EQ(143, res_obj["hits"][0]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(75, res_obj["hits"][0]["document"]["Customers"][1].at("product_price"));
 
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].at("Customers").size());
     ASSERT_EQ(73.5, res_obj["hits"][1]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(140, res_obj["hits"][1]["document"]["Customers"][1].at("product_price"));
 
@@ -8567,16 +8574,16 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].at("Customers").size());
     ASSERT_EQ(143, res_obj["hits"][0]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(75, res_obj["hits"][0]["document"]["Customers"][1].at("product_price"));
 
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].at("Customers").size());
     ASSERT_EQ(73.5, res_obj["hits"][1]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(140, res_obj["hits"][1]["document"]["Customers"][1].at("product_price"));
 
@@ -8593,19 +8600,19 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].at("Customers").size());
     ASSERT_EQ("Joe", res_obj["hits"][0]["document"]["Customers"][0].at("customer_name"));
     ASSERT_EQ(true, res_obj["hits"][0]["document"]["Customers"][0].at("product_available"));
     ASSERT_EQ("Dan", res_obj["hits"][0]["document"]["Customers"][1].at("customer_name"));
     ASSERT_EQ(true, res_obj["hits"][0]["document"]["Customers"][1].at("product_available"));
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].at("Customers").size());
     ASSERT_EQ("Joe", res_obj["hits"][1]["document"]["Customers"][0].at("customer_name"));
     ASSERT_EQ(false, res_obj["hits"][1]["document"]["Customers"][0].at("product_available"));
     ASSERT_EQ("Dan", res_obj["hits"][1]["document"]["Customers"][1].at("customer_name"));
@@ -8634,19 +8641,19 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].at("Customers").size());
     ASSERT_EQ("Joe", res_obj["hits"][0]["document"]["Customers"][0].at("customer_name"));
     ASSERT_EQ(false, res_obj["hits"][0]["document"]["Customers"][0].at("product_available"));
     ASSERT_EQ("Dan", res_obj["hits"][0]["document"]["Customers"][1].at("customer_name"));
     ASSERT_EQ(false, res_obj["hits"][0]["document"]["Customers"][1].at("product_available"));
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("product_a", res_obj["hits"][1]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].at("Customers").size());
     ASSERT_EQ("Joe", res_obj["hits"][1]["document"]["Customers"][0].at("customer_name"));
     ASSERT_EQ(true, res_obj["hits"][1]["document"]["Customers"][0].at("product_available"));
     ASSERT_EQ("Dan", res_obj["hits"][1]["document"]["Customers"][1].at("customer_name"));
@@ -8665,20 +8672,20 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].at("Customers").size());
     ASSERT_EQ(143, res_obj["hits"][0]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(true, res_obj["hits"][0]["document"]["Customers"][0].at("product_available"));
     ASSERT_EQ(75, res_obj["hits"][0]["document"]["Customers"][1].at("product_price"));
     ASSERT_EQ(true, res_obj["hits"][0]["document"]["Customers"][1].at("product_available"));
     ASSERT_EQ(0.15000000596046448, res_obj["hits"][0].at("hybrid_search_info").at("rank_fusion_score"));
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].at("Customers").size());
     ASSERT_EQ(73.5, res_obj["hits"][1]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(false, res_obj["hits"][1]["document"]["Customers"][0].at("product_available"));
     ASSERT_EQ(140, res_obj["hits"][1]["document"]["Customers"][1].at("product_price"));
@@ -8699,19 +8706,19 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].at("Customers").size());
     ASSERT_EQ(143, res_obj["hits"][0]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(true, res_obj["hits"][0]["document"]["Customers"][0].at("product_available"));
     ASSERT_EQ(75, res_obj["hits"][0]["document"]["Customers"][1].at("product_price"));
     ASSERT_EQ(true, res_obj["hits"][0]["document"]["Customers"][1].at("product_available"));
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("product_b", res_obj["hits"][1]["document"].at("product_id"));
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].at("Customers").size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].at("Customers").size());
     ASSERT_EQ(73.5, res_obj["hits"][1]["document"]["Customers"][0].at("product_price"));
     ASSERT_EQ(false, res_obj["hits"][1]["document"]["Customers"][0].at("product_available"));
     ASSERT_EQ(140, res_obj["hits"][1]["document"]["Customers"][1].at("product_price"));
@@ -8728,19 +8735,19 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("Oppenheimer", res_obj["hits"][0]["document"].at("title"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["movie_directors"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["movie_directors"].size());
     ASSERT_EQ("person_a", res_obj["hits"][0]["document"]["movie_directors"].at("person_id"));
 
     ASSERT_EQ("Tenet", res_obj["hits"][1]["document"].at("title"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["movie_directors"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["movie_directors"].size());
     ASSERT_EQ("person_a", res_obj["hits"][1]["document"]["movie_directors"].at("person_id"));
 
     ASSERT_EQ("Barbie", res_obj["hits"][2]["document"].at("title"));
-    ASSERT_EQ(1, res_obj["hits"][2]["document"]["movie_directors"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][2]["document"]["movie_directors"].size());
     ASSERT_EQ("person_b", res_obj["hits"][2]["document"]["movie_directors"].at("person_id"));
 
     req_params = {
@@ -8756,17 +8763,17 @@ TEST_F(JoinSortTest, SortByMultipleReferenceMatches) {
 
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("person_a", res_obj["hits"][0]["document"].at("person_id"));
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["movies"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["movies"].size());
     ASSERT_EQ("Tenet", res_obj["hits"][0]["document"]["movies"][0].at("title"));
     ASSERT_EQ("Oppenheimer", res_obj["hits"][0]["document"]["movies"][1].at("title"));
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("person_b", res_obj["hits"][1]["document"].at("person_id"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["movies"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["movies"].size());
     ASSERT_EQ("Barbie", res_obj["hits"][1]["document"]["movies"][0].at("title"));
 }
 
@@ -8797,14 +8804,14 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
             })"_json
     };
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -8850,7 +8857,7 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -8876,23 +8883,23 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields are mentioned in `include_fields`, should include all fields of Products and Customers by default.
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
     // Default strategy of reference includes is nest. No alias was provided, collection name becomes the field name.
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["Customers"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("customer_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("product_price"));
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("product_price"));
 
     req_params = {
             {"collection", "Products"},
@@ -8904,23 +8911,23 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields are mentioned in `include_fields`, should include all fields of Products and Customers by default.
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
     // Default strategy of reference includes is nest. No alias was provided, collection name becomes the field name.
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["Customers_alias"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["Customers_alias"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
 
     req_params = {
             {"collection", "Products_alias"},
@@ -8932,23 +8939,23 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields are mentioned in `include_fields`, should include all fields of Products and Customers by default.
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
     // Default strategy of reference includes is nest. No alias was provided, collection name becomes the field name.
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["Customers_alias"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["Customers_alias"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
 
     req_params = {
             {"collection", "Products_alias"},
@@ -8962,13 +8969,13 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     // Default strategy of reference includes is nest. No alias was provided, collection name becomes the field name.
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
 
     req_params = {
             {"collection", "Products_alias"},
@@ -8983,20 +8990,20 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("shampoo", res_obj["hits"][0]["document"]["product_name"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("Customers_alias"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("Customers_alias"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
     ASSERT_EQ(143, res_obj["hits"][0]["document"]["Customers_alias"]["product_price"]);
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("product_name"));
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("product_name"));
     ASSERT_EQ("soap", res_obj["hits"][1]["document"]["product_name"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"].count("Customers_alias"));
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["Customers_alias"].count("product_price"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"].count("Customers_alias"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["Customers_alias"].count("product_price"));
     ASSERT_EQ(73.5, res_obj["hits"][1]["document"]["Customers_alias"]["product_price"]);
 
     req_params = {
@@ -9010,9 +9017,9 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(2, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("soap", res_obj["hits"][0]["document"].at("product_name"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"].at("product_price"));
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"].at("product_name"));
@@ -9062,7 +9069,7 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -9077,23 +9084,23 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields are mentioned in `include_fields`, should include all fields of Products and Customers by default.
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
     // Default strategy of reference includes is nest. No alias was provided, collection name becomes the field name.
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["Customers_alias"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["Customers_alias"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
 
     // recreate collection manager to ensure that it initializes `referenced_in` correctly.
     collectionManager.dispose();
@@ -9104,7 +9111,7 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     auto load_op = collectionManager.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
     ASSERT_TRUE(load_op.ok());
 
@@ -9122,23 +9129,23 @@ TEST_F(CollectionJoinTest, FilterByReferenceAlias) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields are mentioned in `include_fields`, should include all fields of Products and Customers by default.
-    ASSERT_EQ(7, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("embedding"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{7}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
     // Default strategy of reference includes is nest. No alias was provided, collection name becomes the field name.
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["Customers_alias"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["Customers_alias"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers_alias"].count("product_price"));
 }
 
 TEST_F(CollectionJoinTest, EmbeddedParamsJoin) {
@@ -9311,7 +9318,7 @@ TEST_F(CollectionJoinTest, EmbeddedParamsJoin) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -9357,7 +9364,7 @@ TEST_F(CollectionJoinTest, EmbeddedParamsJoin) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -9378,21 +9385,21 @@ TEST_F(CollectionJoinTest, EmbeddedParamsJoin) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     // No fields are mentioned in `include_fields`, should include all fields of Products and Customers by default.
-    ASSERT_EQ(6, res_obj["hits"][0]["document"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("product_description"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("rating"));
+    ASSERT_EQ(size_t{6}, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("product_description"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("rating"));
     // Default strategy of reference includes is nest. No alias was provided, collection name becomes the field name.
-    ASSERT_EQ(5, res_obj["hits"][0]["document"]["Customers"].size());
+    ASSERT_EQ(size_t{5}, res_obj["hits"][0]["document"]["Customers"].size());
     ASSERT_EQ("customer_a", res_obj["hits"][0]["document"]["Customers"]["customer_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("customer_name"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("id"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["Customers"].count("product_id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("customer_name"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("id"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["Customers"].count("product_id"));
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"]["Customers"]["product_price"]);
 
     req_params = {
@@ -9409,13 +9416,13 @@ TEST_F(CollectionJoinTest, EmbeddedParamsJoin) {
 
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(6, res_obj["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["hits"][0]["document"].size());
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product_name"]);
     ASSERT_EQ("customer_a", res_obj["hits"][0]["document"]["Customers"]["customer_id"]);
     ASSERT_EQ(73.5, res_obj["hits"][0]["document"]["Customers"]["product_price"]);
 
-    ASSERT_EQ(6, res_obj["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{6}, res_obj["hits"][1]["document"].size());
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"]["product_name"]);
     ASSERT_EQ("customer_b", res_obj["hits"][1]["document"]["Customers"]["customer_id"]);
     ASSERT_EQ(75, res_obj["hits"][1]["document"]["Customers"]["product_price"]);
@@ -9573,8 +9580,8 @@ TEST_F(CollectionJoinTest, GetReferenceCollectionNames) {
 
     filter_query = "$foo(bar:baz)";
     Join::get_reference_collection_names(filter_query, ref_includes);
-    ASSERT_EQ(1, ref_includes->collection_names.size());
-    ASSERT_EQ(1, ref_includes->collection_names.count("foo"));
+    ASSERT_EQ(size_t{1}, ref_includes->collection_names.size());
+    ASSERT_EQ(size_t{1}, ref_includes->collection_names.count("foo"));
     ASSERT_EQ(nullptr, ref_includes->nested_include);
     delete ref_includes;
     ref_includes = nullptr;
@@ -9582,31 +9589,31 @@ TEST_F(CollectionJoinTest, GetReferenceCollectionNames) {
     filter_query = "((age: <5 || age: >10) && category:= [shoes]) &&"
                    " $Customers(customer_id:=customer_a && (product_price:>100 && product_price:<200))";
     Join::get_reference_collection_names(filter_query, ref_includes);
-    ASSERT_EQ(1, ref_includes->collection_names.size());
-    ASSERT_EQ(1, ref_includes->collection_names.count("Customers"));
+    ASSERT_EQ(size_t{1}, ref_includes->collection_names.size());
+    ASSERT_EQ(size_t{1}, ref_includes->collection_names.count("Customers"));
     ASSERT_EQ(nullptr, ref_includes->nested_include);
     delete ref_includes;
     ref_includes = nullptr;
 
     filter_query = "$product_variants( $inventory($retailers(location:(33.865,-118.375,100 km))))";
     Join::get_reference_collection_names(filter_query, ref_includes);
-    ASSERT_EQ(1, ref_includes->collection_names.size());
-    ASSERT_EQ(1, ref_includes->collection_names.count("product_variants"));
-    ASSERT_EQ(1, ref_includes->nested_include->collection_names.size());
-    ASSERT_EQ(1, ref_includes->nested_include->collection_names.count("inventory"));
-    ASSERT_EQ(1, ref_includes->nested_include->nested_include->collection_names.size());
-    ASSERT_EQ(1, ref_includes->nested_include->nested_include->collection_names.count("retailers"));
+    ASSERT_EQ(size_t{1}, ref_includes->collection_names.size());
+    ASSERT_EQ(size_t{1}, ref_includes->collection_names.count("product_variants"));
+    ASSERT_EQ(size_t{1}, ref_includes->nested_include->collection_names.size());
+    ASSERT_EQ(size_t{1}, ref_includes->nested_include->collection_names.count("inventory"));
+    ASSERT_EQ(size_t{1}, ref_includes->nested_include->nested_include->collection_names.size());
+    ASSERT_EQ(size_t{1}, ref_includes->nested_include->nested_include->collection_names.count("retailers"));
     ASSERT_EQ(nullptr, ref_includes->nested_include->nested_include->nested_include);
     delete ref_includes;
     ref_includes = nullptr;
 
     filter_query = "$product_variants( $inventory(id:*) && $retailers(location:(33.865,-118.375,100 km)))";
     Join::get_reference_collection_names(filter_query, ref_includes);
-    ASSERT_EQ(1, ref_includes->collection_names.size());
-    ASSERT_EQ(1, ref_includes->collection_names.count("product_variants"));
-    ASSERT_EQ(2, ref_includes->nested_include->collection_names.size());
-    ASSERT_EQ(1, ref_includes->nested_include->collection_names.count("inventory"));
-    ASSERT_EQ(1, ref_includes->nested_include->collection_names.count("retailers"));
+    ASSERT_EQ(size_t{1}, ref_includes->collection_names.size());
+    ASSERT_EQ(size_t{1}, ref_includes->collection_names.count("product_variants"));
+    ASSERT_EQ(size_t{2}, ref_includes->nested_include->collection_names.size());
+    ASSERT_EQ(size_t{1}, ref_includes->nested_include->collection_names.count("inventory"));
+    ASSERT_EQ(size_t{1}, ref_includes->nested_include->collection_names.count("retailers"));
     ASSERT_EQ(nullptr, ref_includes->nested_include->nested_include);
     delete ref_includes;
     ref_includes = nullptr;
@@ -9628,7 +9635,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("foo", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_TRUE(ref_include_exclude_fields_vec[0].include_fields.empty());
     ASSERT_EQ("bar", ref_include_exclude_fields_vec[0].exclude_fields);
@@ -9660,7 +9667,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("Customers", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_EQ("product_price", ref_include_exclude_fields_vec[0].include_fields);
     ASSERT_EQ("customers.", ref_include_exclude_fields_vec[0].alias);
@@ -9674,7 +9681,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("Customers", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_EQ("product_price", ref_include_exclude_fields_vec[0].include_fields);
     ASSERT_EQ("customers", ref_include_exclude_fields_vec[0].alias);
@@ -9688,7 +9695,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("product_variants", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_EQ("id,", ref_include_exclude_fields_vec[0].include_fields);
     ASSERT_TRUE(ref_include_exclude_fields_vec[0].alias.empty());
@@ -9713,7 +9720,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("product_variants", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_EQ("title", ref_include_exclude_fields_vec[0].include_fields);
     ASSERT_EQ("variants", ref_include_exclude_fields_vec[0].alias);
@@ -9739,7 +9746,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("product_variants", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_EQ("title", ref_include_exclude_fields_vec[0].include_fields);
     ASSERT_EQ("variants.", ref_include_exclude_fields_vec[0].alias);
@@ -9764,7 +9771,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("product_variants", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_EQ("title, description, foo", ref_include_exclude_fields_vec[0].include_fields);
     ASSERT_EQ("variants.", ref_include_exclude_fields_vec[0].alias);
@@ -9789,7 +9796,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("Customers", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_TRUE(ref_include_exclude_fields_vec[0].include_fields.empty());
     ASSERT_EQ("product_price", ref_include_exclude_fields_vec[0].exclude_fields);
@@ -9805,7 +9812,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("product_variants", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_TRUE(ref_include_exclude_fields_vec[0].include_fields.empty());
     ASSERT_EQ("title, description, foo", ref_include_exclude_fields_vec[0].exclude_fields);
@@ -9833,7 +9840,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("product_variants", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_EQ("title", ref_include_exclude_fields_vec[0].include_fields);
     ASSERT_EQ("title,", ref_include_exclude_fields_vec[0].exclude_fields);
@@ -9862,9 +9869,9 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
 
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("retailers", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_TRUE(ref_include_exclude_fields_vec[0].include_fields.empty());
     ASSERT_TRUE(ref_include_exclude_fields_vec[0].exclude_fields.empty());
@@ -9880,9 +9887,9 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
 
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("retailers", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_TRUE(ref_include_exclude_fields_vec[0].include_fields.empty());
     ASSERT_EQ("title", ref_include_exclude_fields_vec[0].exclude_fields);
@@ -9899,13 +9906,13 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
                                                                     exclude_fields_vec,
                                                                     ref_include_exclude_fields_vec);
     ASSERT_TRUE(initialize_op.ok());
-    ASSERT_EQ(1, ref_include_exclude_fields_vec.size());
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec.size());
     ASSERT_EQ("product_variants", ref_include_exclude_fields_vec[0].collection_name);
     ASSERT_EQ("title", ref_include_exclude_fields_vec[0].include_fields);
     ASSERT_EQ("variants", ref_include_exclude_fields_vec[0].alias);
     ASSERT_EQ(ref_include::nest, ref_include_exclude_fields_vec[0].strategy);
     ASSERT_EQ("title:desc", ref_include_exclude_fields_vec[0].sort_by_str);
-    ASSERT_EQ(1, ref_include_exclude_fields_vec[0].limit);
+    ASSERT_EQ(size_t{1}, ref_include_exclude_fields_vec[0].limit);
 
     nested_include_excludes = ref_include_exclude_fields_vec[0].nested_join_includes;
     ASSERT_EQ("inventory", nested_include_excludes[0].collection_name);
@@ -9913,7 +9920,7 @@ TEST_F(CollectionJoinTest, InitializeRefIncludeExcludeFields) {
     ASSERT_EQ("inventory.", nested_include_excludes[0].alias);
     ASSERT_EQ(ref_include::merge, nested_include_excludes[0].strategy);
     ASSERT_EQ("_eval(qty:>0):asc", nested_include_excludes[0].sort_by_str);
-    ASSERT_EQ(2, nested_include_excludes[0].limit);
+    ASSERT_EQ(size_t{2}, nested_include_excludes[0].limit);
 
     ref_include_exclude_fields_vec.clear();
 
@@ -9959,7 +9966,7 @@ TEST_F(CollectionJoinTest, NegateLeftJoinOneToOne) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -9994,7 +10001,7 @@ TEST_F(CollectionJoinTest, NegateLeftJoinOneToOne) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10014,9 +10021,9 @@ TEST_F(CollectionJoinTest, NegateLeftJoinOneToOne) {
 
     auto res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(0, res_obj["hits"][0]["document"].count("books"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"].count("books"));
 
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("Famous Five", res_obj["hits"][1]["document"]["books"]["title"]);
@@ -10032,9 +10039,9 @@ TEST_F(CollectionJoinTest, NegateLeftJoinOneToOne) {
 
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(1, res_obj["found"]);
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(0, res_obj["hits"][0]["document"].count("books"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"].count("books"));
 }
 
 TEST_F(CollectionJoinTest, NegateLeftJoinOneToMany) {
@@ -10073,7 +10080,7 @@ TEST_F(CollectionJoinTest, NegateLeftJoinOneToMany) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10101,7 +10108,7 @@ TEST_F(CollectionJoinTest, NegateLeftJoinOneToMany) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10121,14 +10128,14 @@ TEST_F(CollectionJoinTest, NegateLeftJoinOneToMany) {
 
     auto res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("comb", res_obj["hits"][0]["document"]["product_name"]);
-    ASSERT_EQ(0, res_obj["hits"][0]["document"].count("User_Views"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"].count("User_Views"));
 
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("soap", res_obj["hits"][1]["document"]["product_name"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["User_Views"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["User_Views"].size());
     ASSERT_EQ("user_b", res_obj["hits"][1]["document"]["User_Views"][0]["user_id"]);
 
     req_params = {
@@ -10142,10 +10149,10 @@ TEST_F(CollectionJoinTest, NegateLeftJoinOneToMany) {
 
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(1, res_obj["found"]);
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("comb", res_obj["hits"][0]["document"]["product_name"]);
-    ASSERT_EQ(0, res_obj["hits"][0]["document"].count("User_Views"));
+    ASSERT_EQ(size_t{0}, res_obj["hits"][0]["document"].count("User_Views"));
 }
 
 TEST_F(CollectionJoinTest, FacetByReference) {
@@ -10178,7 +10185,7 @@ TEST_F(CollectionJoinTest, FacetByReference) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10224,7 +10231,7 @@ TEST_F(CollectionJoinTest, FacetByReference) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10245,13 +10252,13 @@ TEST_F(CollectionJoinTest, FacetByReference) {
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product_name"]);
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"]["product_name"]);
 
-    ASSERT_EQ(2, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Customers(product_price)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("143", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
@@ -10270,14 +10277,14 @@ TEST_F(CollectionJoinTest, FacetByReference) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("rating", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("4", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][1]["count"]);
     ASSERT_EQ("2", res_obj["facet_counts"][0]["counts"][1]["value"].get<std::string>());
 
-    ASSERT_EQ(2, res_obj["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{2}, res_obj["facet_counts"][1]["counts"].size());
     ASSERT_EQ("$Customers(product_price)", res_obj["facet_counts"][1]["field_name"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][1]["counts"][0]["count"]);
     ASSERT_EQ("143", res_obj["facet_counts"][1]["counts"][0]["value"].get<std::string>());
@@ -10298,13 +10305,13 @@ TEST_F(CollectionJoinTest, FacetByReference) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product_name"]);
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"]["product_name"]);
 
-    ASSERT_EQ(1, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Customers(customer_name)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ("$Customers(customer_name: `Joe`)", res_obj["facet_counts"][0]["counts"][0]["facet_filter"].get<std::string>());
     ASSERT_EQ(2, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
@@ -10322,20 +10329,20 @@ TEST_F(CollectionJoinTest, FacetByReference) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["product_name"]);
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"]["product_name"]);
 
-    ASSERT_EQ(2, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("rating", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("4", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][1]["count"]);
     ASSERT_EQ("2", res_obj["facet_counts"][0]["counts"][1]["value"].get<std::string>());
 
-    ASSERT_EQ(0, res_obj["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{0}, res_obj["facet_counts"][1]["counts"].size());
     ASSERT_EQ("$Customers(customer_name)", res_obj["facet_counts"][1]["field_name"].get<std::string>());
 
     //multiple facet fields in joined collection
@@ -10351,15 +10358,15 @@ TEST_F(CollectionJoinTest, FacetByReference) {
     res_obj = nlohmann::json::parse(json_res);
 
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
 
-    ASSERT_EQ(1, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Customers(customer_name)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ("$Customers(customer_name: `Joe`)", res_obj["facet_counts"][0]["counts"][0]["facet_filter"].get<std::string>());
     ASSERT_EQ(2, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("Joe", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 
-    ASSERT_EQ(2, res_obj["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{2}, res_obj["facet_counts"][1]["counts"].size());
     ASSERT_EQ("$Customers(product_price)", res_obj["facet_counts"][1]["field_name"].get<std::string>());
     ASSERT_EQ("$Customers(product_price: 143)", res_obj["facet_counts"][1]["counts"][0]["facet_filter"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][1]["counts"][0]["count"]);
@@ -10379,9 +10386,9 @@ TEST_F(CollectionJoinTest, FacetByReference) {
     res_obj = nlohmann::json::parse(json_res);
 
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(1, res_obj["facet_counts"].size());
-    ASSERT_EQ(4, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"].size());
+    ASSERT_EQ(size_t{4}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Customers(product_price)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
 
     ASSERT_EQ("$Customers(product_price: 75)", res_obj["facet_counts"][0]["counts"][0]["facet_filter"].get<std::string>());
@@ -10411,9 +10418,9 @@ TEST_F(CollectionJoinTest, FacetByReference) {
     res_obj = nlohmann::json::parse(json_res);
 
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(1, res_obj["facet_counts"].size());
-    ASSERT_EQ(4, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"].size());
+    ASSERT_EQ(size_t{4}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Customers(product_price)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ("73.5", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ("75", res_obj["facet_counts"][0]["counts"][1]["value"].get<std::string>());
@@ -10434,9 +10441,9 @@ TEST_F(CollectionJoinTest, FacetByReference) {
     res_obj = nlohmann::json::parse(json_res);
 
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
-    ASSERT_EQ(1, res_obj["facet_counts"].size());
-    ASSERT_EQ(4, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"].size());
+    ASSERT_EQ(size_t{4}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Customers_alias(product_price)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ("143", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ("140", res_obj["facet_counts"][0]["counts"][1]["value"].get<std::string>());
@@ -10478,7 +10485,7 @@ TEST_F(CollectionJoinTest, FacetByReferenceExtended) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10516,7 +10523,7 @@ TEST_F(CollectionJoinTest, FacetByReferenceExtended) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10536,11 +10543,11 @@ TEST_F(CollectionJoinTest, FacetByReferenceExtended) {
     ASSERT_TRUE(search_op.ok());
     auto res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(1, res_obj["found"]);
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["student_id"]);
 
-    ASSERT_EQ(1, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Grades(grade)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("B", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
@@ -10558,11 +10565,11 @@ TEST_F(CollectionJoinTest, FacetByReferenceExtended) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(1, res_obj["found"]);
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("4", res_obj["hits"][0]["document"]["student_id"]);
 
-    ASSERT_EQ(1, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Grades(grade)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("A+", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
@@ -10579,11 +10586,11 @@ TEST_F(CollectionJoinTest, FacetByReferenceExtended) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(1, res_obj["found"]);
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["student_id"]);
 
-    ASSERT_EQ(1, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Grades(grade)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("C", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
@@ -10649,7 +10656,7 @@ TEST_F(CollectionJoinTest, FacetByReferenceExtended) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10665,12 +10672,12 @@ TEST_F(CollectionJoinTest, FacetByReferenceExtended) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(3, res_obj["found"]);
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", res_obj["hits"][2]["document"]["id"]);
 
-    ASSERT_EQ(3, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{3}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Subjects(student_id)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("4", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
@@ -10693,12 +10700,12 @@ TEST_F(CollectionJoinTest, FacetByReferenceExtended) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(3, res_obj["found"]);
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
     ASSERT_EQ("3", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", res_obj["hits"][2]["document"]["id"]);
 
-    ASSERT_EQ(3, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{3}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ("$Subjects(electives.grade)", res_obj["facet_counts"][0]["field_name"].get<std::string>());
     ASSERT_EQ(1, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("97", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
@@ -10743,7 +10750,7 @@ TEST_F(CollectionJoinTest, AlterReferenceField) {
     for (auto const &json: documents) {
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10778,7 +10785,7 @@ TEST_F(CollectionJoinTest, AlterReferenceField) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -10786,20 +10793,20 @@ TEST_F(CollectionJoinTest, AlterReferenceField) {
 
     auto collection_summary = coll->get_summary_json();
     ASSERT_EQ("books", collection_summary["name"]);
-    ASSERT_EQ(3, collection_summary["num_documents"].get<size_t>());
-    ASSERT_EQ(2, collection_summary["fields"].size());
+    ASSERT_EQ(size_t{3}, collection_summary["num_documents"].get<size_t>());
+    ASSERT_EQ(size_t{2}, collection_summary["fields"].size());
     ASSERT_EQ("title", collection_summary["fields"][0]["name"]);
     ASSERT_EQ("author_id", collection_summary["fields"][1]["name"]);
     ASSERT_EQ("authors.id", collection_summary["fields"][1]["reference"]);
 
     auto schema = coll->get_schema();
-    ASSERT_EQ(1, schema.count("author_id"));
+    ASSERT_EQ(size_t{1}, schema.count("author_id"));
 
     auto reference_fields = coll->get_reference_fields();
-    ASSERT_EQ(1, reference_fields.count("author_id"));
+    ASSERT_EQ(size_t{1}, reference_fields.count("author_id"));
 
     auto doc = coll->get("0").get();
-    ASSERT_EQ(1, doc.count("author_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("author_id_sequence_id"));
 
     std::map<std::string, std::string> req_params = {
             {"collection", "books"},
@@ -10815,8 +10822,8 @@ TEST_F(CollectionJoinTest, AlterReferenceField) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
 
@@ -10829,22 +10836,22 @@ TEST_F(CollectionJoinTest, AlterReferenceField) {
 
     auto op = coll->alter(alter_schema);
     if(!op.ok()) {
-        LOG(ERROR) << op.error();
+        TS_LOG(ERROR) << op.error();
         FAIL();
     }
 
     collection_summary = coll->get_summary_json();
 
     ASSERT_EQ("books", collection_summary["name"]);
-    ASSERT_EQ(3, collection_summary["num_documents"].get<size_t>());
-    ASSERT_EQ(1, collection_summary["fields"].size());
+    ASSERT_EQ(size_t{3}, collection_summary["num_documents"].get<size_t>());
+    ASSERT_EQ(size_t{1}, collection_summary["fields"].size());
     ASSERT_EQ("title", collection_summary["fields"][0]["name"]);
 
     schema = coll->get_schema();
-    ASSERT_EQ(0, schema.count("author_id"));
+    ASSERT_EQ(size_t{0}, schema.count("author_id"));
 
     reference_fields = coll->get_reference_fields();
-    ASSERT_EQ(0, reference_fields.count("author_id"));
+    ASSERT_EQ(size_t{0}, reference_fields.count("author_id"));
 
     req_params = {
             {"collection", "books"},
@@ -10868,37 +10875,37 @@ TEST_F(CollectionJoinTest, AlterReferenceField) {
 
     op = coll->alter(alter_schema);
     if(!op.ok()) {
-        LOG(ERROR) << op.error();
+        TS_LOG(ERROR) << op.error();
         FAIL();
     }
 
     collection_summary = coll->get_summary_json();
 
     ASSERT_EQ("books", collection_summary["name"]);
-    ASSERT_EQ(3, collection_summary["num_documents"].get<size_t>());
-    ASSERT_EQ(2, collection_summary["fields"].size());
+    ASSERT_EQ(size_t{3}, collection_summary["num_documents"].get<size_t>());
+    ASSERT_EQ(size_t{2}, collection_summary["fields"].size());
     ASSERT_EQ("title", collection_summary["fields"][0]["name"]);
     ASSERT_EQ("author_id", collection_summary["fields"][1]["name"]);
     ASSERT_EQ("authors.id", collection_summary["fields"][1]["reference"]);
 
     //check if field is added to schema
     schema = coll->get_schema();
-    ASSERT_EQ(1, schema.count("author_id"));
+    ASSERT_EQ(size_t{1}, schema.count("author_id"));
     ASSERT_FALSE(schema.at("author_id").reference.empty());
     ASSERT_EQ("authors.id", schema.at("author_id").reference);
-    ASSERT_EQ(schema.count("author_id_sequence_id"), 1);
+    ASSERT_EQ(schema.count("author_id_sequence_id"), size_t{1});
     ASSERT_TRUE(schema.at("author_id_sequence_id").index);
 
     reference_fields = coll->get_reference_fields();
-    ASSERT_EQ(1, reference_fields.count("author_id"));
+    ASSERT_EQ(size_t{1}, reference_fields.count("author_id"));
     ASSERT_EQ(reference_fields.at("author_id").collection, "authors");
     ASSERT_EQ(reference_fields.at("author_id").field, "id");
 
     doc = coll->get("0").get();
-    ASSERT_EQ(1, doc.count("author_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("author_id_sequence_id"));
     ASSERT_EQ(0, doc["author_id_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("author_id_sequence_id", doc[".ref"][0]);
 
     //check joins on updated schema
@@ -10914,8 +10921,8 @@ TEST_F(CollectionJoinTest, AlterReferenceField) {
    search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
    ASSERT_TRUE(search_op.ok());
    res_obj = nlohmann::json::parse(json_res);
-   ASSERT_EQ(2, res_obj["found"].get<size_t>());
-   ASSERT_EQ(2, res_obj["hits"].size());
+   ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+   ASSERT_EQ(size_t{2}, res_obj["hits"].size());
    ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
    ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
 
@@ -10929,37 +10936,37 @@ TEST_F(CollectionJoinTest, AlterReferenceField) {
 
     op = coll->alter(alter_schema);
     if(!op.ok()) {
-        LOG(ERROR) << op.error();
+        TS_LOG(ERROR) << op.error();
         FAIL();
     }
 
     collection_summary = coll->get_summary_json();
 
     ASSERT_EQ("books", collection_summary["name"]);
-    ASSERT_EQ(3, collection_summary["num_documents"].get<size_t>());
-    ASSERT_EQ(2, collection_summary["fields"].size());
+    ASSERT_EQ(size_t{3}, collection_summary["num_documents"].get<size_t>());
+    ASSERT_EQ(size_t{2}, collection_summary["fields"].size());
     ASSERT_EQ("title", collection_summary["fields"][0]["name"]);
     ASSERT_EQ("author_id", collection_summary["fields"][1]["name"]);
     ASSERT_EQ("authors.id", collection_summary["fields"][1]["reference"]);
     ASSERT_EQ(true, collection_summary["fields"][1]["facet"].get<bool>());
 
     schema = coll->get_schema();
-    ASSERT_EQ(1, schema.count("author_id"));
+    ASSERT_EQ(size_t{1}, schema.count("author_id"));
     ASSERT_FALSE(schema.at("author_id").reference.empty());
     ASSERT_EQ("authors.id", schema.at("author_id").reference);
-    ASSERT_EQ(schema.count("author_id_sequence_id"), 1);
+    ASSERT_EQ(schema.count("author_id_sequence_id"), size_t{1});
     ASSERT_TRUE(schema.at("author_id_sequence_id").index);
 
     reference_fields = coll->get_reference_fields();
-    ASSERT_EQ(1, reference_fields.count("author_id"));
+    ASSERT_EQ(size_t{1}, reference_fields.count("author_id"));
     ASSERT_EQ(reference_fields.at("author_id").collection, "authors");
     ASSERT_EQ(reference_fields.at("author_id").field, "id");
 
     doc = coll->get("0").get();
-    ASSERT_EQ(1, doc.count("author_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("author_id_sequence_id"));
     ASSERT_EQ(0, doc["author_id_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("author_id_sequence_id", doc[".ref"][0]);
 
     req_params = {
@@ -10975,12 +10982,12 @@ TEST_F(CollectionJoinTest, AlterReferenceField) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
 
-    ASSERT_EQ(1, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ(2, (int) res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("1", res_obj["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 }
@@ -11017,7 +11024,7 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
     for (auto const &json: documents) {
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11052,7 +11059,7 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11067,37 +11074,37 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
 
     auto op = coll->alter(alter_schema);
     if(!op.ok()) {
-        LOG(ERROR) << op.error();
+        TS_LOG(ERROR) << op.error();
         FAIL();
     }
 
     auto collection_summary = coll->get_summary_json();
 
     ASSERT_EQ("books", collection_summary["name"]);
-    ASSERT_EQ(3, collection_summary["num_documents"].get<size_t>());
-    ASSERT_EQ(2, collection_summary["fields"].size());
+    ASSERT_EQ(size_t{3}, collection_summary["num_documents"].get<size_t>());
+    ASSERT_EQ(size_t{2}, collection_summary["fields"].size());
     ASSERT_EQ("title", collection_summary["fields"][0]["name"]);
     ASSERT_EQ("author_id", collection_summary["fields"][1]["name"]);
     ASSERT_EQ("authors.id", collection_summary["fields"][1]["reference"]);
 
     //check if field is added to schema
     auto schema = coll->get_schema();
-    ASSERT_EQ(1, schema.count("author_id"));
+    ASSERT_EQ(size_t{1}, schema.count("author_id"));
     ASSERT_FALSE(schema.at("author_id").reference.empty());
     ASSERT_EQ("authors.id", schema.at("author_id").reference);
-    ASSERT_EQ(schema.count("author_id_sequence_id"), 1);
+    ASSERT_EQ(schema.count("author_id_sequence_id"), size_t{1});
     ASSERT_TRUE(schema.at("author_id_sequence_id").index);
 
     auto reference_fields = coll->get_reference_fields();
-    ASSERT_EQ(1, reference_fields.count("author_id"));
+    ASSERT_EQ(size_t{1}, reference_fields.count("author_id"));
     ASSERT_EQ(reference_fields.at("author_id").collection, "authors");
     ASSERT_EQ(reference_fields.at("author_id").field, "id");
 
     auto doc = coll->get("0").get();
-    ASSERT_EQ(1, doc.count("author_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("author_id_sequence_id"));
     ASSERT_EQ(0, doc["author_id_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("author_id_sequence_id", doc[".ref"][0]);
 
     //check joins on updated schema
@@ -11115,8 +11122,8 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
 
@@ -11129,17 +11136,17 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
     auto load_op = collectionManager.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
     ASSERT_TRUE(load_op.ok());
 
     //check if reference helper fields are loaded
     coll = collectionManager.get_collection("books").get();
     doc = coll->get("0").get();
-    ASSERT_EQ(1, doc.count("author_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("author_id_sequence_id"));
     ASSERT_EQ(0, doc["author_id_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("author_id_sequence_id", doc[".ref"][0]);
 
     //check join queries after restart
@@ -11155,8 +11162,8 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
 
@@ -11172,37 +11179,37 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
 
     op = coll->alter(alter_schema);
     if(!op.ok()) {
-        LOG(ERROR) << op.error();
+        TS_LOG(ERROR) << op.error();
         FAIL();
     }
 
     collection_summary = coll->get_summary_json();
 
     ASSERT_EQ("books", collection_summary["name"]);
-    ASSERT_EQ(3, collection_summary["num_documents"].get<size_t>());
-    ASSERT_EQ(2, collection_summary["fields"].size());
+    ASSERT_EQ(size_t{3}, collection_summary["num_documents"].get<size_t>());
+    ASSERT_EQ(size_t{2}, collection_summary["fields"].size());
     ASSERT_EQ("title", collection_summary["fields"][0]["name"]);
     ASSERT_EQ("author_id", collection_summary["fields"][1]["name"]);
     ASSERT_EQ("authors.id", collection_summary["fields"][1]["reference"]);
 
     //check if field is added to schema
     schema = coll->get_schema();
-    ASSERT_EQ(1, schema.count("author_id"));
+    ASSERT_EQ(size_t{1}, schema.count("author_id"));
     ASSERT_FALSE(schema.at("author_id").reference.empty());
     ASSERT_EQ("authors.id", schema.at("author_id").reference);
-    ASSERT_EQ(schema.count("author_id_sequence_id"), 1);
+    ASSERT_EQ(schema.count("author_id_sequence_id"), size_t{1});
     ASSERT_TRUE(schema.at("author_id_sequence_id").index);
 
     reference_fields = coll->get_reference_fields();
-    ASSERT_EQ(1, reference_fields.count("author_id"));
+    ASSERT_EQ(size_t{1}, reference_fields.count("author_id"));
     ASSERT_EQ(reference_fields.at("author_id").collection, "authors");
     ASSERT_EQ(reference_fields.at("author_id").field, "id");
 
     doc = coll->get("0").get();
-    ASSERT_EQ(1, doc.count("author_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("author_id_sequence_id"));
     ASSERT_EQ(0, doc["author_id_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("author_id_sequence_id", doc[".ref"][0]);
 
     //check joins on updated schema
@@ -11218,8 +11225,8 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
 
@@ -11232,17 +11239,17 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
     load_op = collectionManager.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
     ASSERT_TRUE(load_op.ok());
 
     //check if reference helper fields are loaded
     coll = collectionManager.get_collection("books").get();
     doc = coll->get("0").get();
-    ASSERT_EQ(1, doc.count("author_id_sequence_id"));
+    ASSERT_EQ(size_t{1}, doc.count("author_id_sequence_id"));
     ASSERT_EQ(0, doc["author_id_sequence_id"]);
-    ASSERT_EQ(1, doc.count(".ref"));
-    ASSERT_EQ(1, doc[".ref"].size());
+    ASSERT_EQ(size_t{1}, doc.count(".ref"));
+    ASSERT_EQ(size_t{1}, doc[".ref"].size());
     ASSERT_EQ("author_id_sequence_id", doc[".ref"][0]);
 
     //check join queries after restart
@@ -11258,8 +11265,8 @@ TEST_F(CollectionJoinTest, AlteredReferenceFieldOnRestart) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
 }
@@ -11276,11 +11283,11 @@ TEST_F(JoinIncludeExcludeFieldsTest, RelatedDocsCount) {
     ASSERT_TRUE(search_op.ok());
     auto res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["product_count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["product_count"].get<size_t>());
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["product_count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["product_count"].get<size_t>());
 
     //order should not bother
     req_params = {
@@ -11295,11 +11302,11 @@ TEST_F(JoinIncludeExcludeFieldsTest, RelatedDocsCount) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(2, res_obj["found"]);
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["product_count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["product_count"].get<size_t>());
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["product_count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["product_count"].get<size_t>());
 
     //typo will result in error
     req_params = {
@@ -11375,7 +11382,7 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeFieldsSortLimit) {
     for (auto const& json: documents) {
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11410,7 +11417,7 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeFieldsSortLimit) {
     for (auto const& json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11429,8 +11436,8 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeFieldsSortLimit) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
 
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["books"][0]["author_id"]);
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["books"][0]["id"]);
@@ -11460,10 +11467,10 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeFieldsSortLimit) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
 
-    ASSERT_EQ(4, res_obj["hits"][0]["document"]["books"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"]["books"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["books"][0]["author_id"]);
     ASSERT_EQ("5", res_obj["hits"][0]["document"]["books"][0]["id"]);
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["books"][1]["author_id"]);
@@ -11473,7 +11480,7 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeFieldsSortLimit) {
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["books"][3]["author_id"]);
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["books"][3]["id"]);
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["books"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["books"].size());
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["books"][0]["author_id"]);
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["books"][0]["id"]);
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["books"][1]["author_id"]);
@@ -11493,16 +11500,16 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeFieldsSortLimit) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
 
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["books"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["books"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["books"][0]["author_id"]);
     ASSERT_EQ("5", res_obj["hits"][0]["document"]["books"][0]["id"]);
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["books"][1]["author_id"]);
     ASSERT_EQ("4", res_obj["hits"][0]["document"]["books"][1]["id"]);
 
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["books"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["books"].size());
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["books"][0]["author_id"]);
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["books"][0]["id"]);
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["books"][1]["author_id"]);
@@ -11521,16 +11528,16 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeFieldsSortLimit) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
 
-    ASSERT_EQ(4, res_obj["hits"][0]["document"]["books.in_stock"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"]["books.in_stock"].size());
     ASSERT_EQ(true, res_obj["hits"][0]["document"]["books.in_stock"][0].get<bool>());
     ASSERT_EQ(true, res_obj["hits"][0]["document"]["books.in_stock"][1].get<bool>());
     ASSERT_EQ(true, res_obj["hits"][0]["document"]["books.in_stock"][2].get<bool>());
     ASSERT_EQ(false, res_obj["hits"][0]["document"]["books.in_stock"][3].get<bool>());
 
-    ASSERT_EQ(4, res_obj["hits"][0]["document"]["books.popularity"].size());
+    ASSERT_EQ(size_t{4}, res_obj["hits"][0]["document"]["books.popularity"].size());
     ASSERT_EQ(4.4, res_obj["hits"][0]["document"]["books.popularity"][0].get<double>());
     ASSERT_EQ(3.8, res_obj["hits"][0]["document"]["books.popularity"][1].get<double>());
     ASSERT_EQ(3.5, res_obj["hits"][0]["document"]["books.popularity"][2].get<double>());
@@ -11551,19 +11558,19 @@ TEST_F(JoinIncludeExcludeFieldsTest, IncludeFieldsSortLimit) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
 
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["books.in_stock"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["books.in_stock"].size());
     ASSERT_EQ(false, res_obj["hits"][0]["document"]["books.in_stock"][0].get<bool>());
 
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["books.popularity"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["books.popularity"].size());
     ASSERT_EQ(4.8, res_obj["hits"][0]["document"]["books.popularity"][0].get<double>());
 
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["books.in_stock"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["books.in_stock"].size());
     ASSERT_EQ(false, res_obj["hits"][1]["document"]["books.in_stock"][0].get<bool>());
 
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["books.popularity"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["books.popularity"].size());
     ASSERT_EQ(4.6, res_obj["hits"][1]["document"]["books.popularity"][0].get<double>());
 }
 
@@ -11588,7 +11595,7 @@ TEST_F(CollectionJoinTest, SortLimitByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11624,7 +11631,7 @@ TEST_F(CollectionJoinTest, SortLimitByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11656,7 +11663,7 @@ TEST_F(CollectionJoinTest, SortLimitByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11737,7 +11744,7 @@ TEST_F(CollectionJoinTest, SortLimitByNestedReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11756,27 +11763,27 @@ TEST_F(CollectionJoinTest, SortLimitByNestedReferences) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("soap", res_obj["hits"][0]["document"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["product_variants"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["product_variants"].size());
 
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["product_variants"][0]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"].size());
     ASSERT_EQ(11, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["qty"]);
-    ASSERT_EQ(2, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["retailers"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["retailers"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["retailers"]["id"]);
     ASSERT_EQ("retailer 3", res_obj["hits"][0]["document"]["product_variants"][0]["inventory"]["retailers"]["title"]);
 
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("shampoo", res_obj["hits"][1]["document"]["title"]);
-    ASSERT_EQ(1, res_obj["hits"][1]["document"]["product_variants"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][1]["document"]["product_variants"].size());
 
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["product_variants"][0]["id"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"].size());
     ASSERT_EQ(9, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["qty"]);
-    ASSERT_EQ(2, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["retailers"].size());
+    ASSERT_EQ(size_t{2}, res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["retailers"].size());
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["retailers"]["id"]);
     ASSERT_EQ("retailer 3", res_obj["hits"][1]["document"]["product_variants"][0]["inventory"]["retailers"]["title"]);
 }
@@ -11812,7 +11819,7 @@ TEST_F(CollectionJoinTest, MutualReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11853,7 +11860,7 @@ TEST_F(CollectionJoinTest, MutualReferences) {
     ASSERT_EQ("Collections having reference to each other are not allowed. `authors` collection is referenced by `books`"
               " collection's `author_id` field.", alter_op.error());
 
-    ASSERT_EQ(0, collection_create_op.get()->get_schema().count("reference_field"));
+    ASSERT_EQ(size_t{0}, collection_create_op.get()->get_schema().count("reference_field"));
 }
 
 TEST_F(CollectionJoinTest, PinnedHitsShouldIncludeJoinedFields) {
@@ -11884,7 +11891,7 @@ TEST_F(CollectionJoinTest, PinnedHitsShouldIncludeJoinedFields) {
     for (auto const &json: documents) {
         auto add_op = products_coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11920,7 +11927,7 @@ TEST_F(CollectionJoinTest, PinnedHitsShouldIncludeJoinedFields) {
     for (auto const &json: documents) {
         auto add_op = product_data_coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -11942,8 +11949,8 @@ TEST_F(CollectionJoinTest, PinnedHitsShouldIncludeJoinedFields) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
     ASSERT_EQ("124", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ(true, res_obj["hits"][0]["curated"].get<bool>());
     ASSERT_EQ("11", res_obj["hits"][0]["document"]["product_data"]["id"]);
@@ -11980,7 +11987,7 @@ TEST_F(CollectionJoinTest, FixReferencesAtQueryTime) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -12026,7 +12033,7 @@ TEST_F(CollectionJoinTest, FixReferencesAtQueryTime) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -12034,7 +12041,7 @@ TEST_F(CollectionJoinTest, FixReferencesAtQueryTime) {
     auto customer_collection = collection_create_op.get();
     std::vector<std::string> customer_doc_ids = {"4", "3", "2", "1", "0"};
     std::vector<uint32_t> ref_seq_ids = {UINT32_MAX, 1, 0, 1, 0};
-    for (auto i = 0; i < customer_doc_ids.size(); i++) {
+    for (size_t i = 0; i < customer_doc_ids.size(); ++i) {
         auto customer_doc = customer_collection->get(customer_doc_ids[i]).get();
         ASSERT_EQ(ref_seq_ids[i], customer_doc.at("product_id_sequence_id"));
     }
@@ -12052,8 +12059,8 @@ TEST_F(CollectionJoinTest, FixReferencesAtQueryTime) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
     ASSERT_EQ("4", res_obj["hits"][0]["document"]["id"]);
     ASSERT_FALSE(res_obj["hits"][0]["document"].contains("Products"));
     ASSERT_EQ("3", res_obj["hits"][1]["document"]["id"]);
@@ -12071,7 +12078,7 @@ TEST_F(CollectionJoinTest, FixReferencesAtQueryTime) {
     ASSERT_TRUE(update_op.ok());
     customer_doc_ids = {"4", "3", "2", "1", "0"};
     ref_seq_ids = {1000, 1000, 1000, 1000, 0};
-    for (auto i = 0; i < customer_doc_ids.size(); i++) {
+    for (size_t i = 0; i < customer_doc_ids.size(); ++i) {
         auto customer_doc = customer_collection->get(customer_doc_ids[i]).get();
         ASSERT_EQ(ref_seq_ids[i], customer_doc.at("product_id_sequence_id"));
     }
@@ -12086,8 +12093,8 @@ TEST_F(CollectionJoinTest, FixReferencesAtQueryTime) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
     ASSERT_EQ("4", res_obj["hits"][0]["document"]["id"]);
     ASSERT_FALSE(res_obj["hits"][0]["document"].contains("Products"));
     ASSERT_EQ("3", res_obj["hits"][1]["document"]["id"]);
@@ -12112,7 +12119,7 @@ TEST_F(CollectionJoinTest, FixReferencesAtQueryTime) {
     ASSERT_TRUE(update_op.ok());
     customer_doc_ids = {"4", "3", "2", "1", "0"};
     ref_seq_ids = {1000, 1000, 1000, 1000, 0};
-    for (auto i = 0; i < customer_doc_ids.size(); i++) {
+    for (size_t i = 0; i < customer_doc_ids.size(); ++i) {
         auto customer_doc = customer_collection->get(customer_doc_ids[i]).get();
         ASSERT_EQ(ref_seq_ids[i], customer_doc.at("product_id_sequence_id"));
     }
@@ -12137,8 +12144,8 @@ TEST_F(CollectionJoinTest, FixReferencesAtQueryTime) {
     search_op = collectionManager.do_union(req_params, embedded_params_union, searches, res_obj, now_ts);
     ASSERT_TRUE(search_op.ok());
 
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
     ASSERT_EQ("4", res_obj["hits"][0]["document"]["id"]);
     ASSERT_FALSE(res_obj["hits"][0]["document"].contains("Products"));
     ASSERT_EQ("3", res_obj["hits"][1]["document"]["id"]);
@@ -12199,8 +12206,8 @@ TEST_F(CollectionJoinTest, MultipleJoinsSameCollection) {
     auto result = products_collection->search("item", {"product_name"}, filter_query, {}, {}, {0},
                                               10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD).get();
 
-    ASSERT_EQ(3, result["found"].get<size_t>());
-    ASSERT_EQ(3, result["hits"].size());
+    ASSERT_EQ(size_t{3}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, result["hits"].size());
 
     collectionManager.drop_collection("Customers");
     collectionManager.drop_collection("Products");

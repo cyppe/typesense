@@ -72,7 +72,6 @@ enum CVT_NODE {
 
 class CVTrie {
 private:
-    size_t size;
     uint8_t* root;
 
     const uintptr_t PTR_MASK = ~(1ULL << 48ULL);
@@ -105,5 +104,4 @@ public:
     bool add(const char* key, const uint8_t length, void* value);
 
 };
-
 

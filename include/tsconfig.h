@@ -98,6 +98,28 @@ private:
 
     uint32_t db_keep_log_file_num;
 
+    size_t db_block_cache_size;
+
+    int64_t db_rate_limit_bytes_per_sec;
+
+    bool db_level_compaction_dynamic_level_bytes;
+    uint32_t db_block_size;
+    uint32_t db_format_version;
+    bool db_enable_statistics;
+    uint32_t db_compression_parallel_threads;
+    uint64_t db_bytes_per_sync;
+    uint64_t db_max_manifest_file_size;
+    bool db_enable_async_io;
+    std::string db_offpeak_time_utc;
+    bool db_unordered_write;
+    uint32_t db_max_subcompactions;
+    uint32_t db_max_background_jobs;
+    bool db_use_direct_reads;
+    bool db_use_direct_io_for_flush_and_compaction;
+    uint64_t db_compaction_readahead_size;
+    bool db_optimize_filters_for_hits;
+    bool db_paranoid_memory_checks;
+
     uint32_t max_indexing_concurrency;
 
     uint32_t proxy_rate_limit;
@@ -152,13 +174,35 @@ protected:
         this->max_group_limit = 99;
 
         //for rocksdb
-        this->db_write_buffer_size = 4*1048576;
+        this->db_write_buffer_size = 128*1048576;  // 128MB (was 4MB — the old value caused constant memtable flushes)
 
-        this->db_max_write_buffer_number = 2;
+        this->db_max_write_buffer_number = 4;  // 4 (was 2 — more buffers allow writes to continue during flush)
 
         this->db_max_log_file_size = 4*1048576;
 
         this->db_keep_log_file_num = 5;
+
+        this->db_block_cache_size = 256 * 1048576;  // 256MB
+
+        this->db_rate_limit_bytes_per_sec = 0;  // disabled by default
+
+        this->db_level_compaction_dynamic_level_bytes = true;
+        this->db_block_size = 16 * 1024;  // 16KB
+        this->db_format_version = 7;
+        this->db_enable_statistics = true;
+        this->db_compression_parallel_threads = 4;
+        this->db_bytes_per_sync = 1048576;  // 1MB
+        this->db_max_manifest_file_size = 1048576;  // 1MB
+        this->db_enable_async_io = true;
+        this->db_offpeak_time_utc = "02:00-06:00";
+        this->db_unordered_write = true;  // +34-131% write throughput when WAL disabled (safe with Raft WAL)
+        this->db_max_subcompactions = 2;  // parallel L0→L1 compaction threads
+        this->db_max_background_jobs = 0;  // 0 = auto
+        this->db_use_direct_reads = false;
+        this->db_use_direct_io_for_flush_and_compaction = false;
+        this->db_compaction_readahead_size = 0;
+        this->db_optimize_filters_for_hits = false;
+        this->db_paranoid_memory_checks = true;
 
         this->max_indexing_concurrency = 4;
 
@@ -226,6 +270,82 @@ public:
 
     void set_db_keep_log_file_num(uint32_t val) {
         this->db_keep_log_file_num = val;
+    }
+
+    void set_db_block_cache_size(size_t val) {
+        this->db_block_cache_size = val;
+    }
+
+    void set_db_rate_limit_bytes_per_sec(int64_t val) {
+        this->db_rate_limit_bytes_per_sec = val;
+    }
+
+    void set_db_level_compaction_dynamic_level_bytes(bool val) {
+        this->db_level_compaction_dynamic_level_bytes = val;
+    }
+
+    void set_db_block_size(uint32_t val) {
+        this->db_block_size = val;
+    }
+
+    void set_db_format_version(uint32_t val) {
+        this->db_format_version = val;
+    }
+
+    void set_db_enable_statistics(bool val) {
+        this->db_enable_statistics = val;
+    }
+
+    void set_db_compression_parallel_threads(uint32_t val) {
+        this->db_compression_parallel_threads = val;
+    }
+
+    void set_db_bytes_per_sync(uint64_t val) {
+        this->db_bytes_per_sync = val;
+    }
+
+    void set_db_max_manifest_file_size(uint64_t val) {
+        this->db_max_manifest_file_size = val;
+    }
+
+    void set_db_enable_async_io(bool val) {
+        this->db_enable_async_io = val;
+    }
+
+    void set_db_offpeak_time_utc(const std::string& val) {
+        this->db_offpeak_time_utc = val;
+    }
+
+    void set_db_unordered_write(bool val) {
+        this->db_unordered_write = val;
+    }
+
+    void set_db_max_subcompactions(uint32_t val) {
+        this->db_max_subcompactions = val;
+    }
+
+    void set_db_max_background_jobs(uint32_t val) {
+        this->db_max_background_jobs = val;
+    }
+
+    void set_db_use_direct_reads(bool val) {
+        this->db_use_direct_reads = val;
+    }
+
+    void set_db_use_direct_io_for_flush_and_compaction(bool val) {
+        this->db_use_direct_io_for_flush_and_compaction = val;
+    }
+
+    void set_db_compaction_readahead_size(uint64_t val) {
+        this->db_compaction_readahead_size = val;
+    }
+
+    void set_db_optimize_filters_for_hits(bool val) {
+        this->db_optimize_filters_for_hits = val;
+    }
+
+    void set_db_paranoid_memory_checks(bool val) {
+        this->db_paranoid_memory_checks = val;
     }
 
     void set_max_indexing_concurrency(uint32_t val) {
@@ -535,6 +655,82 @@ public:
 
     uint32_t get_db_keep_log_file_num() const {
         return this->db_keep_log_file_num;
+    }
+
+    size_t get_db_block_cache_size() const {
+        return this->db_block_cache_size;
+    }
+
+    int64_t get_db_rate_limit_bytes_per_sec() const {
+        return this->db_rate_limit_bytes_per_sec;
+    }
+
+    bool get_db_level_compaction_dynamic_level_bytes() const {
+        return this->db_level_compaction_dynamic_level_bytes;
+    }
+
+    uint32_t get_db_block_size() const {
+        return this->db_block_size;
+    }
+
+    uint32_t get_db_format_version() const {
+        return this->db_format_version;
+    }
+
+    bool get_db_enable_statistics() const {
+        return this->db_enable_statistics;
+    }
+
+    uint32_t get_db_compression_parallel_threads() const {
+        return this->db_compression_parallel_threads;
+    }
+
+    uint64_t get_db_bytes_per_sync() const {
+        return this->db_bytes_per_sync;
+    }
+
+    uint64_t get_db_max_manifest_file_size() const {
+        return this->db_max_manifest_file_size;
+    }
+
+    bool get_db_enable_async_io() const {
+        return this->db_enable_async_io;
+    }
+
+    std::string get_db_offpeak_time_utc() const {
+        return this->db_offpeak_time_utc;
+    }
+
+    bool get_db_unordered_write() const {
+        return this->db_unordered_write;
+    }
+
+    uint32_t get_db_max_subcompactions() const {
+        return this->db_max_subcompactions;
+    }
+
+    uint32_t get_db_max_background_jobs() const {
+        return this->db_max_background_jobs;
+    }
+
+    bool get_db_use_direct_reads() const {
+        return this->db_use_direct_reads;
+    }
+
+    bool get_db_use_direct_io_for_flush_and_compaction() const {
+        return this->db_use_direct_io_for_flush_and_compaction;
+    }
+
+    uint64_t get_db_compaction_readahead_size() const {
+        return this->db_compaction_readahead_size;
+    }
+
+    bool get_db_optimize_filters_for_hits() const {
+        return this->db_optimize_filters_for_hits;
+    }
+
+    bool get_db_paranoid_memory_checks() const {
+        return this->db_paranoid_memory_checks;
     }
 
     uint32_t get_max_indexing_concurrency() const {

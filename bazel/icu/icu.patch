@@ -1,9 +1,6 @@
-
-
-
---- icu4c/source/common/BUILD.bazel
-+++ /dev/null
-@@ -1,1213 +0,0 @@
+--- source/common/BUILD.bazel	2026-01-08 20:02:41.000000000 +0100
++++ /dev/null	2026-03-03 06:42:43.483125153 +0100
+@@ -1,1219 +0,0 @@
 -# © 2021 and later: Unicode, Inc. and others.
 -# License & terms of use: http://www.unicode.org/copyright.html
 -
@@ -70,6 +67,7 @@
 -        "umutex.cpp",
 -        "sharedobject.cpp",
 -        "utrace.cpp",
+-        "fixedstring.cpp",
 -    ],
 -    deps = [
 -        ":headers",
@@ -348,6 +346,7 @@
 -        "dictionarydata.cpp",
 -        "filteredbrk.cpp",
 -        "lstmbe.cpp",
+-        "mlbe.cpp",
 -        "rbbi.cpp",
 -        "rbbi_cache.cpp",
 -        "rbbidata.cpp",
@@ -608,12 +607,16 @@
 -        "locbased.cpp",
 -        "locid.cpp",
 -        "loclikely.cpp",
+-        "loclikelysubtags.cpp",
 -        "locmap.cpp",
+-        "lsr.cpp",
 -        "resbund.cpp",
 -        "resource.cpp",
 -        "uloc.cpp",
 -        "uloc_tag.cpp",
 -        "uloc_keytype.cpp",
+-        "ulocale.cpp",
+-        "ulocbuilder.cpp",
 -        "uresbund.cpp",
 -        "uresdata.cpp",
 -        "wintz.cpp",
@@ -1219,9 +1222,8 @@
 -)
 
 
-
---- icu4c/source/data/unidata/norm2/BUILD.bazel
-+++ /dev/null
+--- source/data/unidata/norm2/BUILD.bazel	2026-01-08 20:02:41.000000000 +0100
++++ /dev/null	2026-03-03 06:42:43.483125153 +0100
 @@ -1,13 +0,0 @@
 -# © 2021 and later: Unicode, Inc. and others.
 -# License & terms of use: http://www.unicode.org/copyright.html
@@ -1234,13 +1236,12 @@
 -)
 -
 -exports_files([
--    "nfc.txt", "nfkc.txt", "nfkc_cf.txt", "uts46.txt",
+-    "nfc.txt", "nfkc.txt", "nfkc_cf.txt", "nfkc_scf.txt", "uts46.txt",
 -])
 
 
-
---- icu4c/source/i18n/BUILD.bazel
-+++ /dev/null
+--- source/i18n/BUILD.bazel	2026-01-08 20:02:41.000000000 +0100
++++ /dev/null	2026-03-03 06:42:43.483125153 +0100
 @@ -1,130 +0,0 @@
 -# © 2021 and later: Unicode, Inc. and others.
 -# License & terms of use: http://www.unicode.org/copyright.html
@@ -1374,25 +1375,9 @@
 -)
 
 
---- icu4c/source/icudefs.mk.in
-+++ icu4c/source/icudefs.mk.in
-@@ -116,8 +116,8 @@ ENABLE_RELEASE = @ENABLE_RELEASE@
- EXEEXT = @EXEEXT@
- CC = @CC@
- CXX = @CXX@
--AR = @AR@
--ARFLAGS = @ARFLAGS@ r
-+AR = ar
-+ARFLAGS = r
- RANLIB = @RANLIB@
- COMPILE_LINK_ENVVAR = @COMPILE_LINK_ENVVAR@
- UCLN_NO_AUTO_CLEANUP = @UCLN_NO_AUTO_CLEANUP@
-
-
-
---- icu4c/source/stubdata/BUILD.bazel
-+++ /dev/null
-@@ -1,23 +0,0 @@
+--- source/stubdata/BUILD.bazel	2026-01-08 20:02:41.000000000 +0100
++++ /dev/null	2026-03-03 06:42:43.483125153 +0100
+@@ -1,24 +0,0 @@
 -# © 2021 and later: Unicode, Inc. and others.
 -# License & terms of use: http://www.unicode.org/copyright.html
 -
@@ -1411,6 +1396,7 @@
 -cc_library(
 -    name = "stubdata",
 -    srcs = ["stubdata.cpp"],
+-    hdrs = ["stubdata.h"],
 -    deps = ["//icu4c/source/common:headers"],
 -    local_defines = [
 -        "U_COMMON_IMPLEMENTATION",
@@ -1418,9 +1404,8 @@
 -)
 
 
-
---- icu4c/source/tools/gennorm2/BUILD.bazel
-+++ /dev/null
+--- source/tools/gennorm2/BUILD.bazel	2026-01-08 20:02:41.000000000 +0100
++++ /dev/null	2026-03-03 06:42:43.483125153 +0100
 @@ -1,39 +0,0 @@
 -# © 2021 and later: Unicode, Inc. and others.
 -# License & terms of use: http://www.unicode.org/copyright.html
@@ -1463,9 +1448,8 @@
 -)
 
 
-
---- icu4c/source/tools/toolutil/BUILD.bazel
-+++ /dev/null
+--- source/tools/toolutil/BUILD.bazel	2026-01-08 20:02:41.000000000 +0100
++++ /dev/null	2026-03-03 06:42:43.483125153 +0100
 @@ -1,126 +0,0 @@
 -# © 2021 and later: Unicode, Inc. and others.
 -# License & terms of use: http://www.unicode.org/copyright.html
@@ -1593,3 +1577,18 @@
 -        "//icu4c/source/i18n:headers",
 -    ],
 -)
+
+
+--- source/icudefs.mk.in	2026-03-04 15:11:25.310027801 +0100
++++ source/icudefs.mk.in	2026-03-04 15:11:25.311038418 +0100
+@@ -117,8 +117,8 @@
+ EXEEXT = @EXEEXT@
+ CC = @CC@
+ CXX = @CXX@
+-AR = @AR@
+-ARFLAGS = @ARFLAGS@ r
++AR = ar
++ARFLAGS = r
+ RANLIB = @RANLIB@
+ COMPILE_LINK_ENVVAR = @COMPILE_LINK_ENVVAR@
+ UCLN_NO_AUTO_CLEANUP = @UCLN_NO_AUTO_CLEANUP@

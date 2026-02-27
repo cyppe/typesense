@@ -2,7 +2,7 @@
 
 #include <iostream>
 #include <string>
-#include <sparsepp.h>
+#include "sparsepp_wrapper.h"
 #include "store.h"
 #include "field.h"
 #include "collection.h"
@@ -119,7 +119,7 @@ public:
     // frees in-memory data structures when server is shutdown - helps us run a memory leak detector properly
     void dispose();
 
-    bool auth_key_matches(const string& req_auth_key, const string& action,
+    bool auth_key_matches(const std::string& req_auth_key, const std::string& action,
                           const std::vector<collection_key_t>& collection_keys,
                           std::map<std::string, std::string>& params,
                           std::vector<nlohmann::json>& embedded_params_vec) const;

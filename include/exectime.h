@@ -13,6 +13,6 @@ public:
     static void log(std::string operation) {
         long long int timeMicros = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::high_resolution_clock::now() - begin).count();
-        LOG(INFO) << "Time taken for " << operation << ": " << timeMicros << "us";
+        TS_LOG(INFO) << "Time taken for " << operation << ": " << timeMicros << "us";
     }
 };

@@ -6,6 +6,7 @@
 #include "array.h"
 #include "match_score.h"
 #include "thread_local_vars.h"
+#include "logger.h"
 
 typedef uint32_t last_id_t;
 class filter_result_iterator_t;
@@ -293,7 +294,7 @@ bool posting_list_t::block_intersect(std::vector<posting_list_t::iterator_t>& it
                 }
 
                 if(equals(its)) {
-                    //LOG(INFO) << its[0].id();
+                    //TS_LOG(INFO) << its[0].id();
                     if(posting_list_t::take_id(istate, its[0].id())) {
                         func(its[0].id(), its);
                     }

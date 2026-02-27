@@ -5,11 +5,12 @@
 #include "http_client.h"
 #include "collection_manager.h"
 #include "string_utils.h"
+#include "logger.h"
 
 #define EVENTS_RATE_LIMIT_SEC 60
 
 void AnalyticsManager::persist_db_events(ReplicationState *raft_server, uint64_t prev_persistence_s, bool triggered) {
-    LOG(INFO) << "Persisting db events" << (triggered ? " (triggered)" : "");
+    TS_LOG(INFO) << "Persisting db events" << (triggered ? " (triggered)" : "");
     const uint64_t now_ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::system_clock::now().time_since_epoch()).count();
 
@@ -29,7 +30,7 @@ void AnalyticsManager::persist_db_events(ReplicationState *raft_server, uint64_t
                                                          res, res_headers, {}, 10 * 1000, true);
 
             if (status_code != 200) {
-                LOG(ERROR) << "Error while sending update_counter_events to leader. "
+                TS_LOG(ERROR) << "Error while sending update_counter_events to leader. "
                            << "Collection: " << collection << ", operation: " << operation
                            << "Status code: " << status_code << ", response: " << res;
             }
@@ -50,7 +51,7 @@ void AnalyticsManager::persist_db_events(ReplicationState *raft_server, uint64_t
         std::map<std::string, std::string> res_headers;
         long status_code = HttpClient::delete_response(truncate_topk_url, res, res_headers, 10*1000, true);
         if (status_code != 200) {
-          LOG(ERROR) << "Error while limit_to_top_k for collection: " << collection
+          TS_LOG(ERROR) << "Error while limit_to_top_k for collection: " << collection
                      << "Status code: " << status_code << ", response: " << res;
         }
       }
@@ -109,7 +110,7 @@ void AnalyticsManager::persist_db_events(ReplicationState *raft_server, uint64_t
 }
 
 void AnalyticsManager::persist_analytics_db_events(ReplicationState *raft_server, uint64_t prev_persistence_s, bool triggred) {
-    LOG(INFO) << "Persisting analytics db events" << (triggred ? " (triggered)" : "");
+    TS_LOG(INFO) << "Persisting analytics db events" << (triggred ? " (triggered)" : "");
     std::unique_lock lock(mutex);
     std::vector<std::string> payloads;
     nlohmann::json payload = nlohmann::json::array();
@@ -162,7 +163,7 @@ void AnalyticsManager::persist_analytics_db_events(ReplicationState *raft_server
                                                           res, res_headers, {}, 10*1000, true);
 
             if(status_code != 200) {
-                LOG(ERROR) << "Error while sending "<<" log events to leader. "
+                TS_LOG(ERROR) << "Error while sending "<<" log events to leader. "
                             << "Status code: " << status_code << ", response: " << res;
             }
         }
@@ -301,7 +302,7 @@ Option<nlohmann::json> AnalyticsManager::get_events(const std::string& userid, c
                 uint64_t timestamp = event_json["timestamp"];
                 all_events.emplace_back(timestamp, event_str);
             } catch (const std::exception& e) {
-                LOG(ERROR) << "Error parsing event JSON: " << e.what();
+                TS_LOG(ERROR) << "Error parsing event JSON: " << e.what();
                 // Skip invalid events
             }
         }
@@ -751,12 +752,12 @@ bool AnalyticsManager::write_to_db(const nlohmann::json& payload) {
 
             bool inserted = analytics_store->insert(key, event.dump());
             if(!inserted) {
-                LOG(ERROR) << "Error while dumping events to analytics db.";
+                TS_LOG(ERROR) << "Error while dumping events to analytics db.";
                 return false;
             }
         }
     } else {
-        LOG(ERROR) << "Analytics DB not initialized!!";
+        TS_LOG(ERROR) << "Analytics DB not initialized!!";
         return false;
     }
     return true;
@@ -824,7 +825,7 @@ void AnalyticsManager::run(ReplicationState* raft_server) {
 
         if(!trigered_flush && now_ts_seconds - prev_persistence_s < Config::get_instance().get_analytics_flush_interval()) {
             // we will persist aggregation every hour
-            // LOG(INFO) << "QuerySuggestions::run interval is less, continuing";
+            // TS_LOG(INFO) << "QuerySuggestions::run interval is less, continuing";
             continue;
         }
 

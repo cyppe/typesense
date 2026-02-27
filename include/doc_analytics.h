@@ -74,6 +74,7 @@ struct doc_event_t {
             data = other.data;
             return *this;
         }
+        return *this;
     }
 
     void to_json(nlohmann::json& obj, const std::string& coll) const;

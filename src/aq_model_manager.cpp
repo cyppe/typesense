@@ -2,6 +2,7 @@
 #include <map>
 #include "vq_model_manager.h"
 #include "http_client.h"
+#include "logger.h"
 
 
 const std::string VQModelManager::get_model_url(const std::string& model_name) {
@@ -83,9 +84,9 @@ Option<bool> VQModelManager::download_model(const std::string& model_name) {
     auto model_url = get_model_url(model_name);
     auto& client = HttpClient::get_instance();
     auto response = client.download_file(model_url, model_path);
-    LOG(INFO) << "Downloading model " << model_name << " from " << model_url << " to " << model_path;
+    TS_LOG(INFO) << "Downloading model " << model_name << " from " << model_url << " to " << model_path;
     if (response != 200) {
-        LOG(INFO) << response;
+        TS_LOG(INFO) << response;
         return Option<bool>(400, "Failed to download voice query model");
     }
 

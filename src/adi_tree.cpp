@@ -9,10 +9,10 @@ struct adi_node_t {
     char* chars;
     adi_node_t** children;
 
-    adi_node_t(): scions(0), num_children(0), chars(nullptr), children(nullptr) {}
+    adi_node_t(): num_children(0), scions(0), chars(nullptr), children(nullptr) {}
 
     ~adi_node_t() {
-        //LOG(INFO) << "~adi_node: " << this;
+        //TS_LOG(INFO) << "~adi_node: " << this;
         //nodes.erase(this);
 
         delete [] chars;
@@ -62,7 +62,7 @@ void adi_tree_t::add_node(adi_node_t* node, const std::string& key, const size_t
 
         new_children[slot] = new adi_node_t();
 
-        /*LOG(INFO) << "new node: " << new_children[slot] << ", slot: " << slot
+        /*TS_LOG(INFO) << "new node: " << new_children[slot] << ", slot: " << slot
                   << ", parent node: " << node << ", key: " << key
                   << ", char: " << int(c) << ", node->num_children: " << node->num_children;*/
 
@@ -248,7 +248,7 @@ void adi_tree_t::remove(uint32_t id) {
     std::vector<adi_node_t*> path;
     auto leaf_node = get_node(root, key, 0, path);
 
-    //LOG(INFO) << "Removing key: " << key << ", seq_id: " << id << ", id_keys.size: " << id_keys.size()
+    //TS_LOG(INFO) << "Removing key: " << key << ", seq_id: " << id << ", id_keys.size: " << id_keys.size()
     //          << ", root.num_children: " << root->num_children;
 
     if(leaf_node != nullptr) {
@@ -261,7 +261,7 @@ void adi_tree_t::remove(uint32_t id) {
 adi_tree_t::~adi_tree_t() {
     std::vector<uint32_t> ids;
 
-    //LOG(INFO) << "ROOT: " << root;
+    //TS_LOG(INFO) << "ROOT: " << root;
 
     for(auto& id_key: id_keys) {
         ids.push_back(id_key.first);
@@ -271,12 +271,12 @@ adi_tree_t::~adi_tree_t() {
         remove(id);
     }
 
-    //LOG(INFO) << "tree destructor, deleting root: " << root;
+    //TS_LOG(INFO) << "tree destructor, deleting root: " << root;
     delete root;
 
-    //LOG(INFO) << "nodes.size: " << nodes.size();
+    //TS_LOG(INFO) << "nodes.size: " << nodes.size();
     //auto missing_node = *nodes.begin();
-    //LOG(INFO) << "missing node: " << missing_node;
+    //TS_LOG(INFO) << "missing node: " << missing_node;
 }
 
 const adi_node_t* adi_tree_t::get_root() {

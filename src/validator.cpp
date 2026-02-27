@@ -86,8 +86,6 @@ Option<uint32_t> validator_t::coerce_element(const field& a_field, nlohmann::jso
                 return Option<>(400, "Nested field `" + field_name  + "` does not contain valid geopoint values.");
             }
 
-            const auto& item = doc_ele;
-
             for(size_t ai = 0; ai < doc_ele.size(); ai+=2) {
                 if(!(doc_ele[ai].is_number() && doc_ele[ai+1].is_number())) {
                     // one or more elements is not an number, try to coerce

@@ -4,7 +4,7 @@
 #include <stack>
 #include "filter.h"
 
-Option<bool> filter::validate_numerical_filter_value(field _field, const string &raw_value) {
+Option<bool> filter::validate_numerical_filter_value(field _field, const std::string &raw_value) {
     if(_field.is_int32()) {
         if (!StringUtils::is_integer(raw_value)) {
             return Option<bool>(400, "Error with filter field `" + _field.name + "`: Not an int32.");
@@ -26,7 +26,7 @@ Option<bool> filter::validate_numerical_filter_value(field _field, const string 
     return Option<bool>(true);
 }
 
-Option<NUM_COMPARATOR> filter::extract_num_comparator(string &comp_and_value) {
+Option<NUM_COMPARATOR> filter::extract_num_comparator(std::string &comp_and_value) {
     auto num_comparator = EQUALS;
 
     if(StringUtils::is_integer(comp_and_value) || StringUtils::is_float(comp_and_value)) {
@@ -156,7 +156,7 @@ Option<bool> filter::parse_geopoint_filter_value(std::string& raw_value,
     return Option<bool>(true);
 }
 
-Option<bool> validate_geofilter_distance(std::string& raw_value, const string& format_err_msg,
+Option<bool> validate_geofilter_distance(std::string& raw_value, const std::string& format_err_msg,
                                          std::string& distance, std::string& unit) {
     if (raw_value.size() < 2) {
         return Option<bool>(400, "Unit must be either `km` or `mi`.");
@@ -183,7 +183,7 @@ Option<bool> validate_geofilter_distance(std::string& raw_value, const string& f
     return Option<bool>(true);
 }
 
-Option<bool> filter::parse_geopoint_filter_value(string& raw_value, const string& format_err_msg, filter& filter_exp) {
+Option<bool> filter::parse_geopoint_filter_value(std::string& raw_value, const std::string& format_err_msg, filter& filter_exp) {
     // FORMAT:
     // [ ([48.853, 2.344], radius: 1km, exact_filter_radius: 100km),
     //   ([48.8662, 2.3255, 48.8581, 2.3209, 48.8561, 2.3448, 48.8641, 2.3469], exact_filter_radius: 100km) ]
@@ -973,7 +973,6 @@ Option<bool> parse_multi_valued_geopoint_filter(const std::string& filter_query,
         return error;
     }
 
-    size_t start_index = index;
     auto size = filter_query.size();
 
     // Individual geopoint filters have square brackets inside them.
@@ -999,7 +998,6 @@ Option<bool> parse_object_filter(const std::string& filter_query, size_t& index)
         return Option<bool>(400, "Could not parse the object filter: `" + filter_query.substr(index) + "`.");
     }
 
-    const auto start_index = index;
     size_t curly_braces_count = 1;
     while (++index < filter_query.size() && curly_braces_count > 0) {
         if (filter_query[index] == '}') {

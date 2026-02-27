@@ -20,7 +20,7 @@ TEST_F(VectorQueryOpsTest, ParseVectorQueryString) {
     auto parsed = VectorQueryOps::parse_vector_query_str("vec:([0.34, 0.66, 0.12, 0.68], k: 10)", vector_query, false, nullptr, false);
     ASSERT_TRUE(parsed.ok());
     ASSERT_EQ("vec", vector_query.field_name);
-    ASSERT_EQ(10, vector_query.k);
+    ASSERT_EQ(size_t{10}, vector_query.k);
     std::vector<float> fvs = {0.34, 0.66, 0.12, 0.68};
     ASSERT_EQ(fvs.size(), vector_query.values.size());
     for (size_t i = 0; i < fvs.size(); i++) {

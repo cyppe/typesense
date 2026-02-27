@@ -112,7 +112,7 @@ struct token_leaf {
     uint32_t num_typos;
 
     token_leaf(art_leaf* leaf, uint32_t root_len, uint32_t num_typos, bool is_prefix) :
-            leaf(leaf), root_len(root_len), num_typos(num_typos), is_prefix(is_prefix) {
+            leaf(leaf), is_prefix(is_prefix), root_len(root_len), num_typos(num_typos) {
 
     }
 };

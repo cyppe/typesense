@@ -19,22 +19,22 @@ TEST_F(ADITreeTest, BasicOps) {
     adi_tree_t tree;
 
     // operations on fresh tree
-    ASSERT_EQ(INT64_MAX, tree.rank(100));
+    ASSERT_EQ(size_t{INT64_MAX}, tree.rank(100));
     tree.remove(100);
 
     tree.index(100, "f");
-    ASSERT_EQ(1, tree.rank(100));
+    ASSERT_EQ(size_t{1}, tree.rank(100));
 
     tree.index(101, "e");
-    ASSERT_EQ(2, tree.rank(100));
-    ASSERT_EQ(1, tree.rank(101));
+    ASSERT_EQ(uint64_t{2}, tree.rank(100));
+    ASSERT_EQ(size_t{1}, tree.rank(101));
 
     tree.remove(101);
-    ASSERT_EQ(1, tree.rank(100));
+    ASSERT_EQ(size_t{1}, tree.rank(100));
 
     tree.remove(100);
-    ASSERT_EQ(INT64_MAX, tree.rank(100));
-    ASSERT_EQ(INT64_MAX, tree.rank(101));
+    ASSERT_EQ(size_t{INT64_MAX}, tree.rank(100));
+    ASSERT_EQ(size_t{INT64_MAX}, tree.rank(101));
 }
 
 TEST_F(ADITreeTest, OverlappedString) {
@@ -42,14 +42,14 @@ TEST_F(ADITreeTest, OverlappedString) {
     tree.index(1, "t");
     tree.index(2, "to");
 
-    ASSERT_EQ(2, tree.rank(2));
-    ASSERT_EQ(1, tree.rank(1));
+    ASSERT_EQ(size_t{2}, tree.rank(2));
+    ASSERT_EQ(size_t{1}, tree.rank(1));
 
     tree.remove(1);
     tree.remove(2);
 
-    ASSERT_EQ(INT64_MAX, tree.rank(2));
-    ASSERT_EQ(INT64_MAX, tree.rank(1));
+    ASSERT_EQ(size_t{INT64_MAX}, tree.rank(2));
+    ASSERT_EQ(size_t{INT64_MAX}, tree.rank(1));
 }
 
 TEST_F(ADITreeTest, OrderInsertedStrings) {
@@ -70,26 +70,26 @@ TEST_F(ADITreeTest, OrderInsertedStrings) {
               });
 
     // alpha, ant, beta, buzz, foo, foobar
-    ASSERT_EQ(1, tree.rank(1));
-    ASSERT_EQ(3, tree.rank(2));
-    ASSERT_EQ(5, tree.rank(3));
-    ASSERT_EQ(2, tree.rank(4));
-    ASSERT_EQ(6, tree.rank(5));
-    ASSERT_EQ(4, tree.rank(6));
+    ASSERT_EQ(size_t{1}, tree.rank(1));
+    ASSERT_EQ(size_t{3}, tree.rank(2));
+    ASSERT_EQ(size_t{5}, tree.rank(3));
+    ASSERT_EQ(size_t{2}, tree.rank(4));
+    ASSERT_EQ(size_t{6}, tree.rank(5));
+    ASSERT_EQ(size_t{4}, tree.rank(6));
 
     // remove "foo"
     tree.remove(3);
-    ASSERT_EQ(5, tree.rank(5));
+    ASSERT_EQ(size_t{5}, tree.rank(5));
 
     // remove "foobar"
     tree.remove(5);
-    ASSERT_EQ(4, tree.rank(6));
+    ASSERT_EQ(size_t{4}, tree.rank(6));
 
     // remove "alpha"
     tree.remove(1);
-    ASSERT_EQ(1, tree.rank(4));
-    ASSERT_EQ(2, tree.rank(2));
-    ASSERT_EQ(3, tree.rank(6));
+    ASSERT_EQ(size_t{1}, tree.rank(4));
+    ASSERT_EQ(size_t{2}, tree.rank(2));
+    ASSERT_EQ(size_t{3}, tree.rank(6));
 }
 
 TEST_F(ADITreeTest, InsertDuplicateAndDelete) {
@@ -100,8 +100,8 @@ TEST_F(ADITreeTest, InsertDuplicateAndDelete) {
     tree.remove(100);
     tree.remove(101);
 
-    ASSERT_EQ(INT64_MAX, tree.rank(100));
-    ASSERT_EQ(INT64_MAX, tree.rank(101));
+    ASSERT_EQ(size_t{INT64_MAX}, tree.rank(100));
+    ASSERT_EQ(size_t{INT64_MAX}, tree.rank(101));
 
     ASSERT_EQ(nullptr, tree.get_root());
 }

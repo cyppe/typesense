@@ -26,7 +26,7 @@ TEST(IdListTest, IdListIteratorTest) {
         count++;
     }
 
-    ASSERT_EQ(10, count);
+    ASSERT_EQ(uint32_t{10}, count);
     ASSERT_FALSE(iter2.valid());
 }
 
@@ -46,7 +46,7 @@ TEST(IdListTest, IdListIntersectionTest) {
     std::sort(res_ids, res_ids + res_len);
 
     auto count = id_list.intersect_count(res_ids, res_len, false, 0);
-    ASSERT_NE(0, count);
+    ASSERT_NE(uint32_t{0}, count);
 
     delete [] res_ids;
 }

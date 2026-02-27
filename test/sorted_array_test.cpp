@@ -7,31 +7,31 @@ TEST(SortedArrayTest, Append) {
     sorted_array arr;
     const int SIZE = 10 * 1000;
 
-    EXPECT_EQ(arr.getLength(), 0);
-    EXPECT_EQ(arr.indexOf(100), 0);  // when not found must be equal to length (0 in this case)
+    EXPECT_EQ(arr.getLength(), size_t{0});
+    EXPECT_EQ(arr.indexOf(100), size_t{0});  // when not found must be equal to length (0 in this case)
 
     for(uint32_t i=0; i < SIZE; i++) {
         size_t appended_index = arr.append(i);
         ASSERT_EQ(i, appended_index);
     }
 
-    EXPECT_EQ(arr.getLength(), SIZE);
+    EXPECT_EQ(arr.getLength(), size_t{SIZE});
 
     for(uint32_t i=0; i < SIZE; i++) {
-        EXPECT_EQ(arr.at(i), i);
-        EXPECT_EQ(arr.indexOf(i), i);
+        EXPECT_EQ(arr.at(i), size_t{i});
+        EXPECT_EQ(arr.indexOf(i), size_t{i});
         EXPECT_EQ(arr.contains(i), true);
     }
 
     EXPECT_EQ(arr.contains(SIZE), false);
-    EXPECT_EQ(arr.indexOf(SIZE), SIZE);
-    EXPECT_EQ(arr.indexOf(SIZE+1), SIZE);
+    EXPECT_EQ(arr.indexOf(SIZE), size_t{SIZE});
+    EXPECT_EQ(arr.indexOf(SIZE+1), size_t{SIZE});
 
     sorted_array arr_small;
     size_t appended_index = arr_small.append(100);
-    EXPECT_EQ(0, appended_index);
-    EXPECT_EQ(arr_small.getLength(), 1);
-    EXPECT_EQ(arr_small.at(0), 100);
+    EXPECT_EQ(size_t{0}, appended_index);
+    EXPECT_EQ(arr_small.getLength(), size_t{1});
+    EXPECT_EQ(arr_small.at(0), size_t{100});
 }
 
 TEST(SortedArrayTest, AppendOutOfOrder) {
@@ -41,7 +41,7 @@ TEST(SortedArrayTest, AppendOutOfOrder) {
         ASSERT_EQ(i-5, appended_index);
     }
 
-    EXPECT_EQ(6, arr.getLength());
+    EXPECT_EQ(size_t{6}, arr.getLength());
 
     int appended_index = -1;
 
@@ -66,7 +66,7 @@ TEST(SortedArrayTest, AppendOutOfOrder) {
     appended_index = arr.append(12);
     ASSERT_EQ(11, appended_index);
 
-    EXPECT_EQ(13, arr.getLength());
+    EXPECT_EQ(size_t{13}, arr.getLength());
 }
 
 TEST(SortedArrayTest, InsertAtIndex) {
@@ -90,14 +90,14 @@ TEST(SortedArrayTest, InsertAtIndex) {
         ASSERT_EQ(eles[i], arr.at(i));
     }
 
-    ASSERT_EQ(1, arr.at(0));
-    ASSERT_EQ(5, arr.at(1));
+    ASSERT_EQ(uint32_t{1}, arr.at(0));
+    ASSERT_EQ(size_t{5}, arr.at(1));
 
     arr.insert(1, 2);
     eles = {1, 2, 5, 6, 7, 8, 9, 11};
-    ASSERT_EQ(1, arr.at(0));
-    ASSERT_EQ(2, arr.at(1));
-    ASSERT_EQ(8, arr.getLength());
+    ASSERT_EQ(size_t{1}, arr.at(0));
+    ASSERT_EQ(size_t{2}, arr.at(1));
+    ASSERT_EQ(size_t{8}, arr.getLength());
 
     for(size_t i=0; i < eles.size(); i++) {
         ASSERT_EQ(eles[i], arr.at(i));
@@ -105,9 +105,9 @@ TEST(SortedArrayTest, InsertAtIndex) {
 
     arr.insert(7, 10);
     eles = { 1, 2, 5, 6, 7, 8, 9, 10, 11};
-    ASSERT_EQ(10, arr.at(7));
-    ASSERT_EQ(11, arr.at(8));
-    ASSERT_EQ(9, arr.getLength());
+    ASSERT_EQ(size_t{10}, arr.at(7));
+    ASSERT_EQ(size_t{11}, arr.at(8));
+    ASSERT_EQ(size_t{9}, arr.getLength());
 
     for(size_t i=0; i < eles.size(); i++) {
         ASSERT_EQ(eles[i], arr.at(i));
@@ -253,15 +253,15 @@ TEST(SortedArrayTest, BulkIndexOf) {
     results = new uint32_t[search_ids.size()];
 
     ids.indexOf(&search_ids[0], search_ids.size(), results);
-    ASSERT_EQ(562, results[0]);
+    ASSERT_EQ(size_t{562}, results[0]);
 
     search_ids = {100, 105};
     delete [] results;
     results = new uint32_t[search_ids.size()];
 
     ids.indexOf(&search_ids[0], search_ids.size(), results);
-    ASSERT_EQ(562, results[0]);
-    ASSERT_EQ(562, results[1]);
+    ASSERT_EQ(size_t{562}, results[0]);
+    ASSERT_EQ(size_t{562}, results[1]);
 
     delete [] results;
 }
@@ -314,14 +314,14 @@ TEST(SortedArrayTest, BulkIndexOf2) {
     uint32_t* indices = new uint32_t[filter_ids.size()];
     arr.indexOf(&filter_ids[0], filter_ids.size(), indices);
 
-    ASSERT_EQ(57, filter_ids[25]);
-    ASSERT_EQ(4, indices[25]);
+    ASSERT_EQ(57u, filter_ids[25]);
+    ASSERT_EQ(4u, indices[25]);
 
-    ASSERT_EQ(60, filter_ids[27]);
-    ASSERT_EQ(5, indices[27]);
+    ASSERT_EQ(60u, filter_ids[27]);
+    ASSERT_EQ(5u, indices[27]);
 
-    ASSERT_EQ(232, filter_ids[135]);
-    ASSERT_EQ(8, indices[135]);
+    ASSERT_EQ(232u, filter_ids[135]);
+    ASSERT_EQ(8u, indices[135]);
 
     delete [] indices;
     indices = nullptr;
@@ -337,17 +337,17 @@ TEST(SortedArrayTest, BulkIndexOf2) {
     indices = new uint32_t[filter_ids.size()];
     arr2.indexOf(&filter_ids[0], filter_ids.size(), indices);
 
-    ASSERT_EQ(4, filter_ids[3]);
-    ASSERT_EQ(0, indices[3]);
+    ASSERT_EQ(4u, filter_ids[3]);
+    ASSERT_EQ(0u, indices[3]);
 
-    ASSERT_EQ(6, filter_ids[4]);
-    ASSERT_EQ(2, indices[4]);
+    ASSERT_EQ(6u, filter_ids[4]);
+    ASSERT_EQ(2u, indices[4]);
 
-    ASSERT_EQ(7, filter_ids[5]);
-    ASSERT_EQ(3, indices[5]);
+    ASSERT_EQ(7u, filter_ids[5]);
+    ASSERT_EQ(3u, indices[5]);
 
-    ASSERT_EQ(8, filter_ids[6]);
-    ASSERT_EQ(4, indices[6]);
+    ASSERT_EQ(8u, filter_ids[6]);
+    ASSERT_EQ(4u, indices[6]);
 
     delete [] indices;
 }
@@ -398,7 +398,7 @@ TEST(SortedArrayTest, NumFoundOfSortedArrayGreaterThanValues) {
     }
 
     auto num_found = arr.numFoundOf(&filter_ids[0], filter_ids.size());
-    ASSERT_EQ(3, num_found);
+    ASSERT_EQ(size_t{3}, num_found);
 
     filter_ids = {4,5,6,7,8};
     ids = {1,2,3,4,6,7,8,9,10};
@@ -409,7 +409,7 @@ TEST(SortedArrayTest, NumFoundOfSortedArrayGreaterThanValues) {
     }
 
     num_found = arr2.numFoundOf(&filter_ids[0], filter_ids.size());
-    ASSERT_EQ(4, num_found);
+    ASSERT_EQ(size_t{4}, num_found);
 }
 
 TEST(SortedArrayTest, NumFoundOfSortedArrayLessThanValues) {
@@ -469,5 +469,5 @@ TEST(SortedArrayTest, NumFoundOfSortedArrayLessThanValues) {
     }
 
     num_found = arr2.numFoundOf(&filter_ids[0], filter_ids.size());
-    ASSERT_EQ(4, num_found);
+    ASSERT_EQ(size_t{4}, num_found);
 }

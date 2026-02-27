@@ -5,20 +5,23 @@
 #include <algorithm>
 #include <collection_manager.h>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionFacetingTest : public ::testing::Test {
 protected:
     Store *store;
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_faceting";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_faceting");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -32,6 +35,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -71,15 +75,15 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
 
     // single facet with no filters
     nlohmann::json results = coll_array_fields->search("Jeremy", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();    
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(4, results["facet_counts"][0].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{4}, results["facet_counts"][0].size());
     ASSERT_EQ("tags", results["facet_counts"][0]["field_name"]);
     ASSERT_EQ(false, results["facet_counts"][0]["sampled"].get<bool>());
-    ASSERT_EQ(4, results["facet_counts"][0]["counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["stats"].size());
-    ASSERT_EQ(4, results["facet_counts"][0]["stats"]["total_values"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{4}, results["facet_counts"][0]["stats"]["total_values"].get<size_t>());
 
     ASSERT_STREQ("gold", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
     ASSERT_EQ(3, (int) results["facet_counts"][0]["counts"][0]["count"]);
@@ -98,11 +102,11 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         FREQUENCY, {false}, 10, spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 2).get();
     
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("tags", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_STREQ("gold", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
     ASSERT_EQ(3, (int) results["facet_counts"][0]["counts"][0]["count"]);
@@ -116,8 +120,8 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
     facets.push_back("name_facet");
     results = coll_array_fields->search("Jeremy", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(2, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"].size());
 
     ASSERT_STREQ("tags", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_STREQ("name_facet", results["facet_counts"][1]["field_name"].get<std::string>().c_str());
@@ -131,8 +135,8 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
     facets.push_back("tags");
     results = coll_array_fields->search("Jeremy", query_fields, "age: >24", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(3, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
 
     ASSERT_STREQ("tags", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(2, (int) results["facet_counts"][0]["counts"][0]["count"]);
@@ -150,8 +154,8 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
     facets.push_back("tags");
     results = coll_array_fields->search("*", query_fields, "age: >24", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(3, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
 
     ASSERT_STREQ("tags", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(2, (int) results["facet_counts"][0]["counts"][0]["count"]);
@@ -170,8 +174,8 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10, " tags : sliver").get();
 
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("tags", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(3, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_STREQ("silver", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
@@ -182,8 +186,8 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10, "tags: fxne platim").get();
 
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("tags", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_STREQ("FINE PLATINUM", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
@@ -195,8 +199,8 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10, "tags: fine").get();
 
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("tags", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_STREQ("FINE PLATINUM", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
@@ -207,8 +211,8 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10, "tags: pltinum").get();
 
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("tags", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_STREQ("FINE PLATINUM", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
@@ -216,8 +220,8 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
     // facet with wildcard
     results = coll_array_fields->search("Jeremy", query_fields, "", {"ag*"}, sort_fields, {0}, 10, 1, FREQUENCY,
                                         {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("age", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
 
     // facet query on an integer field
@@ -226,8 +230,8 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10, "age: 2").get();
 
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("age", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
 
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
@@ -243,7 +247,7 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         {false}, Index::DROP_TOKENS_THRESHOLD,
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10, "").get();
-    ASSERT_EQ(5, results["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{5}, results["facet_counts"][0]["stats"].size());
     ASSERT_FLOAT_EQ(4.880199885368347, results["facet_counts"][0]["stats"]["avg"].get<double>());
     ASSERT_FLOAT_EQ(0.0, results["facet_counts"][0]["stats"]["min"].get<double>());
     ASSERT_FLOAT_EQ(9.99899959564209, results["facet_counts"][0]["stats"]["max"].get<double>());
@@ -252,7 +256,7 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
 
     // check for "0" case
     ASSERT_STREQ("0", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
 
     // facet query on a float field
     results = coll_array_fields->search("*", query_fields, "", {"rating"}, sort_fields, {0}, 10, 1, FREQUENCY,
@@ -260,14 +264,14 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10, "rating: 7").get();
     
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("rating", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_STREQ("7.812", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
     ASSERT_STREQ("<mark>7</mark>.812", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>().c_str());
 
-    ASSERT_EQ(5, results["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{5}, results["facet_counts"][0]["stats"].size());
     ASSERT_FLOAT_EQ(4.880199885368347, results["facet_counts"][0]["stats"]["avg"].get<double>());
     ASSERT_FLOAT_EQ(0.0, results["facet_counts"][0]["stats"]["min"].get<double>());
     ASSERT_FLOAT_EQ(9.99899959564209, results["facet_counts"][0]["stats"]["max"].get<double>());
@@ -280,15 +284,15 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         {false}, Index::DROP_TOKENS_THRESHOLD,
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10, "timestamps: 142189002").get();    
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_STREQ("timestamps", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(2, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_STREQ("1421890022", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
     ASSERT_STREQ("<mark>142189002</mark>2", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>().c_str());
 
-    ASSERT_EQ(5, results["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{5}, results["facet_counts"][0]["stats"].size());
     ASSERT_FLOAT_EQ(1106321222, results["facet_counts"][0]["stats"]["avg"].get<double>());
     ASSERT_FLOAT_EQ(348974822, results["facet_counts"][0]["stats"]["min"].get<double>());
     ASSERT_FLOAT_EQ(1453426022, results["facet_counts"][0]["stats"]["max"].get<double>());
@@ -301,10 +305,10 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10, " tags : notfound").get();
 
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("tags", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
-    ASSERT_EQ(0, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{0}, results["facet_counts"][0]["counts"].size());
 
     // empty facet query value should return all facets without any filtering of facets
     results = coll_array_fields->search("*", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY,
@@ -312,22 +316,22 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                        spp::sparse_hash_set<std::string>(),
                                        spp::sparse_hash_set<std::string>(), 10, "tags: ").get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     results = coll_array_fields->search("*", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY,
                                        {false}, Index::DROP_TOKENS_THRESHOLD,
                                        spp::sparse_hash_set<std::string>(),
                                        spp::sparse_hash_set<std::string>(), 10, "tags:").get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     // Wildcard facet_by can have partial matches
     results = coll_array_fields->search("*", query_fields, "", {"nam*"}, sort_fields, {0}, 10, 1, FREQUENCY,
                                         {false}, Index::DROP_TOKENS_THRESHOLD,
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10).get();
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_EQ("name_facet", results["facet_counts"][0]["field_name"].get<std::string>());
 
     // Wildcard facet_by having no counts should not be returned
@@ -335,15 +339,15 @@ TEST_F(CollectionFacetingTest, FacetCounts) {
                                         {false}, Index::DROP_TOKENS_THRESHOLD,
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10).get();
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(0, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["facet_counts"].size());
 
     results = coll_array_fields->search("*", query_fields, "", {"optional_facet"}, sort_fields, {0}, 10, 1, FREQUENCY,
                                         {false}, Index::DROP_TOKENS_THRESHOLD,
                                         spp::sparse_hash_set<std::string>(),
                                         spp::sparse_hash_set<std::string>(), 10).get();
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_EQ("optional_facet", results["facet_counts"][0]["field_name"].get<std::string>());
 
     // bad facet query syntax
@@ -461,9 +465,9 @@ TEST_F(CollectionFacetingTest, FacetCountsBool) {
                                            token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                            spp::sparse_hash_set<std::string>(), 10, "in_stock:true").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["stats"].size());
     ASSERT_FLOAT_EQ(1, results["facet_counts"][0]["stats"]["total_values"].get<size_t>());
 
     ASSERT_STREQ("in_stock", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
@@ -500,8 +504,8 @@ TEST_F(CollectionFacetingTest, FacetCountsFloatPrecision) {
     nlohmann::json results = coll1->search("*", {"title"}, "", facets, sort_fields, {0}, 10, 1,
                                            token_ordering::FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_STREQ("points", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
@@ -537,20 +541,20 @@ TEST_F(CollectionFacetingTest, FacetCountsHighlighting) {
                                            token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                            spp::sparse_hash_set<std::string>(), 10, "categories:cell").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_STREQ("categories", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_STREQ("Cell Phones", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
     ASSERT_STREQ("<mark>Cell</mark> Phones", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>().c_str());
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][1]["count"].get<size_t>());
     ASSERT_STREQ("Cell Phone Accessories", results["facet_counts"][0]["counts"][1]["value"].get<std::string>().c_str());
     ASSERT_STREQ("<mark>Cell</mark> Phone Accessories", results["facet_counts"][0]["counts"][1]["highlighted"].get<std::string>().c_str());
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][2]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][2]["count"].get<size_t>());
     ASSERT_STREQ("Cell Phone Cases & Clips", results["facet_counts"][0]["counts"][2]["value"].get<std::string>().c_str());
     ASSERT_STREQ("<mark>Cell</mark> Phone Cases & Clips", results["facet_counts"][0]["counts"][2]["highlighted"].get<std::string>().c_str());
 
@@ -563,7 +567,7 @@ TEST_F(CollectionFacetingTest, FacetCountsHighlighting) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "categories:cell").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("categories", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
 
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
@@ -587,8 +591,8 @@ TEST_F(CollectionFacetingTest, FacetCountsHighlighting) {
                             spp::sparse_hash_set<std::string>(), 10, "categories:acces").get();
 
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_STREQ("categories", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_STREQ("Cell Phone Accessories", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
@@ -600,8 +604,8 @@ TEST_F(CollectionFacetingTest, FacetCountsHighlighting) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "categories:ACCES").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_STREQ("categories", results["facet_counts"][0]["field_name"].get<std::string>().c_str());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_STREQ("Cell Phone Accessories", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
@@ -616,8 +620,8 @@ TEST_F(CollectionFacetingTest, FacetCountsHighlighting) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "categories:cell ph").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_STREQ("Cell Phones", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
     ASSERT_STREQ("Cell Phone Accessories", results["facet_counts"][0]["counts"][1]["value"].get<std::string>().c_str());
@@ -629,11 +633,11 @@ TEST_F(CollectionFacetingTest, FacetCountsHighlighting) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "categories:cellx").get();
 
-    ASSERT_EQ(0, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<uint32_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
+    ASSERT_EQ(uint32_t{1}, results["found"].get<uint32_t>());
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_STREQ("<mark>Cello</mark>phanes", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>().c_str());
     ASSERT_STREQ("<mark>Cell</mark> Phones", results["facet_counts"][0]["counts"][1]["highlighted"].get<std::string>().c_str());
@@ -674,9 +678,9 @@ TEST_F(CollectionFacetingTest, FacetStatOnFloatFields) {
 
     auto results = res_op.get();
 
-    ASSERT_EQ(7, results["hits"].size());
+    ASSERT_EQ(size_t{7}, results["hits"].size());
 
-    ASSERT_EQ(5, results["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{5}, results["facet_counts"][0]["stats"].size());
     ASSERT_FLOAT_EQ(-21.3799991607666, results["facet_counts"][0]["stats"]["min"].get<double>());
     ASSERT_FLOAT_EQ(300, results["facet_counts"][0]["stats"]["max"].get<double>());
     ASSERT_FLOAT_EQ(277.8160007725237, results["facet_counts"][0]["stats"]["sum"].get<double>());
@@ -686,7 +690,7 @@ TEST_F(CollectionFacetingTest, FacetStatOnFloatFields) {
     results = coll_float_fields->search("*", query_fields, "average:>100", {"average"}, sort_fields_desc, {0}, 10,
                                         1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(5, results["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{5}, results["facet_counts"][0]["stats"].size());
     ASSERT_FLOAT_EQ(300, results["facet_counts"][0]["stats"]["avg"].get<double>());
     ASSERT_FLOAT_EQ(300, results["facet_counts"][0]["stats"]["min"].get<double>());
     ASSERT_FLOAT_EQ(300, results["facet_counts"][0]["stats"]["max"].get<double>());
@@ -701,7 +705,7 @@ TEST_F(CollectionFacetingTest, FacetStatOnFloatFields) {
                                         spp::sparse_hash_set<std::string>(),
                                         10, "average: 11").get();
 
-    ASSERT_EQ(5, results["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{5}, results["facet_counts"][0]["stats"].size());
     ASSERT_FLOAT_EQ(39.68800011036053, results["facet_counts"][0]["stats"]["avg"].get<double>());
     ASSERT_FLOAT_EQ(-21.3799991607666, results["facet_counts"][0]["stats"]["min"].get<double>());
     ASSERT_FLOAT_EQ(300, results["facet_counts"][0]["stats"]["max"].get<double>());
@@ -725,8 +729,8 @@ TEST_F(CollectionFacetingTest, FacetStatsFloatLon) {
     auto results = coll1->search("*", {},
                                  "", {"lon"}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(5, results["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["facet_counts"][0]["stats"].size());
 
     ASSERT_FLOAT_EQ(-99.1843, results["facet_counts"][0]["stats"]["avg"].get<double>());
     ASSERT_FLOAT_EQ(-99.1843, results["facet_counts"][0]["stats"]["min"].get<double>());
@@ -767,8 +771,8 @@ TEST_F(CollectionFacetingTest, FacetCountOnSimilarStrings) {
                                            token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                            spp::sparse_hash_set<std::string>(), 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_STREQ("India in England", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
     ASSERT_STREQ("England in India", results["facet_counts"][0]["counts"][1]["value"].get<std::string>().c_str());
@@ -805,8 +809,8 @@ TEST_F(CollectionFacetingTest, FacetQueryTest) {
                                  4, {off}, 3, 3, 2, 2, false, "", true, 0, max_score, 100, 0, 0, 4294967295UL, "top_values").get();
 
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(4, results["facet_counts"][0]["counts"].size()); // 4 is default candidate size
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{4}, results["facet_counts"][0]["counts"].size()); // 4 is default candidate size
 
     // junk string should produce no facets
 
@@ -815,8 +819,8 @@ TEST_F(CollectionFacetingTest, FacetQueryTest) {
                             spp::sparse_hash_set<std::string>(), 5, "color:xsda", 30, 4, "", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {off}, 3, 3, 2, 2, false, "", true, 0, max_score, 100, 0, 0, 4294967295UL, "top_values").get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(0, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{0}, results["facet_counts"][0]["counts"].size());
 
     results = coll1->search("*", {},
                             "", {"color"}, {}, {2}, 1, 1, FREQUENCY, {true}, 1, spp::sparse_hash_set<std::string>(),
@@ -824,8 +828,8 @@ TEST_F(CollectionFacetingTest, FacetQueryTest) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {off}, 3, 3, 2, 2, false, "", true, 0, max_score, 100, 0, 0, 4294967295UL, "top_values").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("amazon green", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("<mark>a</mark>mazon <mark>green</mark>", results["facet_counts"][0]["counts"][0]["highlighted"]);
 }
@@ -920,24 +924,24 @@ TEST_F(CollectionFacetingTest, FacetQueryOnStringArray) {
                                  spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "genres: roc").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(5, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{5}, results["facet_counts"][0]["counts"].size());
 
     results = coll1->search("*", {}, "", {"genres"}, sort_fields, {0}, 0, 1, FREQUENCY,
                             {false}, Index::DROP_TOKENS_THRESHOLD,
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "genres: soft roc").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
 
     results = coll1->search("*", {}, "", {"genres"}, sort_fields, {0}, 0, 1, FREQUENCY,
                             {false}, Index::DROP_TOKENS_THRESHOLD,
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "genres: punk roc").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Country <mark>Punk</mark> <mark>Roc</mark>k", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>());
 
     results = coll1->search("*", {}, "", {"genres"}, sort_fields, {0}, 0, 1, FREQUENCY,
@@ -945,8 +949,8 @@ TEST_F(CollectionFacetingTest, FacetQueryOnStringArray) {
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "genres: country roc").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("<mark>Country</mark> Punk <mark>Roc</mark>k", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>());
 
     // with facet query num typo parameter
@@ -959,8 +963,8 @@ TEST_F(CollectionFacetingTest, FacetQueryOnStringArray) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {off}, 32767, 32767, 1).get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("<mark>Electroni</mark>c", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>());
 
     results = coll1->search("*", {}, "", {"genres"}, sort_fields, {0}, 0, 1, FREQUENCY,
@@ -971,8 +975,8 @@ TEST_F(CollectionFacetingTest, FacetQueryOnStringArray) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {off}, 32767, 32767, 0).get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(0, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{0}, results["facet_counts"][0]["counts"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1008,7 +1012,7 @@ TEST_F(CollectionFacetingTest, FacetQueryReturnAllCandidates) {
     ASSERT_TRUE(res_op.ok());
 
     auto results = res_op.get();
-    ASSERT_EQ(6, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{6}, results["facet_counts"][0]["counts"].size());
     collectionManager.drop_collection("coll1");
 }
 
@@ -1033,9 +1037,9 @@ TEST_F(CollectionFacetingTest, FacetValuesShouldBeNormalized) {
     auto results = coll1->search("*", {},
                                  "", {"brand"}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(3, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_EQ("Buqu", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ("BUQU", results["facet_counts"][0]["counts"][1]["value"].get<std::string>());
@@ -1068,9 +1072,9 @@ TEST_F(CollectionFacetingTest, FacetArrayValuesShouldBeNormalized) {
     auto results = coll1->search("*", {},
                                  "", {"brands"}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_EQ("Buqu", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ("BUQU", results["facet_counts"][0]["counts"][1]["value"].get<std::string>());
@@ -1115,24 +1119,24 @@ TEST_F(CollectionFacetingTest, FacetByNestedIntField) {
                                  token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_EQ("company.num_employees", results["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("2000", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 
     // Nested wildcard faceting
     std::vector<facet> wildcard_facets;
     coll1->parse_facet("company.*", wildcard_facets);
 
-    ASSERT_EQ(1, wildcard_facets.size());
+    ASSERT_EQ(size_t{1}, wildcard_facets.size());
     ASSERT_EQ("company.num_employees", wildcard_facets[0].field_name);
 
     wildcard_facets.clear();
     coll1->parse_facet("company*", wildcard_facets);
 
-    ASSERT_EQ(2, wildcard_facets.size());
+    ASSERT_EQ(size_t{2}, wildcard_facets.size());
     ASSERT_EQ("company.num_employees", wildcard_facets[0].field_name);
     ASSERT_EQ("companyRank", wildcard_facets[1].field_name);
 }
@@ -1165,11 +1169,11 @@ TEST_F(CollectionFacetingTest, FacetByNestedArrayField) {
                                  token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_EQ("data.details.name", results["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("Foo", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 }
 
@@ -1201,25 +1205,25 @@ TEST_F(CollectionFacetingTest, FacetByArrayField) {
                                  token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_EQ("data", results["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("Foo", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][1]["count"].get<size_t>());
     ASSERT_EQ("Bazinga", results["facet_counts"][0]["counts"][1]["value"].get<std::string>());
 
     results = coll1->search("*", {}, "", {"data"}, {}, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "data:baz", 30, 4).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_EQ("data", results["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("Bazinga", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 }
 
@@ -1244,15 +1248,15 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
     for(const std::string & facet_field: range_facet_fields) {
         coll1->parse_facet(facet_field, range_facets);
     }
-    ASSERT_EQ(2, range_facets.size());
+    ASSERT_EQ(size_t{2}, range_facets.size());
 
     ASSERT_STREQ("score", range_facets[0].field_name.c_str());
     ASSERT_TRUE(range_facets[0].is_range_query);
-    ASSERT_GT(range_facets[0].facet_range_map.size(), 0);
+    ASSERT_GT(range_facets[0].facet_range_map.size(), size_t{0});
 
     ASSERT_STREQ("grade", range_facets[1].field_name.c_str());
     ASSERT_TRUE(range_facets[1].is_range_query);
-    ASSERT_GT(range_facets[1].facet_range_map.size(), 0);
+    ASSERT_GT(range_facets[1].facet_range_map.size(), size_t{0});
 
     std::vector<std::string> normal_facet_fields {
             "score",
@@ -1262,7 +1266,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
     for(const std::string & facet_field: normal_facet_fields) {
         coll1->parse_facet(facet_field, normal_facets);
     }
-    ASSERT_EQ(2, normal_facets.size());
+    ASSERT_EQ(size_t{2}, normal_facets.size());
 
     ASSERT_STREQ("score", normal_facets[0].field_name.c_str());
     ASSERT_STREQ("grade", normal_facets[1].field_name.c_str());
@@ -1276,7 +1280,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
         coll1->parse_facet(facet_field, wildcard_facets);
     }
 
-    ASSERT_EQ(3, wildcard_facets.size());
+    ASSERT_EQ(size_t{3}, wildcard_facets.size());
 
     std::set<std::string> expected{"range", "rank", "score"};
     for (size_t i = 0; i < wildcard_facets.size(); i++) {
@@ -1309,7 +1313,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
     for(const std::string & facet_field: mixed_facet_fields) {
         coll1->parse_facet(facet_field, mixed_facets);
     }
-    ASSERT_EQ(4, mixed_facets.size());
+    ASSERT_EQ(size_t{4}, mixed_facets.size());
 
     std::vector<facet*> mixed_facets_ptr;
     for(auto& f: mixed_facets) {
@@ -1324,7 +1328,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
 
     ASSERT_EQ("grade", mixed_facets_ptr[0]->field_name);
     ASSERT_TRUE(mixed_facets_ptr[0]->is_range_query);
-    ASSERT_GT(mixed_facets_ptr[0]->facet_range_map.size(), 0);
+    ASSERT_GT(mixed_facets_ptr[0]->facet_range_map.size(), size_t{0});
 
     ASSERT_EQ("rank", mixed_facets_ptr[2]->field_name);
     ASSERT_EQ("range", mixed_facets_ptr[1]->field_name);
@@ -1338,7 +1342,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
         auto res = coll1->parse_facet(facet_field, float_facets);
 
         if(!res.error().empty()) {
-            LOG(ERROR) << res.error();
+            TS_LOG(ERROR) << res.error();
             FAIL();
         }
     }
@@ -1352,7 +1356,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
         auto res = coll1->parse_facet(facet_field, negative_range);
 
         if(!res.error().empty()) {
-            LOG(ERROR) << res.error();
+            TS_LOG(ERROR) << res.error();
             FAIL();
         }
     }
@@ -1362,7 +1366,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
     auto facet_range = "sortindex(Top:[85, 100], Average:[60, 85])";
 
     coll1->parse_facet(facet_range, range_facets_with_sort_as_field);
-    ASSERT_EQ(1, range_facets_with_sort_as_field.size());
+    ASSERT_EQ(size_t{1}, range_facets_with_sort_as_field.size());
 
     //range facet label with special chars
     std::vector<std::string> range_facet_special_chars{
@@ -1375,7 +1379,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
         auto res = coll1->parse_facet(facet_field, facet_speical_chars);
 
         if(!res.error().empty()) {
-            LOG(ERROR) << res.error();
+            TS_LOG(ERROR) << res.error();
             FAIL();
         }
     }
@@ -1386,7 +1390,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
 
     auto res = coll1->parse_facet(only_space_char, facet_speical_chars);
     ASSERT_FALSE(res.error().empty());
-    ASSERT_EQ(400, res.code());
+    ASSERT_EQ(400u, res.code());
     ASSERT_EQ("Facet range value is not valid.", res.error());
 
     fields = {
@@ -1406,16 +1410,16 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
     for(const std::string & facet_field: range_facet_fields) {
         coll1->parse_facet(facet_field, range_facets);
     }
-    ASSERT_EQ(2, range_facets.size());
+    ASSERT_EQ(size_t{2}, range_facets.size());
 
     ASSERT_EQ("ref_score", range_facets[0].field_name);
     ASSERT_TRUE(range_facets[0].is_range_query);
-    ASSERT_EQ(2, range_facets[0].facet_range_map.size());
+    ASSERT_EQ(size_t{2}, range_facets[0].facet_range_map.size());
     ASSERT_EQ("ref_coll", range_facets[0].reference_collection_name);
 
     ASSERT_EQ("ref_grade", range_facets[1].field_name);
     ASSERT_TRUE(range_facets[1].is_range_query);
-    ASSERT_EQ(3, range_facets[1].facet_range_map.size());
+    ASSERT_EQ(size_t{3}, range_facets[1].facet_range_map.size());
     ASSERT_EQ("ref_coll", range_facets[1].reference_collection_name);
 
     normal_facet_fields = {
@@ -1425,7 +1429,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
     for(const std::string & facet_field: normal_facet_fields) {
         coll1->parse_facet(facet_field, normal_facets);
     }
-    ASSERT_EQ(2, normal_facets.size());
+    ASSERT_EQ(size_t{2}, normal_facets.size());
 
     ASSERT_EQ("ref_score", normal_facets[0].field_name);
     ASSERT_EQ("ref_coll", normal_facets[0].reference_collection_name);
@@ -1440,7 +1444,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
         coll1->parse_facet(facet_field, wildcard_facets);
     }
 
-    ASSERT_EQ(3, wildcard_facets.size());
+    ASSERT_EQ(size_t{3}, wildcard_facets.size());
 
     expected = {"ref_range", "ref_rank", "ref_score"};
     for (size_t i = 0; i < wildcard_facets.size(); i++) {
@@ -1472,7 +1476,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
     for(const std::string & facet_field: mixed_facet_fields) {
         coll1->parse_facet(facet_field, mixed_facets);
     }
-    ASSERT_EQ(4, mixed_facets.size());
+    ASSERT_EQ(size_t{4}, mixed_facets.size());
 
     mixed_facets_ptr.clear();
     for(auto& f: mixed_facets) {
@@ -1488,7 +1492,7 @@ TEST_F(CollectionFacetingTest, FacetParseTest){
 
     ASSERT_EQ("ref_grade", mixed_facets_ptr[0]->field_name);
     ASSERT_TRUE(mixed_facets_ptr[0]->is_range_query);
-    ASSERT_GT(mixed_facets_ptr[0]->facet_range_map.size(), 0);
+    ASSERT_GT(mixed_facets_ptr[0]->facet_range_map.size(), size_t{0});
     ASSERT_EQ("ref_coll", mixed_facets_ptr[0]->reference_collection_name);
 
     ASSERT_EQ("ref_rank", mixed_facets_ptr[2]->field_name);
@@ -1561,12 +1565,12 @@ TEST_F(CollectionFacetingTest, RangeFacetTest) {
                                  "<mark>", "</mark>", {}, 1000,
                                  true, false, true, "", true);
     if(!result.ok()) {
-        LOG(INFO) << result.error();
+        TS_LOG(INFO) << result.error();
     }
 
     auto results = result.get();
 
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("Busy", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][1]["count"]);
@@ -1580,8 +1584,8 @@ TEST_F(CollectionFacetingTest, RangeFacetTest) {
                                   spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 10, {}, {}, {}, 0,
                                   "<mark>", "</mark>", {}, 1000,
                                   true, false, true, "", true).get();
-    ASSERT_EQ(1, results2["facet_counts"][0]["counts"].size());
-    ASSERT_EQ(1, results2["facet_counts"][0]["counts"][0]["count"].get<std::size_t>());
+    ASSERT_EQ(size_t{1}, results2["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results2["facet_counts"][0]["counts"][0]["count"].get<std::size_t>());
     ASSERT_STREQ("VeryBusy", results2["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
     ASSERT_TRUE(results2["facet_counts"][0]["counts"][1]["value"] == nullptr);
 
@@ -1607,11 +1611,11 @@ TEST_F(CollectionFacetingTest, RangeFacetTest) {
                                   "<mark>", "</mark>", {}, 1000,
                                   true, false, true, "", true).get();
 
-    ASSERT_EQ(2, results4["facet_counts"][0]["counts"].size());
-    ASSERT_EQ(3, results4["facet_counts"][0]["counts"][0]["count"].get<std::size_t>());
+    ASSERT_EQ(size_t{2}, results4["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{3}, results4["facet_counts"][0]["counts"][0]["count"].get<std::size_t>());
     ASSERT_EQ("Old", results4["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 
-    ASSERT_EQ(2, results4["facet_counts"][0]["counts"][1]["count"].get<std::size_t>());
+    ASSERT_EQ(size_t{2}, results4["facet_counts"][0]["counts"][1]["count"].get<std::size_t>());
     ASSERT_EQ("New", results4["facet_counts"][0]["counts"][1]["value"].get<std::string>());
 
     //range faceting on float fields
@@ -1624,19 +1628,19 @@ TEST_F(CollectionFacetingTest, RangeFacetTest) {
                                   "<mark>", "</mark>", {}, 1000,
                                   true, false, true, "", true).get();
 
-    ASSERT_EQ(3, results4["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{3}, results4["facet_counts"][0]["counts"].size());
 
-    ASSERT_EQ(2, results4["facet_counts"][0]["counts"][0]["count"].get<std::size_t>());
+    ASSERT_EQ(size_t{2}, results4["facet_counts"][0]["counts"][0]["count"].get<std::size_t>());
     ASSERT_EQ("Good", results4["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 
-    ASSERT_EQ(2, results4["facet_counts"][0]["counts"][1]["count"].get<std::size_t>());
+    ASSERT_EQ(size_t{2}, results4["facet_counts"][0]["counts"][1]["count"].get<std::size_t>());
     ASSERT_EQ("Best", results4["facet_counts"][0]["counts"][1]["value"].get<std::string>());
 
-    ASSERT_EQ(1, results4["facet_counts"][0]["counts"][2]["count"].get<std::size_t>());
+    ASSERT_EQ(size_t{1}, results4["facet_counts"][0]["counts"][2]["count"].get<std::size_t>());
     ASSERT_EQ("Average", results4["facet_counts"][0]["counts"][2]["value"].get<std::string>());
 
     //stats on float field
-    ASSERT_EQ(5, results4["facet_counts"][0]["stats"].size());
+    ASSERT_EQ(size_t{5}, results4["facet_counts"][0]["stats"].size());
     ASSERT_FLOAT_EQ(3.8799999713897706, results4["facet_counts"][0]["stats"]["avg"].get<double>());
     ASSERT_FLOAT_EQ(2.9000000953674316, results4["facet_counts"][0]["stats"]["min"].get<double>());
     ASSERT_FLOAT_EQ(4.699999809265137, results4["facet_counts"][0]["stats"]["max"].get<double>());
@@ -1870,7 +1874,7 @@ TEST_F(CollectionFacetingTest, RangeFacetsFloatRange) {
                                  "<mark>", "</mark>", {}, 1000,
                                  true, false, true, "", true).get();
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(2, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("small", results["facet_counts"][0]["counts"][0]["value"]);
 
@@ -1885,7 +1889,7 @@ TEST_F(CollectionFacetingTest, RangeFacetsFloatRange) {
                             6000*1000, 4, 7, fallback, 4, {off}, INT16_MAX, INT16_MAX,
                             2, 2, false, "", true, 0, max_score, 100, 0, 0, 0, "top_values").get();
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("big", results["facet_counts"][0]["counts"][0]["value"]);
 }
@@ -1924,7 +1928,7 @@ TEST_F(CollectionFacetingTest, RangeFacetsMinMaxRange) {
                                  "<mark>", "</mark>", {}, 1000,
                                  true, false, true, "", true).get();
 
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(2, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("large", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][1]["count"]);
@@ -1939,7 +1943,7 @@ TEST_F(CollectionFacetingTest, RangeFacetsMinMaxRange) {
                                  "<mark>", "</mark>", {}, 1000,
                                  true, false, true, "", true).get();
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("small", results["facet_counts"][0]["counts"][0]["value"]);
 }
@@ -1978,7 +1982,7 @@ TEST_F(CollectionFacetingTest, RangeFacetRangeLabelWithSpace) {
                             "<mark>", "</mark>", {}, 1000,
                             true, false, true, "", true).get();
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("small tvs with display size", results["facet_counts"][0]["counts"][0]["value"]);
 }
@@ -2040,7 +2044,7 @@ TEST_F(CollectionFacetingTest, RangeFacetRangeNegativeRanges) {
                                  "<mark>", "</mark>", {}, 1000,
                                  true, false, true, "", true).get();
 
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(3, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("poor", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ(3, (int) results["facet_counts"][0]["counts"][1]["count"]);
@@ -2085,8 +2089,8 @@ TEST_F(CollectionFacetingTest, FacetWithPhraseSearch) {
                                            7UL, fallback, 4UL, {off}, 32767UL, 32767UL, 2UL, 2UL, false,
                                            "", true, 0UL, max_score, 100UL, 0UL, 0UL, 4294967295UL, "exhaustive").get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("The Shawshank Redemption", results["facet_counts"][0]["counts"][0]["value"]);
 }
 
@@ -2123,13 +2127,13 @@ TEST_F(CollectionFacetingTest, SampleFacetCounts) {
                              spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 20, {}, {}, {}, 0,
                              "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                              4, {off}, 3, 3, 2, 2, false, "", true, 0, max_score, 10, 100).get();
-    ASSERT_EQ(1000, res["found"].get<size_t>());
-    ASSERT_EQ(1, res["facet_counts"].size());
-    ASSERT_EQ(2, res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1000}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, res["facet_counts"][0]["counts"].size());
 
     // verify approximate counts
-    ASSERT_GE(res["facet_counts"][0]["counts"][0]["count"].get<size_t>(), 250);
-    ASSERT_GE(res["facet_counts"][0]["counts"][1]["count"].get<size_t>(), 250);
+    ASSERT_GE(res["facet_counts"][0]["counts"][0]["count"].get<size_t>(), size_t{250});
+    ASSERT_GE(res["facet_counts"][0]["counts"][1]["count"].get<size_t>(), size_t{250});
     ASSERT_TRUE(res["facet_counts"][0]["sampled"].get<bool>());
 
     // when sample threshold is high, don't estimate
@@ -2139,9 +2143,9 @@ TEST_F(CollectionFacetingTest, SampleFacetCounts) {
                         "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                         4, {off}, 3, 3, 2, 2, false, "", true, 0, max_score, 10, 10000).get();
 
-    ASSERT_EQ(1000, res["found"].get<size_t>());
-    ASSERT_EQ(1, res["facet_counts"].size());
-    ASSERT_EQ(2, res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1000}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, res["facet_counts"][0]["counts"].size());
 
     for(size_t i = 0; i < res["facet_counts"][0]["counts"].size(); i++) {
         if(res["facet_counts"][0]["counts"][i]["value"].get<std::string>() == "red") {
@@ -2160,9 +2164,9 @@ TEST_F(CollectionFacetingTest, SampleFacetCounts) {
                         "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                         4, {off}, 3, 3, 2, 2, false, "", true, 0, max_score, 0, 10).get();
 
-    ASSERT_EQ(1000, res["found"].get<size_t>());
-    ASSERT_EQ(1, res["facet_counts"].size());
-    ASSERT_EQ(2, res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1000}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, res["facet_counts"][0]["counts"].size());
     ASSERT_FALSE(res["facet_counts"][0]["sampled"].get<bool>());
 
     //sample slope
@@ -2172,13 +2176,13 @@ TEST_F(CollectionFacetingTest, SampleFacetCounts) {
                         "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                         4, {off}, 3, 3, 2, 2, false, "", true, 0, max_score, 0, 10, 30).get();
 
-    ASSERT_EQ(1000, res["found"].get<size_t>());
-    ASSERT_EQ(1, res["facet_counts"].size());
-    ASSERT_EQ(2, res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1000}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, res["facet_counts"][0]["counts"].size());
     ASSERT_TRUE(res["facet_counts"][0]["sampled"].get<bool>());
 
-    ASSERT_GE(res["facet_counts"][0]["counts"][0]["count"].get<size_t>(), 700);
-    ASSERT_GE(res["facet_counts"][0]["counts"][1]["count"].get<size_t>(), 700);
+    ASSERT_GE(res["facet_counts"][0]["counts"][0]["count"].get<size_t>(), size_t{700});
+    ASSERT_GE(res["facet_counts"][0]["counts"][1]["count"].get<size_t>(), size_t{700});
     ASSERT_TRUE(res["facet_counts"][0]["sampled"].get<bool>());
 
     res = coll1->search("*", {}, "", {"color"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5,
@@ -2187,13 +2191,13 @@ TEST_F(CollectionFacetingTest, SampleFacetCounts) {
                         "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                         4, {off}, 3, 3, 2, 2, false, "", true, 0, max_score, 0, 10, 50).get();
 
-    ASSERT_EQ(1000, res["found"].get<size_t>());
-    ASSERT_EQ(1, res["facet_counts"].size());
-    ASSERT_EQ(2, res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1000}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, res["facet_counts"][0]["counts"].size());
     ASSERT_TRUE(res["facet_counts"][0]["sampled"].get<bool>());
 
-    ASSERT_GE(res["facet_counts"][0]["counts"][0]["count"].get<size_t>(), 500);
-    ASSERT_GE(res["facet_counts"][0]["counts"][1]["count"].get<size_t>(), 400);
+    ASSERT_GE(res["facet_counts"][0]["counts"][0]["count"].get<size_t>(), size_t{500});
+    ASSERT_GE(res["facet_counts"][0]["counts"][1]["count"].get<size_t>(), size_t{400});
     ASSERT_TRUE(res["facet_counts"][0]["sampled"].get<bool>());
 
     // test for sample percent > 100
@@ -2250,15 +2254,15 @@ TEST_F(CollectionFacetingTest, FacetOnArrayFieldWithSpecialChars) {
     auto results = coll1->search("*", {},
                                  "", {"tags"}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(4, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{4}, results["facet_counts"][0]["counts"].size());
 
     for(size_t i = 0; i < results["facet_counts"][0]["counts"].size(); i++) {
         auto fvalue = results["facet_counts"][0]["counts"][i]["value"].get<std::string>();
         if(fvalue == "gamma") {
-            ASSERT_EQ(2, results["facet_counts"][0]["counts"][i]["count"].get<size_t>());
+            ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"][i]["count"].get<size_t>());
         } else {
-            ASSERT_EQ(1, results["facet_counts"][0]["counts"][i]["count"].get<size_t>());
+            ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][i]["count"].get<size_t>());
         }
     }
 }
@@ -2279,8 +2283,8 @@ TEST_F(CollectionFacetingTest, FloatFieldValueTruncation) {
     auto results = coll1->search("*", {},
                                  "", {"points"}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_EQ("300", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 }
@@ -2340,12 +2344,12 @@ TEST_F(CollectionFacetingTest, FacetingReturnParent) {
                                  2, "", {"value.color"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     auto results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("{\"b\":0,\"color\":\"red\",\"g\":0,\"r\":255}", results["facet_counts"][0]["counts"][0]["parent"].dump());
     ASSERT_EQ("red", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("{\"b\":255,\"color\":\"blue\",\"g\":0,\"r\":0}", results["facet_counts"][0]["counts"][1]["parent"].dump());
@@ -2368,12 +2372,12 @@ TEST_F(CollectionFacetingTest, FacetingReturnParent) {
                                    2, "", {});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("red", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("blue", results["facet_counts"][0]["counts"][1]["value"]);
 
@@ -2393,17 +2397,17 @@ TEST_F(CollectionFacetingTest, FacetingReturnParent) {
                               2, "", {"value.r"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     results = search_op.get();
-    ASSERT_EQ(2, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"].size());
 
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("red", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("blue", results["facet_counts"][0]["counts"][1]["value"]);
 
-    ASSERT_EQ(2, results["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][1]["counts"].size());
     ASSERT_EQ("{\"b\":255,\"color\":\"blue\",\"g\":0,\"r\":0}", results["facet_counts"][1]["counts"][0]["parent"].dump());
     ASSERT_EQ("0", results["facet_counts"][1]["counts"][0]["value"]);
     ASSERT_EQ("{\"b\":0,\"color\":\"red\",\"g\":0,\"r\":255}", results["facet_counts"][1]["counts"][1]["parent"].dump());
@@ -2426,30 +2430,30 @@ TEST_F(CollectionFacetingTest, FacetingReturnParent) {
                               2, "", {"value.r", "value.g", "value.b"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     results = search_op.get();
-    ASSERT_EQ(4, results["facet_counts"].size());
+    ASSERT_EQ(size_t{4}, results["facet_counts"].size());
 
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("red", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("blue", results["facet_counts"][0]["counts"][1]["value"]);
 
-    ASSERT_EQ(2, results["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][1]["counts"].size());
     ASSERT_EQ("{\"b\":255,\"color\":\"blue\",\"g\":0,\"r\":0}", results["facet_counts"][1]["counts"][0]["parent"].dump());
     ASSERT_EQ("0", results["facet_counts"][1]["counts"][0]["value"]);
     ASSERT_EQ("{\"b\":0,\"color\":\"red\",\"g\":0,\"r\":255}", results["facet_counts"][1]["counts"][1]["parent"].dump());
     ASSERT_EQ("255", results["facet_counts"][1]["counts"][1]["value"]);
 
-    ASSERT_EQ(1, results["facet_counts"][2]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][2]["counts"].size());
     ASSERT_EQ("0", results["facet_counts"][2]["counts"][0]["value"]);
 
     //same facet value appearing in multiple records can return any parent
     ASSERT_TRUE(("{\"b\":255,\"color\":\"blue\",\"g\":0,\"r\":0}" == results["facet_counts"][2]["counts"][0]["parent"].dump())
                 || ("{\"b\":0,\"color\":\"red\",\"g\":0,\"r\":255}" == results["facet_counts"][2]["counts"][0]["parent"].dump()));
 
-    ASSERT_EQ(2, results["facet_counts"][3]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][3]["counts"].size());
     ASSERT_EQ("{\"b\":0,\"color\":\"red\",\"g\":0,\"r\":255}", results["facet_counts"][3]["counts"][0]["parent"].dump());
     ASSERT_EQ("0", results["facet_counts"][3]["counts"][0]["value"]);
     ASSERT_EQ("{\"b\":255,\"color\":\"blue\",\"g\":0,\"r\":0}", results["facet_counts"][3]["counts"][1]["parent"].dump());
@@ -2472,17 +2476,17 @@ TEST_F(CollectionFacetingTest, FacetingReturnParent) {
                               2, "", {"value.*"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     results = search_op.get();
-    ASSERT_EQ(2, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"].size());
 
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("red", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("blue", results["facet_counts"][0]["counts"][1]["value"]);
 
-    ASSERT_EQ(2, results["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][1]["counts"].size());
     ASSERT_EQ("{\"b\":255,\"color\":\"blue\",\"g\":0,\"r\":0}", results["facet_counts"][1]["counts"][0]["parent"].dump());
     ASSERT_EQ("0", results["facet_counts"][1]["counts"][0]["value"]);
     ASSERT_EQ("{\"b\":0,\"color\":\"red\",\"g\":0,\"r\":255}", results["facet_counts"][1]["counts"][1]["parent"].dump());
@@ -2505,17 +2509,17 @@ TEST_F(CollectionFacetingTest, FacetingReturnParent) {
                               2, "", {"*"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     results = search_op.get();
-    ASSERT_EQ(2, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"].size());
 
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("red", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("blue", results["facet_counts"][0]["counts"][1]["value"]);
 
-    ASSERT_EQ(2, results["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][1]["counts"].size());
     ASSERT_EQ("{\"b\":255,\"color\":\"blue\",\"g\":0,\"r\":0}", results["facet_counts"][1]["counts"][0]["parent"].dump());
     ASSERT_EQ("0", results["facet_counts"][1]["counts"][0]["value"]);
     ASSERT_EQ("{\"b\":0,\"color\":\"red\",\"g\":0,\"r\":255}", results["facet_counts"][1]["counts"][1]["parent"].dump());
@@ -2576,12 +2580,12 @@ TEST_F(CollectionFacetingTest, FacetingReturnParentDeepNested) {
                                    2, "", {"product.specification.detail.width"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     auto results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("{\"width\":30}", results["facet_counts"][0]["counts"][0]["parent"].dump());
     ASSERT_EQ("30", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("{\"width\":25}", results["facet_counts"][0]["counts"][1]["parent"].dump());
@@ -2640,12 +2644,12 @@ TEST_F(CollectionFacetingTest, FacetingReturnParentObject) {
                                    2, "", {"value.color"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     auto results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("{\"b\":0,\"color\":\"red\",\"g\":0,\"r\":255}", results["facet_counts"][0]["counts"][0]["parent"].dump());
     ASSERT_EQ("red", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("{\"b\":255,\"color\":\"blue\",\"g\":0,\"r\":0}", results["facet_counts"][0]["counts"][1]["parent"].dump());
@@ -2697,12 +2701,12 @@ TEST_F(CollectionFacetingTest, FacetingReturnParentArrayFields) {
                                    2, "", {"tags.id"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     auto results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("{\"id\":\"tag-2\",\"name\":\"name for tag-2\"}", results["facet_counts"][0]["counts"][0]["parent"].dump());
     ASSERT_EQ("tag-2", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("{\"id\":\"tag-1\",\"name\":\"name for tag-1\"}", results["facet_counts"][0]["counts"][1]["parent"].dump());
@@ -2750,13 +2754,13 @@ TEST_F(CollectionFacetingTest, FacetingReturnParentArrayFields2) {
                                    2, "", {"nestedCategories.categories.FullPath"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     auto results = search_op.get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(R"({"FullPath":"foobar"})", results["facet_counts"][0]["counts"][0]["parent"].dump());
     ASSERT_EQ("foobar", results["facet_counts"][0]["counts"][0]["value"]);
 }
@@ -2802,13 +2806,13 @@ TEST_F(CollectionFacetingTest, FacetingReturnParentArrayFields3) {
                                    2, "", {"nestedCategories.categories"});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     auto results = search_op.get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("{\"categories\":[\"hello\",\"world\"]}", results["facet_counts"][0]["counts"][0]["parent"].dump());
     ASSERT_EQ("world", results["facet_counts"][0]["counts"][0]["value"]);
 
@@ -2879,13 +2883,13 @@ TEST_F(CollectionFacetingTest, FacetSortByAlpha) {
                                    {}, {2});
 
     if (!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
 
     auto results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(7, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{7}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Fusion Plus", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("GT Master", results["facet_counts"][0]["counts"][1]["value"]);
     ASSERT_EQ("Mi 6", results["facet_counts"][0]["counts"][2]["value"]);
@@ -2899,13 +2903,13 @@ TEST_F(CollectionFacetingTest, FacetSortByAlpha) {
                               {}, {2});
 
     if (!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
 
     results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(7, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{7}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Xiaomi", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("Vivo", results["facet_counts"][0]["counts"][1]["value"]);
     ASSERT_EQ("Samsung", results["facet_counts"][0]["counts"][2]["value"]);
@@ -2920,14 +2924,14 @@ TEST_F(CollectionFacetingTest, FacetSortByAlpha) {
                               {}, {2});
 
     if (!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
 
     results = search_op.get();
-    ASSERT_EQ(2, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"].size());
 
-    ASSERT_EQ(7, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{7}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Xiaomi", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("Vivo", results["facet_counts"][0]["counts"][1]["value"]);
     ASSERT_EQ("Samsung", results["facet_counts"][0]["counts"][2]["value"]);
@@ -2936,7 +2940,7 @@ TEST_F(CollectionFacetingTest, FacetSortByAlpha) {
     ASSERT_EQ("Moto", results["facet_counts"][0]["counts"][5]["value"]);
     ASSERT_EQ("Iqoo", results["facet_counts"][0]["counts"][6]["value"]);
 
-    ASSERT_EQ(7, results["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{7}, results["facet_counts"][1]["counts"].size());
     ASSERT_EQ("Fusion Plus", results["facet_counts"][1]["counts"][0]["value"]);
     ASSERT_EQ("GT Master", results["facet_counts"][1]["counts"][1]["value"]);
     ASSERT_EQ("Mi 6", results["facet_counts"][1]["counts"][2]["value"]);
@@ -3043,13 +3047,13 @@ TEST_F(CollectionFacetingTest, FacetSortByOtherField) {
                                    {}, {2});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     auto results = search_op.get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(6, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{6}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("schezwan rice", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("noodles", results["facet_counts"][0]["counts"][1]["value"]);
     ASSERT_EQ("pasta", results["facet_counts"][0]["counts"][2]["value"]);           //pasta and butter chicken both have same value `calories`
@@ -3063,13 +3067,13 @@ TEST_F(CollectionFacetingTest, FacetSortByOtherField) {
                                    {}, {2});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     results = search_op.get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(6, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{6}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("hamburger", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("cheese pizza", results["facet_counts"][0]["counts"][1]["value"]);
     ASSERT_EQ("butter chicken", results["facet_counts"][0]["counts"][2]["value"]);//pasta and butter chicken both have same value `calories`
@@ -3174,13 +3178,13 @@ TEST_F(CollectionFacetingTest, FacetSortByOtherFloatField) {
                                    {}, {2});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     auto results = search_op.get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(6, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{6}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Gold", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("Term Deposits", results["facet_counts"][0]["counts"][1]["value"]);
     ASSERT_EQ("Bonds", results["facet_counts"][0]["counts"][2]["value"]);
@@ -3194,13 +3198,13 @@ TEST_F(CollectionFacetingTest, FacetSortByOtherFloatField) {
                               {}, {2});
 
     if(!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
     results = search_op.get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(6, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{6}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Mutual Funds", results["facet_counts"][0]["counts"][0]["value"]);  //Mutual Funds and Bitcoin have same val `interest_rate`
     ASSERT_EQ("Bitcoin", results["facet_counts"][0]["counts"][1]["value"]);       // but will consider count of facets as tiebreaker
     ASSERT_EQ("Land", results["facet_counts"][0]["counts"][2]["value"]);
@@ -3247,34 +3251,34 @@ TEST_F(CollectionFacetingTest, FacetSortValidation) {
     auto search_op = coll1->search("*", {}, "", {"rating(sort_by:_alpha:desc)"},
                               {}, {2});
 
-    ASSERT_EQ(400, search_op.code());
+    ASSERT_EQ(400u, search_op.code());
     ASSERT_EQ("Facet field should be string type to apply alpha sort.", search_op.error());
 
     //try sort by string field
     search_op = coll1->search("*", {}, "", {"phone(sort_by:brand:desc)"},
                               {}, {2});
 
-    ASSERT_EQ(400, search_op.code());
+    ASSERT_EQ(400u, search_op.code());
     ASSERT_EQ("Sort field should be non string type to apply sort.", search_op.error());
 
     //incorrect syntax
     search_op = coll1->search("*", {}, "", {"phone(sort_by:desc)"},
                               {}, {2});
 
-    ASSERT_EQ(400, search_op.code());
+    ASSERT_EQ(400u, search_op.code());
     ASSERT_EQ("Invalid sort format.", search_op.error());
 
     search_op = coll1->search("*", {}, "", {"phone(sort:_alpha:desc)"},
                               {}, {2});
 
-    ASSERT_EQ(400, search_op.code());
+    ASSERT_EQ(400u, search_op.code());
     ASSERT_EQ("Invalid facet param `sort`.", search_op.error());
 
     //invalid param
     search_op = coll1->search("*", {}, "", {"phone(sort_by:_alpha:foo)"},
                               {}, {2});
 
-    ASSERT_EQ(400, search_op.code());
+    ASSERT_EQ(400u, search_op.code());
     ASSERT_EQ("Invalid sort param.", search_op.error());
 
     //whitespace is allowed
@@ -3282,13 +3286,13 @@ TEST_F(CollectionFacetingTest, FacetSortValidation) {
                               {}, {2});
 
     if (!search_op.ok()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
         FAIL();
     }
 
     auto results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Fusion Plus", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ("Oneplus 11R", results["facet_counts"][0]["counts"][1]["value"]);
     ASSERT_EQ("S22 Ultra", results["facet_counts"][0]["counts"][2]["value"]);
@@ -3308,8 +3312,8 @@ TEST_F(CollectionFacetingTest, FacetSortValidation) {
                               0UL, 4294967295UL, "exhaustive");
 
     results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Fusion Plus", results["facet_counts"][0]["counts"][0]["value"]);
 }
 
@@ -3354,8 +3358,8 @@ TEST_F(CollectionFacetingTest, FacetQueryWithDifferentLocale) {
                               0UL, 4294967295UL, "exhaustive");
 
     auto results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("çapeta", results["facet_counts"][0]["counts"][0]["value"]);
 
     search_op = coll1->search("*", query_fields, "", {"phone(sort_by:_alpha:desc)"},
@@ -3372,8 +3376,8 @@ TEST_F(CollectionFacetingTest, FacetQueryWithDifferentLocale) {
                                    0UL, 0UL, 4294967295UL, "exhaustive");
 
     results = search_op.get();
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("teléfono justo", results["facet_counts"][0]["counts"][0]["value"]);
 }
 
@@ -3396,14 +3400,14 @@ TEST_F(CollectionFacetingTest, FhashInt64MapTest) {
     }
 
     facet_index_v4.insert("visitors", fvalue_to_seq_ids, seq_id_to_fvalues);
-    ASSERT_EQ(3, facet_index_v4.get_fhash_int64_map("visitors").size());
+    ASSERT_EQ(size_t{3}, facet_index_v4.get_fhash_int64_map("visitors").size());
 
     field visitorsf("visitors", field_types::INT64, true);
     nlohmann::json doc;
     doc["visitors"] = 227489798;
 
     facet_index_v4.remove(doc, visitorsf, 0);
-    ASSERT_EQ(2, facet_index_v4.get_fhash_int64_map("visitors").size());
+    ASSERT_EQ(size_t{2}, facet_index_v4.get_fhash_int64_map("visitors").size());
 
     fvalue_to_seq_ids.clear();
     seq_id_to_fvalues.clear();
@@ -3413,7 +3417,7 @@ TEST_F(CollectionFacetingTest, FhashInt64MapTest) {
     seq_id_to_fvalues[seq_id].push_back(facet_value_id);
 
     facet_index_v4.insert("visitors", fvalue_to_seq_ids, seq_id_to_fvalues);
-    ASSERT_EQ(3, facet_index_v4.get_fhash_int64_map("visitors").size());
+    ASSERT_EQ(size_t{3}, facet_index_v4.get_fhash_int64_map("visitors").size());
 }
 
 TEST_F(CollectionFacetingTest, RangeFacetTestWithGroupBy) {
@@ -3480,12 +3484,12 @@ TEST_F(CollectionFacetingTest, RangeFacetTestWithGroupBy) {
                                 "<mark>", "</mark>", {}, 1000,
                                 true, false, true, "", true);
     if(!result.ok()) {
-        LOG(INFO) << result.error();
+        TS_LOG(INFO) << result.error();
     }
 
     auto results = result.get();
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(2, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("VeryBusy", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 
@@ -3502,23 +3506,23 @@ TEST_F(CollectionFacetingTest, RangeFacetTestWithGroupBy) {
                            false, true, "", true);
 
     if(!result.ok()) {
-        LOG(INFO) << result.error();
+        TS_LOG(INFO) << result.error();
     }
 
     results = result.get();
 
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(2, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("VeryBusy", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][1]["count"]);
     ASSERT_EQ("Busy", results["facet_counts"][0]["counts"][1]["value"].get<std::string>());
 
-    ASSERT_EQ(2, results["grouped_hits"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"].size());
 
-    ASSERT_EQ(2, results["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][0]["hits"].size());
     ASSERT_EQ(3.8, results["grouped_hits"][0]["group_key"][0]);
 
-    ASSERT_EQ(3, results["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{3}, results["grouped_hits"][1]["hits"].size());
     ASSERT_EQ(4.5, results["grouped_hits"][1]["group_key"][0]);
 
     collectionManager.drop_collection("coll1");
@@ -3561,7 +3565,7 @@ TEST_F(CollectionFacetingTest, RangeFacetAlphanumericLabels) {
                                  "<mark>", "</mark>", {}, 1000,
                                  true, false, true, "", true).get();
 
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(2, results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("15thAD", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ(1, results["facet_counts"][0]["counts"][1]["count"]);
@@ -3596,7 +3600,7 @@ TEST_F(CollectionFacetingTest, FacetingWithCoercedString) {
     auto results = coll1->search("*", {}, "", {"years"}, {}, {2}, 10,
                                  1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"]);
 }
 
@@ -3692,9 +3696,9 @@ TEST_F(CollectionFacetingTest, TopKFaceting) {
                             {"name"}, {}, {2},
                             10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_EQ("name", results["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("jeans", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ(500, (int) results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("narrow jeans", results["facet_counts"][0]["counts"][1]["value"]);
@@ -3705,9 +3709,9 @@ TEST_F(CollectionFacetingTest, TopKFaceting) {
                                  {"name(top_k:true)"}, {}, {2},
                                  10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_EQ("name", results["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("jeans", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ(250, (int) results["facet_counts"][0]["counts"][0]["count"]);
 
@@ -3716,15 +3720,15 @@ TEST_F(CollectionFacetingTest, TopKFaceting) {
                             {"name(top_k:true)", "price"}, {}, {2},
                             10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(2, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"].size());
 
     ASSERT_EQ("name", results["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("jeans", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ(250, (int) results["facet_counts"][0]["counts"][0]["count"]);
 
     ASSERT_EQ("price", results["facet_counts"][1]["field_name"]);
-    ASSERT_EQ(2, results["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][1]["counts"].size());
     ASSERT_EQ("49.99", results["facet_counts"][1]["counts"][0]["value"]);
     ASSERT_EQ(500, (int) results["facet_counts"][1]["counts"][0]["count"]);
     ASSERT_EQ("29.99", results["facet_counts"][1]["counts"][1]["value"]);
@@ -3885,8 +3889,8 @@ TEST_F(CollectionFacetingTest, IgnoreMissingFacetByFields) {
     ASSERT_TRUE(res_op.ok());
 
     auto res = res_op.get();
-    ASSERT_EQ(1, res["hits"].size());
-    ASSERT_EQ(0, res["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
+    ASSERT_EQ(size_t{0}, res["facet_counts"].size());
 }
 
 TEST_F(CollectionFacetingTest, FacetingWithNegativeInt) {
@@ -3969,9 +3973,9 @@ TEST_F(CollectionFacetingTest, FacetSearchWithFieldLevelSymbolsToIndex) {
     ASSERT_TRUE(search_op2.ok());
     auto results2 = search_op2.get();
 
-    ASSERT_EQ(1, results2["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results2["facet_counts"].size());
     ASSERT_EQ("name", results2["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(1, results2["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results2["facet_counts"][0]["counts"].size());
     ASSERT_EQ("C++", results2["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ(1, results2["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("<mark>C++</mark>", results2["facet_counts"][0]["counts"][0]["highlighted"]);
@@ -3981,7 +3985,7 @@ TEST_F(CollectionFacetingTest, FacetSearchWithFieldLevelSymbolsToIndex) {
                                         token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(regular_search2.ok());
     auto regular_results2 = regular_search2.get();
-    ASSERT_EQ(1, regular_results2["hits"].size());
+    ASSERT_EQ(size_t{1}, regular_results2["hits"].size());
     ASSERT_EQ("C++", regular_results2["hits"][0]["document"]["name"]);
 
     collectionManager.drop_collection("test3");
@@ -4025,9 +4029,9 @@ TEST_F(CollectionFacetingTest, FacetSearchWithFieldLevelSymbolsToIndex) {
     ASSERT_TRUE(search_op.ok());
     auto results = search_op.get();
 
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_EQ("name", results["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("C++", results["facet_counts"][0]["counts"][0]["value"]);
     ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("<mark>C++</mark>", results["facet_counts"][0]["counts"][0]["highlighted"]);
@@ -4036,7 +4040,7 @@ TEST_F(CollectionFacetingTest, FacetSearchWithFieldLevelSymbolsToIndex) {
                                        token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(regular_search.ok());
     auto regular_results = regular_search.get();
-    ASSERT_EQ(1, regular_results["hits"].size());
+    ASSERT_EQ(size_t{1}, regular_results["hits"].size());
     ASSERT_EQ("C++", regular_results["hits"][0]["document"]["name"]);
 
     collectionManager.drop_collection("test2");

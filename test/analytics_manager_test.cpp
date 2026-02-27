@@ -6,6 +6,8 @@
 #include <doc_analytics.h>
 #include <search_analytics.h>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class AnalyticsManagerTest : public ::testing::Test {
 protected:
@@ -13,7 +15,9 @@ protected:
     Store *analytic_store;
     CollectionManager& collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
-    std::string state_dir_path, analytics_dir_path;
+    std::string test_root_path;
+    std::string state_dir_path;
+    std::string analytics_dir_path;
 
     AnalyticsManager& analyticsManager = AnalyticsManager::get_instance();
     DocAnalytics& doc_analytics = DocAnalytics::get_instance();
@@ -22,17 +26,18 @@ protected:
 
     void setupCollection() {
         Config::get_instance().set_enable_search_analytics(true);
-        state_dir_path = "/tmp/typesense_test/analytics_manager_test";
-        analytics_dir_path = "/tmp/typesense-test/analytics";
+        test_root_path = typesense_test::make_test_temp_dir("analytics_manager");
+        state_dir_path = test_root_path + "/state";
+        analytics_dir_path = test_root_path + "/analytics";
 
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
-        system("mkdir -p /tmp/typesense_test/models");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
+        typesense_test::reset_test_temp_dir(test_root_path + "/models");
 
         store = new Store(state_dir_path);
 
-        LOG(INFO) << "Truncating and creating: " << analytics_dir_path;
-        system(("rm -rf "+ analytics_dir_path +" && mkdir -p "+analytics_dir_path).c_str());
+        TS_LOG(INFO) << "Truncating and creating: " << analytics_dir_path;
+        typesense_test::reset_test_temp_dir(analytics_dir_path);
         analytic_store = new Store(analytics_dir_path, 24*60*60, 1024, true, FOURWEEKS_SECS);
 
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -52,6 +57,7 @@ protected:
         delete analytic_store;
         analyticsManager.stop();
         Config::get_instance().set_enable_search_analytics(false);
+        typesense_test::cleanup_test_temp_dir(test_root_path);
     }
 };
 
@@ -216,14 +222,14 @@ TEST_F(AnalyticsManagerTest, UpsertRule) {
   popular_queries_analytics_rule["event_type"] = "click";
   create_op = analyticsManager.create_rule(popular_queries_analytics_rule, true, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Rule event type cannot be changed");
 
   popular_queries_analytics_rule["event_type"] = "search";
   popular_queries_analytics_rule["collection"] = "non_existent_collection";
   create_op = analyticsManager.create_rule(popular_queries_analytics_rule, true, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Rule collection cannot be changed");
 
   popular_queries_analytics_rule["event_type"] = "search";
@@ -344,7 +350,7 @@ TEST_F(AnalyticsManagerTest, GetRules) {
 
     auto get_op = analyticsManager.list_rules();
     ASSERT_TRUE(get_op.ok());
-    ASSERT_EQ(get_op.get().size(), 1);
+    ASSERT_EQ(get_op.get().size(), size_t{1});
     ASSERT_EQ(get_op.get()[0]["name"], "popular_queries_products");
     ASSERT_EQ(get_op.get()[0]["type"], "popular_queries");
     ASSERT_EQ(get_op.get()[0]["collection"], "products");
@@ -355,7 +361,7 @@ TEST_F(AnalyticsManagerTest, GetRules) {
 
     auto get_op_by_tag = analyticsManager.list_rules("popular_queries");
     ASSERT_TRUE(get_op_by_tag.ok());
-    ASSERT_EQ(get_op_by_tag.get().size(), 1);
+    ASSERT_EQ(get_op_by_tag.get().size(), size_t{1});
     ASSERT_EQ(get_op_by_tag.get()[0]["name"], "popular_queries_products");
     ASSERT_EQ(get_op_by_tag.get()[0]["type"], "popular_queries");
     ASSERT_EQ(get_op_by_tag.get()[0]["collection"], "products");
@@ -365,7 +371,7 @@ TEST_F(AnalyticsManagerTest, GetRules) {
 
     auto get_op_by_tag_and_name = analyticsManager.list_rules("non_existent_tag");
     ASSERT_TRUE(get_op_by_tag_and_name.ok());
-    ASSERT_EQ(get_op_by_tag_and_name.get().size(), 0);
+    ASSERT_EQ(get_op_by_tag_and_name.get().size(), size_t{0});
 }
 
 TEST_F(AnalyticsManagerTest, DeleteRule) {
@@ -418,7 +424,7 @@ TEST_F(AnalyticsManagerTest, DeleteRule) {
 
   auto list_op = analyticsManager.list_rules();
   ASSERT_TRUE(list_op.ok());
-  ASSERT_EQ(list_op.get().size(), 0);
+  ASSERT_EQ(list_op.get().size(), size_t{0});
 
   auto delete_non_existent_op = analyticsManager.remove_rule("non_existent_rule");
   ASSERT_FALSE(delete_non_existent_op.ok());
@@ -465,7 +471,7 @@ TEST_F(AnalyticsManagerTest, RuleValidation) {
 
   auto create_op = analyticsManager.create_rule(invalid_destination_collection_popular_queries_rule, false, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Destination collection should be a string");
 
   nlohmann::json wrong_destination_collection_popular_queries_rule = R"({
@@ -483,7 +489,7 @@ TEST_F(AnalyticsManagerTest, RuleValidation) {
 
   create_op = analyticsManager.create_rule(wrong_destination_collection_popular_queries_rule, false, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Destination collection does not exist");
 
   nlohmann::json collection_not_found_popular_queries_rule = R"({
@@ -501,7 +507,7 @@ TEST_F(AnalyticsManagerTest, RuleValidation) {
 
   create_op = analyticsManager.create_rule(collection_not_found_popular_queries_rule, false, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Collection non_existent_collection does not exist");
 
   nlohmann::json wrong_type_nohits_queries_rule = R"({
@@ -517,7 +523,7 @@ TEST_F(AnalyticsManagerTest, RuleValidation) {
 
   create_op = analyticsManager.create_rule(wrong_type_nohits_queries_rule, false, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Event type or type is invalid (or) combination of both is invalid");
 
   nlohmann::json wrong_event_type_counter_rule = R"({
@@ -534,7 +540,7 @@ TEST_F(AnalyticsManagerTest, RuleValidation) {
 
   create_op = analyticsManager.create_rule(wrong_event_type_counter_rule, false, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Event type or type is invalid (or) combination of both is invalid");
 
   nlohmann::json wrong_name_log_rule = R"({
@@ -547,7 +553,7 @@ TEST_F(AnalyticsManagerTest, RuleValidation) {
 
   create_op = analyticsManager.create_rule(wrong_name_log_rule, false, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Name is required when creating an analytics rule");
 
   nlohmann::json no_name_log_rule = R"({
@@ -559,7 +565,7 @@ TEST_F(AnalyticsManagerTest, RuleValidation) {
 
   create_op = analyticsManager.create_rule(no_name_log_rule, false, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Name is required when creating an analytics rule");
 
   nlohmann::json wrong_event_type_log_rule = R"({
@@ -571,7 +577,7 @@ TEST_F(AnalyticsManagerTest, RuleValidation) {
 
   create_op = analyticsManager.create_rule(wrong_event_type_log_rule, false, true, true);
   ASSERT_FALSE(create_op.ok());
-  ASSERT_EQ(create_op.code(), 400);
+  ASSERT_EQ(create_op.code(), 400u);
   ASSERT_EQ(create_op.error(), "Event type or type is invalid (or) combination of both is invalid");
 }
 
@@ -657,14 +663,14 @@ TEST_F(AnalyticsManagerTest, PopularQueries) {
   search_analytics.compact_all_user_queries(future_ts_us);
 
   auto get_counter_op = search_analytics.get_search_counter_events();
-  ASSERT_EQ(get_counter_op.size(), 1);
-  ASSERT_EQ(get_counter_op["with_no_capture"].query_counts.size(), 1);
+  ASSERT_EQ(get_counter_op.size(), size_t{1});
+  ASSERT_EQ(get_counter_op["with_no_capture"].query_counts.size(), size_t{1});
   for(auto& [key, value] : get_counter_op["with_no_capture"].query_counts) {
     ASSERT_EQ(key.query, "hola");
     ASSERT_EQ(key.user_id, "user2");
     ASSERT_EQ(key.tag_str, "tag1");
     ASSERT_EQ(key.filter_str, "country:US");
-    ASSERT_EQ(value, 2);
+    ASSERT_EQ(value, uint32_t{2});
   }
 
   nlohmann::json with_capture = R"({
@@ -696,31 +702,31 @@ TEST_F(AnalyticsManagerTest, PopularQueries) {
   nlohmann::json embedded_params;
   auto results = CollectionManager::do_search(req_params, embedded_params, results_json_str, 0);
   ASSERT_TRUE(results.ok());
-  ASSERT_EQ(1, nlohmann::json::parse(results_json_str)["hits"].size());
+  ASSERT_EQ(size_t{1}, nlohmann::json::parse(results_json_str)["hits"].size());
   req_params["q"] = "typesen";
   results = CollectionManager::do_search(req_params, embedded_params, results_json_str, 0);
   ASSERT_TRUE(results.ok());
-  ASSERT_EQ(1, nlohmann::json::parse(results_json_str)["hits"].size());
+  ASSERT_EQ(size_t{1}, nlohmann::json::parse(results_json_str)["hits"].size());
   req_params["q"] = "typesense";
   results = CollectionManager::do_search(req_params, embedded_params, results_json_str, 0);
   ASSERT_TRUE(results.ok());
-  ASSERT_EQ(1, nlohmann::json::parse(results_json_str)["hits"].size());
+  ASSERT_EQ(size_t{1}, nlohmann::json::parse(results_json_str)["hits"].size());
 
   req_params["x-typesense-user-id"] = "user3";
   results = CollectionManager::do_search(req_params, embedded_params, results_json_str, 0);
   ASSERT_TRUE(results.ok());
-  ASSERT_EQ(1, nlohmann::json::parse(results_json_str)["hits"].size());
+  ASSERT_EQ(size_t{1}, nlohmann::json::parse(results_json_str)["hits"].size());
 
   search_analytics.compact_all_user_queries(future_ts_us);
 
   get_counter_op = search_analytics.get_search_counter_events();
-  ASSERT_EQ(get_counter_op.size(), 2);
-  ASSERT_EQ(get_counter_op["with_capture"].query_counts.size(), 1);
+  ASSERT_EQ(get_counter_op.size(), size_t{2});
+  ASSERT_EQ(get_counter_op["with_capture"].query_counts.size(), size_t{1});
   for(auto& [key, value] : get_counter_op["with_capture"].query_counts) {
     ASSERT_EQ(key.query, "typesense");
     ASSERT_EQ(key.tag_str, "tag1");
     ASSERT_EQ(key.filter_str, "country:US");
-    ASSERT_EQ(value, 2);
+    ASSERT_EQ(value, uint32_t{2});
   }
 }
 
@@ -785,8 +791,8 @@ TEST_F(AnalyticsManagerTest, MetaFieldsGenerateUniqueIDs) {
   ASSERT_TRUE(add_event_op.ok());
 
   auto get_counter_op = search_analytics.get_search_counter_events();
-  ASSERT_EQ(get_counter_op.size(), 1);
-  ASSERT_EQ(get_counter_op["unique_id_meta_tag_rule"].query_counts.size(), 2);
+  ASSERT_EQ(get_counter_op.size(), size_t{1});
+  ASSERT_EQ(get_counter_op["unique_id_meta_tag_rule"].query_counts.size(), size_t{2});
 
   std::string docs;
   get_counter_op["unique_id_meta_tag_rule"].serialize_as_docs(docs);
@@ -803,7 +809,7 @@ TEST_F(AnalyticsManagerTest, MetaFieldsGenerateUniqueIDs) {
     ASSERT_TRUE(doc.contains("analytics_tag"));
     ASSERT_FALSE(doc.contains("filter_by"));
   }
-  ASSERT_EQ(ids.size(), 2);
+  ASSERT_EQ(ids.size(), size_t{2});
 }
 
 TEST_F(AnalyticsManagerTest, MetaFieldsGenerateUniqueIDsWithFilterAndTag) {
@@ -881,8 +887,8 @@ TEST_F(AnalyticsManagerTest, MetaFieldsGenerateUniqueIDsWithFilterAndTag) {
   ASSERT_TRUE(add_event_op.ok());
 
   auto get_counter_op = search_analytics.get_search_counter_events();
-  ASSERT_EQ(get_counter_op.size(), 1);
-  ASSERT_EQ(get_counter_op["unique_id_filter_tag_rule"].query_counts.size(), 3);
+  ASSERT_EQ(get_counter_op.size(), size_t{1});
+  ASSERT_EQ(get_counter_op["unique_id_filter_tag_rule"].query_counts.size(), size_t{3});
 
   std::string docs;
   get_counter_op["unique_id_filter_tag_rule"].serialize_as_docs(docs);
@@ -899,7 +905,7 @@ TEST_F(AnalyticsManagerTest, MetaFieldsGenerateUniqueIDsWithFilterAndTag) {
     ASSERT_TRUE(doc.contains("filter_by"));
     ASSERT_TRUE(doc.contains("analytics_tag"));
   }
-  ASSERT_EQ(ids.size(), 3);
+  ASSERT_EQ(ids.size(), size_t{3});
 }
 
 TEST_F(AnalyticsManagerTest, NoHitsQueries) {
@@ -982,14 +988,14 @@ TEST_F(AnalyticsManagerTest, NoHitsQueries) {
   search_analytics.compact_all_user_queries(future_ts_us);
 
   auto get_counter_op = search_analytics.get_search_counter_events();
-  ASSERT_EQ(get_counter_op.size(), 1);
-  ASSERT_EQ(get_counter_op["with_no_capture_nohits"].query_counts.size(), 1);
+  ASSERT_EQ(get_counter_op.size(), size_t{1});
+  ASSERT_EQ(get_counter_op["with_no_capture_nohits"].query_counts.size(), size_t{1});
   for(auto& [key, value] : get_counter_op["with_no_capture_nohits"].query_counts) {
     ASSERT_EQ(key.query, "nomatch");
     ASSERT_EQ(key.user_id, "user2");
     ASSERT_EQ(key.tag_str, "tag1");
     ASSERT_EQ(key.filter_str, "country:US");
-    ASSERT_EQ(value, 2);
+    ASSERT_EQ(value, uint32_t{2});
   }
 
   nlohmann::json with_capture = R"({
@@ -1020,31 +1026,31 @@ TEST_F(AnalyticsManagerTest, NoHitsQueries) {
   nlohmann::json embedded_params;
   auto results = CollectionManager::do_search(req_params, embedded_params, results_json_str, 0);
   ASSERT_TRUE(results.ok());
-  ASSERT_EQ(0, nlohmann::json::parse(results_json_str)["hits"].size());
+  ASSERT_EQ(size_t{0}, nlohmann::json::parse(results_json_str)["hits"].size());
   req_params["q"] = "nonex";
   results = CollectionManager::do_search(req_params, embedded_params, results_json_str, 0);
   ASSERT_TRUE(results.ok());
-  ASSERT_EQ(0, nlohmann::json::parse(results_json_str)["hits"].size());
+  ASSERT_EQ(size_t{0}, nlohmann::json::parse(results_json_str)["hits"].size());
   req_params["q"] = "nonexistent";
   results = CollectionManager::do_search(req_params, embedded_params, results_json_str, 0);
   ASSERT_TRUE(results.ok());
-  ASSERT_EQ(0, nlohmann::json::parse(results_json_str)["hits"].size());
+  ASSERT_EQ(size_t{0}, nlohmann::json::parse(results_json_str)["hits"].size());
 
   req_params["x-typesense-user-id"] = "user3";
   results = CollectionManager::do_search(req_params, embedded_params, results_json_str, 0);
   ASSERT_TRUE(results.ok());
-  ASSERT_EQ(0, nlohmann::json::parse(results_json_str)["hits"].size());
+  ASSERT_EQ(size_t{0}, nlohmann::json::parse(results_json_str)["hits"].size());
 
   search_analytics.compact_all_user_queries(future_ts_us);
 
   get_counter_op = search_analytics.get_search_counter_events();
-  ASSERT_EQ(get_counter_op.size(), 2);
-  ASSERT_EQ(get_counter_op["with_capture_nohits"].query_counts.size(), 1);
+  ASSERT_EQ(get_counter_op.size(), size_t{2});
+  ASSERT_EQ(get_counter_op["with_capture_nohits"].query_counts.size(), size_t{1});
   for(auto& [key, value] : get_counter_op["with_capture_nohits"].query_counts) {
     ASSERT_EQ(key.query, "nonexistent");
     ASSERT_EQ(key.tag_str, "tag1");
     ASSERT_EQ(key.filter_str, "country:US");
-    ASSERT_EQ(value, 2);
+    ASSERT_EQ(value, uint32_t{2});
   }
 }
 
@@ -1302,14 +1308,14 @@ TEST_F(AnalyticsManagerTest, DocCounterEvents) {
   ASSERT_TRUE(add_event_op.ok());
 
   auto events = doc_analytics.get_doc_counter_events();
-  ASSERT_EQ(events.size(), 1);
+  ASSERT_EQ(events.size(), size_t{1});
   ASSERT_TRUE(events.find("product_popularity") != events.end());
   const auto& counter = events["product_popularity"];
   ASSERT_EQ(counter.counter_field, "popularity");
   ASSERT_EQ(counter.destination_collection, "products");
-  ASSERT_EQ(counter.docid_counts.size(), 2);
-  ASSERT_EQ(counter.docid_counts.at("1"), 4);
-  ASSERT_EQ(counter.docid_counts.at("2"), 2);
+  ASSERT_EQ(counter.docid_counts.size(), size_t{2});
+  ASSERT_EQ(counter.docid_counts.at("1"), uint32_t{4});
+  ASSERT_EQ(counter.docid_counts.at("2"), uint32_t{2});
 }
 
 TEST_F(AnalyticsManagerTest, SearchWithNoRule) {
@@ -1416,7 +1422,7 @@ TEST_F(AnalyticsManagerTest, QueryLogEventsGetInMemory) {
   auto get_events_op = analyticsManager.get_events("user2", "log_queries", 10);
   ASSERT_TRUE(get_events_op.ok());
   const auto& events = get_events_op.get()["events"].get<std::vector<nlohmann::json>>();
-  ASSERT_EQ(events.size(), 2);
+  ASSERT_EQ(events.size(), size_t{2});
 
   ASSERT_EQ(events[0]["name"], "log_queries");
   ASSERT_EQ(events[0]["event_type"], "search");
@@ -1504,7 +1510,7 @@ TEST_F(AnalyticsManagerTest, DocLogEventsGetInMemory) {
   auto get_events_op = analyticsManager.get_events("user2", "doc_click_logs", 10);
   ASSERT_TRUE(get_events_op.ok());
   const auto& events = get_events_op.get()["events"].get<std::vector<nlohmann::json>>();
-  ASSERT_EQ(events.size(), 2);
+  ASSERT_EQ(events.size(), size_t{2});
 
   // Reverse chronological order: multi-doc event first
   ASSERT_EQ(events[0]["name"], "doc_click_logs");
@@ -1513,7 +1519,7 @@ TEST_F(AnalyticsManagerTest, DocLogEventsGetInMemory) {
   ASSERT_EQ(events[0]["user_id"], "user2");
   ASSERT_EQ(events[0]["query"], "typesense");
   ASSERT_TRUE(events[0].contains("doc_ids"));
-  ASSERT_EQ(events[0]["doc_ids"].size(), 2);
+  ASSERT_EQ(events[0]["doc_ids"].size(), size_t{2});
 
   ASSERT_EQ(events[1]["name"], "doc_click_logs");
   ASSERT_EQ(events[1]["event_type"], "click");
@@ -1594,7 +1600,7 @@ TEST_F(AnalyticsManagerTest, QueryLogEventsWithCaptureGetInMemory) {
   auto get_events_op = analyticsManager.get_events("user2", "log_with_capture", 10);
   ASSERT_TRUE(get_events_op.ok());
   const auto& events = get_events_op.get()["events"].get<std::vector<nlohmann::json>>();
-  ASSERT_EQ(events.size(), 1);
+  ASSERT_EQ(events.size(), size_t{1});
   ASSERT_EQ(events[0]["name"], "log_with_capture");
   ASSERT_EQ(events[0]["event_type"], "search");
   ASSERT_EQ(events[0]["collection"], "products");
@@ -1624,7 +1630,7 @@ TEST_F(AnalyticsManagerTest, UninitializedAnalyticsStore) {
 
     auto coll_create_op = collectionManager.create_collection(products_schema);
     ASSERT_TRUE(coll_create_op.ok());
-    auto coll1 = coll_create_op.get();
+    (void)coll_create_op.get();
 
     nlohmann::json products_queries_schema = R"({
       "name": "products_queries",
@@ -1636,7 +1642,7 @@ TEST_F(AnalyticsManagerTest, UninitializedAnalyticsStore) {
 
     coll_create_op = collectionManager.create_collection(products_queries_schema);
     ASSERT_TRUE(coll_create_op.ok());
-    auto coll2 = coll_create_op.get();
+    (void)coll_create_op.get();
 
     nlohmann::json popular_queries_analytics_rule = R"({
         "name": "product_queries_aggregation",

@@ -1,0 +1,141 @@
+name: flake-detection
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'test/**'
+      - 'api_tests/**'
+      - 'BUILD'
+      - 'MODULE.bazel'
+      - 'bazel/**'
+      - 'docker/**'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpp-flake:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Restore Bazel cache
+        id: bazel-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ github.workflow }}-
+
+      - name: Build CI Bazel image
+        run: scripts/bazel_in_docker.sh --build-image-only
+
+      - name: Run C++ flake stress lane
+        run: |
+          mkdir -p flake-logs
+          set -o pipefail
+          echo "[cpp-flake] command: scripts/bazel_in_docker.sh test --cache_test_results=no --runs_per_test=20 --test_output=errors --test_summary=detailed //:typesense-test --test_timeout=900 --test_arg=--gtest_filter=ArtTest.test_art_insert:ArtTest.test_art_insert_search_uuid:ArtTest.test_art_fuzzy_search:MatchTest.MatchScoreWithOffsetWrapAround:CollectionVectorTest.TestImageEmbedding:CollectionCurationTest.OverridesWithSemanticSearch" | tee flake-logs/cpp-flake.log
+          scripts/bazel_in_docker.sh test --cache_test_results=no --runs_per_test=20 --test_output=errors --test_summary=detailed //:typesense-test --test_timeout=900 '--test_arg=--gtest_filter=ArtTest.test_art_insert:ArtTest.test_art_insert_search_uuid:ArtTest.test_art_fuzzy_search:MatchTest.MatchScoreWithOffsetWrapAround:CollectionVectorTest.TestImageEmbedding:CollectionCurationTest.OverridesWithSemanticSearch' 2>&1 | tee -a flake-logs/cpp-flake.log
+
+      - name: Save Bazel cache
+        if: always() && github.event_name != 'pull_request' && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+
+      - name: Upload C++ flake logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flake-cpp-logs
+          path: |
+            flake-logs/
+            bazel-testlogs/typesense-test/
+          if-no-files-found: warn
+
+      - name: Report Bazel cache size
+        if: always()
+        run: du -sh ${{ github.workspace }}/.cache/bazel-docker/*/ 2>/dev/null || true
+
+  api-flake:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Restore Bazel cache
+        id: bazel-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ github.workflow }}-
+
+      - name: Build CI Bazel image
+        run: scripts/bazel_in_docker.sh --build-image-only
+
+      - name: Build Typesense server
+        run: scripts/bazel_in_docker.sh build //:typesense-server
+
+      - name: Set TYPESENSE_BINARY_PATH
+        run: echo "TYPESENSE_BINARY_PATH=$(readlink -f bazel-bin/typesense-server)" >> $GITHUB_ENV
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install API test dependencies
+        working-directory: api_tests
+        run: bun install
+
+      - name: Run API flake stress lane
+        working-directory: api_tests
+        run: |
+          set -o pipefail
+          mkdir -p ../flake-logs
+          cmd='TYPESENSE_DATA_DIR="${{ github.workspace }}/tmp/test" bun src/cli.ts --no-secrets --download-migration-binary tests/documents.test.ts'
+          echo "[api-flake] command: ${cmd}" | tee ../flake-logs/api-flake.log
+          for i in $(seq 1 10); do
+            echo "[api-flake] run ${i}/10" | tee -a ../flake-logs/api-flake.log
+            TYPESENSE_DATA_DIR="${{ github.workspace }}/tmp/test" bun src/cli.ts --no-secrets --download-migration-binary tests/documents.test.ts 2>&1 | tee "../flake-logs/api-documents-run-${i}.log"
+          done
+
+      - name: Save Bazel cache
+        if: always() && github.event_name != 'pull_request' && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+
+      - name: Upload API flake logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flake-api-logs
+          path: |
+            flake-logs/
+            api_tests/tmp/test/
+          if-no-files-found: warn
+
+      - name: Report Bazel cache size
+        if: always()
+        run: du -sh ${{ github.workspace }}/.cache/bazel-docker/*/ 2>/dev/null || true

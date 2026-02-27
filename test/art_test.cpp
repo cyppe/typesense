@@ -3,15 +3,46 @@
 #include <stdio.h>
 #include <string.h>
 #include <cmath>
+#include <cstdlib>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <art.h>
 #include <chrono>
 #include <posting.h>
+#include "runfiles_utils.h"
+#include "logger.h"
 
-#define words_file_path (std::string(ROOT_DIR) + std::string("external/libart/tests/words.txt")).c_str()
-#define uuid_file_path (std::string(ROOT_DIR) + std::string("external/libart/tests/uuid.txt")).c_str()
-#define skus_file_path (std::string(ROOT_DIR) + std::string("test/skus.txt")).c_str()
-#define ill_file_path (std::string(ROOT_DIR) + std::string("test/ill.txt")).c_str()
+#ifndef ROOT_DIR
+#define ROOT_DIR ""
+#endif
+
+namespace {
+const std::string kRootDir = std::string(ROOT_DIR);
+
+const std::string kWordsFilePath = resolve_test_path({
+    kRootDir + "external/libart/tests/words.txt",
+    kRootDir + "libart/tests/words.txt",
+    "+_repo_rules4+libart/tests/words.txt",
+    "libart/tests/words.txt",
+});
+
+const std::string kUuidFilePath = resolve_test_path({
+    kRootDir + "external/libart/tests/uuid.txt",
+    kRootDir + "libart/tests/uuid.txt",
+    "+_repo_rules4+libart/tests/uuid.txt",
+    "libart/tests/uuid.txt",
+});
+
+const std::string kSkusFilePath = resolve_test_path({
+    kRootDir + "test/skus.txt",
+    "test/skus.txt",
+});
+
+const std::string kIllFilePath = resolve_test_path({
+    kRootDir + "test/ill.txt",
+    "test/ill.txt",
+});
+}
 
 art_document get_document(uint32_t id) {
     art_document document(id, id, {0});
@@ -39,7 +70,8 @@ TEST(ArtTest, test_art_insert) {
     size_t len;
     char buf[512];
     FILE *f;
-    f = fopen(words_file_path, "r");
+    f = fopen(kWordsFilePath.c_str(), "r");
+    ASSERT_NE(nullptr, f);
 
     uintptr_t line = 1;
     while (fgets(buf, sizeof buf, f)) {
@@ -104,7 +136,7 @@ TEST(ArtTest, test_art_insert_verylong) {
     ASSERT_TRUE(NULL == art_insert(&t, key1, 299, &doc1));
     ASSERT_TRUE(NULL == art_insert(&t, key2, 302, &doc2));
     art_insert(&t, key2, 302, &doc2);
-    EXPECT_EQ(art_size(&t), 2);
+    EXPECT_EQ(art_size(&t), uint64_t{2});
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -117,7 +149,8 @@ TEST(ArtTest, test_art_insert_search) {
 
     int len;
     char buf[512];
-    FILE *f = fopen(words_file_path, "r");
+    FILE *f = fopen(kWordsFilePath.c_str(), "r");
+    ASSERT_NE(nullptr, f);
 
     uintptr_t line = 1;
     while (fgets(buf, sizeof buf, f)) {
@@ -162,7 +195,8 @@ TEST(ArtTest, test_art_insert_delete) {
 
     int len;
     char buf[512];
-    FILE *f = fopen(words_file_path, "r");
+    FILE *f = fopen(kWordsFilePath.c_str(), "r");
+    ASSERT_NE(nullptr, f);
 
     uintptr_t line = 1, nlines;
     while (fgets(buf, sizeof buf, f)) {
@@ -224,7 +258,8 @@ TEST(ArtTest, test_art_insert_iter) {
 
     int len;
     char buf[512];
-    FILE *f = fopen(words_file_path, "r");
+    FILE *f = fopen(kWordsFilePath.c_str(), "r");
+    ASSERT_NE(nullptr, f);
 
     uint64_t xor_mask = 0;
     uintptr_t line = 1, nlines;
@@ -362,13 +397,13 @@ TEST(ArtTest, test_art_long_prefix) {
 
     // Search for the keys
     s = "this:key:has:a:long:common:prefix:1";
-    EXPECT_EQ(1, posting_t::first_id(((art_leaf *)art_search(&t, (unsigned char*)s, strlen(s)+1))->values));
+    EXPECT_EQ(uint32_t{1}, posting_t::first_id(((art_leaf *)art_search(&t, (unsigned char*)s, strlen(s)+1))->values));
 
     s = "this:key:has:a:long:common:prefix:2";
-    EXPECT_EQ(2, posting_t::first_id(((art_leaf *)art_search(&t, (unsigned char*)s, strlen(s)+1))->values));
+    EXPECT_EQ(uint32_t{2}, posting_t::first_id(((art_leaf *)art_search(&t, (unsigned char*)s, strlen(s)+1))->values));
 
     s = "this:key:has:a:long:prefix:3";
-    EXPECT_EQ(3, posting_t::first_id(((art_leaf *)art_search(&t, (unsigned char*)s, strlen(s)+1))->values));
+    EXPECT_EQ(uint32_t{3}, posting_t::first_id(((art_leaf *)art_search(&t, (unsigned char*)s, strlen(s)+1))->values));
 
     const char *expected[] = {
             "this:key:has:a:long:common:prefix:1",
@@ -390,7 +425,8 @@ TEST(ArtTest, test_art_insert_search_uuid) {
 
     int len;
     char buf[512];
-    FILE *f = fopen(uuid_file_path, "r");
+    FILE *f = fopen(kUuidFilePath.c_str(), "r");
+    ASSERT_NE(nullptr, f);
 
     uintptr_t line = 1;
     while (fgets(buf, sizeof buf, f)) {
@@ -559,16 +595,16 @@ TEST(ArtTest, test_art_insert_multiple_ids_for_same_token) {
     void* value = art_insert(&t, (unsigned char*)key1, strlen(key1) + 1, &doc2);
     ASSERT_TRUE(value != NULL);
 
-    ASSERT_EQ(posting_t::num_ids(value), 2);
-    ASSERT_EQ(posting_t::first_id(value), 1);
+    ASSERT_EQ(posting_t::num_ids(value), uint32_t{2});
+    ASSERT_EQ(posting_t::first_id(value), uint32_t{1});
     ASSERT_TRUE(posting_t::contains(value, 2));
 
     art_document doc3 = get_document((uint32_t) 3);
     void* reinsert_value = art_insert(&t, (unsigned char*) key1, strlen(key1) + 1, &doc3);
 
     ASSERT_TRUE(art_size(&t) == 1);
-    ASSERT_EQ(posting_t::num_ids(reinsert_value), 3);
-    ASSERT_EQ(posting_t::first_id(reinsert_value), 1);
+    ASSERT_EQ(posting_t::num_ids(reinsert_value), size_t{3});
+    ASSERT_EQ(posting_t::first_id(reinsert_value), uint32_t{1});
     ASSERT_TRUE(posting_t::contains(reinsert_value, 2));
     ASSERT_TRUE(posting_t::contains(reinsert_value, 3));
 
@@ -586,11 +622,11 @@ TEST(ArtTest, test_art_fuzzy_search_single_leaf) {
     ASSERT_TRUE(NULL == art_insert(&t, (unsigned char*)implement_key, strlen(implement_key)+1, &doc));
 
     art_leaf* l = (art_leaf *) art_search(&t, (const unsigned char *)implement_key, strlen(implement_key)+1);
-    EXPECT_EQ(1, posting_t::first_id(l->values));
+    EXPECT_EQ(uint32_t{1}, posting_t::first_id(l->values));
 
     std::vector<art_leaf*> leaves;
     art_fuzzy_search(&t, (const unsigned char *) implement_key, strlen(implement_key) + 1, 0, 0, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     const char* implement_key_typo1 = "implment";
     const char* implement_key_typo2 = "implwnent";
@@ -598,17 +634,17 @@ TEST(ArtTest, test_art_fuzzy_search_single_leaf) {
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) implement_key_typo1, strlen(implement_key_typo1) + 1, 0, 0, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(0, leaves.size());
+    ASSERT_EQ(size_t{0}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) implement_key_typo1, strlen(implement_key_typo1) + 1, 0, 1, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) implement_key_typo2, strlen(implement_key_typo2) + 1, 0, 2, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -624,17 +660,17 @@ TEST(ArtTest, test_art_fuzzy_search_single_leaf_prefix) {
     ASSERT_TRUE(NULL == art_insert(&t, (unsigned char*)key, strlen(key)+1, &doc));
 
     art_leaf* l = (art_leaf *) art_search(&t, (const unsigned char *)key, strlen(key)+1);
-    EXPECT_EQ(1, posting_t::first_id(l->values));
+    EXPECT_EQ(uint32_t{1}, posting_t::first_id(l->values));
 
     std::vector<art_leaf*> leaves;
     std::string term = "aplication";
     art_fuzzy_search(&t, (const unsigned char *)(term.c_str()), term.size(), 0, 1, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *)(term.c_str()), term.size(), 0, 2, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -652,7 +688,7 @@ TEST(ArtTest, test_art_fuzzy_search_single_leaf_qlen_greater_than_key) {
     std::string term = "starkbin";
     std::vector<art_leaf*> leaves;
     art_fuzzy_search(&t, (const unsigned char *)(term.c_str()), term.size(), 0, 2, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(0, leaves.size());
+    ASSERT_EQ(size_t{0}, leaves.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -670,12 +706,12 @@ TEST(ArtTest, test_art_fuzzy_search_single_leaf_non_prefix) {
     std::string term = "spz";
     std::vector<art_leaf*> leaves;
     art_fuzzy_search(&t, (const unsigned char *)(term.c_str()), term.size()+1, 0, 1, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(0, leaves.size());
+    ASSERT_EQ(size_t{0}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *)(term.c_str()), term.size(), 0, 1, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -712,7 +748,7 @@ TEST(ArtTest, test_art_prefix_larger_than_key) {
     std::string term = "earrings";
     std::vector<art_leaf*> leaves;
     art_fuzzy_search(&t, (const unsigned char *)(term.c_str()), term.size()+1, 0, 2, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(0, leaves.size());
+    ASSERT_EQ(size_t{0}, leaves.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -762,7 +798,8 @@ TEST(ArtTest, test_art_fuzzy_search) {
 
     int len;
     char buf[512];
-    FILE *f = fopen(words_file_path, "r");
+    FILE *f = fopen(kWordsFilePath.c_str(), "r");
+    ASSERT_NE(nullptr, f);
 
     uintptr_t line = 1;
     while (fgets(buf, sizeof buf, f)) {
@@ -779,7 +816,7 @@ TEST(ArtTest, test_art_fuzzy_search) {
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "pltinum", strlen("pltinum"), 0, 1, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(2, leaves.size());
+    ASSERT_EQ(size_t{2}, leaves.size());
     ASSERT_STREQ("platinumsmith", (const char *)leaves.at(0)->key);
     ASSERT_STREQ("platinum", (const char *)leaves.at(1)->key);
 
@@ -788,93 +825,93 @@ TEST(ArtTest, test_art_fuzzy_search) {
 
     // extra char
     art_fuzzy_search(&t, (const unsigned char *) "higghliving", strlen("higghliving") + 1, 0, 1, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
     ASSERT_STREQ("highliving", (const char *)leaves.at(0)->key);
 
     // transpose
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "zymosthneic", strlen("zymosthneic") + 1, 0, 1, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
     ASSERT_STREQ("zymosthenic", (const char *)leaves.at(0)->key);
 
     // transpose + missing
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "dacrcyystlgia", strlen("dacrcyystlgia") + 1, 0, 2, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
     ASSERT_STREQ("dacrycystalgia", (const char *)leaves.at(0)->key);
 
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "dacrcyystlgia", strlen("dacrcyystlgia") + 1, 1, 2, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
     ASSERT_STREQ("dacrycystalgia", (const char *)leaves.at(0)->key);
 
     // missing char
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "gaberlunze", strlen("gaberlunze") + 1, 0, 1, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
     ASSERT_STREQ("gaberlunzie", (const char *)leaves.at(0)->key);
 
     // substituted char
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "eacemiferous", strlen("eacemiferous") + 1, 0, 1, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
     ASSERT_STREQ("racemiferous", (const char *)leaves.at(0)->key);
 
     // missing char + extra char
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "Sarbruckken", strlen("Sarbruckken") + 1, 0, 2, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
     ASSERT_STREQ("Saarbrucken", (const char *)leaves.at(0)->key);
 
     // multiple matching results
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "hown", strlen("hown") + 1, 0, 1, 10, FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(10, leaves.size());
+    ASSERT_EQ(size_t{10}, leaves.size());
 
     std::set<std::string> expected_words = {"town", "sown", "shown", "own", "mown", "lown", "howl", "howk", "howe", "how"};
 
     for(size_t leaf_index = 0; leaf_index < leaves.size(); leaf_index++) {
         art_leaf*& leaf = leaves.at(leaf_index);
         std::string tok(reinterpret_cast<char*>(leaf->key), leaf->key_len - 1);
-        ASSERT_NE(expected_words.count(tok), 0);
+        ASSERT_NE(expected_words.count(tok), size_t{0});
     }
 
     // fuzzy prefix search
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "lionhear", strlen("lionhear"), 0, 0, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(3, leaves.size());
+    ASSERT_EQ(size_t{3}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "lineage", strlen("lineage"), 0, 0, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(2, leaves.size());
+    ASSERT_EQ(size_t{2}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "liq", strlen("liq"), 0, 0, 50, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(39, leaves.size());
+    ASSERT_EQ(size_t{39}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "antitraditiana", strlen("antitraditiana"), 0, 1, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
     art_fuzzy_search(&t, (const unsigned char *) "antisocao", strlen("antisocao"), 0, 2, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(6, leaves.size());
+    ASSERT_EQ(size_t{6}, leaves.size());
 
     long long int timeMillis = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - begin).count();
-    LOG(INFO) << "Time taken for: " << timeMillis << "ms";
+    TS_LOG(INFO) << "Time taken for: " << timeMillis << "ms";
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -896,11 +933,11 @@ TEST(ArtTest, test_art_fuzzy_search_unicode_chars) {
 
     for(const char* key: keys) {
         art_leaf* l = (art_leaf *) art_search(&t, (const unsigned char *)key, strlen(key)+1);
-        EXPECT_EQ(1, posting_t::first_id(l->values));
+        EXPECT_EQ(uint32_t{1}, posting_t::first_id(l->values));
 
         std::vector<art_leaf*> leaves;
         art_fuzzy_search(&t, (unsigned char *)key, strlen(key), 0, 0, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-        ASSERT_EQ(1, leaves.size());
+        ASSERT_EQ(size_t{1}, leaves.size());
     }
 
     res = art_tree_destroy(&t);
@@ -924,7 +961,7 @@ TEST(ArtTest, test_art_fuzzy_search_extra_chars) {
     const char* query = "abbreviation";
     std::vector<art_leaf*> leaves;
     art_fuzzy_search(&t, (unsigned char *)query, strlen(query), 0, 2, 10, FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -939,7 +976,8 @@ TEST(ArtTest, test_art_search_sku_like_tokens) {
     std::vector<std::string> keys;
     int len;
     char buf[512];
-    FILE *f = fopen(skus_file_path, "r");
+    FILE *f = fopen(kSkusFilePath.c_str(), "r");
+    ASSERT_NE(nullptr, f);
 
     uintptr_t line = 1;
     while (fgets(buf, sizeof buf, f)) {
@@ -955,7 +993,7 @@ TEST(ArtTest, test_art_search_sku_like_tokens) {
 
     // exact search
     art_leaf* l = (art_leaf *) art_search(&t, (const unsigned char *)key1, strlen(key1)+1);
-    EXPECT_EQ(1, posting_t::num_ids(l->values));
+    EXPECT_EQ(uint32_t{1}, posting_t::num_ids(l->values));
 
     // exact search all tokens via fuzzy API
 
@@ -963,7 +1001,7 @@ TEST(ArtTest, test_art_search_sku_like_tokens) {
         std::vector<art_leaf *> leaves;
         art_fuzzy_search(&t, (const unsigned char*)key.c_str(), key.size(), 0, 0, 10,
                          FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-        ASSERT_EQ(1, leaves.size());
+        ASSERT_EQ(size_t{1}, leaves.size());
         ASSERT_STREQ(key.c_str(), (const char *) leaves.at(0)->key);
 
         leaves.clear();
@@ -972,7 +1010,7 @@ TEST(ArtTest, test_art_search_sku_like_tokens) {
         // non prefix
         art_fuzzy_search(&t, (const unsigned char*)key.c_str(), key.size()+1, 0, 0, 10,
                          FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-        ASSERT_EQ(1, leaves.size());
+        ASSERT_EQ(size_t{1}, leaves.size());
         ASSERT_STREQ(key.c_str(), (const char *) leaves.at(0)->key);
     }
 
@@ -989,7 +1027,8 @@ TEST(ArtTest, test_art_search_ill_like_tokens) {
 
     int len;
     char buf[512];
-    FILE *f = fopen(ill_file_path, "r");
+    FILE *f = fopen(kIllFilePath.c_str(), "r");
+    ASSERT_NE(nullptr, f);
 
     uintptr_t line = 1;
     while (fgets(buf, sizeof buf, f)) {
@@ -1020,7 +1059,7 @@ TEST(ArtTest, test_art_search_ill_like_tokens) {
     for (const auto &key : keys) {
         art_leaf* l = (art_leaf *) art_search(&t, (const unsigned char *)key.c_str(), key.size()+1);
         ASSERT_FALSE(l == nullptr);
-        EXPECT_EQ(1, posting_t::num_ids(l->values));
+        EXPECT_EQ(uint32_t{1}, posting_t::num_ids(l->values));
 
         std::vector<art_leaf *> leaves;
         exclude_leaves.clear();
@@ -1030,7 +1069,7 @@ TEST(ArtTest, test_art_search_ill_like_tokens) {
         if(key_to_count.count(key) != 0) {
             ASSERT_EQ(key_to_count[key], leaves.size());
         } else {
-            ASSERT_EQ(1, leaves.size());
+            ASSERT_EQ(size_t{1}, leaves.size());
             ASSERT_STREQ(key.c_str(), (const char *) leaves.at(0)->key);
         }
 
@@ -1041,9 +1080,9 @@ TEST(ArtTest, test_art_search_ill_like_tokens) {
         art_fuzzy_search(&t, (const unsigned char*)key.c_str(), key.size()+1, 0, 0, 10,
                          FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
         if(leaves.size() != 1) {
-            LOG(INFO) << key;
+            TS_LOG(INFO) << key;
         }
-        ASSERT_EQ(1, leaves.size());
+        ASSERT_EQ(size_t{1}, leaves.size());
         ASSERT_STREQ(key.c_str(), (const char *) leaves.at(0)->key);
     }
 
@@ -1071,7 +1110,7 @@ TEST(ArtTest, test_art_search_ill_like_tokens2) {
     for (const auto &key : keys) {
         art_leaf* l = (art_leaf *) art_search(&t, (const unsigned char *)key.c_str(), key.size()+1);
         ASSERT_FALSE(l == nullptr);
-        EXPECT_EQ(1, posting_t::num_ids(l->values));
+        EXPECT_EQ(uint32_t{1}, posting_t::num_ids(l->values));
 
         std::vector<art_leaf *> leaves;
         exclude_leaves.clear();
@@ -1079,9 +1118,9 @@ TEST(ArtTest, test_art_search_ill_like_tokens2) {
                          FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
 
         if(key == "illustration") {
-            ASSERT_EQ(2, leaves.size());
+            ASSERT_EQ(size_t{2}, leaves.size());
         } else {
-            ASSERT_EQ(1, leaves.size());
+            ASSERT_EQ(size_t{1}, leaves.size());
             ASSERT_STREQ(key.c_str(), (const char *) leaves.at(0)->key);
         }
 
@@ -1091,7 +1130,7 @@ TEST(ArtTest, test_art_search_ill_like_tokens2) {
         // non prefix
         art_fuzzy_search(&t, (const unsigned char*)key.c_str(), key.size() + 1, 0, 0, 10,
                          FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-        ASSERT_EQ(1, leaves.size());
+        ASSERT_EQ(size_t{1}, leaves.size());
         ASSERT_STREQ(key.c_str(), (const char *) leaves.at(0)->key);
     }
 
@@ -1115,12 +1154,12 @@ TEST(ArtTest, test_art_search_roche_chews) {
     art_fuzzy_search(&t, (const unsigned char*)term.c_str(), term.size(), 0, 2, 10,
                      FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
 
-    ASSERT_EQ(0, leaves.size());
+    ASSERT_EQ(size_t{0}, leaves.size());
 
     art_fuzzy_search(&t, (const unsigned char*)keys[0].c_str(), keys[0].size() + 1, 0, 0, 10,
                      FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
 
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     term = "xxroche";
     leaves.clear();
@@ -1128,7 +1167,7 @@ TEST(ArtTest, test_art_search_roche_chews) {
     art_fuzzy_search(&t, (const unsigned char*)term.c_str(), term.size()+1, 0, 2, 10,
                      FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
 
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -1154,7 +1193,7 @@ TEST(ArtTest, test_art_search_raspberry) {
     std::string q_raspberries = "raspberries";
     art_fuzzy_search(&t, (const unsigned char*)q_raspberries.c_str(), q_raspberries.size(), 0, 2, 10,
                      FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(2, leaves.size());
+    ASSERT_EQ(size_t{2}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
@@ -1162,7 +1201,7 @@ TEST(ArtTest, test_art_search_raspberry) {
     std::string q_raspberry = "raspberry";
     art_fuzzy_search(&t, (const unsigned char*)q_raspberry.c_str(), q_raspberry.size(), 0, 2, 10,
                      FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(2, leaves.size());
+    ASSERT_EQ(size_t{2}, leaves.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -1188,7 +1227,7 @@ TEST(ArtTest, test_art_search_highliving) {
     std::string query = "higghliving";
     art_fuzzy_search(&t, (const unsigned char*)query.c_str(), query.size() + 1, 0, 1, 10,
                      FREQUENCY, false, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     leaves.clear();
     exclude_leaves.clear();
@@ -1197,7 +1236,7 @@ TEST(ArtTest, test_art_search_highliving) {
 
     art_fuzzy_search(&t, (const unsigned char*)query.c_str(), query.size(), 0, 2, 10,
                      FREQUENCY, true, false, "", nullptr, 0, leaves, exclude_leaves);
-    ASSERT_EQ(1, leaves.size());
+    ASSERT_EQ(size_t{1}, leaves.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -1270,7 +1309,7 @@ TEST(ArtTest, test_int32_overlap) {
 
     int res = art_int32_search(&t, 2002, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(3, results.size());
+    ASSERT_EQ(size_t{3}, results.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -1295,28 +1334,28 @@ TEST(ArtTest, test_int32_range_hundreds) {
 
     int res = art_int32_search(&t, 106, EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
     results.clear();
 
     res = art_int32_search(&t, 106, GREATER_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(4, results.size());
+    ASSERT_EQ(size_t{4}, results.size());
     results.clear();
 
     res = art_int32_search(&t, 106, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(3, results.size());
+    ASSERT_EQ(size_t{3}, results.size());
     results.clear();
 
     res = art_int32_search(&t, 106, LESS_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(7, results.size());
+    ASSERT_EQ(size_t{7}, results.size());
     results.clear();
 
     res = art_int32_search(&t, 106, LESS_THAN, results);
     ASSERT_TRUE(res == 0);
 
-    ASSERT_EQ(6, results.size());
+    ASSERT_EQ(size_t{6}, results.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -1346,7 +1385,7 @@ TEST(ArtTest, test_int32_duplicates) {
         counter += posting_t::num_ids(res->values);
     }
 
-    ASSERT_EQ(10000, counter);
+    ASSERT_EQ(size_t{10000}, counter);
     results.clear();
 
     res = art_tree_destroy(&t);
@@ -1372,32 +1411,32 @@ TEST(ArtTest, test_int32_negative) {
 
     int res = art_int32_search(&t, -99, EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
     results.clear();
 
     res = art_int32_search(&t, -90, GREATER_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(90, results.size());
+    ASSERT_EQ(size_t{90}, results.size());
     results.clear();
 
     res = art_int32_search(&t, -90, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(89, results.size());
+    ASSERT_EQ(size_t{89}, results.size());
     results.clear();
 
     res = art_int32_search(&t, -99, LESS_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(2, results.size());
+    ASSERT_EQ(size_t{2}, results.size());
     results.clear();
 
     res = art_int32_search(&t, -99, LESS_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
     results.clear();
 
     res = art_int32_search(&t, -100, LESS_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
     results.clear();
 
     res = art_tree_destroy(&t);
@@ -1425,62 +1464,62 @@ TEST(ArtTest, test_int32_million) {
     for(uint32_t i = 0; i < 6; i++) {
         results.clear();
         art_int32_search(&t, (uint32_t) pow(10, i), EQUALS, results);
-        ASSERT_EQ(1, results.size());
+        ASSERT_EQ(size_t{1}, results.size());
 
         results.clear();
         art_int32_search(&t, (uint32_t) (pow(10, i) + 7), EQUALS, results);
-        ASSERT_EQ(1, results.size());
+        ASSERT_EQ(size_t{1}, results.size());
     }
 
     results.clear();
     art_int32_search(&t, 1000000 - 1, EQUALS, results);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
 
     // >=
     results.clear();
     art_int32_search(&t, 1000000 - 5, GREATER_THAN_EQUALS, results);
-    ASSERT_EQ(5, results.size());
+    ASSERT_EQ(size_t{5}, results.size());
 
     results.clear();
     art_int32_search(&t, 1000000 - 5, GREATER_THAN, results);
-    ASSERT_EQ(4, results.size());
+    ASSERT_EQ(size_t{4}, results.size());
 
     results.clear();
     art_int32_search(&t, 1000000 - 1, GREATER_THAN_EQUALS, results);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
 
     results.clear();
     art_int32_search(&t, 1000000, GREATER_THAN_EQUALS, results);
-    ASSERT_EQ(0, results.size());
+    ASSERT_EQ(size_t{0}, results.size());
 
     results.clear();
     art_int32_search(&t, 5, GREATER_THAN_EQUALS, results);
-    ASSERT_EQ(1000000-5, results.size());
+    ASSERT_EQ(size_t{1000000 - 5}, results.size());
 
     // <=
     results.clear();
     art_int32_search(&t, 1000000 - 5, LESS_THAN_EQUALS, results);
-    ASSERT_EQ(1000000-5+1, results.size());
+    ASSERT_EQ(size_t{1000000 - 5 + 1}, results.size());
 
     results.clear();
     art_int32_search(&t, 1000000 - 1, LESS_THAN_EQUALS, results);
-    ASSERT_EQ(1000000, results.size());
+    ASSERT_EQ(size_t{1000000}, results.size());
 
     results.clear();
     art_int32_search(&t, 1000000 - 1, LESS_THAN, results);
-    ASSERT_EQ(1000000-1, results.size());
+    ASSERT_EQ(size_t{1000000 - 1}, results.size());
 
     results.clear();
     art_int32_search(&t, 1000000, LESS_THAN_EQUALS, results);
-    ASSERT_EQ(1000000, results.size());
+    ASSERT_EQ(size_t{1000000}, results.size());
 
     results.clear();
     art_int32_search(&t, 5, LESS_THAN_EQUALS, results);
-    ASSERT_EQ(5+1, results.size());
+    ASSERT_EQ(size_t{5 + 1}, results.size());
 
     results.clear();
     art_int32_search(&t, 5, LESS_THAN, results);
-    ASSERT_EQ(5, results.size());
+    ASSERT_EQ(size_t{5}, results.size());
 
     auto res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -1505,11 +1544,11 @@ TEST(ArtTest, test_int_range_byte_boundary) {
 
     results.clear();
     art_int32_search(&t, 255, GREATER_THAN_EQUALS, results);
-    ASSERT_EQ(45, results.size());
+    ASSERT_EQ(size_t{45}, results.size());
 
     results.clear();
     art_int32_search(&t, 255, GREATER_THAN, results);
-    ASSERT_EQ(44, results.size());
+    ASSERT_EQ(size_t{44}, results.size());
 
     auto res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -1569,27 +1608,27 @@ TEST(ArtTest, test_search_int64) {
 
     int res = art_int64_search(&t, lmax, EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
     results.clear();
 
     res = art_int64_search(&t, lmax, GREATER_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(100, results.size());
+    ASSERT_EQ(size_t{100}, results.size());
     results.clear();
 
     res = art_int64_search(&t, lmax, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(99, results.size());
+    ASSERT_EQ(size_t{99}, results.size());
     results.clear();
 
     res = art_int64_search(&t, lmax+50, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(49, results.size());
+    ASSERT_EQ(size_t{49}, results.size());
     results.clear();
 
     res = art_int64_search(&t, lmax+50, LESS_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(50, results.size());
+    ASSERT_EQ(size_t{50}, results.size());
     results.clear();
 
     res = art_tree_destroy(&t);
@@ -1615,27 +1654,27 @@ TEST(ArtTest, test_search_negative_int64) {
 
     int res = art_int64_search(&t, lmax-1, EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
     results.clear();
 
     res = art_int64_search(&t, lmax-1, LESS_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(100, results.size());
+    ASSERT_EQ(size_t{100}, results.size());
     results.clear();
 
     res = art_int64_search(&t, lmax-50, LESS_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(50, results.size());
+    ASSERT_EQ(size_t{50}, results.size());
     results.clear();
 
     res = art_int64_search(&t, lmax-50, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(49, results.size());
+    ASSERT_EQ(size_t{49}, results.size());
     results.clear();
 
     res = art_int64_search(&t, lmax-50, GREATER_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(50, results.size());
+    ASSERT_EQ(size_t{50}, results.size());
     results.clear();
 
     res = art_tree_destroy(&t);
@@ -1657,7 +1696,7 @@ TEST(ArtTest, test_search_negative_int64_large) {
 
     int res = art_int64_search(&t, 1577836800, GREATER_THAN, results);
     //ASSERT_TRUE(res == 0);
-    //ASSERT_EQ(0, results.size());
+    //ASSERT_EQ(size_t{0}, results.size());
     //results.clear();
 
     res = art_tree_destroy(&t);
@@ -1689,7 +1728,7 @@ TEST(ArtTest, test_int32_array) {
 
     int res = art_int32_search(&t, 2002, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(3, results.size());
+    ASSERT_EQ(size_t{3}, results.size());
 
     res = art_tree_destroy(&t);
     ASSERT_TRUE(res == 0);
@@ -1713,42 +1752,42 @@ TEST(ArtTest, test_encode_float_positive) {
 
     int res = art_float_search(&t, 0.0, EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
     results.clear();
 
     res = art_float_search(&t, 0.0, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(5, results.size());
+    ASSERT_EQ(size_t{5}, results.size());
     results.clear();
 
     res = art_float_search(&t, 10.5678, LESS_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(4, results.size());
+    ASSERT_EQ(size_t{4}, results.size());
     results.clear();
 
     res = art_float_search(&t, 10.5678, LESS_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(5, results.size());
+    ASSERT_EQ(size_t{5}, results.size());
     results.clear();
 
     res = art_float_search(&t, 10.5678, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
     results.clear();
 
     res = art_float_search(&t, 10.4, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(2, results.size());
+    ASSERT_EQ(size_t{2}, results.size());
     results.clear();
 
     res = art_float_search(&t, 10.5678, GREATER_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(2, results.size());
+    ASSERT_EQ(size_t{2}, results.size());
     results.clear();
 
     res = art_float_search(&t, 10, GREATER_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(2, results.size());
+    ASSERT_EQ(size_t{2}, results.size());
     results.clear();
 
     res = art_tree_destroy(&t);
@@ -1773,37 +1812,37 @@ TEST(ArtTest, test_encode_float_positive_negative) {
 
     int res = art_float_search(&t, -24.1033, EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(1, results.size());
+    ASSERT_EQ(size_t{1}, results.size());
     results.clear();
 
     res = art_float_search(&t, 0.0, LESS_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(2, results.size());
+    ASSERT_EQ(size_t{2}, results.size());
     results.clear();
 
     res = art_float_search(&t, 0.0, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(3, results.size());
+    ASSERT_EQ(size_t{3}, results.size());
     results.clear();
 
     res = art_float_search(&t,  -2.561, LESS_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(2, results.size());
+    ASSERT_EQ(size_t{2}, results.size());
     results.clear();
 
     res = art_float_search(&t, -2.561, GREATER_THAN, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(4, results.size());
+    ASSERT_EQ(size_t{4}, results.size());
     results.clear();
 
     res = art_float_search(&t, -24.1033, GREATER_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(6, results.size());
+    ASSERT_EQ(size_t{6}, results.size());
     results.clear();
 
     res = art_float_search(&t, -24, GREATER_THAN_EQUALS, results);
     ASSERT_TRUE(res == 0);
-    ASSERT_EQ(5, results.size());
+    ASSERT_EQ(size_t{5}, results.size());
     results.clear();
 
     res = art_tree_destroy(&t);

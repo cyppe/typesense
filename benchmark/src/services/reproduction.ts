@@ -63,20 +63,32 @@ export class ReproductionService {
               }%)`,
           )
           .join("\n# ");
+
+        // For concurrent_* scenarios, try to find the base search scenario for curl generation
+        const resolvedScenario = scenario ?? (() => {
+          const baseScenarioName = scenarioName.replace(/^concurrent_/, "");
+          return searchScenarios.find((s) => s.name === baseScenarioName);
+        })();
+
+        const curlBlock = resolvedScenario
+          ? `### Curl Request
+\`\`\`bash
+# ${vuInfo}
+curl "http://localhost:8108/collections/${K6Benchmarks.COLLECTION_NAME}/documents/search?${this.formatSearchParams(resolvedScenario.params)}" \\
+    -X GET \\
+    -H "Content-Type: application/json" \\
+    -H "X-TYPESENSE-API-KEY: ${params.apiKey}"
+\`\`\``
+          : `> Note: No curl command available for scenario \`${scenarioName}\` (composite benchmark).
+# ${vuInfo}`;
+
         return `
 ### ${scenarioName}
 ### Search Parameters
 \`\`\`json
-${JSON.stringify(scenario?.params, null, 2)}
+${JSON.stringify(resolvedScenario?.params ?? {}, null, 2)}
 \`\`\`
-### Curl Request
-\`\`\`bash
-# ${vuInfo}
-curl "http://localhost:8108/collections/${K6Benchmarks.COLLECTION_NAME}/documents/search?${this.formatSearchParams(scenario!.params)}" \\
-    -X GET \\
-    -H "Content-Type: application/json" \\
-    -H "X-TYPESENSE-API-KEY: ${params.apiKey}"
-\`\`\``;
+${curlBlock}`;
       })
       .join("");
   }

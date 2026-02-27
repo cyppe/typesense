@@ -5,20 +5,23 @@
 #include <algorithm>
 #include <collection_manager.h>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionInfixSearchTest : public ::testing::Test {
 protected:
     Store *store;
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_infix";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_infix");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -32,6 +35,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -66,11 +70,11 @@ TEST_F(CollectionInfixSearchTest, InfixBasics) {
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                  4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("title", results["hits"][0]["highlights"][0]["field"].get<std::string>());
     ASSERT_EQ("<mark>GH100037IN8900X</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_EQ("<mark>GH100037IN8900X</mark>", results["hits"][0]["highlights"][0]["value"].get<std::string>());
@@ -84,8 +88,8 @@ TEST_F(CollectionInfixSearchTest, InfixBasics) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {off}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // when fallback is used, only the prefix result is returned
 
@@ -101,8 +105,8 @@ TEST_F(CollectionInfixSearchTest, InfixBasics) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {fallback}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // always behavior: both prefix and infix matches are returned but ranked below prefix match
@@ -114,8 +118,8 @@ TEST_F(CollectionInfixSearchTest, InfixBasics) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -143,11 +147,11 @@ TEST_F(CollectionInfixSearchTest, InfixOnArray) {
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                  4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("model_numbers", results["hits"][0]["highlights"][0]["field"].get<std::string>());
     ASSERT_EQ("<mark>GH100047IN8900X</mark>", results["hits"][0]["highlights"][0]["snippets"][0].get<std::string>());
     ASSERT_EQ("<mark>GH100047IN8900X</mark>", results["hits"][0]["highlights"][0]["values"][0].get<std::string>());
@@ -174,11 +178,11 @@ TEST_F(CollectionInfixSearchTest, InfixNoMatchButRegularHighlight) {
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                  4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("White <mark>Bread</mark>", results["hits"][0]["highlight"]["title"]["snippet"].get<std::string>());
     collectionManager.drop_collection("coll1");
 }
@@ -209,8 +213,8 @@ TEST_F(CollectionInfixSearchTest, InfixWithFiltering) {
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                  4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // filtering + exclusion via curation
@@ -226,8 +230,8 @@ TEST_F(CollectionInfixSearchTest, InfixWithFiltering) {
                              "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                              4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     auto schema_json =
@@ -281,7 +285,7 @@ TEST_F(CollectionInfixSearchTest, InfixWithFiltering) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -301,8 +305,8 @@ TEST_F(CollectionInfixSearchTest, InfixWithFiltering) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     nlohmann::json result = nlohmann::json::parse(json_res);
 
-    ASSERT_EQ(2, result["found"].get<size_t>());
-    ASSERT_EQ(2, result["hits"].size());
+    ASSERT_EQ(size_t{2}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, result["hits"].size());
     ASSERT_EQ("1", result["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ(3, result["hits"][0]["document"]["rating"].get<std::int32_t>());
     ASSERT_EQ("Salad With Taco Toppings", result["hits"][0]["document"]["title"].get<std::string>());
@@ -339,8 +343,8 @@ TEST_F(CollectionInfixSearchTest, RespectPrefixAndSuffixLimits) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}, 1).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("100037",
@@ -350,8 +354,8 @@ TEST_F(CollectionInfixSearchTest, RespectPrefixAndSuffixLimits) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}, 2).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -363,8 +367,8 @@ TEST_F(CollectionInfixSearchTest, RespectPrefixAndSuffixLimits) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}, INT16_MAX, 2).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("8900",
@@ -374,8 +378,8 @@ TEST_F(CollectionInfixSearchTest, RespectPrefixAndSuffixLimits) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}, INT16_MAX, 5).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -409,8 +413,8 @@ TEST_F(CollectionInfixSearchTest, InfixSpecificField) {
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                  4, {always, off}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("100037",
@@ -420,8 +424,8 @@ TEST_F(CollectionInfixSearchTest, InfixSpecificField) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {off, always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // highlight infix match only on infix-searched field
@@ -438,11 +442,11 @@ TEST_F(CollectionInfixSearchTest, InfixSpecificField) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {off, always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("2", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("description", results["hits"][0]["highlights"][0]["field"].get<std::string>());
     ASSERT_EQ("<mark>HYU16736GY6372</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_FALSE(results["hits"][0]["highlights"][0].contains("value"));
@@ -488,8 +492,8 @@ TEST_F(CollectionInfixSearchTest, InfixOneOfManyFields) {
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                  4, {off, off, off, always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 }
 
 TEST_F(CollectionInfixSearchTest, InfixDeleteAndUpdate) {
@@ -511,14 +515,14 @@ TEST_F(CollectionInfixSearchTest, InfixDeleteAndUpdate) {
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                  4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     coll1->remove("0");
 
     for(size_t i = 0; i < coll1->_get_index()->_get_infix_index().at("title").size(); i++) {
-        ASSERT_EQ(0, coll1->_get_index()->_get_infix_index().at("title").at(i)->size());
+        ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_infix_index().at("title").at(i)->size());
     }
 
     results = coll1->search("100037",
@@ -528,8 +532,8 @@ TEST_F(CollectionInfixSearchTest, InfixDeleteAndUpdate) {
                         "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                         4, {always}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // add the document again and then update it
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
@@ -541,8 +545,8 @@ TEST_F(CollectionInfixSearchTest, InfixDeleteAndUpdate) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     doc["title"] = "YHD3342D78912";
     ASSERT_TRUE(coll1->add(doc.dump(), UPSERT).ok());
@@ -554,8 +558,8 @@ TEST_F(CollectionInfixSearchTest, InfixDeleteAndUpdate) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("100037",
@@ -565,17 +569,17 @@ TEST_F(CollectionInfixSearchTest, InfixDeleteAndUpdate) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     std::string key = "yhd3342d78912";
     auto strhash = StringUtils::hash_wy(key.c_str(), key.size());
     const auto& infix_sets = coll1->_get_index()->_get_infix_index().at("title");
-    ASSERT_EQ(1, infix_sets[strhash % 4]->size());
+    ASSERT_EQ(size_t{1}, infix_sets[strhash % 4]->size());
 
     for(size_t i = 0; i < infix_sets.size(); i++) {
         if(i != strhash % 4) {
-            ASSERT_EQ(0, infix_sets[i]->size());
+            ASSERT_EQ(size_t{0}, infix_sets[i]->size());
         }
     }
 
@@ -609,8 +613,8 @@ TEST_F(CollectionInfixSearchTest, MultiFieldInfixSearch) {
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                  4, {always}).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -642,8 +646,8 @@ TEST_F(CollectionInfixSearchTest, DeleteDocWithInfixIndex) {
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                  4, {always}).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // drop one document
 
@@ -658,8 +662,8 @@ TEST_F(CollectionInfixSearchTest, DeleteDocWithInfixIndex) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     collectionManager.drop_collection("coll1");

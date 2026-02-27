@@ -10,6 +10,8 @@
 #include "conversation_manager.h"
 #include "synonym_index_manager.h"
 #include "curation_index_manager.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CoreAPIUtilsTest : public ::testing::Test {
 protected:
@@ -19,12 +21,13 @@ protected:
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
+    std::string state_dir_path;
 
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/core_api_utils";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("core_api_utils");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -66,6 +69,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -106,7 +110,7 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocs) {
     }
 
     stateful_remove_docs(&deletion_state, 5, done);
-    ASSERT_EQ(1, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{1}, deletion_state.num_removed);
     ASSERT_TRUE(done);
 
     // match 12 documents (multiple batches)
@@ -125,15 +129,15 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocs) {
     }
 
     stateful_remove_docs(&deletion_state, 4, done);
-    ASSERT_EQ(4, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{4}, deletion_state.num_removed);
     ASSERT_FALSE(done);
 
     stateful_remove_docs(&deletion_state, 4, done);
-    ASSERT_EQ(8, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{8}, deletion_state.num_removed);
     ASSERT_FALSE(done);
 
     stateful_remove_docs(&deletion_state, 4, done);
-    ASSERT_EQ(11, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{11}, deletion_state.num_removed);
     ASSERT_TRUE(done);
 
     // match 9 documents (multiple batches)
@@ -152,11 +156,11 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocs) {
     }
 
     stateful_remove_docs(&deletion_state, 7, done);
-    ASSERT_EQ(7, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{7}, deletion_state.num_removed);
     ASSERT_FALSE(done);
 
     stateful_remove_docs(&deletion_state, 7, done);
-    ASSERT_EQ(9, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{9}, deletion_state.num_removed);
     ASSERT_TRUE(done);
 
     // fetch raw document IDs
@@ -185,7 +189,7 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocs) {
     }
 
     stateful_remove_docs(&deletion_state, 5, done);
-    ASSERT_EQ(3, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{3}, deletion_state.num_removed);
     ASSERT_TRUE(done);
 
     // delete single doc
@@ -205,7 +209,7 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocs) {
     }
 
     stateful_remove_docs(&deletion_state, 5, done);
-    ASSERT_EQ(1, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{1}, deletion_state.num_removed);
     ASSERT_TRUE(done);
 
     for(auto& kv: deletion_state.index_ids) {
@@ -230,7 +234,7 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocs) {
     validate_field_names = false;
     op = coll1->get_filter_ids("foo: 99", filter_results, should_timeout, validate_field_names);
     ASSERT_TRUE(op.ok());
-    ASSERT_EQ(0, filter_results.count);
+    ASSERT_EQ(uint32_t{0}, filter_results.count);
     ASSERT_EQ(nullptr, filter_results.docs);
 
     collectionManager.drop_collection("coll1");
@@ -353,7 +357,7 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBody) {
     std::vector<nlohmann::json> embedded_params_vec;
 
     get_collections_for_auth(req_params, body, rpath, "foo", collections, embedded_params_vec);
-    ASSERT_EQ(1, collections.size());
+    ASSERT_EQ(size_t{1}, collections.size());
     ASSERT_EQ("coll1", collections[0].collection);
     ASSERT_EQ("foo", collections[0].api_key);
 
@@ -372,10 +376,10 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBody) {
     )";
 
     get_collections_for_auth(req_params, body, rpath, "foo", collections, embedded_params_vec);
-    ASSERT_EQ(1, collections.size());
+    ASSERT_EQ(size_t{1}, collections.size());
     ASSERT_EQ("", collections[0].collection);
     ASSERT_EQ("foo", collections[0].api_key);
-    ASSERT_EQ(1, embedded_params_vec.size());
+    ASSERT_EQ(size_t{1}, embedded_params_vec.size());
 
     collections.clear();
     embedded_params_vec.clear();
@@ -392,7 +396,7 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBody) {
     )";
 
     get_collections_for_auth(req_params, body, rpath, "foo", collections, embedded_params_vec);
-    ASSERT_EQ(1, collections.size());
+    ASSERT_EQ(size_t{1}, collections.size());
     ASSERT_EQ("", collections[0].collection);
     ASSERT_EQ("foo", collections[0].api_key);
 
@@ -413,7 +417,7 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBody) {
     )";
 
     get_collections_for_auth(req_params, body, rpath, "foo", collections, embedded_params_vec);
-    ASSERT_EQ(1, collections.size());
+    ASSERT_EQ(size_t{1}, collections.size());
     ASSERT_EQ("products", collections[0].collection);
     ASSERT_EQ("bar", collections[0].api_key);
 
@@ -469,7 +473,7 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBody) {
     )";
 
     get_collections_for_auth(req_params, body, rpath, "foo", collections, embedded_params_vec);
-    ASSERT_EQ(1, collections.size());
+    ASSERT_EQ(size_t{1}, collections.size());
     ASSERT_EQ("", collections[0].collection);
     ASSERT_EQ("foo", collections[0].api_key);
 
@@ -487,7 +491,7 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBody) {
     )";
 
     get_collections_for_auth(req_params, body, rpath, "foo", collections, embedded_params_vec);
-    ASSERT_EQ(1, collections.size());
+    ASSERT_EQ(size_t{1}, collections.size());
     ASSERT_EQ("", collections[0].collection);
     ASSERT_EQ("bar", collections[0].api_key);
 }
@@ -501,9 +505,9 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBodyExtended) {
 
     get_collections_for_auth(req_params, "{]", rpath_multi_search, "", collections, embedded_params_vec);
 
-    ASSERT_EQ(1, collections.size());
+    ASSERT_EQ(size_t{1}, collections.size());
     ASSERT_EQ("", collections[0].collection);
-    ASSERT_EQ(1, embedded_params_vec.size());
+    ASSERT_EQ(size_t{1}, embedded_params_vec.size());
 
     nlohmann::json sample_search_body;
     sample_search_body["searches"] = nlohmann::json::array();
@@ -520,7 +524,7 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBodyExtended) {
     embedded_params_vec.clear();
     get_collections_for_auth(req_params, sample_search_body.dump(), rpath_multi_search, "", collections, embedded_params_vec);
 
-    ASSERT_EQ(2, collections.size());
+    ASSERT_EQ(size_t{2}, collections.size());
     ASSERT_EQ("company1", collections[0].collection);
     ASSERT_EQ("company2", collections[1].collection);
 
@@ -529,7 +533,7 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBodyExtended) {
 
     get_collections_for_auth(req_params, sample_search_body.dump(), rpath_multi_search, "", collections, embedded_params_vec);
 
-    ASSERT_EQ(2, collections.size());
+    ASSERT_EQ(size_t{2}, collections.size());
     ASSERT_EQ("company1", collections[0].collection);
     ASSERT_EQ("company2", collections[1].collection);
 
@@ -541,7 +545,7 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBodyExtended) {
 
     get_collections_for_auth(req_params, sample_search_body.dump(), rpath_multi_search, "", collections, embedded_params_vec);
 
-    ASSERT_EQ(2, collections.size());
+    ASSERT_EQ(size_t{2}, collections.size());
     ASSERT_EQ("company1", collections[0].collection);
     ASSERT_EQ("foo", collections[1].collection);
 
@@ -552,9 +556,9 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBodyExtended) {
     route_path rpath_search = route_path("GET", {"collections", ":collection", "documents", "search"}, get_search, false, false);
     get_collections_for_auth(req_params, sample_search_body.dump(), rpath_search, "", collections, embedded_params_vec);
 
-    ASSERT_EQ(1, collections.size());
+    ASSERT_EQ(size_t{1}, collections.size());
     ASSERT_EQ("", collections[0].collection);
-    ASSERT_EQ(1, embedded_params_vec.size());
+    ASSERT_EQ(size_t{1}, embedded_params_vec.size());
 
     collections.clear();
     embedded_params_vec.clear();
@@ -563,9 +567,9 @@ TEST_F(CoreAPIUtilsTest, ExtractCollectionsFromRequestBodyExtended) {
 
     get_collections_for_auth(req_params, sample_search_body.dump(), rpath_search, "", collections, embedded_params_vec);
 
-    ASSERT_EQ(1, collections.size());
+    ASSERT_EQ(size_t{1}, collections.size());
     ASSERT_EQ("foo", collections[0].collection);
-    ASSERT_EQ(1, embedded_params_vec.size());
+    ASSERT_EQ(size_t{1}, embedded_params_vec.size());
 }
 
 TEST_F(CoreAPIUtilsTest, MultiSearchWithPresetShouldUsePresetForAuth) {
@@ -595,10 +599,10 @@ TEST_F(CoreAPIUtilsTest, MultiSearchWithPresetShouldUsePresetForAuth) {
 
     get_collections_for_auth(req_params, search_body, rpath_multi_search, "", collections, embedded_params_vec);
     
-    ASSERT_EQ(2, collections.size());
+    ASSERT_EQ(size_t{2}, collections.size());
     ASSERT_EQ("foo1", collections[0].collection);
     ASSERT_EQ("bar1", collections[1].collection);
-    ASSERT_EQ(2, embedded_params_vec.size());
+    ASSERT_EQ(size_t{2}, embedded_params_vec.size());
 
     // with preset parameter, use collections from preset configuration
     collections.clear();
@@ -607,10 +611,10 @@ TEST_F(CoreAPIUtilsTest, MultiSearchWithPresetShouldUsePresetForAuth) {
     req_params["preset"] = "apple";
     get_collections_for_auth(req_params, search_body, rpath_multi_search, "", collections, embedded_params_vec);
     
-    ASSERT_EQ(2, collections.size());
+    ASSERT_EQ(size_t{2}, collections.size());
     ASSERT_EQ("foo", collections[0].collection);
     ASSERT_EQ("bar", collections[1].collection);
-    ASSERT_EQ(2, embedded_params_vec.size());
+    ASSERT_EQ(size_t{2}, embedded_params_vec.size());
 
     // try using multi_search preset within individual search param
 
@@ -633,10 +637,10 @@ TEST_F(CoreAPIUtilsTest, MultiSearchWithPresetShouldUsePresetForAuth) {
 
     get_collections_for_auth(req_params, search_body, rpath_multi_search, "", collections, embedded_params_vec);
 
-    ASSERT_EQ(2, collections.size());
+    ASSERT_EQ(size_t{2}, collections.size());
     ASSERT_EQ("foo1", collections[0].collection);
     ASSERT_EQ("bar1", collections[1].collection);
-    ASSERT_EQ(2, embedded_params_vec.size());
+    ASSERT_EQ(size_t{2}, embedded_params_vec.size());
 
     // without collection in search array
     req_params.clear();
@@ -652,10 +656,10 @@ TEST_F(CoreAPIUtilsTest, MultiSearchWithPresetShouldUsePresetForAuth) {
 
     get_collections_for_auth(req_params, search_body, rpath_multi_search, "", collections, embedded_params_vec);
 
-    ASSERT_EQ(2, collections.size());
+    ASSERT_EQ(size_t{2}, collections.size());
     ASSERT_EQ("preset_coll", collections[0].collection);
     ASSERT_EQ("preset_coll", collections[1].collection);
-    ASSERT_EQ(2, embedded_params_vec.size());
+    ASSERT_EQ(size_t{2}, embedded_params_vec.size());
 }
 
 TEST_F(CoreAPIUtilsTest, PresetMultiSearch) {
@@ -669,7 +673,7 @@ TEST_F(CoreAPIUtilsTest, PresetMultiSearch) {
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
-    Collection* coll1 = op.get();
+    (void)op.get();
 
     auto preset_value = R"(
         {"collection":"preset_coll", "per_page": "12"}
@@ -694,8 +698,8 @@ TEST_F(CoreAPIUtilsTest, PresetMultiSearch) {
     post_multi_search(req, res);
 
     auto res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(1, res_json["results"].size());
-    ASSERT_EQ(0, res_json["results"][0]["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_json["results"].size());
+    ASSERT_EQ(size_t{0}, res_json["results"][0]["found"].get<size_t>());
 
     // with multiple "searches" preset configuration
     preset_value = R"(
@@ -724,9 +728,9 @@ TEST_F(CoreAPIUtilsTest, PresetMultiSearch) {
 
     post_multi_search(req, res);
     res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(2, res_json["results"].size());
-    ASSERT_EQ(0, res_json["results"][0]["found"].get<size_t>());
-    ASSERT_EQ(0, res_json["results"][1]["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_json["results"].size());
+    ASSERT_EQ(size_t{0}, res_json["results"][0]["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, res_json["results"][1]["found"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
 }
@@ -772,9 +776,9 @@ TEST_F(CoreAPIUtilsTest, SearchPagination) {
 
     post_multi_search(req, res);
     nlohmann::json results = nlohmann::json::parse(res->body)["results"][0];
-    ASSERT_EQ(10, results["hits"].size());
-    ASSERT_EQ(19, results["hits"][0]["document"]["points"].get<size_t>());
-    ASSERT_EQ(1, results["page"].get<size_t>());
+    ASSERT_EQ(size_t{10}, results["hits"].size());
+    ASSERT_EQ(size_t{19}, results["hits"][0]["document"]["points"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["page"].get<size_t>());
 
     // when offset is used we should expect the same but "offset" should be returned in response
     search.clear();
@@ -790,9 +794,9 @@ TEST_F(CoreAPIUtilsTest, SearchPagination) {
 
     post_multi_search(req, res);
     results = nlohmann::json::parse(res->body)["results"][0];
-    ASSERT_EQ(10, results["hits"].size());
-    ASSERT_EQ(18, results["hits"][0]["document"]["points"].get<size_t>());
-    ASSERT_EQ(1, results["offset"].get<size_t>());
+    ASSERT_EQ(size_t{10}, results["hits"].size());
+    ASSERT_EQ(size_t{18}, results["hits"][0]["document"]["points"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["offset"].get<size_t>());
 
     // use limit to restrict page size
     search.clear();
@@ -809,9 +813,9 @@ TEST_F(CoreAPIUtilsTest, SearchPagination) {
 
     post_multi_search(req, res);
     results = nlohmann::json::parse(res->body)["results"][0];
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(18, results["hits"][0]["document"]["points"].get<size_t>());
-    ASSERT_EQ(1, results["offset"].get<size_t>());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{18}, results["hits"][0]["document"]["points"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["offset"].get<size_t>());
 
     // when page is -1
     search.clear();
@@ -828,7 +832,7 @@ TEST_F(CoreAPIUtilsTest, SearchPagination) {
 
     post_multi_search(req, res);
     results = nlohmann::json::parse(res->body)["results"][0];
-    ASSERT_EQ(400, results["code"].get<size_t>());
+    ASSERT_EQ(size_t{400}, results["code"].get<size_t>());
     ASSERT_EQ("Parameter `page` must be an unsigned integer.", results["error"].get<std::string>());
 
     // when offset is -1
@@ -845,7 +849,7 @@ TEST_F(CoreAPIUtilsTest, SearchPagination) {
 
     post_multi_search(req, res);
     results = nlohmann::json::parse(res->body)["results"][0];
-    ASSERT_EQ(400, results["code"].get<size_t>());
+    ASSERT_EQ(size_t{400}, results["code"].get<size_t>());
     ASSERT_EQ("Parameter `offset` must be an unsigned integer.", results["error"].get<std::string>());
 
     // when page is 0 and offset is NOT sent, we will treat as page=1
@@ -862,9 +866,9 @@ TEST_F(CoreAPIUtilsTest, SearchPagination) {
 
     post_multi_search(req, res);
     results = nlohmann::json::parse(res->body)["results"][0];
-    ASSERT_EQ(10, results["hits"].size());
-    ASSERT_EQ(1, results["page"].get<size_t>());
-    ASSERT_EQ(0, results.count("offset"));
+    ASSERT_EQ(size_t{10}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["page"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results.count("offset"));
 
     // when both page and offset are sent, use page
     search.clear();
@@ -881,9 +885,9 @@ TEST_F(CoreAPIUtilsTest, SearchPagination) {
 
     post_multi_search(req, res);
     results = nlohmann::json::parse(res->body)["results"][0];
-    ASSERT_EQ(10, results["hits"].size());
-    ASSERT_EQ(2, results["page"].get<size_t>());
-    ASSERT_EQ(0, results.count("offset"));
+    ASSERT_EQ(size_t{10}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["page"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results.count("offset"));
 
 }
 
@@ -927,7 +931,7 @@ TEST_F(CoreAPIUtilsTest, Union) {
 
     post_multi_search(req, res);
     nlohmann::json response = nlohmann::json::parse(res->body);
-    ASSERT_EQ(0, response.count("results"));
+    ASSERT_EQ(size_t{0}, response.count("results"));
     ASSERT_EQ(20, response["found"]);
 }
 
@@ -999,7 +1003,7 @@ TEST_F(CoreAPIUtilsTest, ExportWithJoin) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1045,7 +1049,7 @@ TEST_F(CoreAPIUtilsTest, ExportWithJoin) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1099,21 +1103,21 @@ TEST_F(CoreAPIUtilsTest, ExportWithJoin) {
     StringUtils::split(res->body, res_strs, "\n");
 
     doc = nlohmann::json::parse(res_strs[0]);
-    ASSERT_EQ(6, doc.size());
-    ASSERT_EQ(1, doc.count("product_name"));
+    ASSERT_EQ(size_t{6}, doc.size());
+    ASSERT_EQ(size_t{1}, doc.count("product_name"));
     ASSERT_EQ("shampoo", doc["product_name"]);
-    ASSERT_EQ(1, doc.count("Customers"));
-    ASSERT_EQ(5, doc["Customers"].size());
-    ASSERT_EQ(1, doc["Customers"].count("product_price"));
+    ASSERT_EQ(size_t{1}, doc.count("Customers"));
+    ASSERT_EQ(size_t{5}, doc["Customers"].size());
+    ASSERT_EQ(size_t{1}, doc["Customers"].count("product_price"));
     ASSERT_EQ(143, doc["Customers"]["product_price"]);
 
     doc = nlohmann::json::parse(res_strs[1]);
-    ASSERT_EQ(6, doc.size());
-    ASSERT_EQ(1, doc.count("product_name"));
+    ASSERT_EQ(size_t{6}, doc.size());
+    ASSERT_EQ(size_t{1}, doc.count("product_name"));
     ASSERT_EQ("soap", doc["product_name"]);
-    ASSERT_EQ(1, doc.count("Customers"));
-    ASSERT_EQ(5, doc["Customers"].size());
-    ASSERT_EQ(1, doc["Customers"].count("product_price"));
+    ASSERT_EQ(size_t{1}, doc.count("Customers"));
+    ASSERT_EQ(size_t{5}, doc["Customers"].size());
+    ASSERT_EQ(size_t{1}, doc["Customers"].count("product_price"));
     ASSERT_EQ(73.5, doc["Customers"]["product_price"]);
 
     delete dynamic_cast<export_state_t*>(req->data);
@@ -1128,15 +1132,15 @@ TEST_F(CoreAPIUtilsTest, ExportWithJoin) {
     StringUtils::split(res->body, res_strs, "\n");
 
     doc = nlohmann::json::parse(res_strs[0]);
-    ASSERT_EQ(6, doc.size());
-    ASSERT_EQ(1, doc.count("product_name"));
+    ASSERT_EQ(size_t{6}, doc.size());
+    ASSERT_EQ(size_t{1}, doc.count("product_name"));
     ASSERT_EQ("soap", doc["product_name"]);
-    ASSERT_EQ(1, doc.count("Customers"));
-    ASSERT_EQ(2, doc["Customers"].size());
-    ASSERT_EQ(5, doc["Customers"][0].size());
+    ASSERT_EQ(size_t{1}, doc.count("Customers"));
+    ASSERT_EQ(size_t{2}, doc["Customers"].size());
+    ASSERT_EQ(size_t{5}, doc["Customers"][0].size());
     ASSERT_EQ("customer_a", doc["Customers"][0]["customer_id"]);
     ASSERT_EQ(73.5, doc["Customers"][0]["product_price"]);
-    ASSERT_EQ(5, doc["Customers"][1].size());
+    ASSERT_EQ(size_t{5}, doc["Customers"][1].size());
     ASSERT_EQ("customer_b", doc["Customers"][1]["customer_id"]);
     ASSERT_EQ(140, doc["Customers"][1]["product_price"]);
 }
@@ -1173,7 +1177,7 @@ TEST_F(CoreAPIUtilsTest, ExportWithJoinHavingNoReferences) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         // The first document is going to fail with the error:
         // Reference document having `code:= `1234`` not found in the collection `redemption_codes`.
@@ -1191,7 +1195,7 @@ TEST_F(CoreAPIUtilsTest, ExportWithJoinHavingNoReferences) {
     for (auto const &json: documents) {
         auto add_op = redemption_codes->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1204,10 +1208,10 @@ TEST_F(CoreAPIUtilsTest, ExportWithJoinHavingNoReferences) {
     std::vector<std::string> res_strs;
     StringUtils::split(res->body, res_strs, "\n");
     auto doc = nlohmann::json::parse(res_strs[0]);
-    ASSERT_EQ(2, doc.size());
+    ASSERT_EQ(size_t{2}, doc.size());
     ASSERT_EQ("1234", doc["code"]);
     doc = nlohmann::json::parse(res_strs[1]);
-    ASSERT_EQ(2, doc.size());
+    ASSERT_EQ(size_t{2}, doc.size());
     ASSERT_EQ("5678", doc["code"]);
     delete dynamic_cast<export_state_t*>(req->data);
     req->data = nullptr;
@@ -1338,9 +1342,9 @@ TEST_F(CoreAPIUtilsTest, ExportIncludeExcludeFields) {
     std::vector<std::string> res_strs;
     StringUtils::split(res->body, res_strs, "\n");
     nlohmann::json doc = nlohmann::json::parse(res_strs[0]);
-    ASSERT_EQ(1, doc.size());
-    ASSERT_EQ(1, doc.count("name"));
-    ASSERT_EQ(1, doc["name"].count("last"));
+    ASSERT_EQ(size_t{1}, doc.size());
+    ASSERT_EQ(size_t{1}, doc.count("name"));
+    ASSERT_EQ(size_t{1}, doc["name"].count("last"));
 
     // exclude fields
 
@@ -1354,12 +1358,12 @@ TEST_F(CoreAPIUtilsTest, ExportIncludeExcludeFields) {
     res_strs.clear();
     StringUtils::split(res->body, res_strs, "\n");
     doc = nlohmann::json::parse(res_strs[0]);
-    ASSERT_EQ(4, doc.size());
-    ASSERT_EQ(1, doc.count("id"));
-    ASSERT_EQ(1, doc.count("points"));
-    ASSERT_EQ(1, doc.count("name"));
-    ASSERT_EQ(1, doc["name"].count("first"));
-    ASSERT_EQ(1, doc.count("description"));     // field not in schema is exported
+    ASSERT_EQ(size_t{4}, doc.size());
+    ASSERT_EQ(size_t{1}, doc.count("id"));
+    ASSERT_EQ(size_t{1}, doc.count("points"));
+    ASSERT_EQ(size_t{1}, doc.count("name"));
+    ASSERT_EQ(size_t{1}, doc["name"].count("first"));
+    ASSERT_EQ(size_t{1}, doc.count("description"));     // field not in schema is exported
 
     // no include or exclude fields
 
@@ -1373,13 +1377,13 @@ TEST_F(CoreAPIUtilsTest, ExportIncludeExcludeFields) {
     res_strs.clear();
     StringUtils::split(res->body, res_strs, "\n");
     doc = nlohmann::json::parse(res_strs[0]);
-    ASSERT_EQ(4, doc.size());
-    ASSERT_EQ(1, doc.count("id"));
-    ASSERT_EQ(1, doc.count("points"));
-    ASSERT_EQ(1, doc.count("name"));
-    ASSERT_EQ(1, doc["name"].count("first"));
-    ASSERT_EQ(1, doc["name"].count("last"));
-    ASSERT_EQ(1, doc.count("description"));     // field not in schema is exported
+    ASSERT_EQ(size_t{4}, doc.size());
+    ASSERT_EQ(size_t{1}, doc.count("id"));
+    ASSERT_EQ(size_t{1}, doc.count("points"));
+    ASSERT_EQ(size_t{1}, doc.count("name"));
+    ASSERT_EQ(size_t{1}, doc["name"].count("first"));
+    ASSERT_EQ(size_t{1}, doc["name"].count("last"));
+    ASSERT_EQ(size_t{1}, doc.count("description"));     // field not in schema is exported
 
     // no match for filter_by
 
@@ -1392,8 +1396,8 @@ TEST_F(CoreAPIUtilsTest, ExportIncludeExcludeFields) {
     res_strs.clear();
     StringUtils::split(res->body, res_strs, "\n");
     auto error = nlohmann::json::parse(res_strs[0]);
-    ASSERT_EQ(1, error.size());
-    ASSERT_EQ(1, error.count("message"));
+    ASSERT_EQ(size_t{1}, error.size());
+    ASSERT_EQ(size_t{1}, error.count("message"));
     ASSERT_EQ("Could not find a filter field named `foo` in the schema.", error["message"]);
 
     delete dynamic_cast<export_state_t*>(req->data);
@@ -1446,9 +1450,9 @@ TEST_F(CoreAPIUtilsTest, ExportIncludeExcludeFieldsWithFilter) {
     std::vector<std::string> res_strs;
     StringUtils::split(res->body, res_strs, "\n");
     nlohmann::json doc = nlohmann::json::parse(res_strs[0]);
-    ASSERT_EQ(1, doc.size());
-    ASSERT_EQ(1, doc.count("name"));
-    ASSERT_EQ(1, doc["name"].count("last"));
+    ASSERT_EQ(size_t{1}, doc.size());
+    ASSERT_EQ(size_t{1}, doc.count("name"));
+    ASSERT_EQ(size_t{1}, doc["name"].count("last"));
 
     // exclude fields
 
@@ -1462,11 +1466,11 @@ TEST_F(CoreAPIUtilsTest, ExportIncludeExcludeFieldsWithFilter) {
     res_strs.clear();
     StringUtils::split(res->body, res_strs, "\n");
     doc = nlohmann::json::parse(res_strs[0]);
-    ASSERT_EQ(3, doc.size());
-    ASSERT_EQ(1, doc.count("id"));
-    ASSERT_EQ(1, doc.count("points"));
-    ASSERT_EQ(1, doc.count("name"));
-    ASSERT_EQ(1, doc["name"].count("first"));
+    ASSERT_EQ(size_t{3}, doc.size());
+    ASSERT_EQ(size_t{1}, doc.count("id"));
+    ASSERT_EQ(size_t{1}, doc.count("points"));
+    ASSERT_EQ(size_t{1}, doc.count("name"));
+    ASSERT_EQ(size_t{1}, doc["name"].count("first"));
 
     collectionManager.drop_collection("coll1");
 }
@@ -1513,7 +1517,7 @@ TEST_F(CoreAPIUtilsTest, TestProxyInvalid) {
 
     post_proxy(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("URL and method must be non-empty strings.", nlohmann::json::parse(resp->body)["message"]);
 
     // test with url as integer
@@ -1524,7 +1528,7 @@ TEST_F(CoreAPIUtilsTest, TestProxyInvalid) {
 
     post_proxy(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("URL and method must be non-empty strings.", nlohmann::json::parse(resp->body)["message"]);
 
     // test with no url parameter
@@ -1535,7 +1539,7 @@ TEST_F(CoreAPIUtilsTest, TestProxyInvalid) {
 
     post_proxy(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Missing required fields.", nlohmann::json::parse(resp->body)["message"]);
 
 
@@ -1547,7 +1551,7 @@ TEST_F(CoreAPIUtilsTest, TestProxyInvalid) {
 
     post_proxy(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Parameter `method` must be one of GET, POST, POST_STREAM, PUT, DELETE.", nlohmann::json::parse(resp->body)["message"]);
 
     // test with method as integer
@@ -1557,7 +1561,7 @@ TEST_F(CoreAPIUtilsTest, TestProxyInvalid) {
 
     post_proxy(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("URL and method must be non-empty strings.", nlohmann::json::parse(resp->body)["message"]);
 
     // test with no method parameter
@@ -1567,7 +1571,7 @@ TEST_F(CoreAPIUtilsTest, TestProxyInvalid) {
 
     post_proxy(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Missing required fields.", nlohmann::json::parse(resp->body)["message"]);
 
 
@@ -1579,7 +1583,7 @@ TEST_F(CoreAPIUtilsTest, TestProxyInvalid) {
 
     post_proxy(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Body must be a string.", nlohmann::json::parse(resp->body)["message"]);
 
 
@@ -1591,7 +1595,7 @@ TEST_F(CoreAPIUtilsTest, TestProxyInvalid) {
 
     post_proxy(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Headers must be a JSON object.", nlohmann::json::parse(resp->body)["message"]);
 }
 
@@ -1612,7 +1616,7 @@ TEST_F(CoreAPIUtilsTest, TestProxyTimeout) {
 
     post_proxy(req, resp);
 
-    ASSERT_EQ(408, resp->status_code);
+    ASSERT_EQ(408u, resp->status_code);
     ASSERT_EQ("Server error on remote server. Please try again later.", nlohmann::json::parse(resp->body)["message"]);
 }
 
@@ -1630,10 +1634,10 @@ TEST_F(CoreAPIUtilsTest, TestGetConversations) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     if (std::getenv("api_key") == nullptr) {
-        LOG(INFO) << "Skipping test as api_key is not set.";
+        TS_LOG(INFO) << "Skipping test as api_key is not set.";
         return;
     }
 
@@ -1683,7 +1687,7 @@ TEST_F(CoreAPIUtilsTest, TestGetConversations) {
 
     ASSERT_TRUE(add_model_op.ok());
 
-    LOG(INFO) << "Model id: " << model_config["id"];
+    TS_LOG(INFO) << "Model id: " << model_config["id"];
 
     auto model_id = model_config["id"].get<std::string>();
 
@@ -1702,7 +1706,7 @@ TEST_F(CoreAPIUtilsTest, TestGetConversations) {
     auto history_collection = ConversationManager::get_instance()
             .get_history_collection(model_config["history_collection"].get<std::string>()).get();
     auto history_search_res = history_collection->search(id, {"conversation_id"}, "", {}, {}, {0}).get();
-    ASSERT_EQ(2, history_search_res["hits"].size());
+    ASSERT_EQ(size_t{2}, history_search_res["hits"].size());
     auto del_res = ConversationModelManager::delete_model(model_id);
 }
 
@@ -1730,7 +1734,7 @@ TEST_F(CoreAPIUtilsTest, SampleGzipIndexTest) {
 
     auto res = ReplicationState::handle_gzip(req);
     if (!res.error().empty()) {
-        LOG(ERROR) << res.error();
+        TS_LOG(ERROR) << res.error();
         FAIL();
     } else {
         outbuffer << req->body;
@@ -1742,7 +1746,7 @@ TEST_F(CoreAPIUtilsTest, SampleGzipIndexTest) {
         doc_lines.push_back(line);
     }
 
-    ASSERT_EQ(14, doc_lines.size());
+    ASSERT_EQ(size_t{14}, doc_lines.size());
     ASSERT_EQ("{\"points\":1,\"title\":\"DuckDuckGo Settings\"}", doc_lines[0]);
     ASSERT_EQ("{\"points\":1,\"title\":\"Making Twitter Easier to Use\"}", doc_lines[1]);
     ASSERT_EQ("{\"points\":2,\"title\":\"London refers Uber app row to High Court\"}", doc_lines[2]);
@@ -1768,10 +1772,10 @@ TEST_F(CoreAPIUtilsTest, TestConversationModels) {
         "history_collection": "conversation_store"
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     if (std::getenv("api_key") == nullptr) {
-        LOG(INFO) << "Skipping test as api_key is not set.";
+        TS_LOG(INFO) << "Skipping test as api_key is not set.";
         return;
     }
 
@@ -1782,25 +1786,25 @@ TEST_F(CoreAPIUtilsTest, TestConversationModels) {
 
     req->body = model_config.dump();
     post_conversation_model(req, resp);
-    ASSERT_EQ(200, resp->status_code);
+    ASSERT_EQ(200u, resp->status_code);
 
     auto id = nlohmann::json::parse(resp->body)["id"].get<std::string>();
     req->params["id"] = id;
     get_conversation_model(req, resp);
 
-    ASSERT_EQ(200, resp->status_code);
+    ASSERT_EQ(200u, resp->status_code);
     ASSERT_EQ(id, nlohmann::json::parse(resp->body)["id"].get<std::string>());
 
     get_conversation_models(req, resp);
-    ASSERT_EQ(200, resp->status_code);
-    ASSERT_EQ(1, nlohmann::json::parse(resp->body).size());
+    ASSERT_EQ(200u, resp->status_code);
+    ASSERT_EQ(size_t{1}, nlohmann::json::parse(resp->body).size());
 
     del_conversation_model(req, resp);
-    ASSERT_EQ(200, resp->status_code);
+    ASSERT_EQ(200u, resp->status_code);
 
     get_conversation_models(req, resp);
-    ASSERT_EQ(200, resp->status_code);
-    ASSERT_EQ(0, nlohmann::json::parse(resp->body).size());
+    ASSERT_EQ(200u, resp->status_code);
+    ASSERT_EQ(size_t{0}, nlohmann::json::parse(resp->body).size());
 }
 
 TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
@@ -1810,7 +1814,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
     })"_json;
 
     if (std::getenv("api_key") == nullptr) {
-        LOG(INFO) << "Skipping test as api_key is not set.";
+        TS_LOG(INFO) << "Skipping test as api_key is not set.";
         return;
     }
 
@@ -1823,7 +1827,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
 
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Property `model_name` is not provided or not a string.", nlohmann::json::parse(resp->body)["message"]);
 
     // test with invalid model_name
@@ -1833,7 +1837,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
 
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Model namespace `` is not supported.", nlohmann::json::parse(resp->body)["message"]);
 
     // test with no api_key
@@ -1844,7 +1848,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
 
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("API key is not provided", nlohmann::json::parse(resp->body)["message"]);
 
     // test with api_key as integer
@@ -1854,7 +1858,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
 
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("API key is not a string", nlohmann::json::parse(resp->body)["message"]);
 
     // test with model_name as integer
@@ -1866,7 +1870,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
 
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Property `model_name` is not provided or not a string.", nlohmann::json::parse(resp->body)["message"]);
 
     model_config["model_name"] = "openai/gpt-3.5-turbo";
@@ -1874,7 +1878,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
     // test without max_bytes
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Property `max_bytes` is not provided or not a number.", nlohmann::json::parse(resp->body)["message"]);
 
     // test with max_bytes as string
@@ -1883,7 +1887,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
     req->body = model_config.dump();
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Property `max_bytes` is not provided or not a number.", nlohmann::json::parse(resp->body)["message"]);
 
     // test with max_bytes as negative number
@@ -1892,7 +1896,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
     req->body = model_config.dump();
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Property `max_bytes` must be a positive number.", nlohmann::json::parse(resp->body)["message"]);
 
     model_config["max_bytes"] = 10000;
@@ -1902,7 +1906,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
     req->body = model_config.dump();
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Property `history_collection` is not provided or not a string.", nlohmann::json::parse(resp->body)["message"]);
 
     // test with history_collection as empty string
@@ -1911,7 +1915,7 @@ TEST_F(CoreAPIUtilsTest, TestInvalidConversationModels) {
     req->body = model_config.dump();
     post_conversation_model(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("Collection not found", nlohmann::json::parse(resp->body)["message"]);
 }
 
@@ -1942,15 +1946,15 @@ TEST_F(CoreAPIUtilsTest, DeleteNonExistingDoc) {
     req->params["collection"] = "coll1";
     req->params["id"] = "9";
     del_remove_document(req, res);
-    ASSERT_EQ(200, res->status_code);
+    ASSERT_EQ(200u, res->status_code);
 
     req->params["id"] = "10";
     del_remove_document(req, res);
-    ASSERT_EQ(404, res->status_code);
+    ASSERT_EQ(404u, res->status_code);
 
     req->params["ignore_not_found"] = "true";
     del_remove_document(req, res);
-    ASSERT_EQ(200, res->status_code);
+    ASSERT_EQ(200u, res->status_code);
 }
 
 TEST_F(CoreAPIUtilsTest, CollectionsPagination) {
@@ -2020,14 +2024,14 @@ TEST_F(CoreAPIUtilsTest, CollectionsPagination) {
     req->params["offset"] = "0a";
     get_collections(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("{\"message\":\"Offset param should be unsigned integer.\"}", resp->body);
 
     //invalid limit string
     req->params["offset"] = "0";
     req->params["limit"] = "-1";
     get_collections(req, resp);
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("{\"message\":\"Limit param should be unsigned integer.\"}", resp->body);
 }
 
@@ -2095,14 +2099,14 @@ TEST_F(CoreAPIUtilsTest, OverridesPagination) {
     req->params["offset"] = "0a";
     get_collections(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("{\"message\":\"Offset param should be unsigned integer.\"}", resp->body);
 
     //invalid limit string
     req->params["offset"] = "0";
     req->params["limit"] = "-1";
     get_collections(req, resp);
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("{\"message\":\"Limit param should be unsigned integer.\"}", resp->body);
 }
 
@@ -2146,21 +2150,19 @@ TEST_F(CoreAPIUtilsTest, SynonymsPagination) {
     req->params["offset"] = "0a";
     get_collections(req, resp);
 
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("{\"message\":\"Offset param should be unsigned integer.\"}", resp->body);
 
     //invalid limit string
     req->params["offset"] = "0";
     req->params["limit"] = "-1";
     get_collections(req, resp);
-    ASSERT_EQ(400, resp->status_code);
+    ASSERT_EQ(400u, resp->status_code);
     ASSERT_EQ("{\"message\":\"Limit param should be unsigned integer.\"}", resp->body);
 }
 
 
 TEST_F(CoreAPIUtilsTest, CollectionMetadataUpdate) {
-    CollectionManager & collectionManager3 = CollectionManager::get_instance();
-
     nlohmann::json schema = R"({
         "name": "collection_meta",
         "enable_nested_fields": true,
@@ -2179,7 +2181,7 @@ TEST_F(CoreAPIUtilsTest, CollectionMetadataUpdate) {
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
-    Collection* coll1 = op.get();
+    (void)op.get();
 
     std::string collection_meta_json;
     nlohmann::json collection_meta;
@@ -2385,8 +2387,6 @@ TEST_F(CoreAPIUtilsTest, CollectionMetadataUpdate) {
 }
 
 TEST_F(CoreAPIUtilsTest, CollectionUpdateValidation) {
-    CollectionManager & collectionManager3 = CollectionManager::get_instance();
-
     nlohmann::json schema = R"({
         "name": "collection_meta",
         "enable_nested_fields": true,
@@ -2405,7 +2405,7 @@ TEST_F(CoreAPIUtilsTest, CollectionUpdateValidation) {
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
-    Collection* coll1 = op.get();
+    (void)op.get();
 
     auto alter_schema = R"({
         "metadata": {},
@@ -2500,7 +2500,7 @@ TEST_F(CoreAPIUtilsTest, DocumentGetIncludeExcludeFields) {
     //normal doc fetch
     ASSERT_TRUE(get_fetch_document(req, res));
     auto resp = nlohmann::json::parse(res->body);
-    ASSERT_EQ(6, resp.size());
+    ASSERT_EQ(size_t{6}, resp.size());
     ASSERT_TRUE(resp.contains("brand"));
     ASSERT_TRUE(resp.contains("size"));
     ASSERT_TRUE(resp.contains("colors"));
@@ -2513,7 +2513,7 @@ TEST_F(CoreAPIUtilsTest, DocumentGetIncludeExcludeFields) {
 
     ASSERT_TRUE(get_fetch_document(req, res));
     resp = nlohmann::json::parse(res->body);
-    ASSERT_EQ(3, resp.size());
+    ASSERT_EQ(size_t{3}, resp.size());
     ASSERT_TRUE(resp.contains("brand"));
     ASSERT_TRUE(resp.contains("size"));
     ASSERT_TRUE(resp.contains("colors"));
@@ -2524,7 +2524,7 @@ TEST_F(CoreAPIUtilsTest, DocumentGetIncludeExcludeFields) {
     req->params["exclude_fields"] = "brand,size,colors";
     ASSERT_TRUE(get_fetch_document(req, res));
     resp = nlohmann::json::parse(res->body);
-    ASSERT_EQ(3, resp.size());
+    ASSERT_EQ(size_t{3}, resp.size());
     ASSERT_TRUE(resp.contains("id"));
     ASSERT_TRUE(resp.contains("title"));
     ASSERT_TRUE(resp.contains("rating"));
@@ -2535,7 +2535,7 @@ TEST_F(CoreAPIUtilsTest, DocumentGetIncludeExcludeFields) {
     req->params["exclude_fields"] = "brand,size,colors";
     ASSERT_TRUE(get_fetch_document(req, res));
     resp = nlohmann::json::parse(res->body);
-    ASSERT_EQ(2, resp.size());
+    ASSERT_EQ(size_t{2}, resp.size());
     ASSERT_TRUE(resp.contains("title"));
     ASSERT_TRUE(resp.contains("rating"));
     ASSERT_FALSE(resp.contains("id"));
@@ -2572,7 +2572,7 @@ TEST_F(CoreAPIUtilsTest, DocumentGetIncludeExcludeReferenceFields) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2607,7 +2607,7 @@ TEST_F(CoreAPIUtilsTest, DocumentGetIncludeExcludeReferenceFields) {
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2621,7 +2621,7 @@ TEST_F(CoreAPIUtilsTest, DocumentGetIncludeExcludeReferenceFields) {
 
     ASSERT_TRUE(get_fetch_document(req, res));
     auto resp = nlohmann::json::parse(res->body);
-    ASSERT_EQ(2, resp.size());
+    ASSERT_EQ(size_t{2}, resp.size());
     ASSERT_TRUE(resp.contains("id"));
     ASSERT_TRUE(resp.contains("authors"));
     ASSERT_TRUE(resp["authors"].contains("id"));
@@ -2630,7 +2630,7 @@ TEST_F(CoreAPIUtilsTest, DocumentGetIncludeExcludeReferenceFields) {
     req->params["exclude_fields"] = "$authors(first_name, last_name)";
     ASSERT_TRUE(get_fetch_document(req, res));
     resp = nlohmann::json::parse(res->body);
-    ASSERT_EQ(2, resp.size());
+    ASSERT_EQ(size_t{2}, resp.size());
     ASSERT_TRUE(resp.contains("id"));
     ASSERT_TRUE(resp.contains("authors"));
     ASSERT_TRUE(resp["authors"].contains("id"));
@@ -2767,10 +2767,10 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocsWithReturnValues) {
     }
 
     stateful_remove_docs(&deletion_state, 5, done);
-    ASSERT_EQ(1, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{1}, deletion_state.num_removed);
     ASSERT_TRUE(done);
-    ASSERT_EQ(1, deletion_state.removed_docs.size());
-    ASSERT_EQ(1, deletion_state.removed_ids.size());
+    ASSERT_EQ(size_t{1}, deletion_state.removed_docs.size());
+    ASSERT_EQ(size_t{1}, deletion_state.removed_ids.size());
     
     ASSERT_EQ("5", deletion_state.removed_docs[0]["id"]);
     ASSERT_EQ("Title 5", deletion_state.removed_docs[0]["title"]);
@@ -2795,16 +2795,16 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocsWithReturnValues) {
     }
 
     stateful_remove_docs(&deletion_state, 2, done);
-    ASSERT_EQ(2, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{2}, deletion_state.num_removed);
     ASSERT_FALSE(done);
-    ASSERT_EQ(2, deletion_state.removed_docs.size());
-    ASSERT_EQ(2, deletion_state.removed_ids.size());
+    ASSERT_EQ(size_t{2}, deletion_state.removed_docs.size());
+    ASSERT_EQ(size_t{2}, deletion_state.removed_ids.size());
 
     stateful_remove_docs(&deletion_state, 10, done);
-    ASSERT_EQ(4, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{4}, deletion_state.num_removed);
     ASSERT_TRUE(done);
-    ASSERT_EQ(4, deletion_state.removed_docs.size());
-    ASSERT_EQ(4, deletion_state.removed_ids.size());
+    ASSERT_EQ(size_t{4}, deletion_state.removed_docs.size());
+    ASSERT_EQ(size_t{4}, deletion_state.removed_ids.size());
 
     // Check return_doc=true, return_id=false
     for(auto& kv: deletion_state.index_ids) {
@@ -2837,10 +2837,10 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocsWithReturnValues) {
     }
 
     stateful_remove_docs(&deletion_state, 5, done);
-    ASSERT_EQ(1, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{1}, deletion_state.num_removed);
     ASSERT_TRUE(done);
-    ASSERT_EQ(1, deletion_state.removed_docs.size());
-    ASSERT_EQ(0, deletion_state.removed_ids.size());
+    ASSERT_EQ(size_t{1}, deletion_state.removed_docs.size());
+    ASSERT_EQ(size_t{0}, deletion_state.removed_ids.size());
     ASSERT_EQ("3", deletion_state.removed_docs[0]["id"]);
 
     // Check return_doc=false, return_id=true
@@ -2874,10 +2874,10 @@ TEST_F(CoreAPIUtilsTest, StatefulRemoveDocsWithReturnValues) {
     }
 
     stateful_remove_docs(&deletion_state, 5, done);
-    ASSERT_EQ(1, deletion_state.num_removed);
+    ASSERT_EQ(uint32_t{1}, deletion_state.num_removed);
     ASSERT_TRUE(done);
-    ASSERT_EQ(0, deletion_state.removed_docs.size());
-    ASSERT_EQ(1, deletion_state.removed_ids.size());
+    ASSERT_EQ(size_t{0}, deletion_state.removed_docs.size());
+    ASSERT_EQ(size_t{1}, deletion_state.removed_ids.size());
     ASSERT_EQ("4", deletion_state.removed_ids[0]);
 
     collectionManager.drop_collection("coll1");
@@ -2916,11 +2916,11 @@ TEST_F(CoreAPIUtilsTest, RemoveDocumentsWithReturnValues) {
     del_remove_documents(req, res);
     
     nlohmann::json res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(1, res_json["num_deleted"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_json["num_deleted"].get<size_t>());
     ASSERT_TRUE(res_json.contains("documents"));
     ASSERT_TRUE(res_json.contains("ids"));
-    ASSERT_EQ(1, res_json["documents"].size());
-    ASSERT_EQ(1, res_json["ids"].size());
+    ASSERT_EQ(size_t{1}, res_json["documents"].size());
+    ASSERT_EQ(size_t{1}, res_json["ids"].size());
     ASSERT_EQ("5", res_json["documents"][0]["id"]);
     ASSERT_EQ("5", res_json["ids"][0]);
 
@@ -2945,10 +2945,10 @@ TEST_F(CoreAPIUtilsTest, RemoveDocumentsWithReturnValues) {
     del_remove_documents(req, res);
     
     res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(1, res_json["num_deleted"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_json["num_deleted"].get<size_t>());
     ASSERT_TRUE(res_json.contains("documents"));
     ASSERT_FALSE(res_json.contains("ids"));
-    ASSERT_EQ(1, res_json["documents"].size());
+    ASSERT_EQ(size_t{1}, res_json["documents"].size());
     ASSERT_EQ("4", res_json["documents"][0]["id"]);
 
     // Test with only return_id
@@ -2972,10 +2972,10 @@ TEST_F(CoreAPIUtilsTest, RemoveDocumentsWithReturnValues) {
     del_remove_documents(req, res);
     
     res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(1, res_json["num_deleted"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_json["num_deleted"].get<size_t>());
     ASSERT_FALSE(res_json.contains("documents"));
     ASSERT_TRUE(res_json.contains("ids"));
-    ASSERT_EQ(1, res_json["ids"].size());
+    ASSERT_EQ(size_t{1}, res_json["ids"].size());
     ASSERT_EQ("3", res_json["ids"][0]);
 
     // Test with multiple documents
@@ -3000,11 +3000,11 @@ TEST_F(CoreAPIUtilsTest, RemoveDocumentsWithReturnValues) {
     del_remove_documents(req, res);
     
     res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(3, res_json["num_deleted"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_json["num_deleted"].get<size_t>());
     ASSERT_TRUE(res_json.contains("documents"));
     ASSERT_TRUE(res_json.contains("ids"));
-    ASSERT_EQ(3, res_json["documents"].size());
-    ASSERT_EQ(3, res_json["ids"].size());
+    ASSERT_EQ(size_t{3}, res_json["documents"].size());
+    ASSERT_EQ(size_t{3}, res_json["ids"].size());
 
     // Test without return parameters
     for(size_t i=0; i<10; i++) {
@@ -3026,7 +3026,7 @@ TEST_F(CoreAPIUtilsTest, RemoveDocumentsWithReturnValues) {
     del_remove_documents(req, res);
     
     res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(1, res_json["num_deleted"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_json["num_deleted"].get<size_t>());
     ASSERT_FALSE(res_json.contains("documents"));
     ASSERT_FALSE(res_json.contains("ids"));
 
@@ -3100,7 +3100,7 @@ TEST_F(CoreAPIUtilsTest, UnionRemoveDuplicates) {
     post_multi_search(req, res);
     nlohmann::json response = nlohmann::json::parse(res->body);
     ASSERT_EQ(2, response["found"]);
-    ASSERT_EQ(2, response["hits"].size());
+    ASSERT_EQ(size_t{2}, response["hits"].size());
     ASSERT_EQ("1", response["hits"][0]["document"]["id"]);
     ASSERT_EQ("0", response["hits"][1]["document"]["id"]);
 
@@ -3114,8 +3114,8 @@ TEST_F(CoreAPIUtilsTest, UnionRemoveDuplicates) {
 
     post_multi_search(req, res);
     response = nlohmann::json::parse(res->body);
-    ASSERT_EQ(5, response["found"].get<size_t>());
-    ASSERT_EQ(5, response["hits"].size());
+    ASSERT_EQ(size_t{5}, response["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, response["hits"].size());
     ASSERT_EQ("1", response["hits"][0]["document"]["id"]);
     ASSERT_EQ("0", response["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", response["hits"][2]["document"]["id"]);

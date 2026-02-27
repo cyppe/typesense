@@ -5,12 +5,20 @@
 #include "field.h"
 #include "personalization_model_manager.h"
 #include <filesystem>
+#include <fstream>
 #include "analytics_manager.h"
 #include "json.hpp"
+#include "runfiles_utils.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class PersonalizationSearchTest : public ::testing::Test {
 protected:
     std::string temp_dir;
+    std::string test_root_path;
+    std::string state_dir_path;
+    std::string analytics_dir_path;
+    std::string model_dir_path;
     Store *store;
     Store *analytic_store;
     CollectionManager& collectionManager = CollectionManager::get_instance();
@@ -21,24 +29,26 @@ protected:
     uint32_t analytics_minute_rate_limit = 5;
 
     void SetUp() override {
-        temp_dir = (std::filesystem::temp_directory_path() / "personalization_search_test").string();
-        system(("rm -rf " + temp_dir + " && mkdir -p " + temp_dir).c_str());
+        temp_dir = typesense_test::make_test_temp_dir("personalization_search_tmp");
+        typesense_test::reset_test_temp_dir(temp_dir);
+
+        test_root_path = typesense_test::make_test_temp_dir("personalization_search");
+        model_dir_path = test_root_path + "/models";
+        state_dir_path = test_root_path + "/state";
+        analytics_dir_path = test_root_path + "/analytics";
 
         // Setup model directory
-        std::string test_dir = "/tmp/typesense_test/personalization_search_test/models";
-        system(("rm -rf " + test_dir + " && mkdir -p " + test_dir).c_str());
-        EmbedderManager::set_model_dir(test_dir);
+        typesense_test::reset_test_temp_dir(model_dir_path);
+        EmbedderManager::set_model_dir(model_dir_path);
 
         // Create test collection
-        std::string state_dir_path = "/tmp/typesense_test/personalization_search_test/personalization_search_test";
-        std::string analytics_dir_path = "/tmp/typesense_test/personalization_search_test/analytics";
         Config::get_instance().set_data_dir(state_dir_path);
 
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf " + state_dir_path + " && mkdir -p " + state_dir_path).c_str());
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
         
-        LOG(INFO) << "Truncating and creating: " << analytics_dir_path;
-        system(("rm -rf "+ analytics_dir_path +" && mkdir -p "+analytics_dir_path).c_str());
+        TS_LOG(INFO) << "Truncating and creating: " << analytics_dir_path;
+        typesense_test::reset_test_temp_dir(analytics_dir_path);
         analytic_store = new Store(analytics_dir_path, 24*60*60, 1024, true, FOURWEEKS_SECS);
 
         store = new Store(state_dir_path);
@@ -54,8 +64,12 @@ protected:
             {"collection", "movies"},
             {"type", "recommendation"}
         };
-        std::string archive_name = "test/resources/models.tar.gz";
+        std::string archive_name = resolve_test_path({
+            "test/resources/models.tar.gz",
+            "_main/test/resources/models.tar.gz",
+        });
         std::ifstream archive_file(archive_name, std::ios::binary);
+        ASSERT_TRUE(archive_file.is_open()) << "Unable to open archive: " << archive_name;
         std::string model_data((std::istreambuf_iterator<char>(archive_file)), std::istreambuf_iterator<char>());
         archive_file.close();
         auto add_result = PersonalizationModelManager::add_model(model_json, model_id, true, model_data);
@@ -140,11 +154,12 @@ protected:
     }
 
     void TearDown() override {
-        std::string test_dir = "/tmp/typesense_test";
-        system(("rm -rf " + test_dir).c_str());
         collectionManager.dispose();
         PersonalizationModelManager::dispose();
         delete store;
+        delete analytic_store;
+        typesense_test::cleanup_test_temp_dir(temp_dir);
+        typesense_test::cleanup_test_temp_dir(test_root_path);
     }
 };
 
@@ -174,7 +189,7 @@ TEST_F(PersonalizationSearchTest, ParseAndValidatePersonalizationQuery) {
     );
     ASSERT_EQ(result.error(), "");
     ASSERT_TRUE(result.ok());
-    ASSERT_EQ(vector_query.values.size(), 256);
+    ASSERT_EQ(vector_query.values.size(), size_t{256});
     ASSERT_EQ(vector_query.field_name, personalization_item_field);
     ASSERT_EQ(filter_query, "id:!=[1,0]");
 

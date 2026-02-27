@@ -2,7 +2,14 @@
 
 #include <sentencepiece_processor.h>
 #include <core/session/onnxruntime_cxx_api.h>
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wpessimizing-move"
+#endif
 #include <tokenizer/bert_tokenizer.hpp>
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #include <vector>
 #include "option.h"
 #include "text_embedder_tokenizer.h"
@@ -20,7 +27,7 @@ class TextEmbedder {
         std::vector<embedding_res_t> embed_documents(const std::vector<std::string>& inputs, const size_t remote_embedding_batch_size = 200,
                                                  const size_t remote_embedding_timeout_ms = 60000, const size_t remote_embedding_num_tries = 2);
         const std::string& get_vocab_file_name() const;
-        const size_t get_num_dim() const;
+        size_t get_num_dim() const;
         bool is_remote() {
             return remote_embedder_ != nullptr;
         }
@@ -34,7 +41,7 @@ class TextEmbedder {
             return env_;
         }
 
-        const TokenizerType get_tokenizer_type() {
+        TokenizerType get_tokenizer_type() {
             return tokenizer_->get_tokenizer_type();
         }
 
@@ -42,7 +49,7 @@ class TextEmbedder {
             return remote_embedder_->update_api_key(api_key);
         }
 
-        const bool is_image_embedding() const {
+        bool is_image_embedding() const {
             return is_image_embedding_model;
         }
     private:

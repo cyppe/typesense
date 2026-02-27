@@ -1,0 +1,707 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Search Performance (p95 ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT percentile(\"value\", 95) FROM \"search_processing_time_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\", \"scenario\", \"vus\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "showPoints": "auto" }
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    },
+    {
+      "title": "Import Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"import_duration\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "Stress Import - Batch Duration",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT percentile(\"value\", 95) FROM \"stress_import_batch_duration_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\", \"vus\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "--- Concurrent Search + Import ---",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "Concurrent Search Processing Time (p95 ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT percentile(\"value\", 95) FROM \"concurrent_search_processing_time_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\", \"scenario\", \"vus\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10, "showPoints": "auto" }
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    },
+    {
+      "title": "Concurrent Import Batch Duration (p95 ms)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT percentile(\"value\", 95) FROM \"concurrent_import_batch_duration_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\", \"vus\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "Concurrent Import Success Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"concurrent_import_success_rate\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "Concurrent Import Errors / 503s",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT sum(\"value\") FROM \"concurrent_import_503s\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT sum(\"value\") FROM \"concurrent_import_errors\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT sum(\"value\") FROM \"concurrent_search_timeouts\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "--- RocksDB ---",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "RocksDB - Block Cache Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_block_cache_usage_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_block_cache_capacity_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 5 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Memtable Size",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_memtable_size_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - L0 Files & Compactions",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_l0_files\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_running_compactions\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_running_flushes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Write Stalls",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 44 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_write_stopped\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_delayed_write_rate\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Estimated Keys",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 52 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_estimate_num_keys\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Flush Pending",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 52 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_mem_table_flush_pending\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Pinned Cache Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 60 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_block_cache_pinned_usage_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "--- System Metrics ---",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 68 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "System - Memory Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 69 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_memory_active_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_memory_allocated_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_memory_mapped_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_memory_metadata_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_memory_resident_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_memory_retained_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right" } }
+    },
+    {
+      "title": "System - CPU Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 69 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_cpu_active_pct\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "System - Network I/O",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 77 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_network_sent_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_network_received_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "System - Disk Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 77 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_disk_used_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_disk_total_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "--- API Stats ---",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 85 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "API - Import Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 86 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_import_latency_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "API - Search/Write Latency p95",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 86 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_search_latency_p95_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_write_latency_p95_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "API - Total RPS + Overloaded RPS",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 94 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_total_rps\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_overloaded_rps\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "API - Pending Write Batches",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 94 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_pending_write_batches\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "--- Phase 3 Metrics ---",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 102 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "title": "API - Search/Write Latency p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 103 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_search_latency_p99_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_write_latency_p99_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "API - Import Latency p95/p99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 103 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_import_latency_p95_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"ts_import_latency_p99_ms\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Block Cache Hit/Miss Counters",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 111 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_block_cache_hit_count\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_block_cache_miss_count\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Cache/Bloom Ratios",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 111 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_block_cache_hit_ratio\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_bloom_filter_true_positive_ratio\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Stall Micros",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 119 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_stall_micros\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "us",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Compaction IO Bytes",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 119 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_compaction_read_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        },
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_compaction_write_bytes\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "title": "RocksDB - Compaction Write Amplification",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 127 },
+      "datasource": { "type": "influxdb", "uid": "k6influxdb" },
+      "targets": [
+        {
+          "query": "SELECT mean(\"value\") FROM \"rocksdb_compaction_write_amplification\" WHERE $timeFilter GROUP BY time($__interval), \"commitHash\" fill(null)",
+          "rawQuery": true,
+          "resultFormat": "time_series"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["typesense", "benchmark", "rocksdb"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Typesense Benchmark Dashboard",
+  "uid": "typesense-benchmark",
+  "version": 1
+}

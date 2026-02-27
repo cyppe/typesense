@@ -21,7 +21,7 @@ TEST(SortedArrayTest, AndScalar) {
     // arr1: [0..8] , arr2: [3, 6, 9]
     uint32_t *results = nullptr;
     uint32_t results_size = ArrayUtils::and_scalar(arr1, size1, arr2, arr2_len, &results);
-    ASSERT_EQ(2, results_size);
+    ASSERT_EQ(uint32_t{2}, results_size);
 
     std::vector<uint32_t> expected = {3, 6};
 
@@ -53,7 +53,7 @@ TEST(SortedArrayTest, OrScalarMergeShouldRemoveDuplicates) {
     // arr1: [0..8] , arr2: [3, 6, 9]
     uint32_t *results = nullptr;
     uint32_t results_size = ArrayUtils::or_scalar(arr1, size1, arr2, arr2_len, &results);
-    ASSERT_EQ(10, results_size);
+    ASSERT_EQ(uint32_t{10}, results_size);
 
     std::vector<uint32_t> expected = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
 
@@ -82,7 +82,7 @@ TEST(SortedArrayTest, OrScalarMergeShouldRemoveDuplicatesAtBoundary) {
 
     uint32_t *results = nullptr;
     uint32_t results_size = ArrayUtils::or_scalar(arr1, size1, arr2, vec2.size(), &results);
-    ASSERT_EQ(9, results_size);
+    ASSERT_EQ(uint32_t{9}, results_size);
 
     std::vector<uint32_t> expected = {0, 1, 2, 3, 4, 5, 6, 7, 8};
 
@@ -104,13 +104,13 @@ TEST(SortedArrayTest, OrScalarWithEitherArrayAsNull) {
 
     uint32_t *results = nullptr;
     uint32_t results_size = ArrayUtils::or_scalar(arr1, size1, nullptr, 0, &results);
-    ASSERT_EQ(9, results_size);
+    ASSERT_EQ(uint32_t{9}, results_size);
 
     delete[] results;
     results = nullptr;
 
     results_size = ArrayUtils::or_scalar(nullptr, 0, arr1, size1, &results);
-    ASSERT_EQ(9, results_size);
+    ASSERT_EQ(uint32_t{9}, results_size);
 
     delete[] results;
     results = nullptr;
@@ -133,7 +133,7 @@ TEST(SortedArrayTest, FilterArray) {
 
     uint32_t *results = nullptr;
     uint32_t results_size = ArrayUtils::exclude_scalar(arr1, size1, arr2, vec2.size(), &results);
-    ASSERT_EQ(4, results_size);
+    ASSERT_EQ(uint32_t{4}, results_size);
 
     std::vector<uint32_t> expected = {2, 3, 4, 6};
 
@@ -154,7 +154,7 @@ TEST(SortedArrayTest, FilterArray) {
 
     results = nullptr;
     results_size = ArrayUtils::exclude_scalar(arr1, size1, arr2, vec2.size(), &results);
-    ASSERT_EQ(0, results_size);
+    ASSERT_EQ(uint32_t{0}, results_size);
 
     delete[] results;
     // on a larger array
@@ -185,35 +185,35 @@ TEST(SortedArrayTest, SkipToID) {
     uint32_t index = 0;
     bool found = ArrayUtils::skip_index_to_id(index, array.data(), array.size(), 15);
     ASSERT_TRUE(found);
-    ASSERT_EQ(5, index);
+    ASSERT_EQ(5u, index);
 
     index = 4;
     found = ArrayUtils::skip_index_to_id(index, array.data(), array.size(), 3);
     ASSERT_FALSE(found);
-    ASSERT_EQ(4, index);
+    ASSERT_EQ(4u, index);
 
     index = 4;
     found = ArrayUtils::skip_index_to_id(index, array.data(), array.size(), 12);
     ASSERT_TRUE(found);
-    ASSERT_EQ(4, index);
+    ASSERT_EQ(4u, index);
 
     index = 4;
     found = ArrayUtils::skip_index_to_id(index, array.data(), array.size(), 24);
     ASSERT_TRUE(found);
-    ASSERT_EQ(8, index);
+    ASSERT_EQ(8u, index);
 
     index = 4;
     found = ArrayUtils::skip_index_to_id(index, array.data(), array.size(), 25);
     ASSERT_FALSE(found);
-    ASSERT_EQ(9, index);
+    ASSERT_EQ(9u, index);
 
     index = 4;
     found = ArrayUtils::skip_index_to_id(index, array.data(), array.size(), 30);
     ASSERT_FALSE(found);
-    ASSERT_EQ(10, index);
+    ASSERT_EQ(10u, index);
 
     index = 12;
     found = ArrayUtils::skip_index_to_id(index, array.data(), array.size(), 30);
     ASSERT_FALSE(found);
-    ASSERT_EQ(12, index);
+    ASSERT_EQ(12u, index);
 }

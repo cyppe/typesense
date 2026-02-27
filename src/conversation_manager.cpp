@@ -82,8 +82,8 @@ Option<std::string> ConversationManager::add_conversation(const nlohmann::json& 
         long status = HttpClient::post_response(url, body, res, res_headers, {}, 10*1000, true);
 
         if(status != 200) {
-            LOG(ERROR) << "Error while creating conversation: " << res;
-            LOG(ERROR) << "Status: " << status;
+            TS_LOG(ERROR) << "Error while creating conversation: " << res;
+            TS_LOG(ERROR) << "Status: " << status;
             return Option<std::string>(400, "Error while creating conversation");
         } else {
             return Option<std::string>(conversation_id);
@@ -221,8 +221,8 @@ Option<nlohmann::json> ConversationManager::delete_conversation_unsafe(const std
     long status = HttpClient::delete_response(url, res, res_headers, 10*1000, true);
 
     if(status != 200) {
-        LOG(ERROR) << "Error while deleting conversation: " << res;
-        LOG(ERROR) << "Status: " << status;
+        TS_LOG(ERROR) << "Error while deleting conversation: " << res;
+        TS_LOG(ERROR) << "Status: " << status;
         return Option<nlohmann::json>(400, "Error while deleting conversation");
     } else {
         nlohmann::json res_json;
@@ -256,7 +256,7 @@ void ConversationManager::clear_expired_conversations() {
 
     auto models_op = ConversationModelManager::get_all_models();
     if(!models_op.ok()) {
-        LOG(ERROR) << "Error while getting conversation models: " << models_op.error();
+        TS_LOG(ERROR) << "Error while getting conversation models: " << models_op.error();
         return;
     }
 
@@ -278,8 +278,8 @@ void ConversationManager::clear_expired_conversations() {
             auto res_code = HttpClient::get_instance().delete_response(url, res, res_headers, 10*1000, true);
 
             if(res_code != 200) {
-                LOG(ERROR) << "Error while deleting expired conversations: " << res;
-                LOG(ERROR) << "Status: " << res_code;
+                TS_LOG(ERROR) << "Error while deleting expired conversations: " << res;
+                TS_LOG(ERROR) << "Status: " << res_code;
             }
         } else {
             std::shared_ptr<http_req> req = std::make_shared<http_req>();
@@ -289,7 +289,7 @@ void ConversationManager::clear_expired_conversations() {
             auto api_res = del_remove_documents(req, resp);
 
             if(!api_res) {
-                LOG(ERROR) << "Error while deleting expired conversations: " << resp->body;
+                TS_LOG(ERROR) << "Error while deleting expired conversations: " << resp->body;
             }
 
         }

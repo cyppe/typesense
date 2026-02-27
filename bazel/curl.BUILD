@@ -11,7 +11,7 @@ filegroup(
 CMAKE_CACHE_ENTRIES = {
     "BUILD_SHARED_LIBS": "OFF",
     "CMAKE_BUILD_TYPE": "Release",
-    "OPENSSL_ROOT_DIR": "$$EXT_BUILD_DEPS$$/openssl",
+    "OPENSSL_ROOT_DIR": "$$EXT_BUILD_DEPS/openssl",
     "CURL_USE_OPENSSL": "ON",
     "BUILD_CURL_EXE": "OFF",
     "CURL_DISABLE_LDAP": "ON",
@@ -35,7 +35,7 @@ cmake(
         "@platforms//os:macos": CMAKE_MACOS_CACHE_ENTRIES,
         "//conditions:default": CMAKE_CACHE_ENTRIES,
     }),
-    lib_source = "//:all_srcs",
+    lib_source = ":all_srcs",
     out_static_libs = ["libcurl.a"],
     deps = ["@openssl"],
 )

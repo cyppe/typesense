@@ -5,6 +5,7 @@
 #include "auth_manager.h"
 #include "core_api.h"
 #include <collection_manager.h>
+#include "temp_dir_utils.h"
 
 static const size_t FUTURE_TS = 64723363199;
 
@@ -14,10 +15,11 @@ protected:
     AuthManager auth_manager;
     CollectionManager& collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/auth_manager_test_db";
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("auth_manager");
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         auth_manager.init(store, "bootstrap-key");
@@ -30,18 +32,20 @@ protected:
     }
 
     virtual void TearDown() {
+        collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
 TEST_F(AuthManagerTest, CreateListDeleteAPIKeys) {
     auto list_op = auth_manager.list_keys();
     ASSERT_TRUE(list_op.ok());
-    ASSERT_EQ(0, list_op.get().size());
+    ASSERT_EQ(size_t{0}, list_op.get().size());
 
     auto get_op = auth_manager.get_key(0);
     ASSERT_FALSE(get_op.ok());
-    ASSERT_EQ(404, get_op.code());
+    ASSERT_EQ(404u, get_op.code());
 
     // test inserts
 
@@ -53,22 +57,22 @@ TEST_F(AuthManagerTest, CreateListDeleteAPIKeys) {
 
     auto insert_op = auth_manager.create_key(api_key1);
     ASSERT_TRUE(insert_op.ok());
-    ASSERT_EQ(5, insert_op.get().value.size());
+    ASSERT_EQ(size_t{5}, insert_op.get().value.size());
 
     insert_op = auth_manager.create_key(api_key2);
     ASSERT_TRUE(insert_op.ok());
-    ASSERT_EQ(5, insert_op.get().value.size());
+    ASSERT_EQ(size_t{5}, insert_op.get().value.size());
 
     // reject on conflict
     insert_op = auth_manager.create_key(api_key2);
     ASSERT_FALSE(insert_op.ok());
-    ASSERT_EQ(409, insert_op.code());
+    ASSERT_EQ(409u, insert_op.code());
     ASSERT_EQ("API key generation conflict.", insert_op.error());
 
     api_key2.value = "bootstrap-key";
     insert_op = auth_manager.create_key(api_key2);
     ASSERT_FALSE(insert_op.ok());
-    ASSERT_EQ(409, insert_op.code());
+    ASSERT_EQ(409u, insert_op.code());
     ASSERT_EQ("API key generation conflict.", insert_op.error());
 
     // get an individual key
@@ -76,23 +80,23 @@ TEST_F(AuthManagerTest, CreateListDeleteAPIKeys) {
     get_op = auth_manager.get_key(0);
     ASSERT_TRUE(get_op.ok());
     const api_key_t &key1 = get_op.get();
-    ASSERT_EQ(4, key1.value.size());
+    ASSERT_EQ(size_t{4}, key1.value.size());
     ASSERT_EQ("test key 1", key1.description);
-    ASSERT_EQ(2, key1.actions.size());
+    ASSERT_EQ(size_t{2}, key1.actions.size());
     EXPECT_STREQ("read", key1.actions[0].c_str());
     EXPECT_STREQ("write", key1.actions[1].c_str());
-    ASSERT_EQ(2, key1.collections.size());
+    ASSERT_EQ(size_t{2}, key1.collections.size());
     EXPECT_STREQ("collection1", key1.collections[0].c_str());
     EXPECT_STREQ("collection2", key1.collections[1].c_str());
 
     get_op = auth_manager.get_key(1);
     ASSERT_TRUE(get_op.ok());
-    ASSERT_EQ(4, get_op.get().value.size());
+    ASSERT_EQ(size_t{4}, get_op.get().value.size());
     ASSERT_EQ("test key 2", get_op.get().description);
 
     get_op = auth_manager.get_key(1, false);
     ASSERT_TRUE(get_op.ok());
-    ASSERT_NE(4, get_op.get().value.size());
+    ASSERT_NE(size_t{4}, get_op.get().value.size());
 
     get_op = auth_manager.get_key(2, false);
     ASSERT_FALSE(get_op.ok());
@@ -100,7 +104,7 @@ TEST_F(AuthManagerTest, CreateListDeleteAPIKeys) {
     // listing keys
     list_op = auth_manager.list_keys();
     ASSERT_TRUE(list_op.ok());
-    ASSERT_EQ(2, list_op.get().size());
+    ASSERT_EQ(size_t{2}, list_op.get().size());
     ASSERT_EQ("test key 1", list_op.get()[0].description);
     ASSERT_EQ("abcd", list_op.get()[0].value);
     ASSERT_EQ("test key 2", list_op.get()[1].description);
@@ -112,7 +116,7 @@ TEST_F(AuthManagerTest, CreateListDeleteAPIKeys) {
 
     del_op = auth_manager.remove_key(1000);
     ASSERT_FALSE(del_op.ok());
-    ASSERT_EQ(404, del_op.code());
+    ASSERT_EQ(404u, del_op.code());
 }
 
 TEST_F(AuthManagerTest, CheckRestoreOfAPIKeys) {
@@ -129,7 +133,7 @@ TEST_F(AuthManagerTest, CheckRestoreOfAPIKeys) {
 
     auto list_op = auth_manager.list_keys();
     ASSERT_TRUE(list_op.ok());
-    ASSERT_EQ(2, list_op.get().size());
+    ASSERT_EQ(size_t{2}, list_op.get().size());
     ASSERT_EQ("test key 1", list_op.get()[0].description);
     ASSERT_EQ("abcd", list_op.get()[0].value);
     ASSERT_STREQ(key_value1.substr(0, 4).c_str(), list_op.get()[0].value.c_str());
@@ -384,7 +388,7 @@ TEST_F(AuthManagerTest, ScopedAPIKeys) {
 
     ASSERT_TRUE(auth_manager.authenticate("documents:search", {collection_key_t("coll1", scoped_key3)}, empty_params, embedded_params));
     ASSERT_EQ("user_id:1080", embedded_params[0]["filter_by"].get<std::string>());
-    ASSERT_EQ(1, embedded_params.size());
+    ASSERT_EQ(size_t{1}, embedded_params.size());
 
     // {"filter_by": "user_id:1080", "expires_at": 1606563316} (expired)
 
@@ -488,7 +492,7 @@ TEST_F(AuthManagerTest, ValidateBadKeyProperties) {
 TEST_F(AuthManagerTest, AutoDeleteKeysOnExpiry) {
     auto list_op = auth_manager.list_keys();
     ASSERT_TRUE(list_op.ok());
-    ASSERT_EQ(0, list_op.get().size());
+    ASSERT_EQ(size_t{0}, list_op.get().size());
 
     //regular key(future ts)
     api_key_t api_key1("abcd", "test key 1", {"read", "write"}, {"collection1", "collection2"}, FUTURE_TS);
@@ -499,16 +503,16 @@ TEST_F(AuthManagerTest, AutoDeleteKeysOnExpiry) {
 
     auto insert_op = auth_manager.create_key(api_key1);
     ASSERT_TRUE(insert_op.ok());
-    ASSERT_EQ(4, insert_op.get().value.size());
+    ASSERT_EQ(size_t{4}, insert_op.get().value.size());
 
     insert_op = auth_manager.create_key(api_key2);
     ASSERT_TRUE(insert_op.ok());
-    ASSERT_EQ(4, insert_op.get().value.size());
+    ASSERT_EQ(size_t{4}, insert_op.get().value.size());
 
     list_op = auth_manager.list_keys();
     ASSERT_TRUE(list_op.ok());
     auto keys = list_op.get();
-    ASSERT_EQ(2, keys.size());
+    ASSERT_EQ(size_t{2}, keys.size());
     ASSERT_EQ("abcd", keys[0].value);
     ASSERT_EQ("wxyz", keys[1].value);
 
@@ -517,7 +521,7 @@ TEST_F(AuthManagerTest, AutoDeleteKeysOnExpiry) {
     list_op = auth_manager.list_keys();
     ASSERT_TRUE(list_op.ok());
     keys = list_op.get();
-    ASSERT_EQ(1, keys.size());
+    ASSERT_EQ(size_t{1}, keys.size());
     ASSERT_EQ("abcd", keys[0].value);
 }
 
@@ -560,14 +564,14 @@ TEST_F(AuthManagerTest, CollectionsByScope) {
     get_collections(req, res);
     auto result_json = nlohmann::json::parse(res->body);
 
-    ASSERT_EQ(1, result_json.size());
+    ASSERT_EQ(size_t{1}, result_json.size());
     ASSERT_EQ("collection_1", result_json[0]["name"]);
 
     req->api_auth_key.clear();
     get_collections(req, res);
     result_json = nlohmann::json::parse(res->body);
 
-    ASSERT_EQ(2, result_json.size());
+    ASSERT_EQ(size_t{2}, result_json.size());
     ASSERT_EQ("collection2", result_json[0]["name"]);
     ASSERT_EQ("collection_1", result_json[1]["name"]);
 
@@ -585,7 +589,7 @@ TEST_F(AuthManagerTest, CollectionsByScope) {
     get_collections(req, res);
     result_json = nlohmann::json::parse(res->body);
 
-    ASSERT_EQ(1, result_json.size());
+    ASSERT_EQ(size_t{1}, result_json.size());
     ASSERT_EQ("collection2", result_json[0]["name"]);
 
     scoped_key_json = R"({
@@ -602,7 +606,7 @@ TEST_F(AuthManagerTest, CollectionsByScope) {
     get_collections(req, res);
     result_json = nlohmann::json::parse(res->body);
 
-    ASSERT_EQ(2, result_json.size());
+    ASSERT_EQ(size_t{2}, result_json.size());
     ASSERT_EQ("collection2", result_json[0]["name"]);
     ASSERT_EQ("collection_1", result_json[1]["name"]);
 }

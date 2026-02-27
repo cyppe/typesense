@@ -1,11 +1,25 @@
 #pragma once
 
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#pragma clang diagnostic ignored "-Wmacro-redefined"
+#pragma clang diagnostic ignored "-Wvla-cxx-extension"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 #include <brpc/controller.h>             // brpc::Controller
 #include <brpc/server.h>                 // brpc::Server
 #include <braft/raft.h>                  // braft::Node braft::StateMachine
 #include <braft/storage.h>               // braft::SnapshotWriter
 #include <braft/util.h>                  // braft::AsyncClosureGuard
 #include <braft/protobuf_file.h>         // braft::ProtoBufFile
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #include <rocksdb/db.h>
 #include <future>
 
@@ -14,6 +28,7 @@
 #include "http_server.h"
 #include "batched_indexer.h"
 #include "cached_resource_stat.h"
+#include "logger.h"
 
 class Store;
 class ReplicationState;
@@ -30,7 +45,7 @@ public:
     }
 
     ~ReplicationClosure() {
-        //LOG(INFO) << "~ReplicationClosure req use count " << request.use_count();
+        //TS_LOG(INFO) << "~ReplicationClosure req use count " << request.use_count();
     }
 
     const std::shared_ptr<http_req>& get_request() const {
@@ -57,9 +72,9 @@ public:
         std::unique_ptr<RefreshNodesClosure> self_guard(this);
 
         if(status().ok()) {
-            LOG(INFO) << "Peer refresh succeeded!";
+            TS_LOG(INFO) << "Peer refresh succeeded!";
         } else {
-            LOG(ERROR) << "Peer refresh failed, error: " << status().error_str();
+            TS_LOG(ERROR) << "Peer refresh failed, error: " << status().error_str();
         }
     }
 };
@@ -284,33 +299,33 @@ private:
 
     void on_leader_start(int64_t term) {
         leader_term.store(term, butil::memory_order_release);
-        LOG(INFO) << "Node becomes leader, term: " << term;
+        TS_LOG(INFO) << "Node becomes leader, term: " << term;
     }
 
     void on_leader_stop(const butil::Status& status) {
         leader_term.store(-1, butil::memory_order_release);
-        LOG(INFO) << "Node stepped down : " << status;
+        TS_LOG(INFO) << "Node stepped down : " << status;
     }
 
     void on_shutdown() {
-        LOG(INFO) << "This node is down";
+        TS_LOG(INFO) << "This node is down";
     }
 
     void on_error(const ::braft::Error& e) {
-        LOG(ERROR) << "Met peering error " << e;
+        TS_LOG(ERROR) << "Met peering error " << e;
     }
 
     void on_configuration_committed(const ::braft::Configuration& conf) {
-        LOG(INFO) << "Configuration of this group is " << conf;
+        TS_LOG(INFO) << "Configuration of this group is " << conf;
     }
 
     void on_start_following(const ::braft::LeaderChangeContext& ctx) {
         refresh_catchup_status(true);
-        LOG(INFO) << "Node starts following " << ctx;
+        TS_LOG(INFO) << "Node starts following " << ctx;
     }
 
     void on_stop_following(const ::braft::LeaderChangeContext& ctx) {
-        LOG(INFO) << "Node stops following " << ctx;
+        TS_LOG(INFO) << "Node stops following " << ctx;
     }
 
     void write_to_leader(const std::shared_ptr<http_req>& request, const std::shared_ptr<http_res>& response);

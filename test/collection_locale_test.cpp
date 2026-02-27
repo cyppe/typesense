@@ -1,20 +1,23 @@
 #include <gtest/gtest.h>
 #include <collection.h>
 #include <collection_manager.h>
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionLocaleTest : public ::testing::Test {
 protected:
     Store *store;
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_locale";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_locale");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -28,6 +31,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -61,9 +65,9 @@ TEST_F(CollectionLocaleTest, SearchAgainstJapaneseText) {
     auto results = coll1->search("拍治",
                                  {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    //LOG(INFO) << results;
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    //TS_LOG(INFO) << results;
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     //ASSERT_EQ("今ぶり<mark>拍</mark><mark>治</mark>ルツ", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 }
@@ -101,8 +105,8 @@ TEST_F(CollectionLocaleTest, SearchAgainstChineseText) {
     auto results = coll1->search("并",
                                  {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("爱<mark>并</mark>不会因时间而", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -111,13 +115,13 @@ TEST_F(CollectionLocaleTest, SearchAgainstChineseText) {
     results = coll1->search("并",
                             {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("上媽",
                             {"title", "artist"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("看誰先跑到小山丘<mark>上</mark>。<mark>媽</mark>媽總是第", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -126,8 +130,8 @@ TEST_F(CollectionLocaleTest, SearchAgainstChineseText) {
     results = coll1->search("妈",
                             {"title", "artist"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("看誰先跑到小山丘上。<mark>媽</mark>媽總是第", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 }
@@ -164,16 +168,16 @@ TEST_F(CollectionLocaleTest, SearchAgainstThaiText) {
     auto results = coll1->search("ลงรถไฟ",
                                  {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>ลง</mark>ที่นั่นโดย<mark>รถไฟ</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
     results = coll1->search("ลงรถไฟ downie",
                             {"title", "artist"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>ลง</mark>ที่นั่นโดย<mark>รถไฟ</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -181,8 +185,8 @@ TEST_F(CollectionLocaleTest, SearchAgainstThaiText) {
     ASSERT_EQ("Gord <mark>Downie</mark>", results["hits"][1]["highlights"][0]["snippet"].get<std::string>());
 
     results = coll1->search("พกไฟ", {"title", "artist"}, "", {}, {}, {0}, 10, 1, FREQUENCY).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>พกไฟ</mark>\nเสมอ", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 }
@@ -217,7 +221,7 @@ TEST_F(CollectionLocaleTest, ThaiTextShouldBeNormalizedToNFKC) {
     auto results = coll1->search("น้ํามัน",{"title"}, "", {}, {},
                                  {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionLocaleTest, ThaiTextShouldRespectSeparators) {
@@ -237,7 +241,7 @@ TEST_F(CollectionLocaleTest, ThaiTextShouldRespectSeparators) {
     auto results = coll1->search("*",{}, "title:=alpha-beta-gamma", {}, {},
                                  {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // now with `symbols_to_index`
     coll_json = R"({
@@ -254,12 +258,12 @@ TEST_F(CollectionLocaleTest, ThaiTextShouldRespectSeparators) {
     results = coll2->search("*",{}, "title:=alpha-beta-gamma", {}, {},
                             {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll2->search("*",{}, "title:=alphabetagamma", {}, {},
                             {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionLocaleTest, SearchThaiTextPreSegmentedQuery) {
@@ -298,7 +302,7 @@ TEST_F(CollectionLocaleTest, SearchThaiTextPreSegmentedQuery) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 40, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {1}, 1000, true, true).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("meji",
@@ -307,7 +311,7 @@ TEST_F(CollectionLocaleTest, SearchThaiTextPreSegmentedQuery) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 40, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1}, 1000, true, true).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("ควม",
@@ -316,7 +320,7 @@ TEST_F(CollectionLocaleTest, SearchThaiTextPreSegmentedQuery) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 40, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1}, 1000, true, true).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -356,8 +360,8 @@ TEST_F(CollectionLocaleTest, SearchAgainstThaiTextExactMatch) {
     auto results = coll1->search("รายได้",
                                  {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_EQ("ติดกับดัก<mark>ราย</mark><mark>ได้</mark>ปานกลาง",
               results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
@@ -368,8 +372,8 @@ TEST_F(CollectionLocaleTest, SearchAgainstThaiTextExactMatch) {
     // check text index overflow regression with NFC normalization + highlighting
 
     results = coll1->search(word_12bytes, {"title"}, "", {}, sort_fields, {2}, 10, 1, FREQUENCY).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("<mark>น้ำ</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 }
 
@@ -404,16 +408,16 @@ TEST_F(CollectionLocaleTest, SearchAgainstKoreanText) {
     auto results = coll1->search("극장판",
                                  {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("안녕은하철도999<mark>극장판</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
     results = coll1->search("산악",
                             {"title", "artist"}, "", {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("경승지·<mark>산악</mark>·협곡", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 }
@@ -459,8 +463,8 @@ TEST_F(CollectionLocaleTest, KoreanTextPrefixConsonant) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 10).get();
 
-    ASSERT_EQ(6, results["found"].get<size_t>());
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     // and &#12593; (Hangul Letter Kiyeok)
@@ -470,8 +474,8 @@ TEST_F(CollectionLocaleTest, KoreanTextPrefixConsonant) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                             "", 10).get();
 
-    ASSERT_EQ(6, results["found"].get<size_t>());
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     // search for full word
@@ -481,8 +485,8 @@ TEST_F(CollectionLocaleTest, KoreanTextPrefixConsonant) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                             "", 10).get();
 
-    ASSERT_EQ(6, results["found"].get<size_t>());
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -526,8 +530,8 @@ TEST_F(CollectionLocaleTest, KoreanTextPrefixVowel) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 10).get();
 
-    ASSERT_EQ(6, results["found"].get<size_t>());
-    ASSERT_EQ(6, results["hits"].size());
+    ASSERT_EQ(size_t{6}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -561,16 +565,16 @@ TEST_F(CollectionLocaleTest, SearchAgainstKoreanTextContainingEnglishChars) {
     auto results = coll1->search("위축됐다",
                                  {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("개혁 등의 영향으로 11%나 <mark>위축됐다</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
     results = coll1->search("11%",
                             {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("개혁 등의 영향으로 <mark>11</mark>%나 위축됐다", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 }
@@ -589,7 +593,7 @@ TEST_F(CollectionLocaleTest, SearchCyrillicText) {
 
     auto results = coll1->search("тест", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -600,7 +604,7 @@ TEST_F(CollectionLocaleTest, SearchCyrillicText) {
 
     results = coll1->search("тетст", {"title"}, "", {}, {}, {1}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -623,7 +627,7 @@ TEST_F(CollectionLocaleTest, SearchCyrillicTextWithDefaultLocale) {
 
     auto results = coll1->search("тетст", {"title"}, "", {}, {}, {1}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
     collectionManager.drop_collection("coll1");
 }
 
@@ -648,7 +652,7 @@ TEST_F(CollectionLocaleTest, SearchCyrillicTextWithDropTokens) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "description", 40, {}, {}, {}, 0,
                                  "<mark>", "</mark>").get();
 
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     ASSERT_EQ("<mark>HPE</mark> <mark>Aruba</mark> <mark>AP575</mark> 802.11ax Wireless Access Point - "
@@ -670,13 +674,13 @@ TEST_F(CollectionLocaleTest, SearchAndFacetSearchForGreekText) {
     auto results = coll1->search("Εμφάν", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true},
                                  10, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title").get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("<mark>Εμφάν</mark>ιση κάθε μέρα.", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_EQ("<mark>Εμφάν</mark>ιση κάθε μέρα.", results["hits"][0]["highlights"][0]["value"].get<std::string>());
 
     // with typo
     results = coll1->search("Εμφάιση", {"title"}, "", {}, {}, {1}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("<mark>Εμφάνιση</mark> κάθε μέρα.", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
     // facet search with prefix
@@ -686,9 +690,9 @@ TEST_F(CollectionLocaleTest, SearchAndFacetSearchForGreekText) {
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "title: Εμφάν").get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("<mark>Εμφάν</mark>ιση κάθε μέρα.", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>());
 
     // facet search with prefix typo
@@ -698,9 +702,9 @@ TEST_F(CollectionLocaleTest, SearchAndFacetSearchForGreekText) {
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "title: Εμφάνση").get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("<mark>Εμφάνισ</mark>η κάθε μέρα.", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -721,7 +725,7 @@ TEST_F(CollectionLocaleTest, SearchOnCyrillicTextWithSpecialCharacters) {
                                  10, spp::sparse_hash_set<std::string>(), spp::sparse_hash_set<std::string>(),
                                  10, "", 10, 4, "title").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("скромности. Посыл, среди которых <mark>отсутствие</mark> мобильного страшн",
               results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_EQ("«Сирый», «несчастный», «никчёмный» — принятое особ, сейчас, впрочем, оттенок скромности. "
@@ -730,7 +734,7 @@ TEST_F(CollectionLocaleTest, SearchOnCyrillicTextWithSpecialCharacters) {
 
     results = coll1->search("принятое", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("«Сирый», «несчастный», «никчёмный» — <mark>принятое</mark> особ, сейчас, впрочем, оттенок скромности. Посыл, среди которых отсутствие мобильного страшн",
               results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -802,9 +806,6 @@ TEST_F(CollectionLocaleTest, SearchOnArabicText) {
     std::string data = "جهينة";
     std::string q = "جوهينة";
 
-    auto dchars = data.c_str();
-    auto qchars = q.c_str();
-
     nlohmann::json doc;
     doc["title"] = "جهينة";
 
@@ -834,7 +835,7 @@ TEST_F(CollectionLocaleTest, SearchOnArabicTextWithTypo) {
     auto results = coll1->search("ينود", {"title"}, "", {}, {}, {2}, 10, 1, FREQUENCY, {false}, 1,
                                  spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 5, 5, "", 10).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 }
@@ -863,7 +864,7 @@ TEST_F(CollectionLocaleTest, SearchOnBulgarianText) {
                                  spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 5, 5, "", 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -880,8 +881,8 @@ TEST_F(CollectionLocaleTest, HighlightOfAllQueryTokensShouldConsiderUnicodePoint
 
     auto results = coll1->search("لة ثم دعا فلم يستجب له فأتى عيسى ابن مريم عليه السلام يشكو إل", {"title"}, "", {}, {},
                                  {2}, 10, 1, FREQUENCY, {true}, 1).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(17, results["hits"][0]["highlights"][0]["matched_tokens"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{17}, results["hits"][0]["highlights"][0]["matched_tokens"].size());
 }
 
 TEST_F(CollectionLocaleTest, SearchInGermanLocaleShouldBeTypoTolerant) {
@@ -902,7 +903,7 @@ TEST_F(CollectionLocaleTest, SearchInGermanLocaleShouldBeTypoTolerant) {
     auto results = coll1->search("mulltonne", {"title_de"}, "", {}, {},
                                  {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionLocaleTest, ExcludeQueryWithPt) {
@@ -926,7 +927,7 @@ TEST_F(CollectionLocaleTest, ExcludeQueryWithPt) {
 
     auto results = coll1->search("nescau -pó", {"title"}, "", {}, {},
                                  {2}, 10, 1, FREQUENCY, {true}, 1).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -950,7 +951,7 @@ TEST_F(CollectionLocaleTest, HandleSpecialCharsInThai) {
     auto results = coll1->search("12345_", {"title_th", "sku"}, "", {}, {},
                                  {2, 0}, 10, 1, FREQUENCY, {true, false}, 1).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 /*
@@ -963,17 +964,17 @@ TEST_F(CollectionLocaleTest, TranslitPad) {
     transliterator->transliterate(unicode_input);
     std::string output;
     unicode_input.toUTF8String(output);
-    LOG(INFO) << output;
+    TS_LOG(INFO) << output;
 
     unicode_input = icu::UnicodeString::fromUTF8("எண்");
     transliterator->transliterate(unicode_input);
     unicode_input.toUTF8String(output);
-    LOG(INFO) << output;
+    TS_LOG(INFO) << output;
 
     unicode_input = icu::UnicodeString::fromUTF8("என்னை");
     transliterator->transliterate(unicode_input);
     unicode_input.toUTF8String(output);
-    LOG(INFO) << output;
+    TS_LOG(INFO) << output;
 
     delete transliterator;
 }*/

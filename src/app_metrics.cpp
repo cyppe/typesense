@@ -120,7 +120,6 @@ void AppMetrics::get(const std::string& rps_key, const std::string& latency_key,
     for(auto& kv: *durations) {
         auto counter_it = counts->find(kv.first);
         if(counter_it != counts->end() && counter_it->second != 0) {
-            auto durations_size = kv.second.size();
             auto total_duration = kv.second.sum();
 
             if(kv.first == SEARCH_LABEL) {

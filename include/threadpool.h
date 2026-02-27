@@ -100,7 +100,7 @@ inline void ThreadPool::shutdown() {
 inline void ThreadPool::log_exhaustion() {
     std::unique_lock<std::mutex> lock(queue_mutex);
     if(tasks.size() >= workers.size()) {
-        LOG(WARNING) << "Threadpool exhaustion detected, task_queue_len: "
+        TS_LOG(WARNING) << "Threadpool exhaustion detected, task_queue_len: "
                      << tasks.size() << ", thread_pool_len: " << workers.size();
     }
 }

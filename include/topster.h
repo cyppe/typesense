@@ -10,6 +10,7 @@
 #include "count_min_sketch.h"
 #include "filter_result_iterator.h"
 #include "loglogbeta.h"
+#include "logger.h"
 
 struct group_found_params_t {
     int8_t sort_index = -1;
@@ -319,9 +320,9 @@ struct Topster {
     }
 
     int add(T* kv) {
-        /*LOG(INFO) << "kv_map size: " << kv_map.size() << " -- kvs[0]: " << kvs[0]->scores[kvs[0]->match_score_index];
+        /*TS_LOG(INFO) << "kv_map size: " << kv_map.size() << " -- kvs[0]: " << kvs[0]->scores[kvs[0]->match_score_index];
         for(auto& mkv: kv_map) {
-            LOG(INFO) << "kv key: " << mkv.first << " => " << mkv.second->scores[mkv.second->match_score_index];
+            TS_LOG(INFO) << "kv key: " << mkv.first << " => " << mkv.second->scores[mkv.second->match_score_index];
         }*/
 
         if (should_group_count) {
@@ -376,7 +377,7 @@ struct Topster {
             return ret;
 
         } else { // not distinct or first group_by pass
-            //LOG(INFO) << "Searching for key: " << kv->key;
+            //TS_LOG(INFO) << "Searching for key: " << kv->key;
 
             const auto& key = is_group_by_first_pass ? get_distinct_key(kv) : get_key(kv);
             const auto& found_it = map.find(key);
@@ -392,7 +393,7 @@ struct Topster {
             if(is_duplicate_key) {
                 // Need to check if kv is greater than existing duplicate kv.
                 auto existing_kv = found_it->second;
-                //LOG(INFO) << "existing_kv: " << existing_kv->key << " -> " << existing_kv->match_score;
+                //TS_LOG(INFO) << "existing_kv: " << existing_kv->key << " -> " << existing_kv->match_score;
 
                 bool smaller_than_existing = is_smaller(kv, existing_kv);
                 if(smaller_than_existing) {

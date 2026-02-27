@@ -1,6 +1,6 @@
 #pragma once
 
-#include "sparsepp.h"
+#include "sparsepp_wrapper.h"
 #include "json.hpp"
 #include "logger.h"
 #include "tsconfig.h"

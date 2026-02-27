@@ -2,11 +2,13 @@
 #include <vector>
 #include <store.h>
 #include <string_utils.h>
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 TEST(StoreTest, GetUpdatesSince) {
-    std::string primary_store_path = "/tmp/typesense_test/primary_store_test";
-    LOG(INFO) << "Truncating and creating: " << primary_store_path;
-    system(("rm -rf "+primary_store_path+" && mkdir -p "+primary_store_path).c_str());
+    std::string primary_store_path = typesense_test::make_test_temp_dir("primary_store_test");
+    TS_LOG(INFO) << "Truncating and creating: " << primary_store_path;
+    typesense_test::reset_test_temp_dir(primary_store_path);
 
     // add some records, get the updates and restore them in a new store
 
@@ -15,15 +17,15 @@ TEST(StoreTest, GetUpdatesSince) {
     // on a fresh store, sequence number is 0
     Option<std::vector<std::string>*> updates_op = primary_store.get_updates_since(0, 10);
     ASSERT_TRUE(updates_op.ok());
-    ASSERT_EQ(0, updates_op.get()->size());
-    ASSERT_EQ(0, primary_store.get_latest_seq_number());
+    ASSERT_EQ(size_t{0}, updates_op.get()->size());
+    ASSERT_EQ(uint64_t{0}, primary_store.get_latest_seq_number());
     delete updates_op.get();
 
     // get_updates_since(1) == get_updates_since(0)
     updates_op = primary_store.get_updates_since(1, 10);
     ASSERT_TRUE(updates_op.ok());
-    ASSERT_EQ(0, updates_op.get()->size());
-    ASSERT_EQ(0, primary_store.get_latest_seq_number());
+    ASSERT_EQ(size_t{0}, updates_op.get()->size());
+    ASSERT_EQ(uint64_t{0}, primary_store.get_latest_seq_number());
     delete updates_op.get();
 
     // querying for a seq_num > 1 on a fresh store
@@ -34,38 +36,38 @@ TEST(StoreTest, GetUpdatesSince) {
 
     // get_updates_since(1) == get_updates_since(0) even after inserting a record
     primary_store.insert("foo1", "bar1");
-    ASSERT_EQ(1, primary_store.get_latest_seq_number());
+    ASSERT_EQ(uint64_t{1}, primary_store.get_latest_seq_number());
     updates_op = primary_store.get_updates_since(1, 10);
     std::cout << updates_op.error() << std::endl;
     ASSERT_TRUE(updates_op.ok());
-    ASSERT_EQ(1, updates_op.get()->size());
+    ASSERT_EQ(size_t{1}, updates_op.get()->size());
     delete updates_op.get();
 
     updates_op = primary_store.get_updates_since(0, 10);
     ASSERT_TRUE(updates_op.ok());
-    ASSERT_EQ(1, updates_op.get()->size());
+    ASSERT_EQ(size_t{1}, updates_op.get()->size());
     delete updates_op.get();
 
     // add more records
     primary_store.insert("foo2", "bar2");
     primary_store.insert("foo3", "bar3");
-    ASSERT_EQ(3, primary_store.get_latest_seq_number());
+    ASSERT_EQ(uint64_t{3}, primary_store.get_latest_seq_number());
 
     updates_op = primary_store.get_updates_since(0, 10);
-    ASSERT_EQ(3, updates_op.get()->size());
+    ASSERT_EQ(size_t{3}, updates_op.get()->size());
     delete updates_op.get();
 
     updates_op = primary_store.get_updates_since(1, 10);
-    ASSERT_EQ(3, updates_op.get()->size());
+    ASSERT_EQ(size_t{3}, updates_op.get()->size());
     delete updates_op.get();
 
     updates_op = primary_store.get_updates_since(3, 10);
-    ASSERT_EQ(1, updates_op.get()->size());
+    ASSERT_EQ(size_t{1}, updates_op.get()->size());
     delete updates_op.get();
 
-    std::string replica_store_path = "/tmp/typesense_test/replica_store_test";
-    LOG(INFO) << "Truncating and creating: " << replica_store_path;
-    system(("rm -rf "+replica_store_path+" && mkdir -p "+replica_store_path).c_str());
+    std::string replica_store_path = typesense_test::make_test_temp_dir("replica_store_test");
+    TS_LOG(INFO) << "Truncating and creating: " << replica_store_path;
+    typesense_test::reset_test_temp_dir(replica_store_path);
 
     Store replica_store(replica_store_path, 24*60*60, 1024, false);
     rocksdb::DB* replica_db = replica_store._get_db_unsafe();
@@ -90,26 +92,26 @@ TEST(StoreTest, GetUpdatesSince) {
 
     // Ensure that updates are limited to max_updates argument
     updates_op = primary_store.get_updates_since(0, 10);
-    ASSERT_EQ(3, updates_op.get()->size());
+    ASSERT_EQ(size_t{3}, updates_op.get()->size());
     delete updates_op.get();
 
     // sequence numbers 0 and 1 are the same
     updates_op = primary_store.get_updates_since(0, 10);
-    ASSERT_EQ(3, updates_op.get()->size());
+    ASSERT_EQ(size_t{3}, updates_op.get()->size());
     delete updates_op.get();
 
     updates_op = primary_store.get_updates_since(1, 10);
-    ASSERT_EQ(3, updates_op.get()->size());
+    ASSERT_EQ(size_t{3}, updates_op.get()->size());
     delete updates_op.get();
 
     updates_op = primary_store.get_updates_since(3, 100);
     ASSERT_TRUE(updates_op.ok());
-    ASSERT_EQ(1, updates_op.get()->size());
+    ASSERT_EQ(size_t{1}, updates_op.get()->size());
     delete updates_op.get();
 
     updates_op = primary_store.get_updates_since(4, 100);
     ASSERT_TRUE(updates_op.ok());
-    ASSERT_EQ(0, updates_op.get()->size());
+    ASSERT_EQ(size_t{0}, updates_op.get()->size());
     delete updates_op.get();
 
     updates_op = primary_store.get_updates_since(50, 100);
@@ -119,9 +121,9 @@ TEST(StoreTest, GetUpdatesSince) {
 }
 
 TEST(StoreTest, GetUpdateSinceInvalidIterator) {
-    std::string primary_store_path = "/tmp/typesense_test/primary_store_test";
-    LOG(INFO) << "Truncating and creating: " << primary_store_path;
-    system(("rm -rf "+primary_store_path+" && mkdir -p "+primary_store_path).c_str());
+    std::string primary_store_path = typesense_test::make_test_temp_dir("primary_store_test");
+    TS_LOG(INFO) << "Truncating and creating: " << primary_store_path;
+    typesense_test::reset_test_temp_dir(primary_store_path);
 
     // add some records, get the updates and restore them in a new store
 
@@ -140,9 +142,9 @@ TEST(StoreTest, GetUpdateSinceInvalidIterator) {
 }
 
 TEST(StoreTest, Contains) {
-    std::string primary_store_path = "/tmp/typesense_test/primary_store_test";
-    LOG(INFO) << "Truncating and creating: " << primary_store_path;
-    system(("rm -rf "+primary_store_path+" && mkdir -p "+primary_store_path).c_str());
+    std::string primary_store_path = typesense_test::make_test_temp_dir("primary_store_test");
+    TS_LOG(INFO) << "Truncating and creating: " << primary_store_path;
+    typesense_test::reset_test_temp_dir(primary_store_path);
 
     // add some records, flush and try to query
     Store primary_store(primary_store_path, 0, 0, true);  // disable WAL

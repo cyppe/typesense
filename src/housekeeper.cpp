@@ -2,6 +2,7 @@
 #include <collection_manager.h>
 #include <system_metrics.h>
 #include "housekeeper.h"
+#include "logger.h"
 
 void HouseKeeper::run() {
     uint64_t prev_remove_expired_keys_s = std::chrono::duration_cast<std::chrono::seconds>(
@@ -35,9 +36,9 @@ void HouseKeeper::run() {
         // perform compaction on underlying store if enabled
         if(Config::get_instance().get_db_compaction_interval() > 0) {
             if(now_ts_seconds - prev_db_compaction_s >= Config::get_instance().get_db_compaction_interval()) {
-                LOG(INFO) << "Starting DB compaction.";
+                TS_LOG(INFO) << "Starting DB compaction.";
                 CollectionManager::get_instance().get_store()->compact_all();
-                LOG(INFO) << "Finished DB compaction.";
+                TS_LOG(INFO) << "Finished DB compaction.";
                 prev_db_compaction_s = std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
             }
@@ -93,22 +94,22 @@ std::string HouseKeeper::get_query_log(const std::shared_ptr<http_req>& req) {
 void HouseKeeper::log_running_queries() {
     std::unique_lock ifq_lock(ifq_mutex);
     if(in_flight_queries.empty()) {
-        LOG(INFO) << "No in-flight search queries were found.";
+        TS_LOG(INFO) << "No in-flight search queries were found.";
         return ;
     }
 
-    LOG(INFO) << "Dump of in-flight search queries:";
+    TS_LOG(INFO) << "Dump of in-flight search queries:";
 
     for(const auto& kv: in_flight_queries) {
-        LOG(INFO) << get_query_log(kv.second.req);
+        TS_LOG(INFO) << get_query_log(kv.second.req);
     }
 }
 
 void HouseKeeper::log_bad_queries() {
     std::unique_lock ifq_lock(ifq_mutex);
 
-    auto now_ts_us = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+    const uint64_t now_ts_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
     const auto memory_req_min_age = memory_req_min_age_s.load();
     const auto long_req_log = long_req_log_s.load();
 
@@ -133,7 +134,7 @@ void HouseKeeper::log_bad_queries() {
         const bool long_running = query_time_elapsed_s > long_req_log;
 
         if(high_memory || long_running) {
-            LOG(INFO) << "Detected bad query, start_ts: " << req_ts << ", memory_diff: " << memory_diff
+            TS_LOG(INFO) << "Detected bad query, start_ts: " << req_ts << ", memory_diff: " << memory_diff
                       << ", " << get_query_log(kv.second.req);
             kv.second.already_logged = true;
         }

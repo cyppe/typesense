@@ -1,5 +1,6 @@
 #include <http_proxy.h>
 #include "text_embedder_remote.h"
+#include "logger.h"
 #include "embedder_manager.h"
 #include "string_utils.h"
 #include <openssl/evp.h>
@@ -65,7 +66,7 @@ long RemoteEmbedder::call_remote_api(const std::string& method, const std::strin
 }
 
 
-const std::string RemoteEmbedder::get_model_key(const nlohmann::json& model_config, size_t num_dims) {
+std::string RemoteEmbedder::get_model_key(const nlohmann::json& model_config, size_t num_dims) {
     const std::string model_namespace = EmbedderManager::get_model_namespace(model_config["model_name"].get<std::string>());
 
     if(model_namespace == "openai") {
@@ -82,8 +83,8 @@ const std::string RemoteEmbedder::get_model_key(const nlohmann::json& model_conf
 }
 
 OpenAIEmbedder::OpenAIEmbedder(const std::string& openai_model_path, const std::string& api_key, const size_t num_dims, 
-                            const bool has_custom_dims, const nlohmann::json& model_config) : api_key(api_key), openai_model_path(openai_model_path), 
-                                                                                                                         num_dims(num_dims), has_custom_dims(has_custom_dims){
+                            const bool has_custom_dims, const nlohmann::json& model_config)
+    : api_key(api_key), openai_model_path(openai_model_path), has_custom_dims(has_custom_dims), num_dims(num_dims) {
 
     if(model_config.count("url") == 0) {
         this->openai_url = "https://api.openai.com";
@@ -494,15 +495,17 @@ std::string GoogleEmbedder::get_model_key(const nlohmann::json& model_config, si
 GCPEmbedder::GCPEmbedder(const std::string& project_id, const std::string& model_name, const std::string& access_token, 
                          const std::string& refresh_token, const std::string& client_id, const std::string& client_secret, const bool has_custom_dims, const size_t num_dims,
                          const std::string& document_task, const std::string& query_task, const std::string& region) :
-        project_id(project_id), access_token(access_token), refresh_token(refresh_token), client_id(client_id), client_secret(client_secret), has_custom_dims(has_custom_dims), num_dims(num_dims),
-        document_task(document_task), query_task(query_task), region(region) {
+        project_id(project_id), access_token(access_token), refresh_token(refresh_token), client_id(client_id),
+        client_secret(client_secret), document_task(document_task), query_task(query_task), region(region),
+        has_custom_dims(has_custom_dims), num_dims(num_dims) {
     
     this->model_name = EmbedderManager::get_model_name_without_namespace(model_name);
 }
 
 GCPEmbedder::GCPEmbedder(const std::string& project_id, const std::string& model_name, const nlohmann::json& service_account,
                          const bool has_custom_dims, const size_t num_dims, const std::string& document_task, const std::string& query_task, const std::string& region)
-        : project_id(project_id), has_custom_dims(has_custom_dims), num_dims(num_dims), document_task(document_task), query_task(query_task), region(region) {
+        : project_id(project_id), document_task(document_task), query_task(query_task), region(region),
+          has_custom_dims(has_custom_dims), num_dims(num_dims) {
     this->model_name = EmbedderManager::get_model_name_without_namespace(model_name);
     this->auth_type = AuthType::SERVICE_ACCOUNT_KEY;
     if(service_account.count("client_email") > 0 && service_account["client_email"].is_string()) {
@@ -758,7 +761,7 @@ Option<bool> GCPEmbedder::is_model_valid(const nlohmann::json& model_config, siz
         return Option<bool>(400, "Got malformed response from GCP API.");
     }
     if(res_json.count("predictions") == 0 || res_json["predictions"].size() == 0 || res_json["predictions"][0].count("embeddings") == 0) {
-        LOG(INFO) << "Invalid response from GCP API: " << res_json.dump();
+        TS_LOG(INFO) << "Invalid response from GCP API: " << res_json.dump();
         return Option<bool>(400, "GCP API error: Invalid response");
     }
 
@@ -1029,7 +1032,7 @@ std::string GCPEmbedder::get_model_key(const nlohmann::json& model_config, size_
 
 
 AzureEmbedder::AzureEmbedder(const std::string& azure_url, const std::string& api_key, const size_t num_dims, const bool has_custom_dims) : 
-    azure_url(azure_url), api_key(api_key), num_dims(num_dims), has_custom_dims(has_custom_dims) {
+    azure_url(azure_url), api_key(api_key), has_custom_dims(has_custom_dims), num_dims(num_dims) {
 }
 
 Option<bool> AzureEmbedder::is_model_valid(const nlohmann::json& model_config, size_t& num_dims, const bool has_custom_dims) {

@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -9,8 +9,8 @@ RUN apt-get update && apt-get install -y \
     locales \
     && add-apt-repository -y ppa:ubuntu-toolchain-r/test \
     && apt-get update \
+    && (apt-get install -y gcc-15 g++-15 || apt-get install -y gcc-14 g++-14) \
     && apt-get install -y \
-    g++-10 \
     make \
     git \
     zlib1g-dev \
@@ -19,8 +19,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up compiler alternatives
-RUN update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 30 \
-    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-10 30 \
+RUN if [ -x /usr/bin/gcc-15 ]; then GCC_VERSION=15; else GCC_VERSION=14; fi \
+    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${GCC_VERSION} 30 \
+    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${GCC_VERSION} 30 \
     && update-alternatives --install /usr/bin/cc cc /usr/bin/gcc 30 \
     && update-alternatives --set cc /usr/bin/gcc \
     && update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++ 30 \

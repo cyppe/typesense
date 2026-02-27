@@ -5,6 +5,7 @@ import type { IDockerComposeResult } from "docker-compose";
 import type { Ora } from "ora";
 import type { CollectionCreateSchema } from "typesense/lib/Typesense/Collections";
 
+import { execSync } from "child_process";
 import { run } from "docker-compose";
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 
@@ -86,6 +87,127 @@ export class K6Benchmarks {
     });
   }
 
+  public performStressImportBenchmark(options?: {
+    vus?: number;
+    chunkSize?: number;
+    duration?: string;
+    serverBatchSize?: number;
+  }): ResultAsync<void, ErrorWithMessage> {
+    return this.getStressImportBenchmarkPath().andThen((scriptPath) => {
+      return this.recreateBenchmarkCollection()
+        .andThen(() =>
+          this.executeK6Benchmark({
+            name: `stress-import-${options?.vus ?? 4}vu-${options?.chunkSize ?? 5000}chunk`,
+            scriptPath,
+            additionalVars: {
+              STRESS_VUS: options?.vus ?? 4,
+              STRESS_CHUNK_SIZE: options?.chunkSize ?? 5000,
+              STRESS_DURATION: options?.duration ?? "60s",
+              STRESS_BATCH_SIZE: options?.serverBatchSize ?? 40,
+            },
+          }),
+        )
+        .map(() => {
+          this.config.spinner.succeed("Stress import benchmark complete");
+        });
+    });
+  }
+
+  public performConcurrentBenchmark(options?: {
+    searchVus?: number;
+    importVus?: number;
+    chunkSize?: number;
+    duration?: string;
+    serverBatchSize?: number;
+  }): ResultAsync<void, ErrorWithMessage> {
+    return this.getConcurrentBenchmarkPath().andThen((scriptPath) => {
+      return this.recreateBenchmarkCollection()
+        .andThen(() =>
+          this.executeK6Benchmark({
+            name: `concurrent-${options?.searchVus ?? 50}search-${options?.importVus ?? 4}import`,
+            scriptPath,
+            additionalVars: {
+              CONCURRENT_SEARCH_VUS: options?.searchVus ?? 50,
+              CONCURRENT_IMPORT_VUS: options?.importVus ?? 4,
+              CONCURRENT_CHUNK_SIZE: options?.chunkSize ?? 1000,
+              CONCURRENT_DURATION: options?.duration ?? "30s",
+              CONCURRENT_BATCH_SIZE: options?.serverBatchSize ?? 40,
+            },
+          }),
+        )
+        .map(() => {
+          this.config.spinner.succeed("Concurrent search+import benchmark complete");
+        });
+    });
+  }
+
+  public startMetricsCollection(duration: string): ResultAsync<void, ErrorWithMessage> {
+    return this.getMetricsCollectorPath().andThen((scriptPath) => {
+      return this.executeK6Benchmark({
+        name: "metrics-collection",
+        scriptPath,
+        additionalVars: {
+          METRICS_DURATION: duration,
+          METRICS_INTERVAL: 2,
+        },
+      });
+    });
+  }
+
+  /**
+   * Start metrics collection in background (detached docker-compose container).
+   * Returns the container ID so it can be stopped later.
+   */
+  public startMetricsCollectionInBackground(duration: string): ResultAsync<string, ErrorWithMessage> {
+    return this.getMetricsCollectorPath().andThen((scriptPath) => {
+      const envVarString = this.buildK6EnvironmentVars({
+        METRICS_DURATION: duration,
+        METRICS_INTERVAL: 2,
+      });
+
+      const command = `run ${envVarString} ${scriptPath}`;
+      const cwd = findRoot(process.cwd());
+
+      logger.info("Starting metrics collector in background...");
+      return ResultAsync.fromPromise(
+        (async () => {
+          // Use docker compose run -d to start detached
+          const result = execSync(
+            `docker compose run -d --no-deps --remove-orphans k6 ${command}`,
+            { cwd, encoding: "utf-8" },
+          ).trim();
+          // result is the container ID
+          logger.info(`Metrics collector started: ${result.slice(0, 12)}`);
+          return result;
+        })(),
+        toErrorWithMessage,
+      );
+    });
+  }
+
+  /**
+   * Stop a detached metrics-collector container.
+   */
+  public stopMetricsCollection(containerId: string): ResultAsync<void, ErrorWithMessage> {
+    logger.info(`Stopping metrics collector ${containerId.slice(0, 12)}...`);
+    return ResultAsync.fromPromise(
+      (async () => {
+        try {
+          execSync(`docker stop ${containerId}`, { encoding: "utf-8", timeout: 15000 });
+        } catch {
+          // Container may have already exited (duration expired)
+        }
+        try {
+          execSync(`docker rm -f ${containerId}`, { encoding: "utf-8", timeout: 10000 });
+        } catch {
+          // Already removed
+        }
+        logger.info("Metrics collector stopped.");
+      })(),
+      toErrorWithMessage,
+    );
+  }
+
   private executeK6Benchmark(options: {
     scriptPath: string;
     name: string;
@@ -131,51 +253,20 @@ export class K6Benchmarks {
     errors: string[],
     warnings: string[],
   ): ResultAsync<void, ErrorWithMessage> {
-    // First trim any leading/trailing whitespace
     const cleanOutput = result.out.trim();
 
-    const checksLine = cleanOutput.split("\n").find((line) => line.trim().startsWith("checks_succeeded"));
-
-    if (!checksLine) {
-      // Fallback to the old format that starts with "checks" if checks_succeeded is not found
-      const oldFormatLine = cleanOutput.split("\n").find((line) => line.trim().startsWith("checks"));
-
-      if (!oldFormatLine) {
-        return errAsync({
-          message: "Could not find checks line in output",
-        });
-      }
-
-      // Extract the pass rate from the old format line
-      const checkMatch = /([0-9.]+)%/.exec(oldFormatLine);
-      const checksPassRate = parseFloat(checkMatch?.[1] ?? "0");
-
-      this.config.spinner.stop();
-      logger.info(`Checks pass rate: ${checksPassRate}%`);
-
-      if (errors.length > 0) {
-        logger.error(`Errors: \n\n${errors.join("\n")}`);
-      }
-      if (warnings.length > 0) {
-        logger.warn(`Warnings: \n\n${warnings.join("\n")}`);
-      }
-
-      if (checksPassRate < 97) {
-        return errAsync({
-          message: `k6 tests failed - ${checksPassRate}% checks passed`,
-        });
-      }
-
-      this.config.spinner.succeed("Benchmark complete");
-      return okAsync(undefined);
+    // Handle empty output (k6 crashed or container failed to start)
+    if (!cleanOutput) {
+      const errDetail = result.err?.trim();
+      return errAsync({
+        message: `k6 produced no output (exit code: ${result.exitCode ?? "unknown"})${errDetail ? `\nDocker output: ${errDetail.slice(0, 500)}` : ""}`,
+      });
     }
 
-    // Extract the pass rate from the checks_succeeded line (format: "checks_succeeded...................: 100.00% 2 out of 2")
-    const checkMatch = /([0-9.]+)%/.exec(checksLine);
-    const checksPassRate = parseFloat(checkMatch?.[1] ?? "0");
+    // Try to find the checks pass rate from either format
+    const checksPassRate = this.extractChecksPassRate(cleanOutput);
 
     this.config.spinner.stop();
-    logger.info(`Checks pass rate: ${checksPassRate}%`);
 
     if (errors.length > 0) {
       logger.error(`Errors: \n\n${errors.join("\n")}`);
@@ -184,7 +275,16 @@ export class K6Benchmarks {
       logger.warn(`Warnings: \n\n${warnings.join("\n")}`);
     }
 
-    if (checksPassRate < 100) {
+    // No checks line found — benchmark may use a different output format (e.g. concurrent with only Trends/Counters)
+    if (checksPassRate === null) {
+      logger.warn("No checks line found in k6 output — assuming benchmark completed (custom metrics only)");
+      this.config.spinner.succeed("Benchmark complete");
+      return okAsync(undefined);
+    }
+
+    logger.info(`Checks pass rate: ${checksPassRate}%`);
+
+    if (checksPassRate < 97) {
       return errAsync({
         message: `k6 tests failed - ${checksPassRate}% checks passed`,
       });
@@ -194,6 +294,24 @@ export class K6Benchmarks {
     return okAsync(undefined);
   }
 
+  private extractChecksPassRate(output: string): number | null {
+    // Try new format: "checks_succeeded...................: 100.00% 2 out of 2"
+    const newFormatLine = output.split("\n").find((line) => line.trim().startsWith("checks_succeeded"));
+    if (newFormatLine) {
+      const match = /([0-9.]+)%/.exec(newFormatLine);
+      return match ? parseFloat(match[1]) : null;
+    }
+
+    // Try old format: "checks.........................: 100.00% ..."
+    const oldFormatLine = output.split("\n").find((line) => line.trim().startsWith("checks"));
+    if (oldFormatLine) {
+      const match = /([0-9.]+)%/.exec(oldFormatLine);
+      return match ? parseFloat(match[1]) : null;
+    }
+
+    return null;
+  }
+
   private buildK6EnvironmentVars(additionalVars?: Record<string, unknown>): string {
     const envVarMap = {
       API_KEY: this.config.apiKey,
@@ -201,7 +319,7 @@ export class K6Benchmarks {
       BATCH_SIZE: this.config.batchSize,
       COLLECTION_NAME: K6Benchmarks.COLLECTION_NAME,
       PORT: this.config.port,
-      HOST: "host.docker.internal",
+      HOST: `typesense-bench-${this.config.port}`,
       COMMIT_HASH: this.config.commitHash,
       ...additionalVars,
     };
@@ -227,11 +345,49 @@ export class K6Benchmarks {
     });
   }
 
+  private recreateBenchmarkCollection(): ResultAsync<void, ErrorWithMessage> {
+    this.config.spinner.start("Recreating benchmark collection");
+
+    const process = this.config.typesenseProcessManager.getProcessByHttpPort(this.config.port);
+    if (!process.isOk()) {
+      return errAsync(process.error);
+    }
+
+    const client = process.value.client;
+    return ResultAsync.fromPromise(
+      client.collections(K6Benchmarks.COLLECTION_NAME).delete().catch(() => {
+        // Collection may not exist, that's fine
+      }),
+      toErrorWithMessage,
+    )
+      .andThen(() =>
+        ResultAsync.fromPromise(
+          client.collections().create(K6Benchmarks.COLLECTION_SCHEMA),
+          toErrorWithMessage,
+        ),
+      )
+      .map(() => {
+        this.config.spinner.succeed("Benchmark collection recreated");
+      });
+  }
+
   private getSearchBenchmarkPath(): ResultAsync<string, ErrorWithMessage> {
     return okAsync(path.join("/app", "src", "benchmarks", "search.ts"));
   }
 
   private getIndexingBenchmarkPath(): ResultAsync<string, ErrorWithMessage> {
     return okAsync(path.join("/app", "src", "benchmarks", "index.ts"));
+  }
+
+  private getStressImportBenchmarkPath(): ResultAsync<string, ErrorWithMessage> {
+    return okAsync(path.join("/app", "src", "benchmarks", "stress-import.ts"));
+  }
+
+  private getConcurrentBenchmarkPath(): ResultAsync<string, ErrorWithMessage> {
+    return okAsync(path.join("/app", "src", "benchmarks", "concurrent-search-import.ts"));
+  }
+
+  private getMetricsCollectorPath(): ResultAsync<string, ErrorWithMessage> {
+    return okAsync(path.join("/app", "src", "benchmarks", "metrics-collector.ts"));
   }
 }

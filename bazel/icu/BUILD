@@ -11,7 +11,8 @@ filegroup(
 configure_make(
     name = "icu",
     args = ["-j8"],
-    configure_command = "icu4c/source/runConfigureICU",
+    tags = ["manual"],
+    configure_command = "source/configure_wrapper",
     configure_options = select({
         "@platforms//os:linux": ["Linux"],
         "@platforms//os:macos": ["MacOSX"],

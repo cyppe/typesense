@@ -361,7 +361,7 @@ interface FetchNodeParams<
   TMethod extends string & keyof TransformedEndpoints<TDoc>[TPath],
   TDoc extends DocumentSchema,
 > {
-  port: (typeof TypesenseProcessManager.nodeToPortMap)[number]["http"];
+  port: (typeof TypesenseProcessManager.defaultNodeToPortMap)[number]["http"];
   endpoint: TPath;
   method: TMethod;
   body?: GetEndpointResponse<TPath, TMethod, TDoc> extends { body: unknown } ?

@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <execinfo.h>
 #include <regex>
+#include "logger.h"
 
 // Currently used only for Mac. Using backward.hpp for Linux.
 
@@ -47,14 +48,14 @@ public:
         bt_size = backtrace(bt, 1024);
         bt_syms = backtrace_symbols(bt, bt_size);
 
-        LOG(ERROR) << "Typesense crashed...";
+        TS_LOG(ERROR) << "Typesense crashed...";
 
         std::regex linux_address_re("\\[(.+)\\]");
         std::string addrs;
 
         for (size_t i = 1; i < bt_size; i++) {
             std::string sym = bt_syms[i];
-            LOG(ERROR) << sym;
+            TS_LOG(ERROR) << sym;
 
             #if __linux__
                 std::smatch matches;
@@ -70,13 +71,13 @@ public:
         }
 
         #if __linux__
-            LOG(ERROR) << "Generating detailed stack trace...";
+            TS_LOG(ERROR) << "Generating detailed stack trace...";
             std::string command = std::string("addr2line -e ") + getexepath() + " -f -C " + addrs;
-            LOG(ERROR) << sh(command);
+            TS_LOG(ERROR) << sh(command);
         #elif __APPLE__
-            LOG(ERROR) << "Generating detailed stack trace...";
+            TS_LOG(ERROR) << "Generating detailed stack trace...";
             std::string command = std::string("atos -p ") + std::to_string(getpid()) + " " + addrs;
-            LOG(ERROR) << sh(command);
+            TS_LOG(ERROR) << sh(command);
         #endif
 
         exit(-1);

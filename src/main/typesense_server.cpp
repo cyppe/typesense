@@ -6,8 +6,9 @@
 #include "backward.hpp"
 #include "butil/at_exit.h"
 #include "text_embedder_remote.h"
+#include "logger.h"
 
-#ifndef ASAN_BUILD
+#ifndef NO_JEMALLOC
 extern "C" {
 #include "jemalloc.h"
 }
@@ -168,11 +169,11 @@ void crash_callback(int sig, backward::StackTrace& st) {
     }
 
     HouseKeeper::get_instance().log_running_queries();
-    LOG(ERROR) << "Typesense " << TYPESENSE_VERSION << " is terminating abruptly.";
+    TS_LOG(ERROR) << "Typesense " << TYPESENSE_VERSION << " is terminating abruptly.";
 }
 
 int main(int argc, char **argv) {
-#ifndef ASAN_BUILD
+#ifndef NO_JEMALLOC
     #ifdef __APPLE__
     // On OS X, je_zone_register registers jemalloc with the system allocator.
     // We have to force the presence of these symbols on macOS by explicitly calling this method.

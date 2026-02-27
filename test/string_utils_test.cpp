@@ -53,14 +53,14 @@ TEST(StringUtilsTest, ShouldSplitString) {
     // restrict list of max_values
     std::vector<std::string> lines_limited;
     size_t end_index = StringUtils::split("a b c d e f", lines_limited, " ", false, true, 0, 3);
-    ASSERT_EQ(3, lines_limited.size());
-    ASSERT_EQ(6, end_index);
+    ASSERT_EQ(size_t{3}, lines_limited.size());
+    ASSERT_EQ(size_t{6}, end_index);
 
     // start from an arbitrary position in string
     std::vector<std::string> lines_custom_start;
     end_index = StringUtils::split("a b c d e f", lines_custom_start, " ", false, true, 2, 100);
-    ASSERT_EQ(5, lines_custom_start.size());
-    ASSERT_EQ(11, end_index);
+    ASSERT_EQ(size_t{5}, lines_custom_start.size());
+    ASSERT_EQ(size_t{11}, end_index);
 
     std::string comma_and_space = "foo, bar";
     std::vector<std::string> comma_space_parts;
@@ -72,7 +72,7 @@ TEST(StringUtilsTest, ShouldSplitString) {
     std::string str_trailing_space = "foo\nbar ";
     std::vector<std::string> trailing_space_parts;
     StringUtils::split(str_trailing_space, trailing_space_parts, "\n", false, false);
-    ASSERT_EQ(2, trailing_space_parts.size());
+    ASSERT_EQ(size_t{2}, trailing_space_parts.size());
     ASSERT_EQ("foo", trailing_space_parts[0]);
     ASSERT_EQ("bar ", trailing_space_parts[1]);
 }
@@ -129,49 +129,49 @@ TEST(StringUtilsTest, ShouldParseQueryString) {
     std::string qs = "?q=bar&filter_by=points: >100 && points: <200";
 
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("bar", qmap["q"]);
     ASSERT_EQ("points: >100 && points: <200", qmap["filter_by"]);
 
     qs = "?q=bar&filter_by=points%3A%20%3E100%20%26%26%20points%3A%20%3C200";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("bar", qmap["q"]);
     ASSERT_EQ("points: >100 && points: <200", qmap["filter_by"]);
 
     qs = "?q=bar&filter_by=points%3A%20%3E100%20%26%26%20points%3A%20%3C200&";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("bar", qmap["q"]);
     ASSERT_EQ("points: >100 && points: <200", qmap["filter_by"]);
 
     qs = "q=bar&filter_by=baz&&";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("bar", qmap["q"]);
     ASSERT_EQ("baz&", qmap["filter_by"]);
 
     qs = "q=bar&filter_by=";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("bar", qmap["q"]);
     ASSERT_EQ("", qmap["filter_by"]);
 
     qs = "q=bread && breakfast&filter_by=";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("bread && breakfast", qmap["q"]);
     ASSERT_EQ("", qmap["filter_by"]);
 
     qs = "q=bread & breakfast&filter_by=";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(3, qmap.size());
+    ASSERT_EQ(size_t{3}, qmap.size());
     ASSERT_EQ("bread ", qmap["q"]);
     ASSERT_EQ("", qmap[" breakfast"]);
     ASSERT_EQ("", qmap["filter_by"]);
@@ -179,14 +179,14 @@ TEST(StringUtilsTest, ShouldParseQueryString) {
     qs = "q=bar&filter_by=&";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("bar", qmap["q"]);
     ASSERT_EQ("", qmap["filter_by"]);
 
     qs = "q=bar&filter_by=points :> 100&enable_typos";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(3, qmap.size());
+    ASSERT_EQ(size_t{3}, qmap.size());
     ASSERT_EQ("bar", qmap["q"]);
     ASSERT_EQ("points :> 100", qmap["filter_by"]);
     ASSERT_EQ("", qmap["enable_typos"]);
@@ -194,7 +194,7 @@ TEST(StringUtilsTest, ShouldParseQueryString) {
     qs = "foo=bar&baz=&bazinga=true";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(3, qmap.size());
+    ASSERT_EQ(size_t{3}, qmap.size());
     ASSERT_EQ("bar", qmap["foo"]);
     ASSERT_EQ("", qmap["baz"]);
     ASSERT_EQ("true", qmap["bazinga"]);
@@ -202,61 +202,61 @@ TEST(StringUtilsTest, ShouldParseQueryString) {
     qs = "foo=bar&bazinga=true&foo=buzz";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("buzz", qmap["foo"]);
     ASSERT_EQ("true", qmap["bazinga"]);
 
     qs = "filter_by=points:>100&bazinga=true&filter_by=points:<=200";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("points:>100&&points:<=200", qmap["filter_by"]);
     ASSERT_EQ("true", qmap["bazinga"]);
 
     qs = "filter_by=points:>100 && brand:= nike&bazinga=true&filter_by=points:<=200";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(2, qmap.size());
+    ASSERT_EQ(size_t{2}, qmap.size());
     ASSERT_EQ("points:>100 && brand:= nike&&points:<=200", qmap["filter_by"]);
     ASSERT_EQ("true", qmap["bazinga"]);
 
     qs = "foo";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(1, qmap.size());
+    ASSERT_EQ(size_t{1}, qmap.size());
     ASSERT_EQ("", qmap["foo"]);
 
     qs = "?foo=";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(1, qmap.size());
+    ASSERT_EQ(size_t{1}, qmap.size());
     ASSERT_EQ("", qmap["foo"]);
 
     qs = "?foo";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(1, qmap.size());
+    ASSERT_EQ(size_t{1}, qmap.size());
     ASSERT_EQ("", qmap["foo"]);
 
     qs = "?";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(0, qmap.size());
+    ASSERT_EQ(size_t{0}, qmap.size());
 
     qs = "";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(0, qmap.size());
+    ASSERT_EQ(size_t{0}, qmap.size());
 
     qs = "&";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(0, qmap.size());
+    ASSERT_EQ(size_t{0}, qmap.size());
 
     qs = "&&";
     qmap.clear();
     StringUtils::parse_query_string(qs, qmap);
-    ASSERT_EQ(0, qmap.size());
+    ASSERT_EQ(size_t{0}, qmap.size());
 }
 
 TEST(StringUtilsTest, ShouldParseStringifiedList) {
@@ -264,28 +264,28 @@ TEST(StringUtilsTest, ShouldParseStringifiedList) {
     std::vector<std::string> strs;
 
     StringUtils::split_to_values(str, strs);
-    ASSERT_EQ(2, strs.size());
+    ASSERT_EQ(size_t{2}, strs.size());
     ASSERT_EQ("John Galt", strs[0]);
     ASSERT_EQ("Random Jack", strs[1]);
 
     strs.clear();
     str = "`John Galt`, `Random, Jack`";
     StringUtils::split_to_values(str, strs);
-    ASSERT_EQ(2, strs.size());
+    ASSERT_EQ(size_t{2}, strs.size());
     ASSERT_EQ("John Galt", strs[0]);
     ASSERT_EQ("Random, Jack", strs[1]);
 
     strs.clear();
     str = "`John Galt, `Random, Jack`";
     StringUtils::split_to_values(str, strs);
-    ASSERT_EQ(2, strs.size());
+    ASSERT_EQ(size_t{2}, strs.size());
     ASSERT_EQ("John Galt, Random", strs[0]);
     ASSERT_EQ("Jack", strs[1]);
 
     strs.clear();
     str = "`Traveller's \\`delight\\`!`, Not wrapped, Last word";
     StringUtils::split_to_values(str, strs);
-    ASSERT_EQ(3, strs.size());
+    ASSERT_EQ(size_t{3}, strs.size());
     ASSERT_EQ("Traveller's \\`delight\\`!", strs[0]);
     ASSERT_EQ("Not wrapped", strs[1]);
     ASSERT_EQ("Last word", strs[2]);
@@ -293,7 +293,7 @@ TEST(StringUtilsTest, ShouldParseStringifiedList) {
     strs.clear();
     str = "`John Galt`";
     StringUtils::split_to_values(str, strs);
-    ASSERT_EQ(1, strs.size());
+    ASSERT_EQ(size_t{1}, strs.size());
     ASSERT_EQ("John Galt", strs[0]);
 }
 
@@ -462,7 +462,7 @@ void splitIncludeExcludeTestHelper(const std::string& include_exclude_fields, co
     auto tokenize_op = StringUtils::split_include_exclude_fields(include_exclude_fields, output);
     ASSERT_TRUE(tokenize_op.ok());
     ASSERT_EQ(expected.size(), output.size());
-    for (auto i = 0; i < output.size(); i++) {
+    for (size_t i = 0; i < output.size(); ++i) {
         ASSERT_EQ(expected[i], output[i]);
     }
 }

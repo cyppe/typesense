@@ -10,7 +10,7 @@ endif()
 ExternalProject_Add(
     onnxruntime
     GIT_REPOSITORY https://github.com/microsoft/onnxruntime
-    GIT_TAG origin/rel-1.14.0
+    GIT_TAG origin/rel-1.24.2
     SOURCE_DIR ${DEP_ROOT_DIR}/${ONNX_NAME}
     PATCH_COMMAND cd ${DEP_ROOT_DIR}/${ONNX_NAME} && git apply ${CMAKE_CURRENT_SOURCE_DIR}/cmake/onnx.patch || git apply ${CMAKE_CURRENT_SOURCE_DIR}/cmake/onnx.patch -R --check && git submodule sync && git submodule foreach  'git fetch --tags' && git submodule update --init --remote
     BINARY_DIR ${DEP_ROOT_DIR}/${ONNX_NAME}-build

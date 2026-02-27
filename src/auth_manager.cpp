@@ -1,4 +1,5 @@
 #include "auth_manager.h"
+#include "logger.h"
 #include <openssl/evp.h>
 #include <regex>
 #include <join.h>
@@ -8,7 +9,7 @@ constexpr const uint64_t api_key_t::FAR_FUTURE_TIMESTAMP;
 
 Option<bool> AuthManager::init(Store* store, const std::string& bootstrap_auth_key) {
     // This function must be idempotent, i.e. when called multiple times, must produce the same state without leaks
-    //LOG(INFO) << "AuthManager::init()";
+    //TS_LOG(INFO) << "AuthManager::init()";
     std::unique_lock lock(mutex);
 
     this->store = store;
@@ -32,7 +33,7 @@ Option<bool> AuthManager::init(Store* store, const std::string& bootstrap_auth_k
                      std::string(API_KEYS_PREFIX) + "`",
                      api_key_json_strs);
 
-    LOG(INFO) << "Indexing " << api_key_json_strs.size() << " API key(s) found on disk.";
+    TS_LOG(INFO) << "Indexing " << api_key_json_strs.size() << " API key(s) found on disk.";
 
     for(auto & api_key_json_str: api_key_json_strs) {
         api_key_t api_key;
@@ -97,7 +98,7 @@ Option<api_key_t> AuthManager::get_key(uint32_t id, bool truncate_value) const {
 }
 
 Option<api_key_t> AuthManager::create_key(api_key_t& api_key) {
-    //LOG(INFO) << "AuthManager::create_key()";
+    //TS_LOG(INFO) << "AuthManager::create_key()";
     std::unique_lock lock(mutex);
 
     if(api_keys.count(api_key.value) != 0 || api_key.value == bootstrap_auth_key) {
@@ -149,7 +150,7 @@ bool AuthManager::authenticate(const std::string& action,
                                std::vector<nlohmann::json>& embedded_params_vec) const {
 
     std::shared_lock lock(mutex);
-    //LOG(INFO) << "AuthManager::authenticate()";
+    //TS_LOG(INFO) << "AuthManager::authenticate()";
 
     size_t num_keys_matched = 0;
     for(size_t i = 0; i < collection_keys.size(); i++) {
@@ -184,7 +185,7 @@ bool AuthManager::authenticate(const std::string& action,
         embedded_params_vec[i] = embedded_params;
     }
 
-    //LOG(INFO) << "api_keys.size() = " << api_keys.size();
+    //TS_LOG(INFO) << "api_keys.size() = " << api_keys.size();
     return (num_keys_matched == collection_keys.size());
 }
 
@@ -192,7 +193,7 @@ bool AuthManager::regexp_match(const std::string& value, const std::string& rege
     try {
         return std::regex_match (value, std::regex(regexp));
     } catch(const std::exception& e) {
-        LOG(ERROR) << "Error while matching regexp " << regexp << " against value " << value;
+        TS_LOG(ERROR) << "Error while matching regexp " << regexp << " against value " << value;
         return false;
     }
 }
@@ -201,14 +202,14 @@ bool AuthManager::auth_against_key(const std::string& req_collection, const std:
                                    const api_key_t& api_key, const bool search_only) const {
 
     if(uint64_t(std::time(0)) > api_key.expires_at) {
-        LOG(ERROR) << fmt_error("Rejecting expired API key.", api_key.value);
+        TS_LOG(ERROR) << fmt_error("Rejecting expired API key.", api_key.value);
         return false;
     }
 
     if(search_only) {
         // ensure that parent key has only search scope
         if(api_key.actions.size() != 1 || api_key.actions[0] != DOCUMENTS_SEARCH_ACTION) {
-            LOG(ERROR) << fmt_error(std::string("Parent API key must allow only `") + DOCUMENTS_SEARCH_ACTION + "` action.",
+            TS_LOG(ERROR) << fmt_error(std::string("Parent API key must allow only `") + DOCUMENTS_SEARCH_ACTION + "` action.",
                                     api_key.value);
             return false;
         }
@@ -261,14 +262,14 @@ Option<bool> AuthManager::authenticate_parse_params(const collection_key_t& scop
 
     // allow only searches from scoped keys
     if(action != DOCUMENTS_SEARCH_ACTION) {
-        LOG(ERROR) << "Scoped API keys can only be used for searches.";
+        TS_LOG(ERROR) << "Scoped API keys can only be used for searches.";
         return Option<bool>(403, "Forbidden.");
     }
 
     const std::string& key_payload = StringUtils::base64_decode(scoped_api_key.api_key);
 
     if(key_payload.size() < HMAC_BASE64_LEN + api_key_t::PREFIX_LEN) {
-        LOG(ERROR) << "Malformed scoped API key.";
+        TS_LOG(ERROR) << "Malformed scoped API key.";
         return Option<bool>(403, "Forbidden.");
     }
 
@@ -431,17 +432,17 @@ bool AuthManager::add_item_to_params(std::map<std::string, std::string>& req_par
 void AuthManager::remove_expired_keys() {
     const Option<std::vector<api_key_t>>& keys_op = list_keys();
     if(!keys_op.ok()) {
-        LOG(ERROR) << keys_op.error();
+        TS_LOG(ERROR) << keys_op.error();
         return;
     }
 
     const std::vector<api_key_t>& keys = keys_op.get();
     for(const auto& key : keys) {
         if(key.autodelete &&  (uint64_t(std::time(0)) > key.expires_at)) {
-            LOG(INFO) << "Deleting expired key " << key.value;
+            TS_LOG(INFO) << "Deleting expired key " << key.value;
             auto delete_op = remove_key(key.id);
             if(!delete_op.ok()) {
-                LOG(ERROR) << delete_op.error();
+                TS_LOG(ERROR) << delete_op.error();
             }
         }
     }

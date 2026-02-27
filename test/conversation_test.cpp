@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "conversation_manager.h"
 #include "conversation_model.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 
 class ConversationTest : public ::testing::Test {
@@ -8,14 +10,15 @@ class ConversationTest : public ::testing::Test {
         CollectionManager & collectionManager = CollectionManager::get_instance();
         Store* store;
         std::atomic<bool> quit = false;
+        std::string state_dir_path;
         nlohmann::json model = R"({
             "id": "0",
             "history_collection": "conversation_store",
             "ttl": 86400
         })"_json;
         void SetUp() override {
-            std::string state_dir_path = "/tmp/typesense_test/conversation_test";
-            system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+            state_dir_path = typesense_test::make_test_temp_dir("conversation");
+            typesense_test::reset_test_temp_dir(state_dir_path);
 
             store = new Store(state_dir_path);
             collectionManager.init(store, 1.0, "auth_key", quit);
@@ -57,6 +60,7 @@ class ConversationTest : public ::testing::Test {
         void TearDown() override {
             collectionManager.dispose();
             delete store;
+            typesense_test::cleanup_test_temp_dir(state_dir_path);
         }
 };
 
@@ -71,14 +75,14 @@ TEST_F(ConversationTest, CreateConversationInvalidType) {
     nlohmann::json conversation = nlohmann::json::object();
     auto create_res = ConversationManager::get_instance().add_conversation(conversation, "conversation_store");
     ASSERT_FALSE(create_res.ok());
-    ASSERT_EQ(create_res.code(), 400);
+    ASSERT_EQ(create_res.code(), 400u);
     ASSERT_EQ(create_res.error(), "Conversation is not an array");
 }
 
 TEST_F(ConversationTest, GetInvalidConversation) {
     auto get_res = ConversationManager::get_instance().get_conversation("qwerty", model);
     ASSERT_FALSE(get_res.ok());
-    ASSERT_EQ(get_res.code(), 404);
+    ASSERT_EQ(get_res.code(), 404u);
     ASSERT_EQ(get_res.error(), "Conversation not found");
 }
 
@@ -91,7 +95,7 @@ TEST_F(ConversationTest, AppendConversation) {
 
     ASSERT_TRUE(create_res.ok());
     std::string conversation_id = create_res.get();
-    LOG(INFO) << conversation_id;
+    TS_LOG(INFO) << conversation_id;
     auto append_res = ConversationManager::get_instance().add_conversation(conversation, model, conversation_id);
     ASSERT_TRUE(append_res.ok());
     ASSERT_EQ(append_res.get(), conversation_id);
@@ -101,7 +105,7 @@ TEST_F(ConversationTest, AppendConversation) {
     ASSERT_TRUE(get_res.ok());
     ASSERT_TRUE(get_res.get()["conversation"].is_array());
     ASSERT_EQ(get_res.get()["id"], conversation_id);
-    ASSERT_EQ(get_res.get()["conversation"].size(), 2);
+    ASSERT_EQ(get_res.get()["conversation"].size(), size_t{2});
     ASSERT_EQ(get_res.get()["conversation"][0]["user"], "Hello");
     ASSERT_EQ(get_res.get()["conversation"][1]["user"], "Hello");
 }
@@ -120,7 +124,7 @@ TEST_F(ConversationTest, AppendInvalidConversation) {
 
     auto append_res = ConversationManager::get_instance().add_conversation(message, model, conversation_id);
     ASSERT_FALSE(append_res.ok());
-    ASSERT_EQ(append_res.code(), 400);
+    ASSERT_EQ(append_res.code(), 400u);
     ASSERT_EQ(append_res.error(), "Conversation is not an array");
 }
 
@@ -132,10 +136,10 @@ TEST_F(ConversationTest, DeleteConversation) {
     auto create_res = ConversationManager::get_instance().add_conversation(conversation, model);
     ASSERT_TRUE(create_res.ok());
     std::string conversation_id = create_res.get();
-    LOG(INFO) << conversation_id;
+    TS_LOG(INFO) << conversation_id;
 
     auto delete_res = ConversationManager::get_instance().delete_conversation(conversation_id, model["id"]);
-    LOG(INFO) << delete_res.error();
+    TS_LOG(INFO) << delete_res.error();
     ASSERT_TRUE(delete_res.ok());
 
     auto delete_res_json = delete_res.get();
@@ -144,14 +148,14 @@ TEST_F(ConversationTest, DeleteConversation) {
 
     auto get_res = ConversationManager::get_instance().get_conversation(conversation_id, model);
     ASSERT_FALSE(get_res.ok());
-    ASSERT_EQ(get_res.code(), 404);
+    ASSERT_EQ(get_res.code(), 404u);
     ASSERT_EQ(get_res.error(), "Conversation not found");
 }
 
 TEST_F(ConversationTest, DeleteInvalidConversation) {
     auto delete_res = ConversationManager::get_instance().delete_conversation("qwerty", model["id"]);
     ASSERT_FALSE(delete_res.ok());
-    ASSERT_EQ(delete_res.code(), 404);
+    ASSERT_EQ(delete_res.code(), 404u);
     ASSERT_EQ(delete_res.error(), "Conversation not found");
 }
 
@@ -180,7 +184,7 @@ TEST_F(ConversationTest, TruncateConversationInvalidType) {
     nlohmann::json conversation = nlohmann::json::object();
     auto truncated = ConversationManager::get_instance().truncate_conversation(conversation, 100);
     ASSERT_FALSE(truncated.ok());
-    ASSERT_EQ(truncated.code(), 400);
+    ASSERT_EQ(truncated.code(), 400u);
     ASSERT_EQ(truncated.error(), "Conversation history is not an array");
 }
 
@@ -188,7 +192,7 @@ TEST_F(ConversationTest, TruncateConversationInvalidLimit) {
     nlohmann::json conversation = nlohmann::json::array();
     auto truncated = ConversationManager::get_instance().truncate_conversation(conversation, 0);
     ASSERT_FALSE(truncated.ok());
-    ASSERT_EQ(truncated.code(), 400);
+    ASSERT_EQ(truncated.code(), 400u);
     ASSERT_EQ(truncated.error(), "Limit must be positive integer");
 }
 
@@ -208,16 +212,16 @@ TEST_F(ConversationTest, TestConversationExpire) {
     ASSERT_TRUE(get_res.ok());
     ASSERT_TRUE(get_res.get()["conversation"].is_array());
     ASSERT_EQ(get_res.get()["id"], conversation_id);
-    ASSERT_EQ(get_res.get()["conversation"].size(), 1);
+    ASSERT_EQ(get_res.get()["conversation"].size(), size_t{1});
 
     ConversationManager::get_instance()._set_ttl_offset(24 * 60 * 60 * 2);
-    LOG(INFO) << "Clearing expired conversations";
+    TS_LOG(INFO) << "Clearing expired conversations";
     ConversationManager::get_instance().clear_expired_conversations();
-    LOG(INFO) << "Cleared expired conversations";
+    TS_LOG(INFO) << "Cleared expired conversations";
 
     get_res = ConversationManager::get_instance().get_conversation(conversation_id, model);
     ASSERT_FALSE(get_res.ok());
-    ASSERT_EQ(get_res.code(), 404);
+    ASSERT_EQ(get_res.code(), 404u);
     ASSERT_EQ(get_res.error(), "Conversation not found");
 
     ConversationManager::get_instance()._set_ttl_offset(0);
@@ -238,7 +242,7 @@ TEST_F(ConversationTest, TestInvalidConversationCollection) {
     auto coll = collectionManager.create_collection(schema_json).get();
     auto res = ConversationManager::get_instance().validate_conversation_store_schema(coll);
     ASSERT_FALSE(res.ok());
-    ASSERT_EQ(res.code(), 400);
+    ASSERT_EQ(res.code(), 400u);
     ASSERT_EQ(res.error(), "Schema is missing `conversation_id` field");
 }
 
@@ -256,7 +260,7 @@ TEST_F(ConversationTest, TestGettingFullConversation) {
 
     auto conversation_history = conversation_history_op.get();
     ASSERT_TRUE(conversation_history["conversation"].is_array());
-    ASSERT_EQ(conversation_history["conversation"].size(), 2);
+    ASSERT_EQ(conversation_history["conversation"].size(), size_t{2});
     ASSERT_EQ(conversation_history["conversation"][0]["user"], question);
     ASSERT_EQ(conversation_history["conversation"][1]["assistant"], answer);
     ASSERT_TRUE(conversation_history["last_updated"].is_number());
@@ -277,7 +281,7 @@ TEST_F(ConversationTest, TestGettingFullConversation) {
 
     conversation_history = conversation_history_op.get();
     ASSERT_TRUE(conversation_history["conversation"].is_array());
-    ASSERT_EQ(conversation_history["conversation"].size(), 4);
+    ASSERT_EQ(conversation_history["conversation"].size(), size_t{4});
     ASSERT_EQ(conversation_history["conversation"][0]["user"], "What is the capital of France?");
     ASSERT_EQ(conversation_history["conversation"][1]["assistant"], "The capital of France is Paris.");
     ASSERT_EQ(conversation_history["conversation"][2]["user"], "What is the capital of Germany?");

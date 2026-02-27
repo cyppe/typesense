@@ -180,7 +180,8 @@ void ids_t::upsert(void*& obj, uint32_t id) {
             return;
         }
 
-        if((list->capacity + extra_capacity_required) > COMPACT_LIST_THRESHOLD_LENGTH) {
+        const int64_t compact_threshold = static_cast<int64_t>(COMPACT_LIST_THRESHOLD_LENGTH);
+        if((static_cast<int64_t>(list->capacity) + extra_capacity_required) > compact_threshold) {
             // we have to convert to a full posting list
             id_list_t* full_list = list->to_full_ids_list();
             free(list);
@@ -441,4 +442,3 @@ void ids_t::block_intersector_t::split_lists(size_t concurrency,
         curr_block = curr_block->next;
     }
 }
-

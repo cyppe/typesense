@@ -5,20 +5,23 @@
 #include <algorithm>
 #include <collection_manager.h>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionNestedFieldsTest : public ::testing::Test {
 protected:
     Store* store;
     CollectionManager& collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     std::vector <std::string> query_fields;
     std::vector <sort_by> sort_fields;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_nested";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf " + state_dir_path + " && mkdir -p " + state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_nested");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -32,6 +35,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -66,7 +70,7 @@ TEST_F(CollectionNestedFieldsTest, FlattenJSONObject) {
     std::vector<field> flattened_fields;
     nlohmann::json doc = nlohmann::json::parse(json_str);
     ASSERT_TRUE(field::flatten_doc(doc, get_nested_map(nested_fields), {}, false, flattened_fields).ok());
-    ASSERT_EQ(5, flattened_fields.size());
+    ASSERT_EQ(size_t{5}, flattened_fields.size());
 
     for(const auto& f: flattened_fields) {
         ASSERT_TRUE(f.is_array());
@@ -226,7 +230,7 @@ TEST_F(CollectionNestedFieldsTest, TestNestedArrayField) {
     std::vector<field> flattened_fields;
     nlohmann::json doc = nlohmann::json::parse(json_str);
     ASSERT_TRUE(field::flatten_doc(doc, get_nested_map(nested_fields), {}, false, flattened_fields).ok());
-    ASSERT_EQ(5, flattened_fields.size());
+    ASSERT_EQ(size_t{5}, flattened_fields.size());
 
     for(const auto& f: flattened_fields) {
         ASSERT_TRUE(f.is_array());
@@ -242,7 +246,7 @@ TEST_F(CollectionNestedFieldsTest, TestNestedArrayField) {
     };
 
     ASSERT_TRUE(field::flatten_doc(doc, get_nested_map(nested_fields), {}, false, flattened_fields).ok());
-    ASSERT_EQ(5, flattened_fields.size());
+    ASSERT_EQ(size_t{5}, flattened_fields.size());
 
     for(const auto& f: flattened_fields) {
         if(StringUtils::begins_with(f.name, "employees.details")) {
@@ -262,7 +266,7 @@ TEST_F(CollectionNestedFieldsTest, TestNestedArrayField) {
     };
 
     ASSERT_TRUE(field::flatten_doc(doc, get_nested_map(nested_fields), {}, false, flattened_fields).ok());
-    ASSERT_EQ(3, flattened_fields.size());
+    ASSERT_EQ(size_t{3}, flattened_fields.size());
 
     std::sort(flattened_fields.begin(), flattened_fields.end(), [](field& a, field& b) {
         return a.name < b.name;
@@ -319,12 +323,12 @@ TEST_F(CollectionNestedFieldsTest, FlattenStoredDoc) {
     std::vector<field> flattened_fields;
     field::flatten_doc(stored_doc, schema, {}, true, flattened_fields);
 
-    ASSERT_EQ(3, stored_doc[".flat"].size());
-    ASSERT_EQ(7, stored_doc.size());
+    ASSERT_EQ(size_t{3}, stored_doc[".flat"].size());
+    ASSERT_EQ(size_t{7}, stored_doc.size());
 
-    ASSERT_EQ(1, stored_doc.count("employees.num"));
-    ASSERT_EQ(1, stored_doc.count("details.name"));
-    ASSERT_EQ(1, stored_doc.count("details.year"));
+    ASSERT_EQ(size_t{1}, stored_doc.count("employees.num"));
+    ASSERT_EQ(size_t{1}, stored_doc.count("details.name"));
+    ASSERT_EQ(size_t{1}, stored_doc.count("details.year"));
 }
 
 TEST_F(CollectionNestedFieldsTest, CompactNestedFields) {
@@ -361,15 +365,15 @@ TEST_F(CollectionNestedFieldsTest, CompactNestedFields) {
     schema.emplace("primary_address.street", field("primary_address.street", field_types::STRING, true));
 
     field::compact_nested_fields(schema);
-    ASSERT_EQ(2, schema.size());
-    ASSERT_EQ(1, schema.count("primary_address"));
-    ASSERT_EQ(1, schema.count("location_addresses"));
+    ASSERT_EQ(size_t{2}, schema.size());
+    ASSERT_EQ(size_t{1}, schema.count("primary_address"));
+    ASSERT_EQ(size_t{1}, schema.count("location_addresses"));
 
     std::vector<field> flattened_fields;
     field::flatten_doc(stored_doc, schema, {}, true, flattened_fields);
 
-    ASSERT_EQ(2, stored_doc["location_addresses.city"].size());
-    ASSERT_EQ(2, stored_doc["location_addresses.street"].size());
+    ASSERT_EQ(size_t{2}, stored_doc["location_addresses.city"].size());
+    ASSERT_EQ(size_t{2}, stored_doc["location_addresses.street"].size());
 }
 
 TEST_F(CollectionNestedFieldsTest, SearchOnFieldsOnWildcardSchema) {
@@ -425,13 +429,13 @@ TEST_F(CollectionNestedFieldsTest, SearchOnFieldsOnWildcardSchema) {
         }
       })"_json;
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ(highlight_doc.dump(), results["hits"][0]["highlight"].dump());
 
     // search both simply nested and deeply nested array-of-objects
     results = coll1->search("electrician commerce", {"employees", "locations"}, "", {}, sort_fields,
                                  {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ(doc, results["hits"][0]["document"]);
 
     highlight_doc = R"({
@@ -520,18 +524,18 @@ TEST_F(CollectionNestedFieldsTest, SearchOnFieldsOnWildcardSchema) {
     })"_json;
 
     // ensure that flat fields are not returned in response
-    ASSERT_EQ(0, results["hits"][0].count(".flat"));
-    ASSERT_EQ(0, results["hits"][0].count("employees.tags"));
+    ASSERT_EQ(size_t{0}, results["hits"][0].count(".flat"));
+    ASSERT_EQ(size_t{0}, results["hits"][0].count("employees.tags"));
 
     // raw document in the store will not have the .flat meta key or actual flat fields
     nlohmann::json raw_doc;
     coll1->get_document_from_store(0, raw_doc, true);
-    ASSERT_EQ(0, raw_doc.count(".flat"));
-    ASSERT_EQ(0, raw_doc.count("employees.tags"));
-    ASSERT_EQ(4, raw_doc.size());
+    ASSERT_EQ(size_t{0}, raw_doc.count(".flat"));
+    ASSERT_EQ(size_t{0}, raw_doc.count("employees.tags"));
+    ASSERT_EQ(size_t{4}, raw_doc.size());
 
     ASSERT_EQ(highlight_doc.dump(), results["hits"][0]["highlight"].dump());
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
 
     // after update also the flat fields or meta should not be present on disk
     doc["employees"]["tags"][0] = "senior plumber 2";
@@ -540,14 +544,14 @@ TEST_F(CollectionNestedFieldsTest, SearchOnFieldsOnWildcardSchema) {
 
     raw_doc.clear();
     coll1->get_document_from_store(0, raw_doc, true);
-    ASSERT_EQ(0, raw_doc.count(".flat"));
-    ASSERT_EQ(0, raw_doc.count("employees.tags"));
-    ASSERT_EQ(4, raw_doc.size());
+    ASSERT_EQ(size_t{0}, raw_doc.count(".flat"));
+    ASSERT_EQ(size_t{0}, raw_doc.count("employees.tags"));
+    ASSERT_EQ(size_t{4}, raw_doc.size());
 
     // search specific nested fields, only matching field is highlighted by default
     results = coll1->search("one shoe", {"locations.address.street", "employees.tags"}, "", {}, sort_fields,
                             {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ(doc, results["hits"][0]["document"]);
 
     highlight_doc = R"({
@@ -574,7 +578,7 @@ TEST_F(CollectionNestedFieldsTest, SearchOnFieldsOnWildcardSchema) {
     })"_json;
 
     ASSERT_EQ(highlight_doc.dump(), results["hits"][0]["highlight"].dump());
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
 
     // try to search nested fields that don't exist
     auto res_op = coll1->search("one shoe", {"locations.address.str"}, "", {}, sort_fields,
@@ -615,15 +619,15 @@ TEST_F(CollectionNestedFieldsTest, IncludeExcludeFieldsPruning) {
     auto doc = nlohmann::json::parse(doc_str);
 
     Collection::prune_doc(doc, tsl::htrie_set<char>(), {"one_obj_arr.foo"});
-    ASSERT_EQ(1, doc.count("one_obj_arr"));
-    ASSERT_EQ(1, doc["one_obj_arr"].size());
+    ASSERT_EQ(size_t{1}, doc.count("one_obj_arr"));
+    ASSERT_EQ(size_t{1}, doc["one_obj_arr"].size());
 
     // handle non-existing exclude field
     doc = nlohmann::json::parse(doc_str);
     Collection::prune_doc(doc, {"employees.num", "employees.tags"}, {"foobar"});
-    ASSERT_EQ(1, doc.size());
-    ASSERT_EQ(1, doc.count("employees"));
-    ASSERT_EQ(2, doc["employees"].size());
+    ASSERT_EQ(size_t{1}, doc.size());
+    ASSERT_EQ(size_t{1}, doc.count("employees"));
+    ASSERT_EQ(size_t{2}, doc["employees"].size());
 
     // select a specific field within nested array object
     doc = nlohmann::json::parse(doc_str);
@@ -688,9 +692,9 @@ TEST_F(CollectionNestedFieldsTest, IncludeFieldsSearch) {
                                  token_ordering::FREQUENCY, {true}, 10, {"name.first"},
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(1, results["hits"][0]["document"].size());
-    ASSERT_EQ(1, results["hits"][0]["document"].count("name"));
-    ASSERT_EQ(1, results["hits"][0]["document"]["name"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"].count("name"));
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["name"].size());
 }
 
 TEST_F(CollectionNestedFieldsTest, HighlightNestedFieldFully) {
@@ -720,7 +724,7 @@ TEST_F(CollectionNestedFieldsTest, HighlightNestedFieldFully) {
                                  token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "locations.address").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     auto highlight_doc = R"({
       "locations":[
@@ -796,7 +800,7 @@ TEST_F(CollectionNestedFieldsTest, HighlightNestedFieldFully) {
     })"_json;
 
     ASSERT_EQ(highlight_doc.dump(), results["hits"][0]["highlight"].dump());
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
 
     // repeating token
 
@@ -804,7 +808,7 @@ TEST_F(CollectionNestedFieldsTest, HighlightNestedFieldFully) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "locations.address").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     highlight_doc = R"({
       "locations":[
@@ -880,7 +884,7 @@ TEST_F(CollectionNestedFieldsTest, HighlightNestedFieldFully) {
     })"_json;
 
     ASSERT_EQ(highlight_doc.dump(), results["hits"][0]["highlight"].dump());
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
 
     // nested array of array, highlighting parent of searched nested field
     results = coll1->search("shoes", {"locations.address.products"}, "", {}, sort_fields, {0}, 10, 1,
@@ -889,7 +893,7 @@ TEST_F(CollectionNestedFieldsTest, HighlightNestedFieldFully) {
                             20, {}, {}, {}, 0, "<mark>", "</mark>", {}, 1000, true, false, true,
                             "locations.address").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     highlight_doc = R"({
       "locations":[
@@ -1164,11 +1168,11 @@ TEST_F(CollectionNestedFieldsTest, FieldsWithExplicitSchema) {
     Collection* coll1 = op.get();
 
     nlohmann::json coll_summary = coll1->get_summary_json();
-    ASSERT_EQ(1, coll_summary.count("enable_nested_fields"));
+    ASSERT_EQ(size_t{1}, coll_summary.count("enable_nested_fields"));
 
     for(auto& f: coll_summary["fields"]) {
-        ASSERT_EQ(0, f.count(fields::nested));
-        ASSERT_EQ(0, f.count(fields::nested_array));
+        ASSERT_EQ(size_t{0}, f.count(fields::nested));
+        ASSERT_EQ(size_t{0}, f.count(fields::nested_array));
     }
 
     auto doc = R"({
@@ -1244,7 +1248,7 @@ TEST_F(CollectionNestedFieldsTest, FieldsWithExplicitSchema) {
       ]
     })"_json;
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ(snippet_doc.dump(), results["hits"][0]["highlight"].dump());
 
     results = coll1->search("fix", {"company.name"},
@@ -1252,7 +1256,7 @@ TEST_F(CollectionNestedFieldsTest, FieldsWithExplicitSchema) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // explicit nested array field (locations.address.street)
     schema = R"({
@@ -1277,7 +1281,7 @@ TEST_F(CollectionNestedFieldsTest, FieldsWithExplicitSchema) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     snippet_doc = R"({
       "locations": [
@@ -1327,7 +1331,7 @@ TEST_F(CollectionNestedFieldsTest, FieldsWithExplicitSchema) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     snippet_doc = R"({
       "locations": [
@@ -1371,7 +1375,7 @@ TEST_F(CollectionNestedFieldsTest, FieldsWithExplicitSchema) {
 
     // check fields and their properties
     auto coll_fields = coll1->get_fields();
-    ASSERT_EQ(6, coll_fields.size());
+    ASSERT_EQ(size_t{6}, coll_fields.size());
 
     for(size_t i = 0; i < coll_fields.size(); i++) {
         auto& coll_field = coll_fields[i];
@@ -1389,7 +1393,7 @@ TEST_F(CollectionNestedFieldsTest, FieldsWithExplicitSchema) {
                             "", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // use remove_if_found API
     coll2->remove_if_found(0);
@@ -1397,7 +1401,7 @@ TEST_F(CollectionNestedFieldsTest, FieldsWithExplicitSchema) {
                             "", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, ExplicitSchemaOptionalFieldValidation) {
@@ -1456,7 +1460,7 @@ TEST_F(CollectionNestedFieldsTest, ExplicitSchemaOptionalFieldValidation) {
 
     // check fields and their properties
     auto coll_fields = coll1->get_fields();
-    ASSERT_EQ(6, coll_fields.size());
+    ASSERT_EQ(size_t{6}, coll_fields.size());
     for(auto& coll_field : coll_fields) {
         ASSERT_TRUE(coll_field.optional);
     }
@@ -1515,7 +1519,7 @@ TEST_F(CollectionNestedFieldsTest, NestedStringArrayHighlight) {
                                  token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("he did not receive <mark>grades</mark> for the courses.",
               results["hits"][0]["highlight"]["passages"][0]["text"]["snippet"].get<std::string>());
 }
@@ -1567,7 +1571,7 @@ TEST_F(CollectionNestedFieldsTest, OptionalNestedOptionalOjectArrStringField) {
                                  token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, OptionalNestedNonOptionalOjectArrStringField) {
@@ -1619,7 +1623,7 @@ TEST_F(CollectionNestedFieldsTest, OptionalNestedNonOptionalOjectArrStringField)
                                  token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, RequiredNonIndexNestedField) {
@@ -1667,7 +1671,7 @@ TEST_F(CollectionNestedFieldsTest, UnindexedNestedFieldShouldNotClutterSchema) {
     ASSERT_TRUE(add_op.ok());
 
     // child fields should not become part of schema
-    ASSERT_EQ(1, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_fields().size());
 }
 
 TEST_F(CollectionNestedFieldsTest, UnindexedNonOptionalFieldShouldBeAllowed) {
@@ -1691,7 +1695,7 @@ TEST_F(CollectionNestedFieldsTest, UnindexedNonOptionalFieldShouldBeAllowed) {
     ASSERT_TRUE(add_op.ok());
 
     // child fields should not become part of schema
-    ASSERT_EQ(1, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_fields().size());
 }
 
 TEST_F(CollectionNestedFieldsTest, SortByNestedField) {
@@ -1728,8 +1732,8 @@ TEST_F(CollectionNestedFieldsTest, SortByNestedField) {
                                  token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1739,8 +1743,8 @@ TEST_F(CollectionNestedFieldsTest, SortByNestedField) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1767,8 +1771,8 @@ TEST_F(CollectionNestedFieldsTest, SortByNestedField) {
                              token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                              spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1778,8 +1782,8 @@ TEST_F(CollectionNestedFieldsTest, SortByNestedField) {
                             token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 }
@@ -1805,7 +1809,7 @@ TEST_F(CollectionNestedFieldsTest, OnlyExplcitSchemaFieldMustBeIndexedInADoc) {
     auto create_op = coll1->add(doc1.dump(), CREATE);
     ASSERT_TRUE(create_op.ok());
     auto fs = coll1->get_fields();
-    ASSERT_EQ(2, coll1->get_fields().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
 }
 
 TEST_F(CollectionNestedFieldsTest, VerifyDisableOfNestedFields) {
@@ -1828,7 +1832,7 @@ TEST_F(CollectionNestedFieldsTest, VerifyDisableOfNestedFields) {
 
     ASSERT_TRUE(coll1->add(doc1.dump(), CREATE).ok());
     auto fs = coll1->get_fields();
-    ASSERT_EQ(3, coll1->get_fields().size());
+    ASSERT_EQ(size_t{3}, coll1->get_fields().size());
 
     // explicit schema
     schema = R"({
@@ -1845,7 +1849,7 @@ TEST_F(CollectionNestedFieldsTest, VerifyDisableOfNestedFields) {
 
     ASSERT_TRUE(coll2->add(doc1.dump(), CREATE).ok());
     fs = coll2->get_fields();
-    ASSERT_EQ(2, coll2->get_fields().size());
+    ASSERT_EQ(size_t{2}, coll2->get_fields().size());
 }
 
 TEST_F(CollectionNestedFieldsTest, ExplicitDotSeparatedFieldsShouldHavePrecendence) {
@@ -1871,34 +1875,34 @@ TEST_F(CollectionNestedFieldsTest, ExplicitDotSeparatedFieldsShouldHavePrecenden
 
     ASSERT_TRUE(coll1->add(doc1.dump(), CREATE).ok());
     auto fs = coll1->get_fields();
-    ASSERT_EQ(6, coll1->get_fields().size());
+    ASSERT_EQ(size_t{6}, coll1->get_fields().size());
 
     // simple nested object
     auto results = coll1->search("*", {}, "company.num_employees: 2000", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "company.num_employees: 1000", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // nested array object
     results = coll1->search("foo", {"details.name"}, "", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("bar", {"details.name"}, "", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // nested simple array
     results = coll1->search("*", {}, "company.ids: 10", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "company.ids: 1", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // WITH EXPLICIT SCHEMA
 
@@ -1929,29 +1933,29 @@ TEST_F(CollectionNestedFieldsTest, ExplicitDotSeparatedFieldsShouldHavePrecenden
     // simple nested object
     results = coll2->search("*", {}, "company.num_employees: 2000", {}, sort_fields, {0}, 10, 1,
                                  token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll2->search("*", {}, "company.num_employees: 1000", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // nested array object
     results = coll2->search("foo", {"details.name"}, "", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll2->search("bar", {"details.name"}, "", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // nested simple array
     results = coll2->search("*", {}, "company.ids: 10", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll2->search("*", {}, "company.ids: 1", {}, sort_fields, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, NestedFieldWithExplicitWeight) {
@@ -1979,7 +1983,7 @@ TEST_F(CollectionNestedFieldsTest, NestedFieldWithExplicitWeight) {
                                  spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "category", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {1}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, ObjectArrayAllowEmpty) {
@@ -2034,11 +2038,11 @@ TEST_F(CollectionNestedFieldsTest, NestedFieldWithGeopointArray) {
     ASSERT_TRUE(coll1->add(doc1.dump(), CREATE).ok());
 
     auto results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "addresses.geoPoint: (12.911, 23.5, 1 mi)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // with nested geopoint array
 
@@ -2048,7 +2052,7 @@ TEST_F(CollectionNestedFieldsTest, NestedFieldWithGeopointArray) {
 
     ASSERT_TRUE(coll1->add(doc2.dump(), CREATE).ok());
     results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
 
     // simply nested geopoint array
 
@@ -2058,7 +2062,7 @@ TEST_F(CollectionNestedFieldsTest, NestedFieldWithGeopointArray) {
 
     ASSERT_TRUE(coll1->add(doc3.dump(), CREATE).ok());
     results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
 
     // simply nested geopoint
     // this technically cannot be allowed but it's really tricky to detect so we allow
@@ -2135,11 +2139,11 @@ TEST_F(CollectionNestedFieldsTest, NestedFieldWithGeopoint) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "address.geoPoint: (19.07, 72.882, 1 mi)",
                             {}, {}, {0}, 10, 1, FREQUENCY).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // data validation
     //with integer values
@@ -2200,8 +2204,8 @@ TEST_F(CollectionNestedFieldsTest, NestedFieldWithParentAndChildSchema) {
     Collection* coll1 = op.get();
 
     // only parent field should be present
-    ASSERT_EQ(1, coll1->get_nested_fields().size());
-    ASSERT_EQ(1, coll1->get_nested_fields().count("addresses"));
+    ASSERT_EQ(size_t{1}, coll1->get_nested_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_nested_fields().count("addresses"));
 
     // with children after object field
     schema = R"({
@@ -2216,8 +2220,8 @@ TEST_F(CollectionNestedFieldsTest, NestedFieldWithParentAndChildSchema) {
     op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
     Collection* coll2 = op.get();
-    ASSERT_EQ(1, coll2->get_nested_fields().size());
-    ASSERT_EQ(1, coll2->get_nested_fields().count("addresses"));
+    ASSERT_EQ(size_t{1}, coll2->get_nested_fields().size());
+    ASSERT_EQ(size_t{1}, coll2->get_nested_fields().count("addresses"));
 
     // only object in schema
     schema = R"({
@@ -2235,8 +2239,8 @@ TEST_F(CollectionNestedFieldsTest, NestedFieldWithParentAndChildSchema) {
     auto doc1 = R"({"addresses": [{"street": "foobar"}]})"_json;
     auto add_op = coll1->add(doc1.dump(), CREATE);
 
-    ASSERT_EQ(1, coll3->get_nested_fields().size());
-    ASSERT_EQ(1, coll3->get_nested_fields().count("addresses"));
+    ASSERT_EQ(size_t{1}, coll3->get_nested_fields().size());
+    ASSERT_EQ(size_t{1}, coll3->get_nested_fields().count("addresses"));
 }
 
 TEST_F(CollectionNestedFieldsTest, GroupByOnNestedFieldsWithWildcardSchema) {
@@ -2273,21 +2277,21 @@ TEST_F(CollectionNestedFieldsTest, GroupByOnNestedFieldsWithWildcardSchema) {
                                  spp::sparse_hash_set<std::string>(), spp::sparse_hash_set<std::string>(), 10, "", 30,
                                  5, "", 10, {}, {}, {"education.name"}, 2).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["grouped_hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"].size());
 
-    ASSERT_EQ(1, results["grouped_hits"][0]["group_key"].size());
-    ASSERT_EQ(2, results["grouped_hits"][0]["group_key"][0].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][0]["group_key"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][0]["group_key"][0].size());
     ASSERT_EQ("X High School", results["grouped_hits"][0]["group_key"][0][0].get<std::string>());
     ASSERT_EQ("Z University", results["grouped_hits"][0]["group_key"][0][1].get<std::string>());
-    ASSERT_EQ(1, results["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][0]["hits"].size());
     ASSERT_EQ("1", results["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(1, results["grouped_hits"][1]["group_key"].size());
-    ASSERT_EQ(2, results["grouped_hits"][1]["group_key"][0].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][1]["group_key"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][1]["group_key"][0].size());
     ASSERT_EQ("X High School", results["grouped_hits"][1]["group_key"][0][0].get<std::string>());
     ASSERT_EQ("Y University", results["grouped_hits"][1]["group_key"][0][1].get<std::string>());
-    ASSERT_EQ(1, results["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("0", results["grouped_hits"][1]["hits"][0]["document"]["id"].get<std::string>());
 
     // group on plain nested field
@@ -2295,19 +2299,19 @@ TEST_F(CollectionNestedFieldsTest, GroupByOnNestedFieldsWithWildcardSchema) {
                             spp::sparse_hash_set<std::string>(), spp::sparse_hash_set<std::string>(), 10, "", 30,
                             5, "", 10, {}, {}, {"employee.num"}, 2).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["grouped_hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"].size());
 
-    ASSERT_EQ(1, results["grouped_hits"][0]["group_key"].size());
-    ASSERT_EQ(1, results["grouped_hits"][0]["group_key"][0].size());
-    ASSERT_EQ(1000, results["grouped_hits"][0]["group_key"][0].get<size_t>());
-    ASSERT_EQ(1, results["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][0]["group_key"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][0]["group_key"][0].size());
+    ASSERT_EQ(size_t{1000}, results["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][0]["hits"].size());
     ASSERT_EQ("1", results["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(1, results["grouped_hits"][1]["group_key"].size());
-    ASSERT_EQ(1, results["grouped_hits"][1]["group_key"][0].size());
-    ASSERT_EQ(5000, results["grouped_hits"][1]["group_key"][0].get<size_t>());
-    ASSERT_EQ(1, results["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][1]["group_key"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][1]["group_key"][0].size());
+    ASSERT_EQ(size_t{5000}, results["grouped_hits"][1]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("0", results["grouped_hits"][1]["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -2335,10 +2339,10 @@ TEST_F(CollectionNestedFieldsTest, WildcardWithExplicitSchema) {
     ASSERT_TRUE(coll1->add(doc1.dump(), CREATE).ok());
 
     auto results = coll1->search("*", {}, "company.id: 1000", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "studies.year: 1997", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, DynamicFieldWithExplicitSchema) {
@@ -2362,7 +2366,7 @@ TEST_F(CollectionNestedFieldsTest, DynamicFieldWithExplicitSchema) {
     ASSERT_TRUE(coll1->add(doc1.dump(), CREATE).ok());
 
     auto field_vec = coll1->get_fields();
-    ASSERT_EQ(3, field_vec.size());
+    ASSERT_EQ(size_t{3}, field_vec.size());
     ASSERT_EQ(field_types::FLOAT, field_vec[2].type);
 
     // with only explicit nested dynamic type
@@ -2381,7 +2385,7 @@ TEST_F(CollectionNestedFieldsTest, DynamicFieldWithExplicitSchema) {
     ASSERT_TRUE(coll2->add(doc1.dump(), CREATE).ok());
 
     field_vec = coll2->get_fields();
-    ASSERT_EQ(4, field_vec.size());
+    ASSERT_EQ(size_t{4}, field_vec.size());
     ASSERT_EQ(field_types::FLOAT, field_vec[3].type);
 }
 
@@ -2428,9 +2432,9 @@ TEST_F(CollectionNestedFieldsTest, UpdateOfNestFields) {
     ASSERT_TRUE(coll1->add(doc_update.dump(), UPDATE).ok());
 
     auto results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(6, results["hits"][0]["document"].size());
-    ASSERT_EQ(2, results["hits"][0]["document"]["brand"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"]["brand"].size());
     ASSERT_EQ("Rempel", results["hits"][0]["document"]["brand"]["name"].get<std::string>());
 
     // action=emplace
@@ -2444,9 +2448,9 @@ TEST_F(CollectionNestedFieldsTest, UpdateOfNestFields) {
     ASSERT_TRUE(coll1->add(doc_update.dump(), EMPLACE).ok());
 
     results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(6, results["hits"][0]["document"].size());
-    ASSERT_EQ(2, results["hits"][0]["document"]["brand"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"]["brand"].size());
     ASSERT_EQ("The Rempel", results["hits"][0]["document"]["brand"]["name"].get<std::string>());
 
     // action=upsert requires the full document
@@ -2473,9 +2477,9 @@ TEST_F(CollectionNestedFieldsTest, UpdateOfNestFields) {
     add_op = coll1->add(doc_update.dump(), UPSERT);
     ASSERT_TRUE(add_op.ok());
     results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());
-    ASSERT_EQ(2, results["hits"][0]["document"]["brand"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"]["brand"].size());
     ASSERT_EQ("Xomel", results["hits"][0]["document"]["brand"]["name"].get<std::string>());
 
     // upsert with brand.name missing is allowed because it's optional
@@ -2490,10 +2494,10 @@ TEST_F(CollectionNestedFieldsTest, UpdateOfNestFields) {
     add_op = coll1->add(doc_update.dump(), UPSERT);
     ASSERT_TRUE(add_op.ok());
     results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());
-    ASSERT_EQ(1, results["hits"][0]["document"]["brand"].size());
-    ASSERT_EQ(34002, results["hits"][0]["document"]["brand"]["id"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["brand"].size());
+    ASSERT_EQ(size_t{34002}, results["hits"][0]["document"]["brand"]["id"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, UpdateOfNestFieldsWithWildcardSchema) {
@@ -2525,22 +2529,22 @@ TEST_F(CollectionNestedFieldsTest, UpdateOfNestFieldsWithWildcardSchema) {
     ASSERT_TRUE(coll1->add(doc_update.dump(), UPDATE).ok());
 
     auto results = coll1->search("*", {}, "company.year: 2000", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "studies.year: 1967", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "studies.year: 1978", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("alpha", {"studies.name"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("beta", {"studies.name"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "company.founded: 1976", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // try removing fields via upsert, dropping "company.year"
     doc_update = R"({
@@ -2551,24 +2555,24 @@ TEST_F(CollectionNestedFieldsTest, UpdateOfNestFieldsWithWildcardSchema) {
     ASSERT_TRUE(coll1->add(doc_update.dump(), UPSERT).ok());
 
     results = coll1->search("*", {}, "company.year: 2000", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "studies.year: 1967", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "studies.year: 1978", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "company.founded: 1976", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());
-    ASSERT_EQ(2, results["hits"][0]["document"]["company"].size());
-    ASSERT_EQ(4000, results["hits"][0]["document"]["company"]["num_employees"].get<size_t>());
-    ASSERT_EQ(1976, results["hits"][0]["document"]["company"]["founded"].get<size_t>());
-    ASSERT_EQ(1, results["hits"][0]["document"]["studies"].size());
-    ASSERT_EQ(1, results["hits"][0]["document"]["studies"][0].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"]["company"].size());
+    ASSERT_EQ(size_t{4000}, results["hits"][0]["document"]["company"]["num_employees"].get<size_t>());
+    ASSERT_EQ(size_t{1976}, results["hits"][0]["document"]["company"]["founded"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["studies"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["studies"][0].size());
     ASSERT_EQ("College Alpha", results["hits"][0]["document"]["studies"][0]["name"].get<std::string>());
 
     // via update (should not remove, since document can be partial)
@@ -2580,13 +2584,13 @@ TEST_F(CollectionNestedFieldsTest, UpdateOfNestFieldsWithWildcardSchema) {
     ASSERT_TRUE(coll1->add(doc_update.dump(), UPDATE).ok());
 
     results = coll1->search("*", {}, "company.founded: 1976", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());
-    ASSERT_EQ(2, results["hits"][0]["document"]["company"].size());
-    ASSERT_EQ(2000, results["hits"][0]["document"]["company"]["num_employees"].get<size_t>());
-    ASSERT_EQ(1976, results["hits"][0]["document"]["company"]["founded"].get<size_t>());
-    ASSERT_EQ(1, results["hits"][0]["document"]["studies"].size());
-    ASSERT_EQ(1, results["hits"][0]["document"]["studies"][0].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"]["company"].size());
+    ASSERT_EQ(size_t{2000}, results["hits"][0]["document"]["company"]["num_employees"].get<size_t>());
+    ASSERT_EQ(size_t{1976}, results["hits"][0]["document"]["company"]["founded"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["studies"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["studies"][0].size());
     ASSERT_EQ("College Alpha", results["hits"][0]["document"]["studies"][0]["name"].get<std::string>());
 
     // via emplace (should not remove, since document can be partial)
@@ -2598,15 +2602,15 @@ TEST_F(CollectionNestedFieldsTest, UpdateOfNestFieldsWithWildcardSchema) {
     ASSERT_TRUE(coll1->add(doc_update.dump(), EMPLACE).ok());
 
     results = coll1->search("*", {}, "company.num_employees: 2000", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());
-    ASSERT_EQ(2, results["hits"][0]["document"]["company"].size());
-    ASSERT_EQ(2000, results["hits"][0]["document"]["company"]["num_employees"].get<size_t>());
-    ASSERT_EQ(1976, results["hits"][0]["document"]["company"]["founded"].get<size_t>());
-    ASSERT_EQ(1, results["hits"][0]["document"]["studies"].size());
-    ASSERT_EQ(2, results["hits"][0]["document"]["studies"][0].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"]["company"].size());
+    ASSERT_EQ(size_t{2000}, results["hits"][0]["document"]["company"]["num_employees"].get<size_t>());
+    ASSERT_EQ(size_t{1976}, results["hits"][0]["document"]["company"]["founded"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["studies"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"]["studies"][0].size());
     ASSERT_EQ("College Alpha", results["hits"][0]["document"]["studies"][0]["name"].get<std::string>());
-    ASSERT_EQ(1977, results["hits"][0]["document"]["studies"][0]["year"].get<size_t>());
+    ASSERT_EQ(size_t{1977}, results["hits"][0]["document"]["studies"][0]["year"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, NestedSchemaWithSingularType) {
@@ -2770,14 +2774,14 @@ TEST_F(CollectionNestedFieldsTest, ArrayOfObjectsFaceting) {
                             {0}, 10, 1, FREQUENCY, {false}).get();
 
     // facet count should be 2
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_EQ("Columbus", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
 
     ASSERT_EQ("Soda Springs", results["facet_counts"][0]["counts"][1]["value"].get<std::string>());
-    ASSERT_EQ(2, results["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][0]["counts"][1]["count"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, HighlightArrayInsideArrayOfObj) {
@@ -2804,8 +2808,8 @@ TEST_F(CollectionNestedFieldsTest, HighlightArrayInsideArrayOfObj) {
     ASSERT_TRUE(coll1->add(doc1.dump(), CREATE).ok());
 
     auto results = coll1->search("beta", {"studies"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     nlohmann::json highlight_meta_doc = R"({
       "studies": [
@@ -2896,7 +2900,7 @@ TEST_F(CollectionNestedFieldsTest, FieldsWithDotsButNotNested) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("beta", {"name.first"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("Alpha <mark>Beta</mark> Gamma",
               results["hits"][0]["highlight"]["name.first"]["snippet"].get<std::string>());
 }
@@ -2924,9 +2928,9 @@ TEST_F(CollectionNestedFieldsTest, NullValuesWithExplicitSchema) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("jack", {"name.first"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"][0]["document"].size());  // id, name
-    ASSERT_EQ(1, results["hits"][0]["document"]["name"].size());  // name.first
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"].size());  // id, name
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["name"].size());  // name.first
     ASSERT_EQ("Jack", results["hits"][0]["document"]["name"]["first"].get<std::string>());
 }
 
@@ -3017,9 +3021,9 @@ TEST_F(CollectionNestedFieldsTest, EmplaceWithNullValueOnOptionalField) {
 
     // try to fetch the document to see the stored value
     auto results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"][0]["document"].size());  // id, currency
-    ASSERT_EQ(0, results["hits"][0]["document"]["currency"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"].size());  // id, currency
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"]["currency"].size());
 }
 
 TEST_F(CollectionNestedFieldsTest, UpsertWithNullValueOnObjectlField) {
@@ -3046,12 +3050,12 @@ TEST_F(CollectionNestedFieldsTest, UpsertWithNullValueOnObjectlField) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(1, results["hits"][0]["document"]["status"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["status"].size());
 
     results = coll1->search("foo", {"status"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // upsert again with null value
     doc1 = R"({
@@ -3064,12 +3068,12 @@ TEST_F(CollectionNestedFieldsTest, UpsertWithNullValueOnObjectlField) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(0, results["hits"][0]["document"]["status"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"]["status"].size());
 
     results = coll1->search("foo", {"status"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, UpsertWithNullValueONestedField) {
@@ -3096,12 +3100,12 @@ TEST_F(CollectionNestedFieldsTest, UpsertWithNullValueONestedField) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(1, results["hits"][0]["document"]["status"].size());  // status.name
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["status"].size());  // status.name
 
     results = coll1->search("foo", {"status"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // upsert again with null value
     doc1 = R"({
@@ -3114,22 +3118,22 @@ TEST_F(CollectionNestedFieldsTest, UpsertWithNullValueONestedField) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(0, results["hits"][0]["document"]["status"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"]["status"].size());
 
     // searching, filtering and faceting should produce no hits
 
     results = coll1->search("foo", {"status"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "status.name: foo", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "", {"status.name"}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(0, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{0}, results["facet_counts"][0]["counts"].size());
 }
 
 TEST_F(CollectionNestedFieldsTest, UpdateWithNullValueONestedField) {
@@ -3156,12 +3160,12 @@ TEST_F(CollectionNestedFieldsTest, UpdateWithNullValueONestedField) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(1, results["hits"][0]["document"]["status"].size());  // status.name
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["status"].size());  // status.name
 
     results = coll1->search("foo", {"status"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // upsert again with null value
     doc1 = R"({
@@ -3174,22 +3178,22 @@ TEST_F(CollectionNestedFieldsTest, UpdateWithNullValueONestedField) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(0, results["hits"][0]["document"]["status"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"]["status"].size());
 
     // searching, filtering and faceting should produce no hits
 
     results = coll1->search("foo", {"status"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "status.name: foo", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "", {"status.name"}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(0, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{0}, results["facet_counts"][0]["counts"].size());
 }
 
 TEST_F(CollectionNestedFieldsTest, EmplaceWithNullValueObjectField) {
@@ -3222,9 +3226,9 @@ TEST_F(CollectionNestedFieldsTest, EmplaceWithNullValueObjectField) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("*", {}, "sale.type: EnglishAuction", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"][0]["document"].size());  // id, sale
-    ASSERT_EQ(1, results["hits"][0]["document"]["sale"].size());  // sale.type
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"].size());  // id, sale
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["sale"].size());  // sale.type
 
     // emplace with null parent object
     doc1 = R"({
@@ -3237,11 +3241,11 @@ TEST_F(CollectionNestedFieldsTest, EmplaceWithNullValueObjectField) {
 
     // filtering should produce no hits
     results = coll1->search("*", {}, "sale.type: EnglishAuction", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // emplace another value
@@ -3253,7 +3257,7 @@ TEST_F(CollectionNestedFieldsTest, EmplaceWithNullValueObjectField) {
     add_op = coll1->add(doc1.dump(), EMPLACE);
     ASSERT_TRUE(add_op.ok());
     results = coll1->search("*", {}, "sale.type: GermanAuction", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, EmplaceWithNullValueObjectFieldWithObjectSchema) {
@@ -3292,9 +3296,9 @@ TEST_F(CollectionNestedFieldsTest, EmplaceWithNullValueObjectFieldWithObjectSche
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("*", {}, "sale.type: EnglishAuction", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"][0]["document"].size());  // id, sale
-    ASSERT_EQ(1, results["hits"][0]["document"]["sale"].size());  // sale.type
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"].size());  // id, sale
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["sale"].size());  // sale.type
 
     // emplace with null parent object
     doc1 = R"({
@@ -3307,11 +3311,11 @@ TEST_F(CollectionNestedFieldsTest, EmplaceWithNullValueObjectFieldWithObjectSche
 
     // filtering should produce no hits
     results = coll1->search("*", {}, "sale.type: EnglishAuction", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // emplace another value
@@ -3323,10 +3327,10 @@ TEST_F(CollectionNestedFieldsTest, EmplaceWithNullValueObjectFieldWithObjectSche
     add_op = coll1->add(doc1.dump(), EMPLACE);
     ASSERT_TRUE(add_op.ok());
     results = coll1->search("*", {}, "sale.type: GermanAuction", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "sale.type: EnglishAuction", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, UpsertWithNullValueONestedArrayField) {
@@ -3353,13 +3357,13 @@ TEST_F(CollectionNestedFieldsTest, UpsertWithNullValueONestedArrayField) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(1, results["hits"][0]["document"]["statuses"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["statuses"].size());
     ASSERT_EQ("foo", results["hits"][0]["document"]["statuses"][0]["name"].get<std::string>());
 
     results = coll1->search("foo", {"statuses"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // upsert again with null value
     doc1 = R"({
@@ -3373,23 +3377,23 @@ TEST_F(CollectionNestedFieldsTest, UpsertWithNullValueONestedArrayField) {
 
     results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(1, results["hits"][0]["document"]["statuses"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["statuses"].size());
     ASSERT_TRUE(results["hits"][0]["document"]["statuses"][0]["name"].is_null());
 
     // searching, filtering & faceting should produce no hits
 
     results = coll1->search("foo", {"statuses.name"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "statuses.name: foo", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "", {"statuses.name"}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(0, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{0}, results["facet_counts"][0]["counts"].size());
 }
 
 TEST_F(CollectionNestedFieldsTest, UpdateWithNullValueONestedArrayField) {
@@ -3416,13 +3420,13 @@ TEST_F(CollectionNestedFieldsTest, UpdateWithNullValueONestedArrayField) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(1, results["hits"][0]["document"]["statuses"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["statuses"].size());
     ASSERT_EQ("foo", results["hits"][0]["document"]["statuses"][0]["name"].get<std::string>());
 
     results = coll1->search("foo", {"statuses"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // upsert again with null value
     doc1 = R"({
@@ -3436,22 +3440,22 @@ TEST_F(CollectionNestedFieldsTest, UpdateWithNullValueONestedArrayField) {
 
     results = coll1->search("alpha", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());  // id, title, status
-    ASSERT_EQ(1, results["hits"][0]["document"]["statuses"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());  // id, title, status
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["statuses"].size());
     ASSERT_TRUE(results["hits"][0]["document"]["statuses"][0]["name"].is_null());
 
     // searching, filtering & faceting should produce no hits
     results = coll1->search("foo", {"statuses.name"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "statuses.name: foo", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*", {}, "", {"statuses.name"}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(0, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{0}, results["facet_counts"][0]["counts"].size());
 }
 
 TEST_F(CollectionNestedFieldsTest, EmplaceWithMissingArrayValueOnOptionalField) {
@@ -3492,22 +3496,22 @@ TEST_F(CollectionNestedFieldsTest, EmplaceWithMissingArrayValueOnOptionalField) 
 
     // try to fetch the document to see the stored value
     auto results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"][0]["document"].size());  // id, currency
-    ASSERT_EQ(1, results["hits"][0]["document"]["currency"].size());
-    ASSERT_EQ(10000, results["hits"][0]["document"]["currency"][0]["us"].get<uint32_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"].size());  // id, currency
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"]["currency"].size());
+    ASSERT_EQ(uint32_t{10000}, results["hits"][0]["document"]["currency"][0]["us"].get<uint32_t>());
 
     // Try querying for `currency.eu` after reload
     // recreate collection manager to ensure that it restores the records from the disk backed store
     collectionManager.dispose();
     delete store;
 
-    store = new Store("/tmp/typesense_test/collection_nested");
+    store = new Store(state_dir_path);
     collectionManager.init(store, 1.0, "auth_key", quit);
     auto load_op = collectionManager.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
 
     ASSERT_TRUE(load_op.ok());
@@ -3516,7 +3520,7 @@ TEST_F(CollectionNestedFieldsTest, EmplaceWithMissingArrayValueOnOptionalField) 
     ASSERT_NE(nullptr, coll1);
 
     results = coll1->search("*", {}, "currency.eu: 12000", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, UpdateNestedDocument) {
@@ -3553,7 +3557,7 @@ TEST_F(CollectionNestedFieldsTest, UpdateNestedDocument) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("beta", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // emplace document partially
 
@@ -3566,7 +3570,7 @@ TEST_F(CollectionNestedFieldsTest, UpdateNestedDocument) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("gamma", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // update a sub-field of an object
     doc1 = R"({
@@ -3578,15 +3582,15 @@ TEST_F(CollectionNestedFieldsTest, UpdateNestedDocument) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("shaw", {"contributors"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("john", {"contributors.first_name"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // should not be able to find the old name
 
     results = coll1->search("galt", {"contributors"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, UpdateNestedDocumentAutoSchema) {
@@ -3621,7 +3625,7 @@ TEST_F(CollectionNestedFieldsTest, UpdateNestedDocumentAutoSchema) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("us", {"price.country"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, UpdateNestedDocumentWithOptionalNullValue) {
@@ -3659,7 +3663,7 @@ TEST_F(CollectionNestedFieldsTest, UpdateNestedDocumentWithOptionalNullValue) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("beta", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // emplace document partially
 
@@ -3673,13 +3677,13 @@ TEST_F(CollectionNestedFieldsTest, UpdateNestedDocumentWithOptionalNullValue) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("gamma", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // remove field with null value
     auto del_op = coll1->remove("0");
     ASSERT_TRUE(del_op.ok());
     results = coll1->search("gamma", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, ImproveErrorMessageForNestedArrayNumericalFields) {
@@ -3803,32 +3807,32 @@ TEST_F(CollectionNestedFieldsTest, HighlightArrayOfObjects) {
     auto results = coll1->search("james", {"details.name"}, "", {}, {}, {0}, 10, 1, FREQUENCY,
                                  {true}, 1, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["highlight"]["details"].size());
-    ASSERT_EQ(0, results["hits"][0]["highlight"]["details"][0].size());
-    ASSERT_EQ(1, results["hits"][0]["highlight"]["details"][1].size());
-    ASSERT_EQ(0, results["hits"][0]["highlight"]["details"][2].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["highlight"]["details"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlight"]["details"][0].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlight"]["details"][1].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlight"]["details"][2].size());
 
     results = coll1->search("james", {"details.name"}, "", {}, {}, {0}, 10, 1, FREQUENCY,
                             {true}, 1, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1}, 10000, true, false, true, "details.name").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(0, results["hits"][0]["highlight"]["details"][0].size());
-    ASSERT_EQ(1, results["hits"][0]["highlight"]["details"][1].size());
-    ASSERT_EQ(0, results["hits"][0]["highlight"]["details"][2].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlight"]["details"][0].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlight"]["details"][1].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlight"]["details"][2].size());
 
     results = coll1->search("james", {"details.name"}, "", {}, {}, {0}, 10, 1, FREQUENCY,
                             {true}, 1, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1}, 10000, true, false, true, "details").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"][0]["highlight"]["details"].size());
-    ASSERT_EQ(1, results["hits"][0]["highlight"]["details"][0].size());
-    ASSERT_EQ(1, results["hits"][0]["highlight"]["details"][1].size());
-    ASSERT_EQ(1, results["hits"][0]["highlight"]["details"][2].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["highlight"]["details"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlight"]["details"][0].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlight"]["details"][1].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlight"]["details"][2].size());
 }
 
 TEST_F(CollectionNestedFieldsTest, DeepNestedOptionalArrayValue) {
@@ -3903,7 +3907,7 @@ TEST_F(CollectionNestedFieldsTest, DeepNestedOptionalArrayValue) {
     auto results = coll1->search("naruto", {"items.nested_items.name"}, "", {}, {}, {0}, 10, 1, FREQUENCY,
                                  {true}, 1, spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, FloatInsideNestedObject) {
@@ -3951,7 +3955,7 @@ TEST_F(CollectionNestedFieldsTest, FloatInsideNestedObject) {
     ASSERT_TRUE(add_op.ok());
 
     auto fs = coll2->get_fields();
-    ASSERT_EQ(3, fs.size());
+    ASSERT_EQ(size_t{3}, fs.size());
 
     add_op = coll2->add(doc1.dump(), CREATE);
     ASSERT_TRUE(add_op.ok());
@@ -3990,7 +3994,7 @@ TEST_F(CollectionNestedFieldsTest, NestedFieldWithRegexName) {
     auto results = coll1->search("foobar", {"titles.en"}, "start_date.year: 2020", {}, {}, {2}, 10,
                                  1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionNestedFieldsTest, HighlightOnFlatFieldWithSnippeting) {

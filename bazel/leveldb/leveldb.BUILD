@@ -14,20 +14,21 @@
 # limitations under the License.
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
-load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 
-copy_file(
+genrule(
     name = "port_config_h",
-    src = "@//bazel/leveldb:port_config.h",
-    out = "port/port_config.h",
-    allow_symlink = True,
+    srcs = ["@//bazel/leveldb:port_config.h"],
+    outs = ["port/port_config.h"],
+    cmd = "cp $(location @//bazel/leveldb:port_config.h) $@",
+    cmd_bat = "copy /Y $(location @//bazel/leveldb:port_config.h) $@",
 )
 
-copy_file(
+genrule(
     name = "port_h",
-    src = "@//bazel/leveldb:port.h",
-    out = "port/port.h",
-    allow_symlink = True,
+    srcs = ["@//bazel/leveldb:port.h"],
+    outs = ["port/port.h"],
+    cmd = "cp $(location @//bazel/leveldb:port.h) $@",
+    cmd_bat = "copy /Y $(location @//bazel/leveldb:port.h) $@",
 )
 
 cc_library(
@@ -52,6 +53,7 @@ cc_library(
             "**/*_windows*",
             "db/leveldbutil.cc",
         ],
+        allow_empty = True,
     ),
     hdrs = glob(
         ["include/**/*.h"],

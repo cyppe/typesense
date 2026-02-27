@@ -79,8 +79,6 @@ struct negate_left_join_t {
     bool is_negate_join = false;
     size_t excluded_ids_size = 0;
     std::unique_ptr<uint32_t []> excluded_ids = nullptr;
-
-    negate_left_join_t() = default;
 };
 
 class Join {
@@ -120,7 +118,7 @@ public:
                                                                   std::vector<std::string>& exclude_fields_vec,
                                                                   std::vector<ref_include_exclude_fields>& ref_include_exclude_fields_vec);
 
-    [[nodiscard]] static bool merge_join_conditions(string& embedded_filter, string& query_filter);
+    [[nodiscard]] static bool merge_join_conditions(std::string& embedded_filter, std::string& query_filter);
 
     static Option<bool> single_value_filter_query(nlohmann::json& document, const std::string& field_name,
                                                   const std::string& ref_field_type, std::string& filter_value,

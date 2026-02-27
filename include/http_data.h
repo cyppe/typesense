@@ -61,7 +61,7 @@ struct http_res {
     }
 
     ~http_res() {
-        //LOG(INFO) << "~http_res " << this;
+        //TS_LOG(INFO) << "~http_res " << this;
     }
 
     void set_content(uint32_t status_code, const std::string& content_type_header, const std::string& body, const bool final) {
@@ -350,7 +350,7 @@ struct http_req {
 
     ~http_req() {
 
-        //LOG(INFO) << "~http_req " << this;
+        //TS_LOG(INFO) << "~http_req " << this;
         if(_req != nullptr) {
             Config& config = Config::get_instance();
 
@@ -390,7 +390,7 @@ struct http_req {
                 std::string full_url_path = metric_identifier + query_string;
 
                 // NOTE: we log the `body` ONLY for multi-search query
-                LOG(INFO) << "event=slow_request, time=" << ms_since_start << " ms"
+                TS_LOG(INFO) << "event=slow_request, time=" << ms_since_start << " ms"
                           << ", client_ip=" << client_ip << ", endpoint=" << full_url_path
                           << ", body=" << (is_multi_search_query ? body : "");
             }

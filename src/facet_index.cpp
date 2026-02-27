@@ -1,4 +1,5 @@
 #include "facet_index.h"
+#include "logger.h"
 #include <tokenizer.h>
 #include "string_utils.h"
 #include "array_utils.h"
@@ -78,7 +79,7 @@ void facet_index_t::insert(const std::string& field_name,
                     facet_count_node.value().count = ids_t::num_ids(fvalue_index_it->second.seq_ids);
                     facet_index.counts.insert(std::move(facet_count_node));
                 } else {
-                    LOG(ERROR) << "Wrong reference stored for facet " << fvalue.facet_value << " with facet_id " << facet_id;
+                    TS_LOG(ERROR) << "Wrong reference stored for facet " << fvalue.facet_value << " with facet_id " << facet_id;
                 }
             }
 
@@ -246,7 +247,7 @@ size_t facet_index_t::intersect(facet& a_facet, const field& facet_field,
     const auto& facet_index_map = facet_field_it->second.fvalue_seq_ids;
     const auto& counter_list = facet_field_it->second.counts;
 
-     //LOG(INFO) << "fvalue_seq_ids size " << facet_index_map.size() << " , counts size " << counter_list.size();
+     //TS_LOG(INFO) << "fvalue_seq_ids size " << facet_index_map.size() << " , counts size " << counter_list.size();
 
     // We look 2 * max_facet_count when keyword search / filtering is involved to ensure that we
     // try and pick the actual top facets by count.
@@ -319,7 +320,7 @@ size_t facet_index_t::intersect(facet& a_facet, const field& facet_field,
     if(sort_order.empty()) {
         for (auto facet_count_it = counter_list.begin(); facet_count_it != counter_list.end();
              ++facet_count_it) {
-            //LOG(INFO) << "checking ids in facet_value " << facet_count.facet_value << " having total count "
+            //TS_LOG(INFO) << "checking ids in facet_value " << facet_count.facet_value << " having total count "
             //           << facet_count.count << ", is_wildcard_no_filter_query: " << is_wildcard_no_filter_query;
 
             intersect_fn(facet_count_it);
@@ -469,7 +470,7 @@ bool facet_index_t::facet_value_exists(const std::string& field_name, const std:
     return facet_index.fvalue_seq_ids.find(fvalue) != facet_index.fvalue_seq_ids.end();
 }
 
-size_t facet_index_t::facet_val_num_ids(const string &field_name, const string &fvalue) {
+size_t facet_index_t::facet_val_num_ids(const std::string &field_name, const std::string &fvalue) {
     const auto facet_field_map_it = facet_field_map.find(field_name);
     if(facet_field_map_it == facet_field_map.end()) {
         return 0;
@@ -483,7 +484,7 @@ size_t facet_index_t::facet_val_num_ids(const string &field_name, const string &
     return seq_ids ?  ids_t::num_ids(seq_ids) : 0;
 }
 
-size_t facet_index_t::facet_node_count(const string &field_name, const string &fvalue) {
+size_t facet_index_t::facet_node_count(const std::string &field_name, const std::string &fvalue) {
     const auto facet_field_map_it = facet_field_map.find(field_name);
     if(facet_field_map_it == facet_field_map.end()) {
         return 0;
@@ -496,7 +497,7 @@ size_t facet_index_t::facet_node_count(const string &field_name, const string &f
     return facet_field_map_it->second.fvalue_seq_ids[fvalue].facet_count_it->count;
 }
 
-void facet_index_t::check_for_high_cardinality(const string& field_name, size_t total_num_docs) {
+void facet_index_t::check_for_high_cardinality(const std::string& field_name, size_t total_num_docs) {
     // high cardinality or sparse facet fields must be dropped from value facet index
     if(total_num_docs < 10*1000) {
         return ;
@@ -532,7 +533,7 @@ void facet_index_t::check_for_high_cardinality(const string& field_name, size_t 
 
         facet_field_map_it->second.counts.clear();
         facet_field_map_it->second.has_value_index = false;
-        //LOG(INFO) << "Dropped value index for field " << field_name;
+        //TS_LOG(INFO) << "Dropped value index for field " << field_name;
     }
 }
 

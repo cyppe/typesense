@@ -53,7 +53,7 @@ size_t sorted_array::append(uint32_t value) {
             in = new_location;
             size_bytes = (uint32_t) new_size;
 
-            //LOG(INFO) << "new_size: " << new_size;
+            //TS_LOG(INFO) << "new_size: " << new_size;
         }
 
         uint32_t new_length_bytes = for_append_sorted(in, length, value);
@@ -366,9 +366,9 @@ void sorted_array::binary_count_indices(const uint32_t *values, int low_vindex, 
         uint32_t in_index = lower_bound_search_bits(in+METADATA_OVERHEAD, low_index, high_index, base, bits,
                                                     values[pivot_vindex], &actual_value);
 
-        //LOG(INFO) << "pivot_vindex: " << pivot_vindex << ", values[pivot_vindex]: " << values[pivot_vindex];
+        //TS_LOG(INFO) << "pivot_vindex: " << pivot_vindex << ", values[pivot_vindex]: " << values[pivot_vindex];
         if(actual_value == values[pivot_vindex]) {
-            //LOG(INFO) << actual_value;
+            //TS_LOG(INFO) << actual_value;
             num_found++;
         }
 
@@ -387,9 +387,9 @@ void sorted_array::binary_count_indices(const uint32_t *values, int low_vindex, 
 
         uint32_t in_index = lower_bound_search(src, low_index, high_index, values[pivot_vindex], &actual_value);
 
-        //LOG(INFO) << "pivot_vindex: " << pivot_vindex << ", values[pivot_vindex]: " << values[pivot_vindex];
+        //TS_LOG(INFO) << "pivot_vindex: " << pivot_vindex << ", values[pivot_vindex]: " << values[pivot_vindex];
         if(actual_value == values[pivot_vindex]) {
-            //LOG(INFO) << actual_value;
+            //TS_LOG(INFO) << actual_value;
             num_found++;
         }
 

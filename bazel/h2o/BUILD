@@ -21,6 +21,7 @@ CMAKE_LINUX_CACHE_ENTRIES = dict(CMAKE_CACHE_ENTRIES.items() + {
 
 cmake(
     name = "h2o",
+    tags = ["manual"],
     build_args = ["-j8"],
     cache_entries = select({
         "@platforms//os:linux": CMAKE_LINUX_CACHE_ENTRIES,
@@ -33,11 +34,20 @@ cmake(
         "-DCMAKE_C_FLAGS=-DNDEBUG",
         "-DWITH_MRUBY=OFF",
         "-DWITH_CCACHE=OFF",
+        "-DWITH_IO_URING=OFF",
+        "-DWITH_AEGIS=OFF",
+        "-DWITH_ACME=OFF",
     ],
-    lib_source = "//:all_srcs",
-    out_lib_dir = "../h2o.build_tmpdir",
+    lib_source = ":all_srcs",
+    install = False,
     out_static_libs = ["libh2o-evloop.a"],
     targets = ["libh2o-evloop"],
+    postfix_script = """
+        mkdir -p $$INSTALLDIR/lib $$INSTALLDIR/include
+        cp $$BUILD_TMPDIR/libh2o-evloop.a $$INSTALLDIR/lib/libh2o-evloop.a
+        src_dir=$$(grep '^CMAKE_HOME_DIRECTORY:INTERNAL=' CMakeCache.txt | cut -d= -f2)
+        cp -r "$$src_dir/include/"* $$INSTALLDIR/include/
+    """,
     deps = [
         "@picotls_openssl",
         "@quicly",

@@ -138,7 +138,7 @@ Option<Collection*> CollectionManager::init_collection(const nlohmann::json & co
             auto res = EmbedderManager::get_instance().validate_and_init_model(model_config, num_dim);
             if(!res.ok()) {
                 const std::string& model_name = model_config["model_name"].get<std::string>();
-                LOG(ERROR) << "Error initializing model: " << model_name << ", error: " << res.error();
+                TS_LOG(ERROR) << "Error initializing model: " << model_name << ", error: " << res.error();
                 continue;
             }
 
@@ -146,7 +146,7 @@ Option<Collection*> CollectionManager::init_collection(const nlohmann::json & co
                 field_obj[fields::num_dim] = num_dim;
             }
 
-            LOG(INFO) << "Model init done.";
+            TS_LOG(INFO) << "Model init done.";
         }
 
         field f(field_obj[fields::name], field_obj[fields::type], field_obj[fields::facet],
@@ -191,27 +191,27 @@ Option<Collection*> CollectionManager::init_collection(const nlohmann::json & co
         token_separators = collection_meta[Collection::COLLECTION_SEPARATORS].get<std::vector<std::string>>();
     }
 
-    LOG(INFO) << "Found collection " << this_collection_name << " with " << num_memory_shards << " memory shards.";
+    TS_LOG(INFO) << "Found collection " << this_collection_name << " with " << num_memory_shards << " memory shards.";
     std::shared_ptr<VQModel> model = nullptr;
     if(collection_meta.count(Collection::COLLECTION_VOICE_QUERY_MODEL) != 0) {
         const nlohmann::json& voice_query_model = collection_meta[Collection::COLLECTION_VOICE_QUERY_MODEL];
 
         if(!voice_query_model.is_object()) {
-            LOG(ERROR) << "Parameter `voice_query_model` must be an object.";
+            TS_LOG(ERROR) << "Parameter `voice_query_model` must be an object.";
         }
 
         if(voice_query_model.count("model_name") == 0) {
-            LOG(ERROR) << "Parameter `voice_query_model.model_name` is missing.";
+            TS_LOG(ERROR) << "Parameter `voice_query_model.model_name` is missing.";
         }
 
         if(!voice_query_model["model_name"].is_string() || voice_query_model["model_name"].get<std::string>().empty()) {
-            LOG(ERROR) << "Parameter `voice_query_model.model_name` is invalid.";
+            TS_LOG(ERROR) << "Parameter `voice_query_model.model_name` is invalid.";
         }
 
         std::string model_name = voice_query_model["model_name"].get<std::string>();
         auto model_res = VQModelManager::get_instance().validate_and_init_model(model_name);
         if(!model_res.ok()) {
-            LOG(ERROR) << "Error while loading voice query model: " << model_res.error();
+            TS_LOG(ERROR) << "Error while loading voice query model: " << model_res.error();
         } else {
             model = model_res.get();
         }
@@ -241,7 +241,7 @@ Option<Collection*> CollectionManager::init_collection(const nlohmann::json & co
     std::vector<std::string> curation_sets;
     if (collection_meta.count(Collection::COLLECTION_SYNONYM_SETS) != 0) {
         if (!collection_meta[Collection::COLLECTION_SYNONYM_SETS].is_array()) {
-            LOG(ERROR) << "Parameter `synonym_sets` must be an array.";
+            TS_LOG(ERROR) << "Parameter `synonym_sets` must be an array.";
         } else {
             synonym_sets = collection_meta[Collection::COLLECTION_SYNONYM_SETS].get<std::vector<std::string>>();
         }
@@ -249,7 +249,7 @@ Option<Collection*> CollectionManager::init_collection(const nlohmann::json & co
 
     if (collection_meta.count(Collection::COLLECTION_curation_sets) != 0) {
         if (!collection_meta[Collection::COLLECTION_curation_sets].is_array()) {
-            LOG(ERROR) << "Parameter `curation_sets` must be an array.";
+            TS_LOG(ERROR) << "Parameter `curation_sets` must be an array.";
         } else {
             curation_sets = collection_meta[Collection::COLLECTION_curation_sets].get<std::vector<std::string>>();
         }
@@ -364,7 +364,7 @@ void CollectionManager::_populate_referenced_ins(const std::vector<std::string>&
             std::vector<std::string> split_result;
             StringUtils::split(reference, split_result, ".");
             if (split_result.size() < 2) {
-                LOG(ERROR) << "Invalid reference `" << reference << "`.";
+                TS_LOG(ERROR) << "Invalid reference `" << reference << "`.";
                 continue;
             }
 
@@ -427,11 +427,11 @@ void CollectionManager::_populate_referenced_ins(const std::vector<std::string>&
 
 Option<bool> CollectionManager::load(const size_t collection_batch_size, const size_t document_batch_size) {
     // This function must be idempotent, i.e. when called multiple times, must produce the same state without leaks
-    LOG(INFO) << "CollectionManager::load()";
+    TS_LOG(INFO) << "CollectionManager::load()";
 
     Option<bool> auth_init_op = auth_manager.init(store, bootstrap_auth_key);
     if(!auth_init_op.ok()) {
-        LOG(ERROR) << "Auth manager init failed, error=" << auth_init_op.error();
+        TS_LOG(ERROR) << "Auth manager init failed, error=" << auth_init_op.error();
     }
 
     std::string next_collection_id_str;
@@ -457,13 +457,13 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
     while(iter->Valid() && iter->key().starts_with(symlink_prefix_key)) {
         std::vector<std::string> parts;
         StringUtils::split(iter->key().ToString(), parts, symlink_prefix_key);
-        LOG(INFO) << "Loading symlink " << parts[0] << " to " << iter->value().ToString();
+        TS_LOG(INFO) << "Loading symlink " << parts[0] << " to " << iter->value().ToString();
         collection_symlinks[parts[0]] = iter->value().ToString();
         iter->Next();
     }
     delete iter;
 
-    LOG(INFO) << "Loading upto " << collection_batch_size << " collections in parallel, "
+    TS_LOG(INFO) << "Loading upto " << collection_batch_size << " collections in parallel, "
               << document_batch_size << " documents at a time.";
 
     std::vector<std::string> collection_meta_jsons;
@@ -472,7 +472,7 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
                      collection_meta_jsons);
 
     const size_t num_collections = collection_meta_jsons.size();
-    LOG(INFO) << "Found " << num_collections << " collection(s) on disk.";
+    TS_LOG(INFO) << "Found " << num_collections << " collection(s) on disk.";
 
     if (!store->contains(REFERENCED_INS)) {
         _populate_referenced_ins(collection_meta_jsons, referenced_ins);
@@ -512,7 +512,7 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
         if(!stemming_dictionary_obj.is_discarded() && stemming_dictionary_obj.is_object()) {
             StemmerManager::get_instance().load_stemming_dictioary(stemming_dictionary_obj);
         } else {
-            LOG(INFO) << "Invalid object for stemming dictionary " << stemming_dictionary_name;
+            TS_LOG(INFO) << "Invalid object for stemming dictionary " << stemming_dictionary_name;
         }
 
         iter->Next();
@@ -536,7 +536,7 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
         const auto& collection_meta_json = collection_meta_jsons[coll_index];
         nlohmann::json collection_meta = nlohmann::json::parse(collection_meta_json, nullptr, false);
         if(collection_meta.is_discarded()) {
-            LOG(ERROR) << "Error while parsing collection meta, json: " << collection_meta_json;
+            TS_LOG(ERROR) << "Error while parsing collection meta, json: " << collection_meta_json;
             return Option<bool>(500, "Error while parsing collection meta.");
         }
 
@@ -553,11 +553,11 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
                                                captured_referenced_ins);
             /*long long int timeMillis =
                     std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - begin).count();
-            LOG(INFO) << "Time taken for indexing: " << timeMillis << "ms";*/
+            TS_LOG(INFO) << "Time taken for indexing: " << timeMillis << "ms";*/
 
             if(!res.ok()) {
-                LOG(ERROR) << "Error while loading collection. " << res.error();
-                LOG(ERROR) << "Typesense is quitting.";
+                TS_LOG(ERROR) << "Error while loading collection. " << res.error();
+                TS_LOG(ERROR) << "Typesense is quitting.";
                 captured_store->close();
                 exit(1);
             }
@@ -565,12 +565,11 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
             std::unique_lock<std::mutex> lock(m_process);
             num_processed++;
 
-            auto& cm = CollectionManager::get_instance();
             cv_process.notify_one();
 
             size_t progress_modulo = std::max<size_t>(1, (num_collections / 10));  // every 10%
             if(num_processed % progress_modulo == 0) {
-                LOG(INFO) << "Loaded " << num_processed << " collection(s) so far";
+                TS_LOG(INFO) << "Loaded " << num_processed << " collection(s) so far";
             }
         });
     }
@@ -596,7 +595,7 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
         if(!preset_obj.is_discarded() && preset_obj.is_object()) {
             preset_configs[preset_name] = preset_obj;
         } else {
-            LOG(INFO) << "Invalid value for preset " << preset_name;
+            TS_LOG(INFO) << "Invalid value for preset " << preset_name;
         }
 
         iter->Next();
@@ -616,7 +615,7 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
         if(!stopword_obj.is_discarded() && stopword_obj.is_object()) {
             StopwordsManager::get_instance().upsert_stopword(stopword_name, stopword_obj);
         } else {
-            LOG(INFO) << "Invalid object for stopword " << stopword_name;
+            TS_LOG(INFO) << "Invalid object for stopword " << stopword_name;
         }
 
         iter->Next();
@@ -629,32 +628,32 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
                      std::string(AnalyticsManager::ANALYTICS_RULE_PREFIX) + "`",
                      analytics_config_jsons);
 
-    LOG(INFO) << "Loaded " << num_collections << " collection(s).";
-    LOG(INFO) << "Found " << analytics_config_jsons.size() << " analytics config(s).";
+    TS_LOG(INFO) << "Loaded " << num_collections << " collection(s).";
+    TS_LOG(INFO) << "Found " << analytics_config_jsons.size() << " analytics config(s).";
     for(const auto& analytics_config_json: analytics_config_jsons) {
         nlohmann::json analytics_config = nlohmann::json::parse(analytics_config_json);
         AnalyticsManager::get_instance().create_rule(analytics_config, false, false, false);
     }
-    LOG(INFO) << "Loaded " << analytics_config_jsons.size() << " analytics config(s).";
+    TS_LOG(INFO) << "Loaded " << analytics_config_jsons.size() << " analytics config(s).";
 
     // restore old analytics configs
     std::vector<std::string> old_analytics_config_jsons;
     store->scan_fill(AnalyticsManager::OLD_ANALYTICS_RULE_PREFIX,
                      std::string(AnalyticsManager::OLD_ANALYTICS_RULE_PREFIX) + "`",
                      old_analytics_config_jsons);
-    LOG(INFO) << "Found " << old_analytics_config_jsons.size() << " old analytics config(s) on disk.";
+    TS_LOG(INFO) << "Found " << old_analytics_config_jsons.size() << " old analytics config(s) on disk.";
 
     size_t restored_old_analytics_configs = 0;
     for(const auto& old_analytics_config_json: old_analytics_config_jsons) {
         nlohmann::json old_analytics_config = nlohmann::json::parse(old_analytics_config_json);
         auto create_op = AnalyticsManager::get_instance().create_old_rule(old_analytics_config);
         if(!create_op.ok() && create_op.code() != 409) {
-            LOG(ERROR) << "Error while creating old analytics config. " << create_op.error();
+            TS_LOG(ERROR) << "Error while creating old analytics config. " << create_op.error();
         }
         restored_old_analytics_configs++;
     }
-    LOG(INFO) << "Restored " << restored_old_analytics_configs << " old analytics config(s)." << " from " << old_analytics_config_jsons.size() << " old analytics config(s) on disk.";
-    LOG(INFO) << "Removing restored old analytics config(s) from disk.";
+    TS_LOG(INFO) << "Restored " << restored_old_analytics_configs << " old analytics config(s)." << " from " << old_analytics_config_jsons.size() << " old analytics config(s) on disk.";
+    TS_LOG(INFO) << "Removing restored old analytics config(s) from disk.";
 
     loading_pool.shutdown();
 
@@ -677,7 +676,7 @@ void CollectionManager::dispose() {
         referenced_ins_json += temp_json;
     }
     if (!store->insert(REFERENCED_INS, referenced_ins_json.dump())) {
-         LOG(ERROR) << "Could not persist referenced_ins to store.";
+         TS_LOG(ERROR) << "Could not persist referenced_ins to store.";
     }
 
     collections.clear();
@@ -690,7 +689,7 @@ void CollectionManager::dispose() {
     CurationIndexManager::get_instance().dispose();
 }
 
-bool CollectionManager::auth_key_matches(const string& req_auth_key, const string& action,
+bool CollectionManager::auth_key_matches(const std::string& req_auth_key, const std::string& action,
                                          const std::vector<collection_key_t>& collection_keys,
                                          std::map<std::string, std::string>& params,
                                          std::vector<nlohmann::json>& embedded_params_vec) const {
@@ -874,7 +873,7 @@ Option<std::vector<std::shared_ptr<Collection>>> CollectionManager::get_collecti
         std::advance(collections_end, limit);
     }
 
-    for (collections_it; collections_it != collections_end; ++collections_it) {
+    for (; collections_it != collections_end; ++collections_it) {
         if(is_valid_api_key_collection(api_key_collections, collections_it->second)) {
             collection_vec.push_back(collections_it->second);
         }
@@ -945,7 +944,7 @@ Option<nlohmann::json> CollectionManager::drop_collection(const std::string& col
         auto& cm = CollectionManager::get_instance();
         auto ref_coll = cm.get_collection(ref_coll_name);
         if (ref_coll == nullptr) {
-            LOG(ERROR) << "Referenced collection `" + ref_coll_name + "` not found.";
+            TS_LOG(ERROR) << "Referenced collection `" + ref_coll_name + "` not found.";
             continue;
         }
 
@@ -1312,7 +1311,8 @@ bool CollectionManager::parse_sort_by_str(std::string sort_by_str, std::vector<s
                 sort_field_expr += sort_by_str[i];
             }
 
-            int colon_index = sort_field_expr.size()-1;
+            const int sort_field_expr_size = static_cast<int>(sort_field_expr.size());
+            int colon_index = sort_field_expr_size - 1;
 
             while(colon_index >= 0) {
                 if(sort_field_expr[colon_index] == ':') {
@@ -1322,7 +1322,7 @@ bool CollectionManager::parse_sort_by_str(std::string sort_by_str, std::vector<s
                 colon_index--;
             }
 
-            if(colon_index < 0 || colon_index+1 == sort_field_expr.size()) {
+            if(colon_index < 0 || colon_index + 1 == sort_field_expr_size) {
                 return false;
             }
 
@@ -1515,7 +1515,7 @@ Option<bool> CollectionManager::do_search(std::map<std::string, std::string>& re
 
     results_json_str = result.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore);
 
-    //LOG(INFO) << "Time taken: " << timeMillis << "ms";
+    //TS_LOG(INFO) << "Time taken: " << timeMillis << "ms";
 
     return Option<bool>(true);
 }
@@ -1619,7 +1619,7 @@ Option<bool> CollectionManager::do_union(std::map<std::string, std::string>& req
     std::vector<collection_search_args_t> coll_searches;
     std::vector<uint32_t> collection_ids;
     auto result_op = Option<bool>(true);
-    auto group_by_args_count = 0;
+    size_t group_by_args_count = 0;
 
     for(size_t i = 0; i < searches.size(); i++) {
         auto& search_params = searches[i];
@@ -1633,8 +1633,6 @@ Option<bool> CollectionManager::do_union(std::map<std::string, std::string>& req
             result_op = std::move(validate_op);
             break;
         }
-
-        auto begin = std::chrono::high_resolution_clock::now();
 
         auto& embedded_params = embedded_params_vec[i];
         // enrich params with values from embedded params
@@ -1928,7 +1926,7 @@ Option<Collection*> CollectionManager::create_collection(nlohmann::json& req_jso
         const std::string& model_name = voice_query_model["model_name"].get<std::string>();
         auto model_res = VQModelManager::get_instance().validate_and_init_model(model_name);
         if(!model_res.ok()) {
-            LOG(ERROR) << "Error while loading voice query model: " << model_res.error();
+            TS_LOG(ERROR) << "Error while loading voice query model: " << model_res.error();
             return Option<Collection*>(model_res.code(), model_res.error());
         } else {
             model = model_res.get();
@@ -1960,9 +1958,9 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
     }
 
     if(!collection_meta[Collection::COLLECTION_NAME_KEY].is_string()) {
-        LOG(ERROR) << collection_meta[Collection::COLLECTION_NAME_KEY];
-        LOG(ERROR) << Collection::COLLECTION_NAME_KEY;
-        LOG(ERROR) << "";
+        TS_LOG(ERROR) << collection_meta[Collection::COLLECTION_NAME_KEY];
+        TS_LOG(ERROR) << Collection::COLLECTION_NAME_KEY;
+        TS_LOG(ERROR) << "";
     }
     const std::string & this_collection_name = collection_meta[Collection::COLLECTION_NAME_KEY].get<std::string>();
 
@@ -1971,13 +1969,13 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
                                                 collection_next_seq_id_str);
 
     if(next_seq_id_status == StoreStatus::ERROR) {
-        LOG(ERROR) << "Error while fetching next sequence ID for " << this_collection_name;
+        TS_LOG(ERROR) << "Error while fetching next sequence ID for " << this_collection_name;
         return Option<bool>(500, "Error while fetching collection's next sequence ID from the disk for "
                                  "`" + this_collection_name + "`");
     }
 
     if(next_seq_id_status == StoreStatus::NOT_FOUND && next_coll_id_status == StoreStatus::FOUND) {
-        LOG(ERROR) << "collection's next sequence ID is missing";
+        TS_LOG(ERROR) << "collection's next sequence ID is missing";
         return Option<bool>(500, "Next collection id was found, but collection's next sequence ID is missing for "
                                  "`" + this_collection_name + "`");
     }
@@ -1991,7 +1989,7 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
 
         if(existing_collection != nullptr) {
             // To maintain idempotency, if the collection already exists in-memory, drop it from memory
-            LOG(WARNING) << "Dropping duplicate collection " << this_collection_name << " before loading it again.";
+            TS_LOG(WARNING) << "Dropping duplicate collection " << this_collection_name << " before loading it again.";
             lock.unlock();
             cm.drop_collection(this_collection_name, false);
         }
@@ -2003,7 +2001,7 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
     }
     Collection* collection = op.get();
 
-    LOG(INFO) << "Loading collection " << collection->get_name();
+    TS_LOG(INFO) << "Loading collection " << collection->get_name();
 
     // migrate synonyms if exists
     const std::string& syn_lower_bound_key =
@@ -2018,12 +2016,12 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
         SynonymIndexManager& synonym_index_manager = SynonymIndexManager::get_instance();
         auto get_op = synonym_index_manager.get_synonym_index(this_collection_name + "_synonyms_index");
         if(get_op.ok()) {
-            LOG(INFO) << "Synonym index already exists for collection " << this_collection_name
+            TS_LOG(INFO) << "Synonym index already exists for collection " << this_collection_name
                        << ", skipping migration";
         } else {
           auto synonym_index_op = synonym_index_manager.add_synonym_index(this_collection_name + "_synonyms_index");
           if(!synonym_index_op.ok()) {
-              LOG(ERROR) << "Error while creating synonym index for collection " << this_collection_name
+              TS_LOG(ERROR) << "Error while creating synonym index for collection " << this_collection_name
                         << ": " << synonym_index_op.error();
               return Option<bool>(synonym_index_op.code(), synonym_index_op.error());
           }
@@ -2034,19 +2032,19 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
               synonym_t synonym;
               auto parse_op = synonym_t::parse(collection_synonym, synonym);
               if(!parse_op.ok()) {
-                  LOG(ERROR) << "Skipping loading of synonym: " << parse_op.error();
+                  TS_LOG(ERROR) << "Skipping loading of synonym: " << parse_op.error();
                   continue;
               }
               auto add_op = synonym_index->add_synonym(synonym, true);
               if(!add_op.ok()) {
-                  LOG(ERROR) << "Error while adding synonym: " << add_op.error();
+                  TS_LOG(ERROR) << "Error while adding synonym: " << add_op.error();
               }
           }
 
           // Add the SynonymIndex to the collection
           collection->set_synonym_sets({this_collection_name + "_synonyms_index"});
 
-          LOG(INFO) << "Migrated synonyms for collection " << this_collection_name;
+          TS_LOG(INFO) << "Migrated synonyms for collection " << this_collection_name;
         }
     }
 
@@ -2062,12 +2060,12 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
         // Create a new CurationIndex for the collection
         auto get_op = curation_index_manager.get_curation_index(this_collection_name + "_curations_index");
         if(get_op.ok()) {
-            LOG(INFO) << "Curation index already exists for collection " << this_collection_name
+            TS_LOG(INFO) << "Curation index already exists for collection " << this_collection_name
                        << ", skipping migration";
         } else {
           auto curation_index_op = curation_index_manager.add_curation_index(this_collection_name + "_curations_index");
           if(!curation_index_op.ok()) {
-              LOG(ERROR) << "Error while creating curation index for collection " << this_collection_name
+              TS_LOG(ERROR) << "Error while creating curation index for collection " << this_collection_name
                         << ": " << curation_index_op.error();
               return Option<bool>(curation_index_op.code(), curation_index_op.error());
           }
@@ -2078,16 +2076,16 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
               std::string curation_id = collection_curation.value("id", std::string{});
               auto parse_op = curation_t::parse(collection_curation, curation_id, curation);
               if(!parse_op.ok()) {
-                  LOG(ERROR) << "Skipping loading of curation: " << parse_op.error();
+                  TS_LOG(ERROR) << "Skipping loading of curation: " << parse_op.error();
                   continue;
               }
               auto add_op = curation_index->add_curation(curation, true);
               if(!add_op.ok()) {
-                  LOG(ERROR) << "Error while adding curation: " << add_op.error();
+                  TS_LOG(ERROR) << "Error while adding curation: " << add_op.error();
               }
           }
           collection->set_curation_sets({this_collection_name + "_curations_index"});
-          LOG(INFO) << "Migrated curations for collection " << this_collection_name;
+          TS_LOG(INFO) << "Migrated curations for collection " << this_collection_name;
         }
     }
 
@@ -2118,7 +2116,7 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
         try {
             document = nlohmann::json::parse(doc_string);
         } catch(const std::exception& e) {
-            LOG(ERROR) << "JSON error: " << e.what();
+            TS_LOG(ERROR) << "JSON error: " << e.what();
             return Option<bool>(400, "Bad JSON.");
         }
 
@@ -2168,7 +2166,7 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
 
             if(time_elapsed > 30) {
                 begin = std::chrono::high_resolution_clock::now();
-                LOG(INFO) << "Loaded " << num_found_docs << " documents from " << collection->get_name() << " so far.";
+                TS_LOG(INFO) << "Loaded " << num_found_docs << " documents from " << collection->get_name() << " so far.";
             }
         }
 
@@ -2179,7 +2177,7 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
 
     cm.add_to_collections(collection);
 
-    LOG(INFO) << "Indexed " << num_indexed_docs << "/" << num_found_docs
+    TS_LOG(INFO) << "Indexed " << num_indexed_docs << "/" << num_found_docs
               << " documents into collection " << collection->get_name();
 
     return Option<bool>(true);
@@ -2190,7 +2188,7 @@ spp::sparse_hash_map<std::string, nlohmann::json> CollectionManager::get_presets
     return preset_configs;
 }
 
-Option<bool> CollectionManager::get_preset(const string& preset_name, nlohmann::json& preset) const {
+Option<bool> CollectionManager::get_preset(const std::string& preset_name, nlohmann::json& preset) const {
     std::shared_lock lock(mutex);
 
     const auto& it = preset_configs.find(preset_name);
@@ -2202,7 +2200,7 @@ Option<bool> CollectionManager::get_preset(const string& preset_name, nlohmann::
     return Option<bool>(404, "Not found.");
 }
 
-Option<bool> CollectionManager::upsert_preset(const string& preset_name, const nlohmann::json& preset_config) {
+Option<bool> CollectionManager::upsert_preset(const std::string& preset_name, const nlohmann::json& preset_config) {
     std::unique_lock lock(mutex);
 
     bool inserted = store->insert(get_preset_key(preset_name), preset_config.dump());
@@ -2214,11 +2212,11 @@ Option<bool> CollectionManager::upsert_preset(const string& preset_name, const n
     return Option<bool>(true);
 }
 
-std::string CollectionManager::get_preset_key(const string& preset_name) {
+std::string CollectionManager::get_preset_key(const std::string& preset_name) {
     return std::string(PRESET_PREFIX) + "_" + preset_name;
 }
 
-Option<bool> CollectionManager::delete_preset(const string& preset_name) {
+Option<bool> CollectionManager::delete_preset(const std::string& preset_name) {
     std::unique_lock lock(mutex);
 
     bool removed = store->remove(get_preset_key(preset_name));
@@ -2230,7 +2228,7 @@ Option<bool> CollectionManager::delete_preset(const string& preset_name) {
     return Option<bool>(true);
 }
 
-Option<Collection*> CollectionManager::clone_collection(const string& existing_name, const nlohmann::json& req_json,
+Option<Collection*> CollectionManager::clone_collection(const std::string& existing_name, const nlohmann::json& req_json,
                                                        const bool copy_documents) {
     std::shared_lock lock(mutex);
 
@@ -2282,7 +2280,7 @@ Option<Collection*> CollectionManager::clone_collection(const string& existing_n
     if(copy_documents) {
         lock.unlock();
 
-        LOG(INFO) << "Copying documents from " << existing_name << " to " << new_name;
+        TS_LOG(INFO) << "Copying documents from " << existing_name << " to " << new_name;
 
         // Fetch records from the store and index them in the new collection using add_many
         const std::string seq_id_prefix = existing_coll->get_seq_id_collection_prefix();
@@ -2309,7 +2307,7 @@ Option<Collection*> CollectionManager::clone_collection(const string& existing_n
             try {
                 document = nlohmann::json::parse(doc_string);
             } catch(const std::exception& e) {
-                LOG(ERROR) << "JSON error during document copy: " << e.what();
+                TS_LOG(ERROR) << "JSON error during document copy: " << e.what();
                 iter->Next();
                 continue;
             }
@@ -2345,13 +2343,13 @@ Option<Collection*> CollectionManager::clone_collection(const string& existing_n
 
                     if(time_elapsed > 30) {
                         begin = std::chrono::high_resolution_clock::now();
-                        LOG(INFO) << "Copied " << num_found_docs << " documents so far.";
+                        TS_LOG(INFO) << "Copied " << num_found_docs << " documents so far.";
                     }
                 }
             }
         }
 
-        LOG(INFO) << "Successfully copied " << num_indexed_docs << "/" << num_found_docs
+        TS_LOG(INFO) << "Successfully copied " << num_indexed_docs << "/" << num_found_docs
                   << " documents from " << existing_name << " to " << new_name;
 
         lock.lock();
@@ -2439,7 +2437,7 @@ void CollectionManager::process_embedding_field_delete(const std::string& model_
     }
 
     if(!found) {
-        LOG(INFO) << "Deleting text embedder: " << model_name;
+        TS_LOG(INFO) << "Deleting text embedder: " << model_name;
         EmbedderManager::get_instance().delete_text_embedder(model_name);
         EmbedderManager::get_instance().delete_image_embedder(model_name);
     }

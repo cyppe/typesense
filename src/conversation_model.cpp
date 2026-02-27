@@ -1,6 +1,7 @@
 #include <regex>
 #include <iterator>
 #include "conversation_model.h"
+#include "logger.h"
 #include "embedder_manager.h"
 #include "text_embedder_remote.h"
 #include "conversation_manager.h"
@@ -562,8 +563,8 @@ void OpenAIConversationModel::async_res_write_callback(std::string& response, co
             response += "data: [DONE]\n\n";
         }
     } catch (const std::exception& e) {
-        LOG(ERROR) << e.what();
-        LOG(ERROR) << "Response: " << response;
+        TS_LOG(ERROR) << e.what();
+        TS_LOG(ERROR) << "Response: " << response;
     }
 }
 
@@ -633,8 +634,8 @@ Option<std::string> OpenAIConversationModel::get_answer_stream(const std::string
         header_["x-typesense-api-key"] = HttpClient::get_api_key();
 
         res->proxied_stream = true;
-        auto status = HttpClient::get_instance().post_response_sse(proxy_url, proxy_req_body.dump(), header_,
-                                                                   HttpProxy::default_timeout_ms, req, res, server);
+        HttpClient::get_instance().post_response_sse(proxy_url, proxy_req_body.dump(), header_,
+                                                     HttpProxy::default_timeout_ms, req, res, server);
     } else {
         res->proxied_stream = true;
         HttpClient::get_instance().post_response_sse(openai_url + openai_path, req_body.dump(), headers,
@@ -662,7 +663,7 @@ Option<std::string> OpenAIConversationModel::get_answer_stream(const std::string
     return Option<std::string>(async_conversation.response);
 }
 
-const std::string CFConversationModel::get_model_url(const std::string& model_name, const std::string& account_id) {
+std::string CFConversationModel::get_model_url(const std::string& model_name, const std::string& account_id) {
     return "https://api.cloudflare.com/client/v4/accounts/" + account_id + "/ai/run/" + model_name;
 }
 
@@ -684,8 +685,6 @@ Option<bool> CFConversationModel::validate_model(const nlohmann::json& model_con
     }
 
     auto model_name = EmbedderManager::get_model_name_without_namespace(model_config["model_name"].get<std::string>());
-
-    bool found = false;
 
     std::unordered_map<std::string, std::string> headers;
     std::map<std::string, std::string> res_headers;
@@ -975,8 +974,8 @@ Option<std::string> CFConversationModel::parse_stream_response(const std::string
         }
         return Option<std::string>(parsed_response);
     } catch (const std::exception& e) {
-        LOG(ERROR) << e.what();
-        LOG(ERROR) << "Response: " << res;
+        TS_LOG(ERROR) << e.what();
+        TS_LOG(ERROR) << "Response: " << res;
         return Option<std::string>(400, "Got malformed response from Cloudflare API.");
     }
 }
@@ -1031,8 +1030,8 @@ void CFConversationModel::async_res_write_callback(std::string& response, const 
             response += "data: [DONE]\n\n";
         }
     } catch (const std::exception& e) {
-        LOG(ERROR) << e.what();
-        LOG(ERROR) << "Response: " << response;
+        TS_LOG(ERROR) << e.what();
+        TS_LOG(ERROR) << "Response: " << response;
     }
 }
 
@@ -1382,11 +1381,11 @@ Option<nlohmann::json> vLLMConversationModel::format_answer(const std::string& m
     return Option<nlohmann::json>(json);
 }
 
-const std::string vLLMConversationModel::get_list_models_url(const std::string& vllm_url) {
+std::string vLLMConversationModel::get_list_models_url(const std::string& vllm_url) {
     return vllm_url.back() == '/' ? vllm_url + "v1/models" : vllm_url + "/v1/models";
 }
 
-const std::string vLLMConversationModel::get_chat_completion_url(const std::string& vllm_url) {
+std::string vLLMConversationModel::get_chat_completion_url(const std::string& vllm_url) {
     return vllm_url.back() == '/' ? vllm_url + "v1/chat/completions" : vllm_url + "/v1/chat/completions";
 }
 
@@ -1439,8 +1438,8 @@ void vLLMConversationModel::async_res_write_callback(std::string& response, cons
             response += "data: [DONE]\n\n";
         }
     } catch (const std::exception& e) {
-        LOG(ERROR) << e.what();
-        LOG(ERROR) << "Response: " << response;
+        TS_LOG(ERROR) << e.what();
+        TS_LOG(ERROR) << "Response: " << response;
     }
 }
 
@@ -1731,8 +1730,8 @@ void GeminiConversationModel::async_res_write_callback(std::string& response, co
             }
         }
     } catch (const std::exception& e) {
-        LOG(ERROR) << e.what();
-        LOG(ERROR) << "Response: " << response;
+        TS_LOG(ERROR) << e.what();
+        TS_LOG(ERROR) << "Response: " << response;
     }
 }
 
@@ -2046,7 +2045,7 @@ void AzureConversationModel::async_res_write_callback(std::string& response, con
             try {
                 json_line = nlohmann::json::parse(substr_line);
             } catch (const std::exception& e) {
-                LOG(ERROR) << "Azure callback: Failed to parse JSON: " << substr_line << " Error: " << e.what();
+                TS_LOG(ERROR) << "Azure callback: Failed to parse JSON: " << substr_line << " Error: " << e.what();
                 continue;
             }
             
@@ -2104,8 +2103,8 @@ void AzureConversationModel::async_res_write_callback(std::string& response, con
         } 
 
     } catch (const std::exception& e) {
-        LOG(ERROR) << "Azure callback: Exception caught: " << e.what();
-        LOG(ERROR) << "Azure callback: Response that caused error: " << response;
+        TS_LOG(ERROR) << "Azure callback: Exception caught: " << e.what();
+        TS_LOG(ERROR) << "Azure callback: Response that caused error: " << response;
         // Set error response
         async_conversations[req].response = "{\"error\":{\"message\":\"" + std::string(e.what()) + "\"}}";
         async_conversations[req].ready = true;
@@ -2190,7 +2189,7 @@ Option<std::string> AzureConversationModel::get_answer_stream(const nlohmann::js
                 return Option<std::string>(400, "Azure API error: " + error_json["error"]["message"].get<std::string>());
             }
         } catch (const std::exception& e) {
-            LOG(ERROR) << "AzureConversationModel::get_answer_stream: Error parsing JSON: " << e.what();
+            TS_LOG(ERROR) << "AzureConversationModel::get_answer_stream: Error parsing JSON: " << e.what();
         }
         return Option<std::string>(400, "Azure API error: " + async_conversation.response);
     }

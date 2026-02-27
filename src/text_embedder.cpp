@@ -17,7 +17,7 @@ TextEmbedder::TextEmbedder(const std::string& model_name, const bool is_public_m
             // check existence of shared lib
             void* handle = dlopen("libonnxruntime_providers_shared.so", RTLD_NOW | RTLD_GLOBAL);
             if(!handle) {
-                LOG(INFO) << "ONNX shared libs: off";
+                TS_LOG(INFO) << "ONNX shared libs: off";
                 // log error
                 continue;
             }
@@ -30,7 +30,7 @@ TextEmbedder::TextEmbedder(const std::string& model_name, const bool is_public_m
     }
     std::string abs_path = EmbedderManager::get_absolute_model_path(model_name, is_public_model);
     session_options.EnableOrtCustomOps();
-    LOG(INFO) << "Loading model from disk: " << abs_path;
+    TS_LOG(INFO) << "Loading model from disk: " << abs_path;
     env_ = std::make_shared<Ort::Env>();
     session_ = std::make_shared<Ort::Session>(*env_, abs_path.c_str(), session_options);
     std::ifstream config_file(EmbedderManager::get_absolute_config_path(model_name, is_public_model));
@@ -82,7 +82,7 @@ TextEmbedder::TextEmbedder(const std::string& model_name, const bool is_public_m
 
 TextEmbedder::TextEmbedder(const nlohmann::json& model_config, size_t num_dims, const bool has_custom_dims) {
     const std::string& model_name = model_config["model_name"].get<std::string>();
-    LOG(INFO) << "Initializing remote embedding model: " << model_name;
+    TS_LOG(INFO) << "Initializing remote embedding model: " << model_name;
     auto model_namespace = EmbedderManager::get_model_namespace(model_name);
 
     if(model_namespace == "openai") {
@@ -136,9 +136,9 @@ TextEmbedder::TextEmbedder(const nlohmann::json& model_config, size_t num_dims, 
 std::vector<float> TextEmbedder::mean_pooling(const std::vector<std::vector<float>>& inputs, const std::vector<int64_t>& attention_mask) {
 
     std::vector<float> pooled_output;
-    for (int i = 0; i < inputs[0].size(); i++) {
+    for (size_t i = 0; i < inputs[0].size(); i++) {
         float sum = 0;
-        for (int j = 0; j < inputs.size(); j++) {
+        for (size_t j = 0; j < inputs.size(); j++) {
             sum += inputs[j][i] * attention_mask[j];
         }
         pooled_output.push_back(sum);
@@ -202,7 +202,7 @@ embedding_res_t TextEmbedder::embed_query(const std::string& text, const size_t 
             input_tensors.push_back(Ort::Value::CreateTensor<int64_t>(memory_info, encoded_input.token_type_ids.data(), encoded_input.token_type_ids.size(), input_shapes.back().data(), input_shapes.back().size()));
         }
         
-        //LOG(INFO) << "Running model";
+        //TS_LOG(INFO) << "Running model";
         // create output tensor object
         std::vector<const char*> output_node_names = {output_tensor_name.c_str()};
         // Cannot run same model in parallel, so lock the mutex
@@ -219,10 +219,12 @@ embedding_res_t TextEmbedder::embed_query(const std::string& text, const size_t 
             shape.insert(shape.begin(), 1);
         }
 
-        for (int i = 0; i < shape[1]; i++) {
+        const size_t sequence_length = static_cast<size_t>(shape[1]);
+        const size_t hidden_dims = static_cast<size_t>(shape[2]);
+        for (size_t i = 0; i < sequence_length; i++) {
             std::vector<float> temp;
-            for (int j = 0; j < shape[2]; j++) {
-                temp.push_back(data[i * shape[2] + j]);
+            for (size_t j = 0; j < hidden_dims; j++) {
+                temp.push_back(data[i * hidden_dims + j]);
             }
             // edge case for clip model
             if(is_image_embedding_model) {
@@ -239,8 +241,9 @@ std::vector<embedding_res_t> TextEmbedder::embed_documents(const std::vector<std
                                                        const size_t remote_embedding_timeout_ms, const size_t remote_embedding_num_tries) {
     std::vector<embedding_res_t> outputs;
     if(!is_remote()) {
-        for(int i = 0; i < inputs.size(); i += 8) {
-            auto input_batch = std::vector<std::string>(inputs.begin() + i, inputs.begin() + std::min(i + 8, static_cast<int>(inputs.size())));
+        for(size_t i = 0; i < inputs.size(); i += 8) {
+            const size_t batch_end = std::min(i + 8, inputs.size());
+            auto input_batch = std::vector<std::string>(inputs.begin() + i, inputs.begin() + batch_end);
             auto encoded_inputs = batch_encode(input_batch);
             
             // create input tensor object from data values
@@ -255,9 +258,9 @@ std::vector<embedding_res_t> TextEmbedder::embed_documents(const std::vector<std
             std::vector<int64_t> token_type_ids_flatten;
             std::vector<float> pixel_values;
 
-            for (int i = 0; i < encoded_inputs.input_ids.size(); i++) {
-                for (int j = 0; j < encoded_inputs.input_ids[i].size(); j++) {
-                    input_ids_flatten.push_back(encoded_inputs.input_ids[i][j]);
+            for (size_t batch_idx = 0; batch_idx < encoded_inputs.input_ids.size(); batch_idx++) {
+                for (size_t token_idx = 0; token_idx < encoded_inputs.input_ids[batch_idx].size(); token_idx++) {
+                    input_ids_flatten.push_back(encoded_inputs.input_ids[batch_idx][token_idx]);
                 }
             }
 
@@ -267,9 +270,9 @@ std::vector<embedding_res_t> TextEmbedder::embed_documents(const std::vector<std
             input_tensors.push_back(Ort::Value::CreateTensor<int64_t>(memory_info, input_ids_flatten.data(), input_ids_flatten.size(), input_shapes.back().data(), input_shapes.back().size()));
 
             if(has_attention_mask_input) {
-                for (int i = 0; i < encoded_inputs.attention_mask.size(); i++) {
-                    for (int j = 0; j < encoded_inputs.attention_mask[i].size(); j++) {
-                        attention_mask_flatten.push_back(encoded_inputs.attention_mask[i][j]);
+                for (size_t batch_idx = 0; batch_idx < encoded_inputs.attention_mask.size(); batch_idx++) {
+                    for (size_t token_idx = 0; token_idx < encoded_inputs.attention_mask[batch_idx].size(); token_idx++) {
+                        attention_mask_flatten.push_back(encoded_inputs.attention_mask[batch_idx][token_idx]);
                     }
                 }
 
@@ -287,9 +290,9 @@ std::vector<embedding_res_t> TextEmbedder::embed_documents(const std::vector<std
             } else if(session_->GetInputCount() == 3) {
                 input_node_names.push_back("token_type_ids");
 
-                for (int i = 0; i < encoded_inputs.token_type_ids.size(); i++) {
-                    for (int j = 0; j < encoded_inputs.token_type_ids[i].size(); j++) {
-                        token_type_ids_flatten.push_back(encoded_inputs.token_type_ids[i][j]);
+                for (size_t batch_idx = 0; batch_idx < encoded_inputs.token_type_ids.size(); batch_idx++) {
+                    for (size_t token_idx = 0; token_idx < encoded_inputs.token_type_ids[batch_idx].size(); token_idx++) {
+                        token_type_ids_flatten.push_back(encoded_inputs.token_type_ids[batch_idx][token_idx]);
                     }
                 }
 
@@ -297,13 +300,13 @@ std::vector<embedding_res_t> TextEmbedder::embed_documents(const std::vector<std
                 input_tensors.push_back(Ort::Value::CreateTensor<int64_t>(memory_info, token_type_ids_flatten.data(), token_type_ids_flatten.size(), input_shapes.back().data(), input_shapes.back().size()));
             }
 
-            //LOG(INFO) << "Running model";
+            //TS_LOG(INFO) << "Running model";
             // create output tensor object
             std::vector<const char*> output_node_names = {output_tensor_name.c_str()};
 
             // if seq length is 0, return empty vector
             if(input_shapes[0][1] == 0) {
-                for(int i = 0; i < input_batch.size(); i++) {
+                for(size_t j = 0; j < input_batch.size(); j++) {
                     outputs.push_back(embedding_res_t(400, nlohmann::json({{"error", "Invalid input: empty sequence"}})));
                 }
                 continue;
@@ -320,12 +323,15 @@ std::vector<embedding_res_t> TextEmbedder::embed_documents(const std::vector<std
                 // insert 1 to index 0
                 shape.insert(shape.begin(), 1);
             }
-            for (int i = 0; i < shape[0]; i++) {
+            const size_t batch_count = static_cast<size_t>(shape[0]);
+            const size_t sequence_length = static_cast<size_t>(shape[1]);
+            const size_t hidden_dims = static_cast<size_t>(shape[2]);
+            for (size_t batch_idx = 0; batch_idx < batch_count; batch_idx++) {
                 std::vector<std::vector<float>> output;
-                for (int j = 0; j < shape[1]; j++) {
+                for (size_t seq_idx = 0; seq_idx < sequence_length; seq_idx++) {
                     std::vector<float> output_row;
-                    for (int k = 0; k < shape[2]; k++) {
-                        output_row.push_back(data[i * shape[1] * shape[2] + j * shape[2] + k]);
+                    for (size_t dim_idx = 0; dim_idx < hidden_dims; dim_idx++) {
+                        output_row.push_back(data[batch_idx * sequence_length * hidden_dims + seq_idx * hidden_dims + dim_idx]);
                     }
                     if(is_image_embedding_model) {
                         // no mean pooling for clip
@@ -335,12 +341,13 @@ std::vector<embedding_res_t> TextEmbedder::embed_documents(const std::vector<std
                     output.push_back(output_row);
                 }
                 if(!is_image_embedding_model) {
-                    outputs.push_back(embedding_res_t(mean_pooling(output, encoded_inputs.attention_mask[i])));
+                    outputs.push_back(embedding_res_t(mean_pooling(output, encoded_inputs.attention_mask[batch_idx])));
                 }
             }
         }
     } else {
-        outputs = std::move(remote_embedder_->embed_documents(inputs, remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries));
+        outputs = remote_embedder_->embed_documents(inputs, remote_embedding_batch_size,
+                                                    remote_embedding_timeout_ms, remote_embedding_num_tries);
     }
     
     return outputs;
@@ -382,14 +389,14 @@ batch_encoded_input_t TextEmbedder::batch_encode(const std::vector<std::string>&
 
 Option<bool> TextEmbedder::validate() {
     if(session_->GetInputCount() != 3 && session_->GetInputCount() != 2) {
-        LOG(ERROR) << "Invalid model: input count is not 3 or 2";
+        TS_LOG(ERROR) << "Invalid model: input count is not 3 or 2";
         return Option<bool>(400, "Invalid model: input count is not 3 or 2");
     }
 
     Ort::AllocatorWithDefaultOptions allocator;
     auto input_ids_name = session_->GetInputNameAllocated(0, allocator);
     if (std::strcmp(input_ids_name.get(), "input_ids") != 0) {
-        LOG(ERROR) << "Invalid model: input_ids tensor not found";
+        TS_LOG(ERROR) << "Invalid model: input_ids tensor not found";
         return Option<bool>(400, "Invalid model: input_ids tensor not found");
     }
 
@@ -398,7 +405,7 @@ Option<bool> TextEmbedder::validate() {
         auto attention_mask_index = tokenizer_->get_tokenizer_type() == TokenizerType::clip ? 2 : 1;
         auto attention_mask_name = session_->GetInputNameAllocated(attention_mask_index, allocator);
         if (std::strcmp(attention_mask_name.get(), "attention_mask") != 0) {
-            LOG(ERROR) << "Invalid model: attention_mask tensor not found";
+            TS_LOG(ERROR) << "Invalid model: attention_mask tensor not found";
             return Option<bool>(400, "Invalid model: attention_mask tensor not found");
         }
     }
@@ -406,7 +413,7 @@ Option<bool> TextEmbedder::validate() {
     if(session_->GetInputCount() == 3) {
         auto token_type_ids_name = session_->GetInputNameAllocated(2, allocator);
         if (std::strcmp(token_type_ids_name.get(), "token_type_ids") != 0 && !is_image_embedding_model) {
-            LOG(ERROR) << "Invalid model: token_type_ids tensor not found";
+            TS_LOG(ERROR) << "Invalid model: token_type_ids tensor not found";
             return Option<bool>(400, "Invalid model: token_type_ids tensor not found");
         }
     }
@@ -431,13 +438,13 @@ Option<bool> TextEmbedder::validate() {
     }
 
     if (!found_output_tensor) {
-        LOG(ERROR) << "Invalid model: Output tensor not found";
+        TS_LOG(ERROR) << "Invalid model: Output tensor not found";
         return Option<bool>(400, "Invalid model: Output tensor not found");
     }
 
     return Option<bool>(true);
 }
 
-const size_t TextEmbedder::get_num_dim() const {
+size_t TextEmbedder::get_num_dim() const {
     return num_dim;
 }

@@ -409,7 +409,7 @@ namespace cmdline{
                 args.push_back(buf);
 
             for (size_t i=0; i<args.size(); i++)
-                LOG(INFO)<<"\""<<args[i]<<"\"";
+                TS_LOG(INFO)<<"\""<<args[i]<<"\"";
 
             return parse(args);
         }

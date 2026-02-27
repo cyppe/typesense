@@ -1,4 +1,5 @@
 #include "personalization_model.h"
+#include "logger.h"
 #include "text_embedder_remote.h"
 #include "archive_utils.h"
 #include <iostream>
@@ -32,7 +33,7 @@ PersonalizationModel::PersonalizationModel(const std::string& model_id)
     try {
         std::ifstream prompt_file(prompt_path_);
         if (!prompt_file.is_open()) {
-            LOG(ERROR) << "Could not open prompt file: " + prompt_path_;
+            TS_LOG(ERROR) << "Could not open prompt file: " + prompt_path_;
             return;
         }
         
@@ -41,7 +42,7 @@ PersonalizationModel::PersonalizationModel(const std::string& model_id)
         std::string json_str = buffer.str();
         
         if (json_str.empty()) {
-            LOG(ERROR) << "Prompt file is empty";
+            TS_LOG(ERROR) << "Prompt file is empty";
             return;
         }
         
@@ -49,11 +50,11 @@ PersonalizationModel::PersonalizationModel(const std::string& model_id)
         
         if (!prompt_json.contains("q") || !prompt_json["q"].is_string() ||
             !prompt_json.contains("d") || !prompt_json["d"].is_string()) {
-            LOG(ERROR) << "Prompt file missing required string fields 'q' and 'd'";
+            TS_LOG(ERROR) << "Prompt file missing required string fields 'q' and 'd'";
             return;
         }
     } catch (const std::exception& e) {
-        LOG(ERROR) << "Failed to parse prompt file: " << e.what();
+        TS_LOG(ERROR) << "Failed to parse prompt file: " << e.what();
     }
     query_prompt_ = prompt_json["q"].get<std::string>();
     item_prompt_ = prompt_json["d"].get<std::string>();
@@ -231,7 +232,7 @@ void PersonalizationModel::initialize_session() {
         if(provider == "CUDAExecutionProvider") {
             void* handle = dlopen("libonnxruntime_providers_shared.so", RTLD_NOW | RTLD_GLOBAL);
             if(!handle) {
-                LOG(INFO) << "ONNX shared libs: off";
+                TS_LOG(INFO) << "ONNX shared libs: off";
                 continue;
             }
             dlclose(handle);
@@ -330,7 +331,8 @@ std::vector<embedding_res_t> PersonalizationModel::batch_embed_recommendations(c
         float* output_data = output_tensors[0].GetTensorMutableData<float>();
         auto shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
         std::vector<embedding_res_t> embeddings;
-        for (size_t i = 0; i < shape[0]; i++) {
+        const size_t output_batch_size = static_cast<size_t>(shape[0]);
+        for (size_t i = 0; i < output_batch_size; i++) {
             std::vector<float> embedding;
             embedding.assign(output_data + (i * num_dim_), output_data + ((i + 1) * num_dim_));
             embeddings.push_back(embedding_res_t(embedding));
@@ -420,12 +422,6 @@ std::vector<embedding_res_t> PersonalizationModel::batch_embed_users(const std::
             std::vector<int64_t> input_ids_flatten;
             std::vector<int64_t> attention_mask_flatten;
 
-            for (auto& i: input_shapes) {
-                int64_t total_size = 1;
-                for (auto& j: i) {
-                    total_size *= j;
-                }
-            }
             for(auto& batch : encoded_inputs) {
                 for(auto& input_ids : batch.input_ids) {
                     for(auto& id : input_ids) {
@@ -449,7 +445,8 @@ std::vector<embedding_res_t> PersonalizationModel::batch_embed_users(const std::
 
             float* output_data = output_tensors[0].GetTensorMutableData<float>();
             auto shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
-            for (size_t i = 0; i < shape[0]; i++) {
+            const size_t output_batch_size = static_cast<size_t>(shape[0]);
+            for (size_t i = 0; i < output_batch_size; i++) {
                 std::vector<float> embedding;
                 embedding.assign(output_data + (i * num_dim_), output_data + ((i + 1) * num_dim_));
                 embeddings.push_back(embedding_res_t(embedding));
@@ -523,7 +520,7 @@ std::vector<embedding_res_t> PersonalizationModel::batch_embed_items(const std::
 
     std::vector<embedding_res_t> embeddings;
     size_t batch_size = 8;
-    for(int i = 0; i < features.size(); i+= batch_size) {
+    for(size_t i = 0; i < features.size(); i += batch_size) {
         auto input_batch = std::vector<std::vector<std::string>>(features.begin() + i, features.begin() + std::min(i + batch_size, static_cast<size_t>(features.size())));
         auto encoded_inputs = encode_batch(input_batch);
 
@@ -564,7 +561,8 @@ std::vector<embedding_res_t> PersonalizationModel::batch_embed_items(const std::
 
             float* output_data = output_tensors[0].GetTensorMutableData<float>();
             auto shape = output_tensors[0].GetTensorTypeAndShapeInfo().GetShape();
-            for (size_t i = 0; i < shape[0]; i++) {
+            const size_t output_batch_size = static_cast<size_t>(shape[0]);
+            for (size_t i = 0; i < output_batch_size; i++) {
                 std::vector<float> embedding;
                 embedding.assign(output_data + (i * num_dim_), output_data + ((i + 1) * num_dim_));
                 embeddings.push_back(embedding_res_t(embedding));

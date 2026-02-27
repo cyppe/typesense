@@ -223,14 +223,14 @@ TEST(TopsterTest, DistinctIntValues) {
 
         if(distinct_ids[i] == 1) {
             EXPECT_EQ(12, (int) dist_topster.getKV(i)->scores[dist_topster.getKV(i)->match_score_index]);
-            EXPECT_EQ(2, dist_topster.group_kv_map[dist_topster.getDistinctKeyAt(i)]->size);
+            EXPECT_EQ(size_t{2}, dist_topster.group_kv_map[dist_topster.getDistinctKeyAt(i)]->size);
             EXPECT_EQ(12, dist_topster.group_kv_map[dist_topster.getDistinctKeyAt(i)]->getKV(0)->scores[0]);
             EXPECT_EQ(11, dist_topster.group_kv_map[dist_topster.getDistinctKeyAt(i)]->getKV(1)->scores[0]);
         }
 
         if(distinct_ids[i] == 5) {
             EXPECT_EQ(9, (int) dist_topster.getKV(i)->scores[dist_topster.getKV(i)->match_score_index]);
-            EXPECT_EQ(2, dist_topster.group_kv_map[dist_topster.getDistinctKeyAt(i)]->size);
+            EXPECT_EQ(size_t{2}, dist_topster.group_kv_map[dist_topster.getDistinctKeyAt(i)]->size);
             EXPECT_EQ(10, dist_topster.group_kv_map[dist_topster.getDistinctKeyAt(i)]->getKV(0)->scores[0]);
             EXPECT_EQ(9, dist_topster.group_kv_map[dist_topster.getDistinctKeyAt(i)]->getKV(1)->scores[0]);
         }
@@ -259,5 +259,5 @@ TEST(TopsterTest, DistinctIntValues) {
     }
 
     ASSERT_TRUE(dist_topster_first_pass.group_kv_map.empty());
-    ASSERT_EQ(10, dist_topster_first_pass.loglog_counter->cardinality());
+    ASSERT_EQ(size_t{10}, dist_topster_first_pass.loglog_counter->cardinality());
 }

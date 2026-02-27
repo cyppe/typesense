@@ -1,4 +1,5 @@
 #include "synonym_index_manager.h"
+#include "logger.h"
 
 // static
 SynonymIndexManager& SynonymIndexManager::get_instance() {
@@ -16,7 +17,7 @@ void SynonymIndexManager::init_store(Store* store) {
 Option<SynonymIndex*> SynonymIndexManager::add_synonym_index(const std::string& index_name, SynonymIndex&& index, bool write_to_store) {
     auto res = synonym_index_list.insert(synonym_index_list.end(), std::move(index));
     if(synonym_index_map.find(index_name) != synonym_index_map.end()) {
-        LOG(INFO) << "Removing existing synonym index: " << index_name;
+        TS_LOG(INFO) << "Removing existing synonym index: " << index_name;
         synonym_index_list.erase(synonym_index_map[index_name]);
         synonym_index_map.erase(index_name);
     }
@@ -33,7 +34,7 @@ Option<SynonymIndex*> SynonymIndexManager::add_synonym_index(const std::string& 
     if(synonym_index_map.find(index_name) != synonym_index_map.end()) {
         synonym_index_list.erase(synonym_index_map[index_name]);
         synonym_index_map.erase(index_name);
-        LOG(INFO) << "Removed existing synonym index: " << index_name;
+        TS_LOG(INFO) << "Removed existing synonym index: " << index_name;
     }
     synonym_index_map.emplace(index_name, res);
     if(write_to_store) {
@@ -67,7 +68,7 @@ Option<bool> SynonymIndexManager::remove_synonym_index(const std::string& index_
 nlohmann::json SynonymIndexManager::get_all_synonym_indices_json() {
     nlohmann::json result = nlohmann::json::array();
     for (const auto& pair : synonym_index_map) {
-        LOG(INFO) << "Adding synonym index: " << pair.first;
+        TS_LOG(INFO) << "Adding synonym index: " << pair.first;
         result.push_back(get_synonym_index_json(pair.first));
     }
     return result;
@@ -110,7 +111,7 @@ Option<bool> SynonymIndexManager::validate_synonym_index(const nlohmann::json& p
 void SynonymIndexManager::load_synonym_indices() {
     std::vector<std::string> synonym_index_names;
     if (!store) {
-        LOG(ERROR) << "Store not initialized for loading synonym indices.";
+        TS_LOG(ERROR) << "Store not initialized for loading synonym indices.";
         return;
     }
     store->scan_fill(
@@ -123,7 +124,7 @@ void SynonymIndexManager::load_synonym_indices() {
         // create SynonymIndex object
         auto add_op = add_synonym_index(synonym_index_name, false);
         if (!add_op.ok()) {
-            LOG(ERROR) << "Failed to add synonym index: " << synonym_index_name << ", error: " << add_op.error();
+            TS_LOG(ERROR) << "Failed to add synonym index: " << synonym_index_name << ", error: " << add_op.error();
             continue;
         }
         auto& index = *add_op.get();
@@ -132,20 +133,20 @@ void SynonymIndexManager::load_synonym_indices() {
         store->scan_fill(SynonymIndex::COLLECTION_SYNONYM_PREFIX + std::string("_") + synonym_index_name + "_",
                          SynonymIndex::COLLECTION_SYNONYM_PREFIX + std::string("_") + synonym_index_name + "`",
                         synonyms);
-        LOG(INFO) << "Loading synonyms for index: " << synonym_index_name << ", count: " << synonyms.size();
+        TS_LOG(INFO) << "Loading synonyms for index: " << synonym_index_name << ", count: " << synonyms.size();
         for (const auto& synonym_json : synonyms) {
             nlohmann::json syn_json;
             try {
                 syn_json = nlohmann::json::parse(synonym_json);
             } catch (const nlohmann::json::parse_error& e) {
-                LOG(ERROR) << "Failed to parse synonym JSON: " << synonym_json << ", error: " << e.what();
+                TS_LOG(ERROR) << "Failed to parse synonym JSON: " << synonym_json << ", error: " << e.what();
                 continue;
             }
             // Add the synonym to the index
             auto synonym = synonym_t();
             auto syn_op = synonym_t::parse(syn_json, synonym);
             if (!syn_op.ok()) {
-                LOG(ERROR) << "Failed to parse synonym: " << syn_json.dump() << ", error: " << syn_op.error();
+                TS_LOG(ERROR) << "Failed to parse synonym: " << syn_json.dump() << ", error: " << syn_op.error();
                 continue;
             }
             index.add_synonym(synonym, false);

@@ -1,6 +1,6 @@
 #include "personalization_model_manager.h"
 #include "sole.hpp"
-#include <glog/logging.h>
+#include "logger.h"
 
 Option<nlohmann::json> PersonalizationModelManager::get_model(const std::string& model_id) {
     std::shared_lock lock(models_mutex);
@@ -38,15 +38,15 @@ Option<nlohmann::json> PersonalizationModelManager::add_model(nlohmann::json& mo
         auto model = std::make_shared<PersonalizationModel>(model_id);
         auto validate_op = model->validate_model_io();
         if(!validate_op.ok()) {
-            LOG(ERROR) << "Error validating model: " << model_id << ", error: " << validate_op.error();
+            TS_LOG(ERROR) << "Error validating model: " << model_id << ", error: " << validate_op.error();
             models.erase(model_id);
             return Option<nlohmann::json>(validate_op.code(), validate_op.error());
         }
         model_embedders.emplace(model_id, model);
         model_json["num_dim"] = model->get_num_dim();
-        LOG(INFO) << "Created model embedder for model: " << model_id;
+        TS_LOG(INFO) << "Created model embedder for model: " << model_id;
     } catch (const std::exception& e) {
-        LOG(ERROR) << "Error creating model embedder for model: " << model_id << ", error: " << e.what();
+        TS_LOG(ERROR) << "Error creating model embedder for model: " << model_id << ", error: " << e.what();
         models.erase(model_id);
         return Option<nlohmann::json>(500, std::string("Error creating model embedder: ") + e.what());
     }
@@ -68,7 +68,7 @@ Option<int> PersonalizationModelManager::init(Store* store) {
     store->scan_fill(std::string(MODEL_KEY_PREFIX) + "_", std::string(MODEL_KEY_PREFIX) + "`", model_strs);
 
     if(!model_strs.empty()) {
-        LOG(INFO) << "Found " << model_strs.size() << " personalization model(s).";
+        TS_LOG(INFO) << "Found " << model_strs.size() << " personalization model(s).";
     }
 
     int loaded_models = 0;
@@ -78,7 +78,7 @@ Option<int> PersonalizationModelManager::init(Store* store) {
         try {
             model_json = nlohmann::json::parse(model_str);
         } catch (const nlohmann::json::parse_error& e) {
-            LOG(ERROR) << "Error parsing model JSON: " << e.what();
+            TS_LOG(ERROR) << "Error parsing model JSON: " << e.what();
             continue;
         }
 
@@ -86,15 +86,15 @@ Option<int> PersonalizationModelManager::init(Store* store) {
 
         auto add_op = add_model(model_json, model_id, false);
         if(!add_op.ok()) {
-            LOG(ERROR) << "Error while loading personalization model: " << model_id << ", error: " << add_op.error();
+            TS_LOG(ERROR) << "Error while loading personalization model: " << model_id << ", error: " << add_op.error();
             continue;
         }
 
         try {
             model_embedders.emplace(model_id, std::make_shared<PersonalizationModel>(model_id));
-            LOG(INFO) << "Loaded model embedder for model: " << model_id;
+            TS_LOG(INFO) << "Loaded model embedder for model: " << model_id;
         } catch (const std::exception& e) {
-            LOG(ERROR) << "Error loading model embedder for model: " << model_id << ", error: " << e.what();
+            TS_LOG(ERROR) << "Error loading model embedder for model: " << model_id << ", error: " << e.what();
             continue;
         }
 
@@ -177,7 +177,7 @@ Option<nlohmann::json> PersonalizationModelManager::update_model(const std::stri
                 model_embedders.erase(model_id);
                 model_embedders.emplace(model_id, std::make_shared<PersonalizationModel>(model_id));
             } catch (const std::exception& e) {
-                LOG(ERROR) << "Failed to reload model embedder after update: " << e.what();
+                TS_LOG(ERROR) << "Failed to reload model embedder after update: " << e.what();
                 model_embedders.erase(model_id);
             }
         }

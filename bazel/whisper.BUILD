@@ -1,4 +1,5 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
+load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -11,13 +12,6 @@ config_setting(
     name = "with_cuda",
     define_values = { "use_cuda": "on" }
 )
-
-print("CUDA: " + str(select({
-    ":with_cuda": True,
-    "//conditions:default": False,
-})))
-
-load("@cuda_home_repo//:cuda_home.bzl", "CUDA_HOME")
 
 cmake(
     name = "whisper",

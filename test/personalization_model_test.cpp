@@ -1,28 +1,38 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <filesystem>
+#include <fstream>
 #include "personalization_model.h"
 #include "collection_manager.h"
+#include "runfiles_utils.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class PersonalizationModelTest : public ::testing::Test {
 protected:
     std::string temp_dir;
+    std::string test_root_path;
+    std::string state_dir_path;
+    std::string model_dir_path;
     Store *store;
     CollectionManager& collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
     void SetUp() override {
-        temp_dir = (std::filesystem::temp_directory_path() / "personalization_model_test").string();
-        system(("rm -rf " + temp_dir + " && mkdir -p " + temp_dir).c_str());
-        std::string test_dir = "/tmp/typesense_test/models";
-        system(("rm -rf " + test_dir + " && mkdir -p " + test_dir).c_str());
-        EmbedderManager::set_model_dir(test_dir);
+        temp_dir = typesense_test::make_test_temp_dir("personalization_model_tmp");
+        typesense_test::reset_test_temp_dir(temp_dir);
+
+        test_root_path = typesense_test::make_test_temp_dir("personalization_model");
+        model_dir_path = test_root_path + "/models";
+        state_dir_path = test_root_path + "/state";
+
+        typesense_test::reset_test_temp_dir(model_dir_path);
+        typesense_test::reset_test_temp_dir(state_dir_path);
+        EmbedderManager::set_model_dir(model_dir_path);
 
         // Create test collection
-        std::string state_dir_path = "/tmp/typesense_test/personalization_model_test";
         Config::get_instance().set_data_dir(state_dir_path);
 
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
         nlohmann::json collection_schema = R"({
             "name": "companies",
             "fields": [
@@ -37,16 +47,23 @@ protected:
     }
 
     void TearDown() override {
-        std::string test_dir = "/tmp/typesense_test";
-        system(("rm -rf " + test_dir).c_str());
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(temp_dir);
+        typesense_test::cleanup_test_temp_dir(test_root_path);
     }
 
     std::string get_onnx_model_archive() {
-        std::string archive_name = "test/resources/models.tar.gz";
+        std::string archive_name = resolve_test_path({
+            "test/resources/models.tar.gz",
+            "_main/test/resources/models.tar.gz",
+        });
 
         std::ifstream archive_file(archive_name, std::ios::binary);
+        EXPECT_TRUE(archive_file.is_open()) << "Unable to open archive: " << archive_name;
+        if (!archive_file.is_open()) {
+            return {};
+        }
         std::string archive_content((std::istreambuf_iterator<char>(archive_file)), std::istreambuf_iterator<char>());
 
         archive_file.close();
@@ -91,7 +108,7 @@ TEST_F(PersonalizationModelTest, ValidateModelMissingFields) {
 
     auto result = PersonalizationModel::validate_model(invalid_model);
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 400);
+    ASSERT_EQ(result.code(), 400u);
     ASSERT_EQ(result.error(), "Missing or invalid 'id' field.");
 }
 
@@ -105,7 +122,7 @@ TEST_F(PersonalizationModelTest, ValidateModelInvalidName) {
 
     auto result = PersonalizationModel::validate_model(invalid_model);
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 400);
+    ASSERT_EQ(result.code(), 400u);
     ASSERT_EQ(result.error(), "Model namespace must be 'ts'.");
 }
 
@@ -119,7 +136,7 @@ TEST_F(PersonalizationModelTest, ValidateModelInvalidType) {
 
     auto result = PersonalizationModel::validate_model(invalid_model);
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 400);
+    ASSERT_EQ(result.code(), 400u);
     ASSERT_EQ(result.error(), "Invalid type. Must be either 'recommendation' or 'search'.");
 }
 
@@ -133,7 +150,7 @@ TEST_F(PersonalizationModelTest, ValidateModelInvalidModelName) {
 
     auto result = PersonalizationModel::validate_model(invalid_model);
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 400);
+    ASSERT_EQ(result.code(), 400u);
     ASSERT_EQ(result.error(), "Invalid model name for type. Use 'tyrec-1' for recommendation and 'tyrec-2' for search.");
 }
 
@@ -188,7 +205,7 @@ TEST_F(PersonalizationModelTest, CreateModelFailsWithInvalidArchive) {
 
     auto result = PersonalizationModel::create_model(model_id, model_json, invalid_model_data);
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 400);
+    ASSERT_EQ(result.code(), 400u);
     ASSERT_EQ(result.error(), "Missing the required model files in archive");
 }
 
@@ -243,7 +260,7 @@ TEST_F(PersonalizationModelTest, EmbedRecommendations) {
     ASSERT_FLOAT_EQ(embedding.embedding[2], -0.088352792f);
     ASSERT_FLOAT_EQ(embedding.embedding[3], -0.045160018f);
     ASSERT_FLOAT_EQ(embedding.embedding[255], -0.050552275f);
-    ASSERT_EQ(embedding.embedding.size(), 256);
+    ASSERT_EQ(embedding.embedding.size(), size_t{256});
 }
 
 TEST_F(PersonalizationModelTest, BatchEmbedRecommendations) {
@@ -275,21 +292,21 @@ TEST_F(PersonalizationModelTest, BatchEmbedRecommendations) {
 
     std::vector user_mask(2, std::vector<int64_t>(8, 1));
     std::vector<embedding_res_t> embeddings = model.batch_embed_recommendations(input_vector, user_mask);
-    ASSERT_EQ(embeddings.size(), 2);
+    ASSERT_EQ(embeddings.size(), size_t{2});
     ASSERT_TRUE(embeddings[0].success);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[0], -0.10328025f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[1], -0.10312808f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[2], -0.088352792f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[3], -0.045160018f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[255], -0.050552275f);
-    ASSERT_EQ(embeddings[0].embedding.size(), 256);
+    ASSERT_EQ(embeddings[0].embedding.size(), size_t{256});
     ASSERT_TRUE(embeddings[1].success);
     ASSERT_FLOAT_EQ(embeddings[1].embedding[0], -0.10328025f);
     ASSERT_FLOAT_EQ(embeddings[1].embedding[1], -0.10312808f);
     ASSERT_FLOAT_EQ(embeddings[1].embedding[2], -0.088352792f);
     ASSERT_FLOAT_EQ(embeddings[1].embedding[3], -0.045160018f);
     ASSERT_FLOAT_EQ(embeddings[1].embedding[255], -0.050552275f);
-    ASSERT_EQ(embeddings[1].embedding.size(), 256);
+    ASSERT_EQ(embeddings[1].embedding.size(), size_t{256});
 }
 
 TEST_F(PersonalizationModelTest, EmbedUsers) {
@@ -309,7 +326,7 @@ TEST_F(PersonalizationModelTest, EmbedUsers) {
     std::vector<std::string> input_vector(4, "Hello world");
     embedding_res_t embedding = model.embed_user(input_vector);
     ASSERT_TRUE(embedding.success);
-    ASSERT_EQ(embedding.embedding.size(), 256);
+    ASSERT_EQ(embedding.embedding.size(), size_t{256});
     ASSERT_FLOAT_EQ(embedding.embedding[0], 0.0054538441f);
     ASSERT_FLOAT_EQ(embedding.embedding[1], 0.044301841f);
     ASSERT_FLOAT_EQ(embedding.embedding[2], -0.091164835f);
@@ -333,16 +350,16 @@ TEST_F(PersonalizationModelTest, BatchEmbedUsers) {
     PersonalizationModel model(model_id);
     std::vector<std::vector<std::string>> input_vector(2, std::vector<std::string>(4    , "Hello world"));
     std::vector<embedding_res_t> embeddings = model.batch_embed_users(input_vector);
-    ASSERT_EQ(embeddings.size(), 2);
+    ASSERT_EQ(embeddings.size(), size_t{2});
     ASSERT_TRUE(embeddings[0].success);
-    ASSERT_EQ(embeddings[0].embedding.size(), 256);
+    ASSERT_EQ(embeddings[0].embedding.size(), size_t{256});
     ASSERT_FLOAT_EQ(embeddings[0].embedding[0], 0.0054538441f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[1], 0.044301841f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[2], -0.091164835f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[3], -0.076299265f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[255], 0.092341594f);
     ASSERT_TRUE(embeddings[1].success);
-    ASSERT_EQ(embeddings[1].embedding.size(), 256);
+    ASSERT_EQ(embeddings[1].embedding.size(), size_t{256});
     ASSERT_FLOAT_EQ(embeddings[1].embedding[0], 0.0054538441f);
     ASSERT_FLOAT_EQ(embeddings[1].embedding[1], 0.044301841f);
     ASSERT_FLOAT_EQ(embeddings[1].embedding[2], -0.091164835f);
@@ -367,7 +384,7 @@ TEST_F(PersonalizationModelTest, EmbedItem) {
     std::vector<std::string> input_vector(4, "Hello world");
     embedding_res_t embedding = model.embed_item(input_vector);
     ASSERT_TRUE(embedding.success);
-    ASSERT_EQ(embedding.embedding.size(), 256);
+    ASSERT_EQ(embedding.embedding.size(), size_t{256});
     ASSERT_FLOAT_EQ(embedding.embedding[0], 0.020180844f);
     ASSERT_FLOAT_EQ(embedding.embedding[1], 0.016092315f);
     ASSERT_FLOAT_EQ(embedding.embedding[2], -0.02253399f);
@@ -391,16 +408,16 @@ TEST_F(PersonalizationModelTest, BatchEmbedItems) {
     PersonalizationModel model(model_id);
     std::vector<std::vector<std::string>> input_vector(2, std::vector<std::string>(4, "Hello world"));
     std::vector<embedding_res_t> embeddings = model.batch_embed_items(input_vector);
-    ASSERT_EQ(embeddings.size(), 2);
+    ASSERT_EQ(embeddings.size(), size_t{2});
     ASSERT_TRUE(embeddings[0].success);
-    ASSERT_EQ(embeddings[0].embedding.size(), 256);
+    ASSERT_EQ(embeddings[0].embedding.size(), size_t{256});
     ASSERT_FLOAT_EQ(embeddings[0].embedding[0], 0.020180844f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[1], 0.016092315f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[2], -0.02253399f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[3], 0.073433787f);
     ASSERT_FLOAT_EQ(embeddings[0].embedding[255], 0.058315977f);
     ASSERT_TRUE(embeddings[1].success);
-    ASSERT_EQ(embeddings[1].embedding.size(), 256);
+    ASSERT_EQ(embeddings[1].embedding.size(), size_t{256});
     ASSERT_FLOAT_EQ(embeddings[1].embedding[0], 0.020180844f);
     ASSERT_FLOAT_EQ(embeddings[1].embedding[1], 0.016092315f);
     ASSERT_FLOAT_EQ(embeddings[1].embedding[2], -0.02253399f);

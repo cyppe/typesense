@@ -172,10 +172,10 @@ TEST(ConfigTest, CmdLineArgsOverrideConfigFileAndEnvVars) {
     ASSERT_EQ(true, config.get_enable_cors());
     ASSERT_EQ("192.168.10.10", config.get_api_address());
     ASSERT_EQ("abcd", config.get_api_key());  // cli parameter curations file config
-    ASSERT_EQ(1, config.get_cors_domains().size());  // cli parameter curations file config
+    ASSERT_EQ(size_t{1}, config.get_cors_domains().size());  // cli parameter curations file config
     ASSERT_EQ("http://localhost:8108", *(config.get_cors_domains().begin()));
     ASSERT_EQ(250, config.get_max_per_page());
-    ASSERT_EQ(99, config.get_max_group_limit());
+    ASSERT_EQ(uint32_t{99}, config.get_max_group_limit());
 }
 
 TEST(ConfigTest, CorsDefaults) {
@@ -198,7 +198,7 @@ TEST(ConfigTest, CorsDefaults) {
     config.load_config_cmd_args(options);
 
     ASSERT_EQ(true, config.get_enable_cors());
-    ASSERT_EQ(0, config.get_cors_domains().size());
+    ASSERT_EQ(size_t{0}, config.get_cors_domains().size());
 
     unsetenv("TYPESENSE_ENABLE_CORS");
     unsetenv("TYPESENSE_CORS_DOMAINS");
@@ -207,11 +207,11 @@ TEST(ConfigTest, CorsDefaults) {
     config2.load_config_env();
 
     ASSERT_EQ(true, config2.get_enable_cors());
-    ASSERT_EQ(0, config2.get_cors_domains().size());
+    ASSERT_EQ(size_t{0}, config2.get_cors_domains().size());
 
     ConfigImpl config3;
     config3.load_config_file(options);
 
     ASSERT_EQ(true, config3.get_enable_cors());
-    ASSERT_EQ(1, config3.get_cors_domains().size());
+    ASSERT_EQ(size_t{1}, config3.get_cors_domains().size());
 }

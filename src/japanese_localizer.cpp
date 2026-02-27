@@ -35,7 +35,7 @@ bool JapaneseLocalizer::init() {
     }
 
     if (kakasi_getopt_argv(argv.size(), argv.data()) != 0) {
-        LOG(ERROR) << "Kakasi initialization failed.";
+        TS_LOG(ERROR) << "Kakasi initialization failed.";
         return false;
     }
 

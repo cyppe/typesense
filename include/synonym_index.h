@@ -1,7 +1,7 @@
 #pragma once
 
 #include <set>
-#include "sparsepp.h"
+#include "sparsepp_wrapper.h"
 #include "json.hpp"
 #include "string_utils.h"
 #include "option.h"

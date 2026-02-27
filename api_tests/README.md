@@ -16,10 +16,54 @@ A fully‑featured API test harness that spins up Typesense in both single‑ an
 The phases within a given path run **sequentially** because each later phase re‑uses the data produced by the previous one. The single‑node and multi‑node paths run **in parallel** to reduce build time.
 
 > [!NOTE]
-> Single-node server is always run on 8108 when running api_tests
+> Single-node defaults to `8108` and multi-node defaults to `5108,6108,7108`, but the harness can auto-select free ports when defaults are occupied.
+
+## Environment
+
+- `TYPESENSE_BINARY_PATH`: current Typesense binary under test.
+- `TYPESENSE_DATA_DIR`: root test data directory (each run uses an isolated subdirectory).
+- `TYPESENSE_MIGRATION_SOURCE_BINARY_PATH`: older Typesense binary used by migration tests.
+- `TYPESENSE_MIGRATION_SOURCE_API_PORT` and `TYPESENSE_MIGRATION_SOURCE_PEERING_PORT`: optional fixed ports for migration tests.
+- `TYPESENSE_TEST_TEI_URL`: optional TEI endpoint used by `tei-integration.test.ts` (suite is skipped when unset).
+- `TYPESENSE_TEST_TEI_API_KEY`: optional API key for TEI requests (defaults to test value when unset).
+- `TYPESENSE_TEST_TEI_MODEL_NAME`: optional TEI model name (default: `openai/sentence-transformers/all-MiniLM-L6-v2`).
+
+> [!IMPORTANT]
+> Run the API test CLI from the `api_tests/` directory so Bun only discovers this test suite.
 
 > [!NOTE]
-> Multi-node server is always run on 5108, 6108, 7108 when running api_tests
+> Migration tests are only meaningful when `TYPESENSE_MIGRATION_SOURCE_BINARY_PATH` points to a legacy binary that is different from `TYPESENSE_BINARY_PATH`. If not, migration tests are skipped.
+
+> [!NOTE]
+> Rollback validation to v29 is intentionally not part of this suite, since migrated snapshot storage is not readable by the older v29 binary.
+
+### Downloading migration source binary
+
+You can ask the API test CLI to download and wire the migration source binary automatically:
+
+```bash
+cd api_tests
+typesense-api-tests --download-migration-binary
+```
+
+By default this downloads `v29.0` `linux-amd64` to `api_tests/artifacts/v29` and sets `TYPESENSE_MIGRATION_SOURCE_BINARY_PATH` for the current run.
+
+You can also customize version/target/output:
+
+```bash
+cd api_tests
+typesense-api-tests --download-migration-binary --migration-version 30.0 --migration-target linux-amd64 --migration-output-dir ./artifacts/v30
+```
+
+The downloader reuses an existing `typesense-server` binary in the output directory. Set `TYPESENSE_FORCE_DOWNLOAD_MIGRATION_BINARY=1` to force a fresh download.
+
+If you want to pre-download manually (same behavior used internally):
+
+```bash
+cd api_tests
+bash ./scripts/download_migration_binary.sh 29.0 linux-amd64 ./artifacts/v29
+export TYPESENSE_MIGRATION_SOURCE_BINARY_PATH="$PWD/artifacts/v29/typesense-server"
+```
 
 ## Writing a New Test Suite
 
@@ -142,7 +186,7 @@ Phases are therefore best thought of as a *progressive timeline* rather than ind
 
 ### `fetchSingleNode(path: string, init?: RequestInit): Promise<Response>`
 
-* Targets `http://localhost:8108`.
+* Targets `http://$TYPESENSE_API_HOST:$TYPESENSE_SINGLE_API_PORT` (defaults: `localhost:8108`).
 * Automatically injects the header `X-TYPESENSE-API-KEY: xyz`.
 * Use it for all **single-node** phases.
 
@@ -152,7 +196,7 @@ const res = await fetchSingleNode("/health");
 
 ### `fetchMultiNode(node: 1 | 2 | 3, path: string, init?: RequestInit): Promise<Response>`
 
-* Maps node → port as **1 ⇒ 5108**, **2 ⇒ 6108**, **3 ⇒ 7108**.
+* Maps node → port from `TYPESENSE_MULTI_API_PORTS` (default mapping remains **1 ⇒ 5108**, **2 ⇒ 6108**, **3 ⇒ 7108**).
 * Polls the RAFT *commit-index* across all three nodes until they match, guaranteeing cluster‑wide consistency before your request runs.
 * Same API‑key injection as above.
 

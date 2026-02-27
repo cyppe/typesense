@@ -8,6 +8,8 @@
 #include "synonym_index.h"
 #include "synonym_index_manager.h"
 #include "curation_index_manager.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionCurationTest : public ::testing::Test {
 protected:
@@ -17,11 +19,12 @@ protected:
     Collection *coll_mul_fields;
     StemmerManager& stemmerManager = StemmerManager::get_instance();
     SynonymIndexManager& manager = SynonymIndexManager::get_instance();
-    std::string state_dir_path = "/tmp/typesense_test/collection_curation";
+    std::string state_dir_path;
 
     void setupCollection() {
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_curation");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         stemmerManager.init(store);
@@ -71,6 +74,7 @@ protected:
         collectionManager.drop_collection("coll_mul_fields");
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -106,9 +110,9 @@ TEST_F(CollectionCurationTest, ExcludeIncludeExactQueryMatch) {
     ASSERT_TRUE(res_op.ok());
     nlohmann::json results = res_op.get();
 
-    ASSERT_EQ(3, results["hits"].size());
-    ASSERT_EQ(3, results["found"].get<uint32_t>());
-    ASSERT_EQ(6, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
+    ASSERT_EQ(uint32_t{3}, results["found"].get<uint32_t>());
+    ASSERT_EQ(size_t{6}, results["facet_counts"][0]["counts"].size());
 
     ASSERT_STREQ("12", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("5", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -139,8 +143,8 @@ TEST_F(CollectionCurationTest, ExcludeIncludeExactQueryMatch) {
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
 
-    ASSERT_EQ(3, results["hits"].size());
-    ASSERT_EQ(3, results["found"].get<uint32_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
+    ASSERT_EQ(uint32_t{3}, results["found"].get<uint32_t>());
     ASSERT_FALSE(results.contains("metadata"));
 
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
@@ -150,7 +154,7 @@ TEST_F(CollectionCurationTest, ExcludeIncludeExactQueryMatch) {
     // curated results should be marked as such
     ASSERT_EQ(true, results["hits"][0]["curated"].get<bool>());
     ASSERT_EQ(true, results["hits"][1]["curated"].get<bool>());
-    ASSERT_EQ(0, results["hits"][2].count("curated"));
+    ASSERT_EQ(size_t{0}, results["hits"][2].count("curated"));
 
     ov_manager.delete_curation_item("index", "exclude-rule");
     ov_manager.delete_curation_item("index", "include-rule");
@@ -181,8 +185,8 @@ TEST_F(CollectionCurationTest, ExcludeIncludeExactQueryMatch) {
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
 
-    ASSERT_EQ(4, results["hits"].size());
-    ASSERT_EQ(4, results["found"].get<uint32_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
+    ASSERT_EQ(uint32_t{4}, results["found"].get<uint32_t>());
 
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("3", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -194,8 +198,8 @@ TEST_F(CollectionCurationTest, ExcludeIncludeExactQueryMatch) {
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
 
-    ASSERT_EQ(0, results["hits"].size());
-    ASSERT_EQ(0, results["found"].get<uint32_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
+    ASSERT_EQ(uint32_t{0}, results["found"].get<uint32_t>());
 
     // ability to disable curations
     bool enable_curations = false;
@@ -206,8 +210,8 @@ TEST_F(CollectionCurationTest, ExcludeIncludeExactQueryMatch) {
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
 
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["found"].get<uint32_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(uint32_t{2}, results["found"].get<uint32_t>());
 
     ASSERT_STREQ("3", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("2", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -220,8 +224,8 @@ TEST_F(CollectionCurationTest, ExcludeIncludeExactQueryMatch) {
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
 
-    ASSERT_EQ(4, results["hits"].size());
-    ASSERT_EQ(4, results["found"].get<uint32_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
+    ASSERT_EQ(uint32_t{4}, results["found"].get<uint32_t>());
 
     ov_manager.delete_curation_item("index", "include-rule");
     Config::get_instance().set_enable_search_analytics(false);
@@ -237,8 +241,6 @@ TEST_F(CollectionCurationTest, OverrideJSONValidation) {
                    }
             }
     };
-
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     exclude_json["excludes"] = nlohmann::json::array();
     exclude_json["excludes"][0] = nlohmann::json::object();
@@ -348,7 +350,7 @@ TEST_F(CollectionCurationTest, IncludeHitsFilterOverrides) {
     ov_manager.upsert_curation_item("index", curation_json_include);
 
     auto curations = ov_manager.list_curation_items("index", 0, 0).get();
-    ASSERT_EQ(1, curations.size());
+    ASSERT_EQ(size_t{1}, curations.size());
     auto curation_json = curations[0];
     ASSERT_TRUE(curation_json.contains("filter_curated_hits"));
     ASSERT_TRUE(curation_json["filter_curated_hits"].get<bool>());
@@ -358,7 +360,7 @@ TEST_F(CollectionCurationTest, IncludeHitsFilterOverrides) {
                                            spp::sparse_hash_set<std::string>(),
                                            spp::sparse_hash_set<std::string>(), 10, "starring: will").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("bar", results["metadata"]["foo"].get<std::string>());
 
     // disable filter curation option
@@ -369,7 +371,7 @@ TEST_F(CollectionCurationTest, IncludeHitsFilterOverrides) {
                                       spp::sparse_hash_set<std::string>(),
                                       spp::sparse_hash_set<std::string>(), 10, "starring: will").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // remove filter curation option: by default no filtering should be done
     curation_json_include.erase("filter_curated_hits");
@@ -379,7 +381,7 @@ TEST_F(CollectionCurationTest, IncludeHitsFilterOverrides) {
                                       spp::sparse_hash_set<std::string>(),
                                       spp::sparse_hash_set<std::string>(), 10, "starring: will").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // query param configuration should take precedence over curation level config
     results = coll_mul_fields->search("not-found", {"title"}, "points:>70", {"starring"}, {}, {0}, 10, 1, FREQUENCY,
@@ -391,7 +393,7 @@ TEST_F(CollectionCurationTest, IncludeHitsFilterOverrides) {
                                       "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                       4, {off}, 32767, 32767, 2, 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // try disabling and overriding
 
@@ -407,7 +409,7 @@ TEST_F(CollectionCurationTest, IncludeHitsFilterOverrides) {
                                       "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                       4, {off}, 32767, 32767, 2, 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // try enabling and overriding
     curation_json_include["filter_curated_hits"] = true;
@@ -422,7 +424,7 @@ TEST_F(CollectionCurationTest, IncludeHitsFilterOverrides) {
                                       "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                       4, {off}, 32767, 32767, 2, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
 }
 
@@ -451,7 +453,7 @@ TEST_F(CollectionCurationTest, ExcludeIncludeFacetFilterQuery) {
     ov_manager.upsert_curation_item("index", curation_json_include);
 
     auto curations = ov_manager.list_curation_items("index", 0, 0).get();
-    ASSERT_EQ(1, curations.size());
+    ASSERT_EQ(size_t{1}, curations.size());
     auto curation_json = curations[0];
     ASSERT_FALSE(curation_json.contains("filter_by"));
     ASSERT_TRUE(curation_json.contains("remove_matched_tokens"));
@@ -466,7 +468,7 @@ TEST_F(CollectionCurationTest, ExcludeIncludeFacetFilterQuery) {
 
     ASSERT_EQ("<mark>Will</mark> Ferrell", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>());
     ASSERT_EQ("Will Ferrell", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
 
     ov_manager.delete_curation_item("index", "include-rule");
 
@@ -492,14 +494,14 @@ TEST_F(CollectionCurationTest, ExcludeIncludeFacetFilterQuery) {
                                       spp::sparse_hash_set<std::string>(),
                                       spp::sparse_hash_set<std::string>(), 10, "starring: scott").get();
 
-    ASSERT_EQ(9, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{9}, results["found"].get<size_t>());
 
     // "count" would be `2` without exclusion
     ASSERT_EQ("<mark>Scott</mark> Glenn", results["facet_counts"][0]["counts"][0]["highlighted"].get<std::string>());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
 
     ASSERT_EQ("Kristin <mark>Scott</mark> Thomas", results["facet_counts"][0]["counts"][1]["highlighted"].get<std::string>());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][1]["count"].get<size_t>());
 
     // ensure per_page is respected
     // first with per_page = 0
@@ -508,8 +510,8 @@ TEST_F(CollectionCurationTest, ExcludeIncludeFacetFilterQuery) {
                                       spp::sparse_hash_set<std::string>(),
                                       spp::sparse_hash_set<std::string>(), 10, "starring: scott").get();
 
-    ASSERT_EQ(9, results["found"].get<size_t>());
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{9}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     ov_manager.delete_curation_item("index", "exclude-rule");
 
@@ -521,14 +523,16 @@ TEST_F(CollectionCurationTest, ExcludeIncludeFacetFilterQuery) {
                                       spp::sparse_hash_set<std::string>(),
                                       spp::sparse_hash_set<std::string>(), 10, "").get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // should be able to replace existing curation
     curation_json_include["rule"]["query"] = "found";
     ov_manager.upsert_curation_item("index", curation_json_include);
-    ASSERT_STREQ("found", ov_manager.list_curation_items("index", 0, 0).get()[0]["rule"]["query"].get<std::string>().c_str());
+    auto updated_curation = ov_manager.get_curation_item("index", "include-rule");
+    ASSERT_TRUE(updated_curation.ok());
+    ASSERT_STREQ("found", updated_curation.get()["rule"]["query"].get<std::string>().c_str());
 
     ov_manager.delete_curation_item("index", "include-rule");
 }
@@ -570,7 +574,7 @@ TEST_F(CollectionCurationTest, FilterCuratedHitsSlideToCoverMissingSlots) {
                                            spp::sparse_hash_set<std::string>(),
                                            spp::sparse_hash_set<std::string>(), 10, "").get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("10", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("11", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("12", results["hits"][2]["document"]["id"].get<std::string>());
@@ -609,7 +613,7 @@ TEST_F(CollectionCurationTest, FilterCuratedHitsSlideToCoverMissingSlots) {
                                            spp::sparse_hash_set<std::string>(),
                                            spp::sparse_hash_set<std::string>(), 10, "").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("9", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("11", results["hits"][1]["document"]["id"].get<std::string>());
 }
@@ -688,7 +692,7 @@ TEST_F(CollectionCurationTest, SimpleOverrideStopProcessing) {
     auto results = coll1->search("shoes", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][2]["document"]["id"].get<std::string>());
@@ -713,7 +717,7 @@ TEST_F(CollectionCurationTest, SimpleOverrideStopProcessing) {
     results = coll1->search("shoes", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -805,7 +809,7 @@ TEST_F(CollectionCurationTest, IncludeOverrideWithFilterBy) {
     auto results = coll1->search("shoes", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -814,7 +818,7 @@ TEST_F(CollectionCurationTest, IncludeOverrideWithFilterBy) {
     results = coll1->search("shoes", {"name"}, "points:1000",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     // when bad filter by clause is used in curation
@@ -844,7 +848,7 @@ TEST_F(CollectionCurationTest, IncludeOverrideWithFilterBy) {
 
     results = coll1->search("random-name", {"name"}, "",
                              {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 }
 
 TEST_F(CollectionCurationTest, ReplaceQuery) {
@@ -898,7 +902,7 @@ TEST_F(CollectionCurationTest, ReplaceQuery) {
     auto results = coll1->search("boots", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -965,7 +969,7 @@ TEST_F(CollectionCurationTest, ReplaceWildcardQueryWithKeyword) {
     auto results = coll1->search("*", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1046,7 +1050,7 @@ TEST_F(CollectionCurationTest, BothFilterByAndQueryMatch) {
     auto results = coll1->search("*", {}, "storiesIds.id:=[a94f4198-c22d-4a67-9993-370f69243cc9]",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(7, results["hits"].size());
+    ASSERT_EQ(size_t{7}, results["hits"].size());
     ASSERT_EQ("16b2e68b-b0a0-4b6f-aada-403277b5df7b", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("ff62dbec-7510-4688-9186-d89106e6566f", results["hits"][1]["document"]["id"].get<std::string>());
 }
@@ -1116,13 +1120,13 @@ TEST_F(CollectionCurationTest, RuleQueryMustBeCaseInsensitive) {
     auto results = coll1->search("great shoes", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("ball", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -1168,7 +1172,7 @@ TEST_F(CollectionCurationTest, RuleQueryWithAccentedChars) {
     auto results = coll1->search("grün", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -1210,7 +1214,7 @@ TEST_F(CollectionCurationTest, WindowForRule) {
     auto results = coll1->search("boots", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // rule must not match when window_start is set into the future
@@ -1221,7 +1225,7 @@ TEST_F(CollectionCurationTest, WindowForRule) {
 
     results = coll1->search("boots", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // rule must not match when window_end is set into the past
     curation_json["effective_from_ts"] = -1;
@@ -1232,7 +1236,7 @@ TEST_F(CollectionCurationTest, WindowForRule) {
 
     results = coll1->search("boots", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // resetting both should bring the curation back in action
     curation_json["effective_from_ts"] = 965388863;
@@ -1243,7 +1247,7 @@ TEST_F(CollectionCurationTest, WindowForRule) {
 
     results = coll1->search("boots", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 }
 
 TEST_F(CollectionCurationTest, FilterRule) {
@@ -1301,7 +1305,7 @@ TEST_F(CollectionCurationTest, FilterRule) {
     auto results = coll1->search("*", {}, "points: 50",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1309,7 +1313,7 @@ TEST_F(CollectionCurationTest, FilterRule) {
     results = coll1->search("", {"name"}, "points: 50",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     // check to_json
@@ -1336,14 +1340,14 @@ TEST_F(CollectionCurationTest, FilterRule) {
     results = coll1->search("socks", {"name"}, "points: 1",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
 
     curation_json_ser = curation_rule2.to_json();
     ASSERT_EQ("points: 1", curation_json_ser["rule"]["filter_by"]);
-    ASSERT_EQ(0, curation_json_ser["rule"].count("query"));
-    ASSERT_EQ(0, curation_json_ser["rule"].count("match"));
+    ASSERT_EQ(size_t{0}, curation_json_ser["rule"].count("query"));
+    ASSERT_EQ(size_t{0}, curation_json_ser["rule"].count("match"));
 }
 
 TEST_F(CollectionCurationTest, CurationGroupingNonCuratedHitsShouldNotAppearOutside) {
@@ -1419,10 +1423,10 @@ TEST_F(CollectionCurationTest, CurationGroupingNonCuratedHitsShouldNotAppearOuts
     // when only one of the 2 records belonging to a group is used for curation, the other record
     // should also appear
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
 
-    ASSERT_EQ(2, results["grouped_hits"][0]["hits"].size());
-    ASSERT_EQ(1, results["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][1]["hits"].size());
 
     ASSERT_EQ("2", results["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["grouped_hits"][0]["hits"][1]["document"]["id"].get<std::string>());
@@ -1439,10 +1443,10 @@ TEST_F(CollectionCurationTest, CurationGroupingNonCuratedHitsShouldNotAppearOuts
     // when only one of the 2 records belonging to a group is used for curation, the other record
     // should also appear
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
 
-    ASSERT_EQ(2, results["grouped_hits"][0]["hits"].size());
-    ASSERT_EQ(1, results["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][1]["hits"].size());
 
     ASSERT_EQ("2", results["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["grouped_hits"][0]["hits"][1]["document"]["id"].get<std::string>());
@@ -1462,7 +1466,7 @@ TEST_F(CollectionCurationTest, PinnedAndHiddenHits) {
                                            "", 10,
                                            pinned_hits, {}).get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
     ASSERT_STREQ("13", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("4", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("11", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1477,7 +1481,7 @@ TEST_F(CollectionCurationTest, PinnedAndHiddenHits) {
                                       "", 10,
                                       pinned_hits, {}).get();
 
-    ASSERT_EQ(5, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, results["found"].get<size_t>());
     ASSERT_STREQ("13", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("4", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("11", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1495,7 +1499,7 @@ TEST_F(CollectionCurationTest, PinnedAndHiddenHits) {
                                       "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                                       4, {off}, 32767, 32767, 2, 1).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
     ASSERT_STREQ("14", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("11", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("12", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1568,14 +1572,13 @@ TEST_F(CollectionCurationTest, PinnedAndHiddenHits) {
                                       "", 10,
                                       {}, {hidden_hits}).get();
 
-    ASSERT_EQ(8, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{8}, results["found"].get<size_t>());
     ASSERT_STREQ("8", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("6", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 }
 
 TEST_F(CollectionCurationTest, PinnedHitsSmallerThanPageSize) {
     auto pinned_hits = "17:1,13:4,11:3";
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     // pinned hits larger than page size: check that pagination works
 
@@ -1591,11 +1594,11 @@ TEST_F(CollectionCurationTest, PinnedHitsSmallerThanPageSize) {
 
     std::vector<size_t> expected_ids_p1 = {17, 16, 11, 13, 6, 8, 1, 0};
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
-    ASSERT_EQ(8, results["hits"].size());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{8}, results["hits"].size());
 
     for(size_t i=0; i<8; i++) {
-        ASSERT_EQ(expected_ids_p1[i], std::stoi(results["hits"][i]["document"]["id"].get<std::string>()));
+        ASSERT_EQ(expected_ids_p1[i], static_cast<size_t>(std::stoi(results["hits"][i]["document"]["id"].get<std::string>())));
     }
 
     std::vector<size_t> expected_ids_p2 = {10, 4};
@@ -1607,17 +1610,16 @@ TEST_F(CollectionCurationTest, PinnedHitsSmallerThanPageSize) {
                                       "", 10,
                                       pinned_hits, {}).get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     for(size_t i=0; i<2; i++) {
-        ASSERT_EQ(expected_ids_p2[i], std::stoi(results["hits"][i]["document"]["id"].get<std::string>()));
+        ASSERT_EQ(expected_ids_p2[i], static_cast<size_t>(std::stoi(results["hits"][i]["document"]["id"].get<std::string>())));
     }
 }
 
 TEST_F(CollectionCurationTest, PinnedHitsLargerThanPageSize) {
     auto pinned_hits = "6:1,1:2,16:3,11:4";
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     // pinned hits larger than page size: check that pagination works
 
@@ -1628,8 +1630,8 @@ TEST_F(CollectionCurationTest, PinnedHitsLargerThanPageSize) {
                                            "", 10,
                                            pinned_hits, {}).get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_STREQ("6", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("1", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -1640,8 +1642,8 @@ TEST_F(CollectionCurationTest, PinnedHitsLargerThanPageSize) {
                                       "", 10,
                                       pinned_hits, {}).get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_STREQ("16", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("11", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -1652,15 +1654,14 @@ TEST_F(CollectionCurationTest, PinnedHitsLargerThanPageSize) {
                                       "", 10,
                                       pinned_hits, {}).get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_STREQ("8", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 }
 
 TEST_F(CollectionCurationTest, PinnedHitsWhenThereAreNotEnoughResults) {
     auto pinned_hits = "6:1,1:2,11:5";
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     // multiple pinned hits specified, but query produces no result
 
@@ -1671,8 +1672,8 @@ TEST_F(CollectionCurationTest, PinnedHitsWhenThereAreNotEnoughResults) {
                                            "", 10,
                                            pinned_hits, {}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_STREQ("6", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("1", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("11", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1685,8 +1686,8 @@ TEST_F(CollectionCurationTest, PinnedHitsWhenThereAreNotEnoughResults) {
                                       "", 10,
                                       pinned_hits, {}).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ASSERT_STREQ("6", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("1", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -1696,7 +1697,6 @@ TEST_F(CollectionCurationTest, PinnedHitsWhenThereAreNotEnoughResults) {
 
 TEST_F(CollectionCurationTest, HiddenHitsHidingSingleResult) {
     Collection *coll1;
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     std::vector<field> fields = {field("title", field_types::STRING, false),
                                  field("points", field_types::INT32, false),};
@@ -1729,8 +1729,8 @@ TEST_F(CollectionCurationTest, HiddenHitsHidingSingleResult) {
                                       "", 10,
                                       "", hidden_hits).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("the train", {"title"}, "points:0", {}, {}, {0}, 50, 1, FREQUENCY,
                            {false}, Index::DROP_TOKENS_THRESHOLD,
@@ -1739,15 +1739,14 @@ TEST_F(CollectionCurationTest, HiddenHitsHidingSingleResult) {
                            "", 10,
                            "", hidden_hits).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
 
 TEST_F(CollectionCurationTest, PinnedHitsGrouping) {
     auto pinned_hits = "6:1,8:1,1:2,13:3";
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     // without any grouping parameter, only the first ID in a position should be picked
     // and other IDs should appear in their original positions
@@ -1759,7 +1758,7 @@ TEST_F(CollectionCurationTest, PinnedHitsGrouping) {
                                            "", 10,
                                            pinned_hits, {}).get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
     ASSERT_STREQ("6", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("1", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("13", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1769,7 +1768,7 @@ TEST_F(CollectionCurationTest, PinnedHitsGrouping) {
     ASSERT_EQ(true, results["hits"][0]["curated"].get<bool>());
     ASSERT_EQ(true, results["hits"][1]["curated"].get<bool>());
     ASSERT_EQ(true, results["hits"][2]["curated"].get<bool>());
-    ASSERT_EQ(0, results["hits"][3].count("curated"));
+    ASSERT_EQ(size_t{0}, results["hits"][3].count("curated"));
 
     // with grouping
 
@@ -1780,10 +1779,10 @@ TEST_F(CollectionCurationTest, PinnedHitsGrouping) {
                             "", 10,
                             pinned_hits, {}, {"cast"}, 2).get();
 
-    ASSERT_EQ(9, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{9}, results["found"].get<size_t>());
 
-    ASSERT_EQ(1, results["grouped_hits"][0]["group_key"].size());
-    ASSERT_EQ(2, results["grouped_hits"][0]["group_key"][0].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][0]["group_key"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][0]["group_key"][0].size());
     ASSERT_STREQ("Chris Evans", results["grouped_hits"][0]["group_key"][0][0].get<std::string>().c_str());
     ASSERT_STREQ("Scarlett Johansson", results["grouped_hits"][0]["group_key"][0][1].get<std::string>().c_str());
 
@@ -1800,7 +1799,6 @@ TEST_F(CollectionCurationTest, PinnedHitsGrouping) {
 
 TEST_F(CollectionCurationTest, PinnedHitsGroupingNonPinnedHitsShouldNotAppearOutside) {
     Collection *coll1;
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     std::vector<field> fields = {field("title", field_types::STRING, false),
                                  field("group_id", field_types::STRING, true),};
@@ -1839,10 +1837,10 @@ TEST_F(CollectionCurationTest, PinnedHitsGroupingNonPinnedHitsShouldNotAppearOut
     // when only one of the 2 records belonging to a group is used for curation, the other record
     // should appear at the back
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
 
-    ASSERT_EQ(2, results["grouped_hits"][0]["hits"].size());
-    ASSERT_EQ(1, results["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][1]["hits"].size());
 
     ASSERT_EQ("2", results["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["grouped_hits"][0]["hits"][1]["document"]["id"].get<std::string>());
@@ -1859,10 +1857,10 @@ TEST_F(CollectionCurationTest, PinnedHitsGroupingNonPinnedHitsShouldNotAppearOut
     // when only one of the 2 records belonging to a group is used for curation, the other record
     // should appear at the back
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
 
-    ASSERT_EQ(2, results["grouped_hits"][0]["hits"].size());
-    ASSERT_EQ(1, results["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, results["grouped_hits"][1]["hits"].size());
 
     ASSERT_EQ("2", results["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["grouped_hits"][0]["hits"][1]["document"]["id"].get<std::string>());
@@ -1871,7 +1869,6 @@ TEST_F(CollectionCurationTest, PinnedHitsGroupingNonPinnedHitsShouldNotAppearOut
 
 TEST_F(CollectionCurationTest, PinnedHitsWithWildCardQuery) {
     Collection *coll1;
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     std::vector<field> fields = {field("title", field_types::STRING, false),
                                  field("points", field_types::INT32, false),};
@@ -1904,13 +1901,13 @@ TEST_F(CollectionCurationTest, PinnedHitsWithWildCardQuery) {
                                        "", 10,
                                        pinned_hits, {}, {}, {0}, "", "", {}).get();
 
-    ASSERT_EQ(311, results["found"].get<size_t>());
-    ASSERT_EQ(11, results["hits"].size());
+    ASSERT_EQ(size_t{311}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{11}, results["hits"].size());
 
     std::vector<size_t> expected_ids = {12, 11, 10, 9, 8, 6, 5, 3, 2, 1, 0};  // 4 and 7 should be missing
 
     for(size_t i=0; i<11; i++) {
-        ASSERT_EQ(expected_ids[i], std::stoi(results["hits"][i]["document"]["id"].get<std::string>()));
+    ASSERT_EQ(expected_ids[i], static_cast<size_t>(std::stoi(results["hits"][i]["document"]["id"].get<std::string>())));
     }
 
     collectionManager.drop_collection("coll1");
@@ -1918,7 +1915,6 @@ TEST_F(CollectionCurationTest, PinnedHitsWithWildCardQuery) {
 
 TEST_F(CollectionCurationTest, HiddenHitsWithWildCardQuery) {
     Collection *coll1;
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     std::vector<field> fields = {field("title", field_types::STRING, false),
                                  field("points", field_types::INT32, false),};
@@ -1947,14 +1943,13 @@ TEST_F(CollectionCurationTest, HiddenHitsWithWildCardQuery) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 10,
                                  {}, hidden_hits, {}, {0}, "", "", {}).get();
-    ASSERT_EQ(4, results["found"].get<size_t>());
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     collectionManager.drop_collection("coll1");
 }
 
 TEST_F(CollectionCurationTest, PinnedHitsIdsHavingColon) {
     Collection *coll1;
-    auto& ov_manager = CurationIndexManager::get_instance();
 
     std::vector<field> fields = {field("url", field_types::STRING, true),
                                  field("points", field_types::INT32, false)};
@@ -1992,7 +1987,7 @@ TEST_F(CollectionCurationTest, PinnedHitsIdsHavingColon) {
 
     auto res = res_op.get();
 
-    ASSERT_EQ(10, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, res["found"].get<size_t>());
     ASSERT_STREQ("https://example.com/1", res["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("https://example.com/3", res["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("https://example.com/10", res["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -2047,7 +2042,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringExactMatchBasics) {
     auto results = coll1->search("shoes", {"name", "category", "brand"}, "",
                                  {}, sort_fields, {2, 2, 2}, 10).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -2111,30 +2106,30 @@ TEST_F(CollectionCurationTest, DynamicFilteringExactMatchBasics) {
     results = coll1->search("shoes", {"name", "category", "brand"}, "",
                                        {}, sort_fields, {2, 2, 2}, 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
-    ASSERT_EQ(0, results["hits"][1]["highlights"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][1]["highlights"].size());
 
     // should not apply filter for non-exact case
     results = coll1->search("running shoes", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {false}, 10).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     results = coll1->search("adidas shoes", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {false}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     // dynamic brand filter + explicit ID include
     results = coll1->search("adidas", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -2241,7 +2236,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringPrefixMatchShouldNotWork) {
     auto results = coll1->search("shoe", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2291,7 +2286,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringMissingField) {
     auto results = coll1->search("shoes", {"name", "category"}, "",
                             {}, sort_fields, {2, 2}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2341,7 +2336,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringBadFilterBy) {
     auto results = coll1->search("shoes", {"name", "category"}, "",
                                  {}, sort_fields, {2, 2}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     collectionManager.drop_collection("coll1");
 }
 
@@ -2412,7 +2407,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringMultiplePlaceholders) {
     auto results = coll1->search("Nike Air Jordan light yellow shoes", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {false}, 10).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -2421,7 +2416,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringMultiplePlaceholders) {
     results = coll1->search("New Nike Air Jordan yellow shoes", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {false}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2493,7 +2488,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringTokensBetweenPlaceholders) {
     auto results = coll1->search("Nike Air Jordan shoes yellow", {"name", "category", "brand"}, "",
                                  {}, sort_fields, {2, 2, 2}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2572,14 +2567,14 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithNumericalFilter) {
 
     auto results = coll1->search("popular nike shoes", {"name", "category", "brand"}, "",
                                  {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ov_manager.upsert_curation_item("index", curation_json);
 
     results = coll1->search("popular nike shoes", {"name", "category", "brand"}, "",
                                  {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {false}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // when curations are disabled
@@ -2590,14 +2585,14 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithNumericalFilter) {
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1, 1, 1}, 10000, true, false, enable_curations).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     // should not match the defined curation
 
     results = coll1->search("running adidas shoes", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {false}, 10).get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][2]["document"]["id"].get<std::string>());
@@ -2606,7 +2601,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithNumericalFilter) {
     results = coll1->search("adidas", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {false}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2688,17 +2683,17 @@ TEST_F(CollectionCurationTest, DynamicFilteringExactMatch) {
     auto results = coll1->search("really popular nike shoes", {"name", "category", "brand"}, "",
                                   {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     results = coll1->search("popular nike running shoes", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     results = coll1->search("popular nike shoes running", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("3", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -2773,7 +2768,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithSynonyms) {
     ov_manager.upsert_curation_item("index", curation_json1);
 
     auto curations = ov_manager.list_curation_items("index", 0, 0).get();
-    ASSERT_EQ(1, curations.size());
+    ASSERT_EQ(size_t{1}, curations.size());
     auto curation_json = curations[0];
     ASSERT_EQ("category: {category}", curation_json["filter_by"].get<std::string>());
     ASSERT_EQ(true, curation_json["remove_matched_tokens"].get<bool>());  // must be true by default
@@ -2798,7 +2793,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithSynonyms) {
     auto results = coll1->search("sneakers", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     // keyword does not exist but has a synonym with results
@@ -2806,7 +2801,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithSynonyms) {
     results = coll1->search("boots", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
@@ -2815,7 +2810,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithSynonyms) {
     results = coll1->search("exciting", {"name", "category", "brand"}, "",
                             {}, sort_fields, {2, 2, 2}, 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
@@ -2897,28 +2892,28 @@ TEST_F(CollectionCurationTest, StaticFiltering) {
     auto results = coll1->search("expensive shoes", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("expensive", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // partial word should not match
     results = coll1->search("inexpensive shoes", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(2, results["found"].get<uint32_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(uint32_t{2}, results["found"].get<uint32_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // with exact match
 
     results = coll1->search("cheap", {"name"}, "",
                             {}, sort_fields, {2}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     // should not work in match contains context
@@ -2926,7 +2921,7 @@ TEST_F(CollectionCurationTest, StaticFiltering) {
     results = coll1->search("cheap boots", {"name"}, "",
                             {}, sort_fields, {2}, 10).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // with synonym for expensive: should NOT match as synonyms are resolved after curation substitution
     op = SynonymIndexManager::get_instance().upsert_synonym_item("index",
@@ -2936,7 +2931,7 @@ TEST_F(CollectionCurationTest, StaticFiltering) {
     results = coll1->search("costly", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -3020,7 +3015,7 @@ TEST_F(CollectionCurationTest, StaticFilteringMultipleRuleMatch) {
     auto results = coll1->search("starred twitter", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     // when stop_processing is enabled (default is true)
@@ -3040,7 +3035,7 @@ TEST_F(CollectionCurationTest, StaticFilteringMultipleRuleMatch) {
     results = coll1->search("starred twitter", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -3131,7 +3126,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringMultipleRuleMatch) {
     auto results = coll1->search("starred nike", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("bar", results["metadata"]["foo"].get<std::string>());
 
@@ -3152,7 +3147,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringMultipleRuleMatch) {
     results = coll1->search("starred nike", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -3222,7 +3217,7 @@ TEST_F(CollectionCurationTest, SynonymsAppliedToOverridenQuery) {
     auto results = coll1->search("expensive shoes", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3290,7 +3285,7 @@ TEST_F(CollectionCurationTest, StaticFilterWithAndWithoutQueryStringMutation) {
     auto results = coll1->search("apple", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // now, with query string mutation
@@ -3314,7 +3309,7 @@ TEST_F(CollectionCurationTest, StaticFilterWithAndWithoutQueryStringMutation) {
     results = coll1->search("apple", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3366,7 +3361,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithJustRemoveTokens) {
     auto results = coll1->search("all", {"name", "category", "brand"}, "",
                                  {}, sort_fields, {0, 0, 0}, 10).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // with curation, we return all records
 
@@ -3389,11 +3384,11 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithJustRemoveTokens) {
     results = coll1->search("all", {"name", "category", "brand"}, "",
                             {}, sort_fields, {0, 0, 0}, 10).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     results = coll1->search("really amazing shoes", {"name", "category", "brand"}, "",
                             {}, sort_fields, {0, 0, 0}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // with contains
     curation_json = {
@@ -3414,7 +3409,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithJustRemoveTokens) {
 
     results = coll1->search("really amazing shoes", {"name", "category", "brand"}, "",
                             {}, sort_fields, {0, 0, 0}, 1).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -3471,7 +3466,7 @@ TEST_F(CollectionCurationTest, StaticSorting) {
     auto results = coll1->search("shoes", {"name"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3482,7 +3477,7 @@ TEST_F(CollectionCurationTest, StaticSorting) {
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
     // with curation we will sort on price
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3490,7 +3485,7 @@ TEST_F(CollectionCurationTest, StaticSorting) {
     results = coll1->search("*", {"name"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3588,7 +3583,7 @@ TEST_F(CollectionCurationTest, DynamicSorting) {
     auto results = coll1->search("store01", {"store"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3596,7 +3591,7 @@ TEST_F(CollectionCurationTest, DynamicSorting) {
     results = coll1->search("store02", {"store"}, "",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3623,7 +3618,7 @@ TEST_F(CollectionCurationTest, DynamicSorting) {
     results = coll1->search("*", {}, "store:=store01",
                                  {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3631,7 +3626,7 @@ TEST_F(CollectionCurationTest, DynamicSorting) {
     results = coll1->search("*", {}, "store:=store02",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3664,7 +3659,7 @@ TEST_F(CollectionCurationTest, DynamicSorting) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "size").get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3679,7 +3674,7 @@ TEST_F(CollectionCurationTest, DynamicSorting) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "size").get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3688,7 +3683,7 @@ TEST_F(CollectionCurationTest, DynamicSorting) {
     results = coll1->search("store", {"store"}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3696,7 +3691,7 @@ TEST_F(CollectionCurationTest, DynamicSorting) {
     results = coll1->search("*", {}, "",
                             {}, sort_fields, {2}, 10, 1, FREQUENCY, {true}, 0).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][2]["document"]["id"].get<std::string>());
@@ -3742,7 +3737,7 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithPartialTokenMatch) {
     auto results = coll1->search("shoes", {"name"}, "",
                                  {}, sort_fields, {0}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // with curation, we return all records
 
@@ -3766,12 +3761,12 @@ TEST_F(CollectionCurationTest, DynamicFilteringWithPartialTokenMatch) {
     results = coll1->search("shoes", {"name"}, "",
                             {}, sort_fields, {0}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("shox", {"name"}, "",
                             {}, sort_fields, {0}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -3812,7 +3807,7 @@ TEST_F(CollectionCurationTest, OverrideWithSymbolsToIndex) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // with curation, we return all records
 
@@ -3839,7 +3834,7 @@ TEST_F(CollectionCurationTest, OverrideWithSymbolsToIndex) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                             "", 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("nonstick", {"name"}, "",
@@ -3849,7 +3844,7 @@ TEST_F(CollectionCurationTest, OverrideWithSymbolsToIndex) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                             "", 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -3909,7 +3904,7 @@ TEST_F(CollectionCurationTest, OverrideWithTags) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // create curations containing 2 tags, single tag and no tags:
     nlohmann::json curation_json1 = R"({
@@ -3969,7 +3964,7 @@ TEST_F(CollectionCurationTest, OverrideWithTags) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "foo").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // when multiple curations match a given tag, return first matching record
     results = coll1->search("queryA", {"name"}, "",
@@ -3982,7 +3977,7 @@ TEST_F(CollectionCurationTest, OverrideWithTags) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "alpha").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // single tag matching rule with multiple tags
@@ -3996,7 +3991,7 @@ TEST_F(CollectionCurationTest, OverrideWithTags) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "beta").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // when multiple tags are passed, only consider rule with both tags
@@ -4010,7 +4005,7 @@ TEST_F(CollectionCurationTest, OverrideWithTags) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "alpha,beta").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // query with no tags should only trigger curation with no tags
@@ -4024,7 +4019,7 @@ TEST_F(CollectionCurationTest, OverrideWithTags) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -4106,7 +4101,7 @@ TEST_F(CollectionCurationTest, OverrideWithTagsPartialMatch) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "alpha,zeta").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     collectionManager.drop_collection("coll1");
 }
@@ -4208,7 +4203,7 @@ TEST_F(CollectionCurationTest, OverrideWithTagsWithoutStopProcessing) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "alpha").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("bar", results["metadata"]["foo"].get<std::string>());
 
@@ -4286,7 +4281,7 @@ TEST_F(CollectionCurationTest, WildcardTagRuleThatMatchesAllQueries) {
                                  0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                                  true, true, false, "", "", curation_tags).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("queryA", {"name"}, "",
@@ -4299,7 +4294,7 @@ TEST_F(CollectionCurationTest, WildcardTagRuleThatMatchesAllQueries) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", curation_tags).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // includes instead of filter_by
@@ -4329,7 +4324,7 @@ TEST_F(CollectionCurationTest, WildcardTagRuleThatMatchesAllQueries) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", curation_tags).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -4385,7 +4380,7 @@ TEST_F(CollectionCurationTest, TagsOnlyRule) {
                                  0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                                  true, true, false, "", "", "listing").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // with include rule
@@ -4414,7 +4409,7 @@ TEST_F(CollectionCurationTest, TagsOnlyRule) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", "listing2").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     // no curation tag passed: rule should not match
@@ -4429,7 +4424,7 @@ TEST_F(CollectionCurationTest, TagsOnlyRule) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", curation_tag).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -4595,7 +4590,7 @@ TEST_F(CollectionCurationTest, WildcardSearchOverride) {
                                  0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                                  true, true, false, "", "", curation_tags).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // includes instead of filter_by
@@ -4624,7 +4619,7 @@ TEST_F(CollectionCurationTest, WildcardSearchOverride) {
                             0, "exhaustive", 30000, 2, "", {}, {}, "right_to_left",
                             true, true, false, "", "", curation_tags).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -4665,7 +4660,7 @@ TEST_F(CollectionCurationTest, OverridesPagination) {
     limit=2;
     auto curation_op = ov_manager.list_curation_items("index", limit, offset);
     auto curation_map = curation_op.get();
-    ASSERT_EQ(2, curation_map.size());
+    ASSERT_EQ(size_t{2}, curation_map.size());
     i=offset;
     for(const auto &kv : curation_map) {
         ASSERT_EQ("curation" + std::to_string(i+1), kv["id"].get<std::string>().c_str());
@@ -4676,7 +4671,7 @@ TEST_F(CollectionCurationTest, OverridesPagination) {
     offset=3;
     curation_op = ov_manager.list_curation_items("index", limit, offset);
     curation_map = curation_op.get();
-    ASSERT_EQ(2, curation_map.size());
+    ASSERT_EQ(size_t{2}, curation_map.size());
     i=offset;
     for(const auto &kv : curation_map) {
         ASSERT_EQ("curation" + std::to_string(i+1),  kv["id"].get<std::string>().c_str());
@@ -4687,7 +4682,7 @@ TEST_F(CollectionCurationTest, OverridesPagination) {
     offset=1; limit=0;
     curation_op = ov_manager.list_curation_items("index", limit, offset);
     curation_map = curation_op.get();
-    ASSERT_EQ(4, curation_map.size());
+    ASSERT_EQ(size_t{4}, curation_map.size());
     i=offset;
     for(const auto &kv : curation_map) {
         ASSERT_EQ("curation" + std::to_string(i+1),  kv["id"].get<std::string>().c_str());
@@ -4698,14 +4693,14 @@ TEST_F(CollectionCurationTest, OverridesPagination) {
     offset=4, limit=1;
     curation_op = ov_manager.list_curation_items("index", limit, offset);
     curation_map = curation_op.get();
-    ASSERT_EQ(1, curation_map.size());
+    ASSERT_EQ(size_t{1}, curation_map.size());
     ASSERT_EQ("curation5", curation_map[0]["id"].get<std::string>());
 
     //if limit is greater than number of collection then return all from offset
     offset=0; limit=8;
     curation_op = ov_manager.list_curation_items("index", limit, offset);
     curation_map = curation_op.get();
-    ASSERT_EQ(5, curation_map.size());
+    ASSERT_EQ(size_t{5}, curation_map.size());
     i=offset;
     for(const auto &kv : curation_map) {
         ASSERT_EQ("curation" + std::to_string(i+1),  kv["id"].get<std::string>());
@@ -4715,7 +4710,7 @@ TEST_F(CollectionCurationTest, OverridesPagination) {
     offset=3; limit=4;
     curation_op = ov_manager.list_curation_items("index", limit, offset);
     curation_map = curation_op.get();
-    ASSERT_EQ(2, curation_map.size());
+    ASSERT_EQ(size_t{2}, curation_map.size());
     i=offset;
     for(const auto &kv : curation_map) {
         ASSERT_EQ("curation" + std::to_string(i+1),  kv["id"].get<std::string>().c_str());
@@ -4808,7 +4803,7 @@ TEST_F(CollectionCurationTest, FilterPinnedHits) {
                                  INT16_MAX, 2, filter_curated_hits ).get();
 
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("4", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][2]["document"]["id"].get<std::string>());
@@ -4829,7 +4824,7 @@ TEST_F(CollectionCurationTest, FilterPinnedHits) {
                             fallback, 4, {off}, INT16_MAX,
                             INT16_MAX, 2, filter_curated_hits ).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("4", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -4848,7 +4843,7 @@ TEST_F(CollectionCurationTest, FilterPinnedHits) {
                             false, 6000 * 1000, 4, 7,
                             fallback, 4, {off}, INT16_MAX,
                             INT16_MAX, 2, filter_curated_hits ).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // Filter should apply on curated results
     results = coll3->search("2023", {"title"}, "points: >70", {}, {},
@@ -4864,7 +4859,7 @@ TEST_F(CollectionCurationTest, FilterPinnedHits) {
                             fallback, 4, {off}, INT16_MAX,
                             INT16_MAX, 2, filter_curated_hits ).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -4883,7 +4878,7 @@ TEST_F(CollectionCurationTest, FilterPinnedHits) {
                             INT16_MAX, 2, filter_curated_hits).get();
 
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][2]["document"]["id"].get<std::string>());
@@ -4903,7 +4898,7 @@ TEST_F(CollectionCurationTest, FilterPinnedHits) {
                             INT16_MAX, 2, filter_curated_hits).get();
 
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("4", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -4956,7 +4951,7 @@ TEST_F(CollectionCurationTest, AvoidTypoMatchingWhenOverlapWithCuratedData) {
                                  fallback, 4, {off}, INT16_MAX,
                                  INT16_MAX, 2, false).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("4", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -4974,7 +4969,7 @@ TEST_F(CollectionCurationTest, AvoidTypoMatchingWhenOverlapWithCuratedData) {
                             fallback, 4, {off}, INT16_MAX,
                             INT16_MAX, 2, false).get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("4", results["hits"][1]["document"]["id"].get<std::string>());
 }
@@ -5018,11 +5013,11 @@ TEST_F(CollectionCurationTest, PinnedHitsAndFilteredFaceting) {
                                  fallback, 4, {off}, INT16_MAX,
                                  INT16_MAX, 2, filter_curated_hits).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("4711", results["hits"][0]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("sfa", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<int>());
 }
@@ -5051,7 +5046,7 @@ TEST_F(CollectionCurationTest, OverridesWithSemanticSearch) {
             ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto coll_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(coll_op.ok());
@@ -5178,7 +5173,7 @@ TEST_F(CollectionCurationTest, NestedObjectOverride) {
     auto results = coll1->search("nike shoes", {"name", "nested.brand", "nested.category"}, "",
                                 {}, sort_fields, {2, 2, 2}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_TRUE(results.contains("metadata"));
     ASSERT_TRUE(results["metadata"]["filtered"].get<bool>());
@@ -5242,7 +5237,7 @@ TEST_F(CollectionCurationTest, CurationWithGroupBy) {
                                           "", 30, 5, "",
                                          10, {}, {}, {}, 0).get();
 
-    ASSERT_EQ(2, results_no_group["hits"].size());
+    ASSERT_EQ(size_t{2}, results_no_group["hits"].size());
     // First two should be curated (pinned) documents
     ASSERT_EQ("3", results_no_group["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("5", results_no_group["hits"][1]["document"]["id"].get<std::string>());
@@ -5260,7 +5255,7 @@ TEST_F(CollectionCurationTest, CurationWithGroupBy) {
 
     // Should have grouped results
     ASSERT_TRUE(results_with_group.contains("grouped_hits"));
-    ASSERT_GE(results_with_group["grouped_hits"].size(), 1);
+    ASSERT_GE(results_with_group["grouped_hits"].size(), size_t{1});
 
     // Look for curated results in grouped hits
     bool found_curated_doc3 = false;
@@ -5318,7 +5313,7 @@ TEST_F(CollectionCurationTest, DynamicFilterMatchingMultipleRules) {
 
     //without any curation
     auto results = coll1->search("*", {}, "region:=act`", {}, {}, {0}).get();
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
     ASSERT_EQ("4", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -5352,7 +5347,7 @@ TEST_F(CollectionCurationTest, DynamicFilterMatchingMultipleRules) {
     // should match with curation2 only even though curation1 can be matched with filter_query
     results = coll1->search("*", {}, "region:=act && (category:=`Electronics` || category:=`Office`) ", {}, {}, {0}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("4", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -5361,7 +5356,7 @@ TEST_F(CollectionCurationTest, DynamicFilterMatchingMultipleRules) {
     //this should match with curation1 only
     results = coll1->search("*", {}, "region:=act && category:=`Electronics`", {}, {}, {0}).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("4", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ(true, results["hits"][0]["curated"].get<bool>());
@@ -5369,7 +5364,7 @@ TEST_F(CollectionCurationTest, DynamicFilterMatchingMultipleRules) {
     //should not match any curation even though subset of both curations
     results = coll1->search("*", {}, "region:=act`", {}, {}, {0}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
     ASSERT_EQ("4", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -5416,7 +5411,7 @@ TEST_F(CollectionCurationTest, DynamicFilterStandaloneParenTokenDeath) {
     auto res_op = coll1->search("*", {}, "region:=act && ( category:=`Electronics` )", {}, {}, {0});
     ASSERT_TRUE(res_op.ok());
     auto results = res_op.get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("4", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 }
@@ -5468,7 +5463,7 @@ TEST_F(CollectionCurationTest, DynamicOverridePlaceHolderFieldNameTypo) {
     auto res_op = coll1->search("Office", {"title"}, "", {}, {}, {0});
     ASSERT_TRUE(res_op.ok());
     auto results = res_op.get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("placeholder_field filter triggered", results["metadata"]["text"].get<std::string>());
@@ -5522,7 +5517,7 @@ TEST_F(CollectionCurationTest, DiversityOverrideParsing) {
     auto op = diversity_t::parse(json, diversity);
     ASSERT_TRUE(op.ok());
 
-    ASSERT_EQ(4, diversity.similarity_equation.size());
+    ASSERT_EQ(size_t{4}, diversity.similarity_equation.size());
     ASSERT_EQ("flow_id", diversity.similarity_equation[0].field);
     ASSERT_EQ(diversity_t::similarity_methods::equality, diversity.similarity_equation[0].method);
     ASSERT_FLOAT_EQ(0.6, diversity.similarity_equation[0].weight);
@@ -5603,9 +5598,9 @@ TEST_F(CollectionCurationTest, DiversityOverrideParsing) {
     op = curation_t::parse(json, "", curation, "", {}, {});
     ASSERT_TRUE(op.ok());
     ASSERT_EQ("foo", curation.id);
-    ASSERT_EQ(1, curation.rule.tags.size());
+    ASSERT_EQ(size_t{1}, curation.rule.tags.size());
     ASSERT_EQ("screen_pattern_rule", *curation.rule.tags.begin());
-    ASSERT_EQ(4, curation.diversity.similarity_equation.size());
+    ASSERT_EQ(size_t{4}, curation.diversity.similarity_equation.size());
 
     create_op = ov_manager.upsert_curation_item("index", json);
     ASSERT_TRUE(create_op.ok());
@@ -5627,9 +5622,9 @@ TEST_F(CollectionCurationTest, DiversityOverrideParsing) {
     ASSERT_TRUE(op.ok());
 
     ASSERT_EQ("foo", curation.id);
-    ASSERT_EQ(1, curation.rule.tags.size());
+    ASSERT_EQ(size_t{1}, curation.rule.tags.size());
     ASSERT_EQ("screen_pattern_rule", *curation.rule.tags.begin());
-    ASSERT_EQ(4, curation.diversity.similarity_equation.size());
+    ASSERT_EQ(size_t{4}, curation.diversity.similarity_equation.size());
 
     //diversity weights should accept only numbers
     json = R"({
@@ -5751,10 +5746,10 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(6, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, res_obj["hits"].size());
     for (uint32_t i = 0; i < 6; i++) {
-        ASSERT_EQ(std::to_string(5 - i), res_obj["hits"][i]["document"]["id"]);
+        ASSERT_EQ(std::to_string(5 - i), res_obj["hits"][i]["document"]["id"].get<std::string>());
     }
 
     auto json =
@@ -5788,8 +5783,8 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(6, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, res_obj["hits"].size());
     ASSERT_EQ("5", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("4", res_obj["hits"][2]["document"]["id"]);
@@ -5806,10 +5801,10 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(6, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, res_obj["hits"].size());
     for (uint32_t i = 0; i < 6; i++) {
-        ASSERT_EQ(std::to_string(5 - i), res_obj["hits"][i]["document"]["id"]);
+        ASSERT_EQ(std::to_string(5 - i), res_obj["hits"][i]["document"]["id"].get<std::string>());
     }
 
     req_params = {
@@ -5822,8 +5817,8 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("5", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["id"]);
 
@@ -5837,8 +5832,8 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("4", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("3", res_obj["hits"][1]["document"]["id"]);
 
@@ -5852,8 +5847,8 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
 
@@ -5867,8 +5862,8 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(0, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, res_obj["hits"].size());
 
     req_params = {
             {"collection", "tags"},
@@ -5879,10 +5874,10 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(6, res_obj["found"].get<size_t>());
-    ASSERT_EQ(6, res_obj["hits"].size());
+    ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{6}, res_obj["hits"].size());
     for (uint32_t i = 0; i < 6; i++) {
-        ASSERT_EQ(std::to_string(5 - i), res_obj["hits"][i]["document"]["id"]);
+        ASSERT_EQ(std::to_string(5 - i), res_obj["hits"][i]["document"]["id"].get<std::string>());
     }
 
     req_params = {
@@ -5932,8 +5927,8 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("4", res_obj["hits"][2]["document"]["id"]);
@@ -5951,8 +5946,8 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("4", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("5", res_obj["hits"][2]["document"]["id"]);
@@ -6003,7 +5998,7 @@ TEST_F(CollectionCurationTest, TextSortBucketDiversification) {
 
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(3, res_obj["found"]);
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][2]["document"]["id"]);
@@ -6048,7 +6043,7 @@ TEST_F(CollectionCurationTest, TextSortBucketDiversification) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(3, res_obj["found"]);
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", res_obj["hits"][2]["document"]["id"]);
@@ -6110,7 +6105,7 @@ TEST_F(CollectionCurationTest, StemmingWithCuration) {
     auto res_op = coll1->search("Children", {"title"}, "", {}, {}, {0});
     ASSERT_TRUE(res_op.ok());
     auto results = res_op.get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>()); //added by curation rule
     ASSERT_EQ("3", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -6118,7 +6113,7 @@ TEST_F(CollectionCurationTest, StemmingWithCuration) {
     res_op = coll1->search("Child", {"title"}, "", {}, {}, {0});
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>()); //added by curation rule
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("3", results["hits"][2]["document"]["id"].get<std::string>());
@@ -6145,7 +6140,7 @@ TEST_F(CollectionCurationTest, StemmingWithCuration) {
     res_op = coll1->search("Person", {"title"}, "", {}, {}, {0});
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>()); //added by curation rule
     ASSERT_EQ("4", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -6153,7 +6148,7 @@ TEST_F(CollectionCurationTest, StemmingWithCuration) {
     res_op = coll1->search("People", {"title"}, "", {}, {}, {0});
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>()); //added by curation rule
     ASSERT_EQ("5", results["hits"][1]["document"]["id"].get<std::string>());
 }
@@ -6213,7 +6208,7 @@ TEST_F(CollectionCurationTest, SynonymsMatchWithCuration) {
     auto res_op = coll1->search("Notebook", {"title"}, "", {}, {}, {0});
     ASSERT_TRUE(res_op.ok());
     auto results = res_op.get();
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
     ASSERT_EQ("4", results["hits"][0]["document"]["id"].get<std::string>()); //added by curation rule
     ASSERT_EQ("3", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("5", results["hits"][2]["document"]["id"].get<std::string>());
@@ -6247,7 +6242,7 @@ TEST_F(CollectionCurationTest, SynonymsMatchWithCuration) {
     res_op = coll1->search("payment card", {"title"}, "", {}, {}, {0});
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("4", results["hits"][0]["document"]["id"].get<std::string>()); //added by curation rule
     ASSERT_EQ("6", results["hits"][1]["document"]["id"].get<std::string>());
 }
@@ -6297,7 +6292,7 @@ TEST_F(CollectionCurationTest, ToJsonSerializesSynonymsStemFields) {
     serialized = curation2.to_json();
     ASSERT_TRUE(serialized["rule"]["synonyms"].get<bool>());
     ASSERT_FALSE(serialized["rule"]["stem"].get<bool>());
-    ASSERT_EQ(0, serialized["rule"].count("stemming_dictionary"));
+    ASSERT_EQ(size_t{0}, serialized["rule"].count("stemming_dictionary"));
 
     // curation with only stem (no synonyms, no dictionary)
     curation_json = R"({
@@ -6317,7 +6312,7 @@ TEST_F(CollectionCurationTest, ToJsonSerializesSynonymsStemFields) {
     serialized = curation3.to_json();
     ASSERT_FALSE(serialized["rule"]["synonyms"].get<bool>());
     ASSERT_TRUE(serialized["rule"]["stem"].get<bool>());
-    ASSERT_EQ(0, serialized["rule"].count("stemming_dictionary"));
+    ASSERT_EQ(size_t{0}, serialized["rule"].count("stemming_dictionary"));
 
     // curation with neither synonyms nor stem (defaults)
     curation_json = R"({
@@ -6336,7 +6331,7 @@ TEST_F(CollectionCurationTest, ToJsonSerializesSynonymsStemFields) {
     serialized = curation4.to_json();
     ASSERT_FALSE(serialized["rule"]["synonyms"].get<bool>());
     ASSERT_FALSE(serialized["rule"]["stem"].get<bool>());
-    ASSERT_EQ(0, serialized["rule"].count("stemming_dictionary"));
+    ASSERT_EQ(size_t{0}, serialized["rule"].count("stemming_dictionary"));
 }
 
 TEST_F(CollectionCurationTest, OverridesWithRerankHybridSearches) {
@@ -6356,7 +6351,7 @@ TEST_F(CollectionCurationTest, OverridesWithRerankHybridSearches) {
             }
         ]
     })"_json;
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
@@ -6399,8 +6394,8 @@ TEST_F(CollectionCurationTest, OverridesWithRerankHybridSearches) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
 
     //now search with rerank-hybrid-matches
@@ -6414,7 +6409,7 @@ TEST_F(CollectionCurationTest, OverridesWithRerankHybridSearches) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
 }

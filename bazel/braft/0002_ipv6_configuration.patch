@@ -1,0 +1,61 @@
+--- src/braft/configuration.h	2026-02-28 07:33:05.016188360 +0100
++++ src/braft/configuration.h	2026-02-28 07:36:01.285135112 +0100
+@@ -73,20 +73,48 @@
+     }
+     int parse(const std::string& str) {
+         reset();
+-        char ip_str[64];
+-        int value = REPLICA;
+-        if (2 > sscanf(str.c_str(), "%[^:]%*[:]%d%*[:]%d%*[:]%d", ip_str, &addr.port, &idx, &value)) {
+-            reset();
+-            return -1;
++        std::string endpoint_str;
++        std::string remaining;
++        if (str.find('[') != std::string::npos) {
++            size_t bracket_end = str.find(']');
++            if (bracket_end == std::string::npos) return -1;
++            size_t port_colon = str.find(':', bracket_end + 1);
++            if (port_colon == std::string::npos) return -1;
++            size_t after_port = str.find(':', port_colon + 1);
++            if (after_port == std::string::npos) {
++                endpoint_str = str;
++            } else {
++                endpoint_str = str.substr(0, after_port);
++                remaining = str.substr(after_port + 1);
++            }
++        } else {
++            size_t first_colon = str.find(':');
++            if (first_colon == std::string::npos) return -1;
++            size_t second_colon = str.find(':', first_colon + 1);
++            if (second_colon == std::string::npos) {
++                endpoint_str = str;
++            } else {
++                endpoint_str = str.substr(0, second_colon);
++                remaining = str.substr(second_colon + 1);
++            }
+         }
+-        role = (Role)value;
+-        if (role > WITNESS) {
++        if (0 != butil::str2endpoint(endpoint_str.c_str(), &addr)) {
+             reset();
+             return -1;
+         }
+-        if (0 != butil::str2ip(ip_str, &addr.ip)) {
+-            reset();
+-            return -1;
++        if (!remaining.empty()) {
++            size_t colon = remaining.find(':');
++            if (colon == std::string::npos) {
++                idx = atoi(remaining.c_str());
++            } else {
++                idx = atoi(remaining.substr(0, colon).c_str());
++                int role_val = atoi(remaining.c_str() + colon + 1);
++                if (role_val > (int)Role::WITNESS) {
++                    reset();
++                    return -1;
++                }
++                role = (Role)role_val;
++            }
+         }
+         return 0;
+     }

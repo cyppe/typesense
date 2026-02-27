@@ -10,14 +10,20 @@ filegroup(
 
 configure_make(
     name = "libdw",
+    args = [
+        "-j8",
+        "CFLAGS+=-Wno-error",
+        "CXXFLAGS+=-Wno-error",
+        "CXXFLAGS+=-Wno-unknown-warning-option",
+    ],
     configure_options = [
         "--disable-libdebuginfod",
         "--disable-debuginfod",
         "--without-lzma",
         "--without-bzlib",
-        "--without-zstd"
+        "--without-zstd",
     ],
-    lib_source = "//:all_srcs",
+    lib_source = ":all_srcs",
     out_lib_dir = "lib",
     out_static_libs = ["libdw.a", "libelf.a"],
     deps = [

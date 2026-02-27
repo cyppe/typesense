@@ -10,56 +10,70 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Install dependencies
-        run: |
-          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          sudo apt-get update
-
-          sudo apt-get install -y g++-10 make git zlib1g-dev m4
-
-          # Define the compiler
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 30
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-10 30
-
-          sudo update-alternatives --install /usr/bin/cc cc /usr/bin/gcc 30
-          sudo update-alternatives --set cc /usr/bin/gcc
-
-          sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++ 30
-          sudo update-alternatives --set c++ /usr/bin/g++
-
-      - name: Setup lld
-        run: |
-          sudo apt-get install -y lld
-
-      - name: Set up Bazel
-        uses: bazel-contrib/setup-bazel@0.14.0
+      - name: Restore Bazel cache
+        id: bazel-cache
+        uses: actions/cache/restore@v5
         with:
-          bazelisk-cache: true
-          disk-cache: ${{ vars.BAZEL_CACHE_KEY != '' && vars.BAZEL_CACHE_KEY || github.workflow }}
-          repository-cache: true
-          external-cache: true
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ github.workflow }}-
 
-      - name: Build protobuf deps
-        run: |
-          bazel build @com_google_protobuf//:protobuf_headers
-          bazel build @com_google_protobuf//:protobuf_lite
-          bazel build @com_google_protobuf//:protobuf
-          bazel build @com_google_protobuf//:protoc
+      - name: Build CI Bazel image
+        run: scripts/bazel_in_docker.sh --build-image-only
 
       - name: Build Typesense
-        run: bazel build //:typesense-server
+        run: scripts/bazel_in_docker.sh build //:typesense-server
+
+      - name: Guard GCC warning budget
+        run: |
+          TYPESENSE_GCC_WARNING_LOG=${{ github.workspace }}/tmp/gcc-warning-guardrail.log \
+          TYPESENSE_GCC_WARNING_MAX=0 \
+          TYPESENSE_GCC_TRACKED_WARNING_MAX=0 \
+          scripts/check_gcc_warning_guardrail.sh
+
+      - name: Save GCC warning log on failure
+        uses: actions/upload-artifact@v7
+        with:
+          name: gcc-warning-guardrail-log
+          path: ${{ github.workspace }}/tmp/gcc-warning-guardrail.log
+          if-no-files-found: warn
+        if: failure()
+
+      - name: Guard clang warning budget
+        run: |
+          TYPESENSE_CLANG_WARNING_LOG=${{ github.workspace }}/tmp/clang-warning-guardrail.log \
+          TYPESENSE_CLANG_WARNING_MAX=0 \
+          TYPESENSE_CLANG_TRACKED_WARNING_MAX=0 \
+          TYPESENSE_CLANG_SPARSEPP_WARNING_MAX=0 \
+          scripts/check_clang_warning_guardrail.sh
+
+      - name: Save clang warning log on failure
+        uses: actions/upload-artifact@v7
+        with:
+          name: clang-warning-guardrail-log
+          path: ${{ github.workspace }}/tmp/clang-warning-guardrail.log
+          if-no-files-found: warn
+        if: failure()
 
       - name: Setup artifacts for tests
         run: curl https://dl.typesense.org/ci/tyrec/tyrec-1-models.tar.gz > ./test/resources/models.tar.gz
 
+      - name: Prewarm e5-small model cache
+        run: bash test/scripts/prewarm_e5_small_model.sh "${{ github.workspace }}/tmp/ci-models"
+
       - name: Run tests
-        run: bazel test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=900
+        run: scripts/bazel_in_docker.sh test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=1200 --flaky_test_attempts=2 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
 
       # Source: https://github.com/actions/upload-artifact/issues/92#issuecomment-1080347032
       - name: Set BAZEL_BIN_FULL_PATH
@@ -69,29 +83,46 @@ jobs:
         run: echo "BAZEL_TESTLOGS_FULL_PATH=$(readlink -f bazel-testlogs)" >> $GITHUB_ENV
         if: failure()
 
+      - name: Prepare Typesense runtime bundle
+        run: bash api_tests/scripts/prepare_runtime_bundle.sh "${{ github.workspace }}/typesense-runtime-bundle"
+
       - name: Save build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: typesense-server
-          path: ${{ env.BAZEL_BIN_FULL_PATH }}/typesense-server
+          path: |
+            ${{ github.workspace }}/typesense-runtime-bundle/typesense-server
+            ${{ github.workspace }}/typesense-runtime-bundle/lib/libonnxruntime.so
+            ${{ github.workspace }}/typesense-runtime-bundle/lib/libonnxruntime.so.1
 
       - name: Save test logs on failure
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-logs
           path: ${{ env.BAZEL_TESTLOGS_FULL_PATH }}/
         if: failure()
 
+      - name: Save Bazel cache
+        if: always() && github.event_name != 'pull_request' && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+
+      - name: Report Bazel cache size
+        if: always()
+        run: du -sh ${{ github.workspace }}/.cache/bazel-docker/*/ 2>/dev/null || true
+
   api-tests:
     needs: test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download Typesense Binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: typesense-server
           path: ./typesense-server-binary
@@ -146,14 +177,39 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Check previous run TEI cache availability
+        if: steps.get-previous-run.outputs.previous_run_id != ''
+        id: previous_cache_artifact
+        run: |
+          ARTIFACT_ID=$(gh api -H "Accept: application/vnd.github+json" \
+            /repos/${{ github.repository }}/actions/runs/${{ steps.get-previous-run.outputs.previous_run_id }}/artifacts \
+            -q '.artifacts[] | select(.name == "tei-model-cache") | .id' | head -n 1)
+          if [ -n "$ARTIFACT_ID" ]; then
+            echo "has_cache=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_cache=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Download cached model (if exists)
-        uses: actions/download-artifact@v5
+        if: steps.get-previous-run.outputs.previous_run_id != '' && steps.previous_cache_artifact.outputs.has_cache == 'true'
+        id: download_cached_model
+        uses: actions/download-artifact@v8
         with:
           name: tei-model-cache
           path: ./hf_cache
           github-token: ${{ github.token }}
           run-id: ${{ steps.get-previous-run.outputs.previous_run_id }}
         continue-on-error: true
+
+      - name: Note cache miss (no previous run)
+        if: steps.get-previous-run.outputs.previous_run_id == ''
+        run: echo "No previous successful run available for TEI cache; proceeding with fresh model download."
+
+      - name: Note cache miss (artifact unavailable)
+        if: steps.get-previous-run.outputs.previous_run_id != '' && steps.previous_cache_artifact.outputs.has_cache != 'true'
+        run: echo "Previous run found, but TEI cache artifact was unavailable; proceeding with fresh model download."
 
       - name: Check cache contents
         run: |
@@ -169,6 +225,11 @@ jobs:
 
       - name: Make binary executable
         run: chmod +x ./typesense-server-binary/typesense-server
+
+      - name: Verify runtime library resolution
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/typesense-server-binary/lib
+        run: ldd ./typesense-server-binary/typesense-server | tee ./typesense-server-binary/ldd.txt
 
       - name: Install bun
         uses: oven-sh/setup-bun@v2
@@ -198,45 +259,75 @@ jobs:
         working-directory: api_tests
         run: bun link
 
-      - name: Download test artifacts
-        working-directory: api_tests
-        run: |
-          sudo apt-get install -y tar
-          mkdir -p ./artifacts/v29
-          curl https://dl.typesense.org/releases/29.0/typesense-server-29.0-linux-amd64.tar.gz > ./artifacts/v29.tar.gz
-          tar -xzf ./artifacts/v29.tar.gz -C ./artifacts/v29/
-
-      - name: Run API tests with secrets
-        if: github.event.pull_request.head.repo.fork == false
-        working-directory: api_tests
+      - name: Detect embedding secret availability
+        id: embedding_secrets
         env:
-          TYPESENSE_BINARY_PATH: ${{ github.workspace }}/typesense-server-binary/typesense-server
-          TYPESENSE_V29_BINARY_PATH: ${{ github.workspace }}/api_tests/artifacts/v29/typesense-server
-          TYPESENSE_DATA_DIR: ${{ github.workspace }}/tmp/test
           OPEN_AI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_URL: ${{ secrets.AZURE_OPENAI_URL }}
-        run: typesense-api-tests
+        run: |
+          if [ -n "${OPEN_AI_API_KEY}" ] && [ -n "${AZURE_OPENAI_API_KEY}" ] && [ -n "${AZURE_OPENAI_URL}" ]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Run API tests without secrets
-        if: github.event.pull_request.head.repo.fork == true
+      - name: Run API tests with secrets
+        if: steps.embedding_secrets.outputs.has_secrets == 'true'
         working-directory: api_tests
         env:
           TYPESENSE_BINARY_PATH: ${{ github.workspace }}/typesense-server-binary/typesense-server
-          TYPESENSE_V29_BINARY_PATH: ${{ github.workspace }}/api_tests/artifacts/v29/typesense-server
           TYPESENSE_DATA_DIR: ${{ github.workspace }}/tmp/test
+          LD_LIBRARY_PATH: ${{ github.workspace }}/typesense-server-binary/lib
+          OPEN_AI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_URL: ${{ secrets.AZURE_OPENAI_URL }}
+        run: typesense-api-tests --download-migration-binary
+
+      - name: Run API tests without secrets
+        if: steps.embedding_secrets.outputs.has_secrets != 'true'
+        working-directory: api_tests
+        env:
+          TYPESENSE_BINARY_PATH: ${{ github.workspace }}/typesense-server-binary/typesense-server
+          TYPESENSE_DATA_DIR: ${{ github.workspace }}/tmp/test
+          LD_LIBRARY_PATH: ${{ github.workspace }}/typesense-server-binary/lib
           OPEN_AI_API_KEY: ""
-        run: typesense-api-tests --no-secrets
+        run: typesense-api-tests --no-secrets --download-migration-binary
+
+      - name: Run TEI integration lane
+        working-directory: api_tests
+        env:
+          TYPESENSE_BINARY_PATH: ${{ github.workspace }}/typesense-server-binary/typesense-server
+          TYPESENSE_DATA_DIR: ${{ github.workspace }}/tmp/test
+          LD_LIBRARY_PATH: ${{ github.workspace }}/typesense-server-binary/lib
+          TYPESENSE_TEST_TEI_URL: http://localhost:8080
+        run: typesense-api-tests --no-secrets --download-migration-binary tests/tei-integration.test.ts
 
       - name: Upload model cache for next run
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tei-model-cache
           path: ./hf_cache
           if-no-files-found: warn
           overwrite: false
           retention-days: 7
+
+      - name: Capture TEI container logs
+        if: always()
+        run: docker logs tei-container > ./tei-container.log 2>&1 || echo "No logs found" > ./tei-container.log
+
+      - name: Upload API diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-test-diagnostics
+          path: |
+            ./tei-container.log
+            ./typesense-server-binary/ldd.txt
+            ./tmp/test
+            ./api_tests/artifacts
+          if-no-files-found: warn
 
       - name: Cleanup TEI Container
         if: always()

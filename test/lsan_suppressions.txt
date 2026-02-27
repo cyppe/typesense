@@ -1,0 +1,7 @@
+# LeakSanitizer suppression file for Typesense tests.
+# Add third-party leak patterns here to reduce noise in ASAN runs.
+# Syntax: leak:<function_or_module_pattern>
+#
+# Example:
+#   leak:libonnxruntime
+#   leak:some_third_party_init

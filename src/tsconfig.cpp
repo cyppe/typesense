@@ -1,21 +1,19 @@
 #include "option.h"
 #include "json.hpp"
 #include "tsconfig.h"
+#include "logger.h"
 #include "file_utils.h"
 #include <fstream>
 #include <thread>
 #include <mutex>
 
 Option<bool> Config::update_config(const nlohmann::json& req_json) {
-    bool found_config = false;
-
     if(req_json.count("log-slow-requests-time-ms") != 0) {
         if(!req_json["log-slow-requests-time-ms"].is_number_integer()) {
             return Option<bool>(400, "Configuration `log-slow-requests-time-ms` must be an integer.");
         }
 
         set_log_slow_requests_time_ms(req_json["log-slow-requests-time-ms"].get<int>());
-        found_config = true;
     }
 
     if(req_json.count("log-slow-searches-time-ms") != 0) {
@@ -24,7 +22,6 @@ Option<bool> Config::update_config(const nlohmann::json& req_json) {
         }
 
         set_log_slow_searches_time_ms(req_json["log-slow-searches-time-ms"].get<int>());
-        found_config = true;
     }
 
     if(req_json.count("enable-search-logging") != 0) {
@@ -33,7 +30,6 @@ Option<bool> Config::update_config(const nlohmann::json& req_json) {
         }
 
         set_enable_search_logging(req_json["enable-search-logging"].get<bool>());
-        found_config = true;
     }
 
     if(req_json.count("healthy-read-lag") != 0) {
@@ -47,7 +43,6 @@ Option<bool> Config::update_config(const nlohmann::json& req_json) {
         }
 
         set_healthy_read_lag(read_lag);
-        found_config = true;
     }
 
     if(req_json.count("healthy-write-lag") != 0) {
@@ -61,7 +56,6 @@ Option<bool> Config::update_config(const nlohmann::json& req_json) {
         }
 
         set_healthy_write_lag(write_lag);
-        found_config = true;
     }
 
     if(req_json.count("cache-num-entries") != 0) {
@@ -75,7 +69,6 @@ Option<bool> Config::update_config(const nlohmann::json& req_json) {
         }
 
         set_cache_num_entries(cache_entries_num);
-        found_config = true;
     }
 
     if(req_json.count("embedding-cache-num-entries") != 0) {
@@ -89,7 +82,6 @@ Option<bool> Config::update_config(const nlohmann::json& req_json) {
         }
 
         set_embedding_cache_num_entries(embedding_cache_entries_num);
-        found_config = true;
     }
 
     if(req_json.count("skip-writes") != 0) {
@@ -99,7 +91,6 @@ Option<bool> Config::update_config(const nlohmann::json& req_json) {
 
         bool skip_writes = req_json["skip-writes"].get<bool>();
         set_skip_writes(skip_writes);
-        found_config = true;
     }
 
     return Option<bool>(true);
@@ -312,6 +303,83 @@ void Config::load_config_env() {
         this->db_keep_log_file_num = std::stoi(get_env("TYPESENSE_DB_KEEP_LOG_FILE_NUM"));
     }
 
+    if(!get_env("TYPESENSE_DB_BLOCK_CACHE_SIZE").empty()) {
+        this->db_block_cache_size = std::stoull(get_env("TYPESENSE_DB_BLOCK_CACHE_SIZE"));
+    }
+
+    if(!get_env("TYPESENSE_DB_RATE_LIMIT_BYTES_PER_SEC").empty()) {
+        this->db_rate_limit_bytes_per_sec = std::stoll(get_env("TYPESENSE_DB_RATE_LIMIT_BYTES_PER_SEC"));
+    }
+
+    if(!get_env("TYPESENSE_DB_LEVEL_COMPACTION_DYNAMIC_LEVEL_BYTES").empty()) {
+        this->db_level_compaction_dynamic_level_bytes = ("TRUE" == get_env("TYPESENSE_DB_LEVEL_COMPACTION_DYNAMIC_LEVEL_BYTES"));
+    }
+
+    if(!get_env("TYPESENSE_DB_BLOCK_SIZE").empty()) {
+        this->db_block_size = std::stoul(get_env("TYPESENSE_DB_BLOCK_SIZE"));
+    }
+
+    if(!get_env("TYPESENSE_DB_FORMAT_VERSION").empty()) {
+        this->db_format_version = std::stoul(get_env("TYPESENSE_DB_FORMAT_VERSION"));
+    }
+
+    if(!get_env("TYPESENSE_DB_ENABLE_STATISTICS").empty()) {
+        this->db_enable_statistics = ("TRUE" == get_env("TYPESENSE_DB_ENABLE_STATISTICS"));
+    }
+
+    if(!get_env("TYPESENSE_DB_COMPRESSION_PARALLEL_THREADS").empty()) {
+        this->db_compression_parallel_threads = std::stoul(get_env("TYPESENSE_DB_COMPRESSION_PARALLEL_THREADS"));
+    }
+
+    if(!get_env("TYPESENSE_DB_BYTES_PER_SYNC").empty()) {
+        this->db_bytes_per_sync = std::stoull(get_env("TYPESENSE_DB_BYTES_PER_SYNC"));
+    }
+
+    if(!get_env("TYPESENSE_DB_MAX_MANIFEST_FILE_SIZE").empty()) {
+        this->db_max_manifest_file_size = std::stoull(get_env("TYPESENSE_DB_MAX_MANIFEST_FILE_SIZE"));
+    }
+
+    if(!get_env("TYPESENSE_DB_ENABLE_ASYNC_IO").empty()) {
+        this->db_enable_async_io = ("TRUE" == get_env("TYPESENSE_DB_ENABLE_ASYNC_IO"));
+    }
+
+    if(!get_env("TYPESENSE_DB_OFFPEAK_TIME_UTC").empty()) {
+        this->db_offpeak_time_utc = get_env("TYPESENSE_DB_OFFPEAK_TIME_UTC");
+    }
+
+    if(!get_env("TYPESENSE_DB_UNORDERED_WRITE").empty()) {
+        this->db_unordered_write = ("TRUE" == get_env("TYPESENSE_DB_UNORDERED_WRITE"));
+    }
+
+    if(!get_env("TYPESENSE_DB_MAX_SUBCOMPACTIONS").empty()) {
+        this->db_max_subcompactions = std::stoul(get_env("TYPESENSE_DB_MAX_SUBCOMPACTIONS"));
+    }
+
+    if(!get_env("TYPESENSE_DB_MAX_BACKGROUND_JOBS").empty()) {
+        this->db_max_background_jobs = std::stoul(get_env("TYPESENSE_DB_MAX_BACKGROUND_JOBS"));
+    }
+
+    if(!get_env("TYPESENSE_DB_USE_DIRECT_READS").empty()) {
+        this->db_use_direct_reads = ("TRUE" == get_env("TYPESENSE_DB_USE_DIRECT_READS"));
+    }
+
+    if(!get_env("TYPESENSE_DB_USE_DIRECT_IO_FOR_FLUSH_AND_COMPACTION").empty()) {
+        this->db_use_direct_io_for_flush_and_compaction =
+            ("TRUE" == get_env("TYPESENSE_DB_USE_DIRECT_IO_FOR_FLUSH_AND_COMPACTION"));
+    }
+
+    if(!get_env("TYPESENSE_DB_COMPACTION_READAHEAD_SIZE").empty()) {
+        this->db_compaction_readahead_size = std::stoull(get_env("TYPESENSE_DB_COMPACTION_READAHEAD_SIZE"));
+    }
+
+    if(!get_env("TYPESENSE_DB_OPTIMIZE_FILTERS_FOR_HITS").empty()) {
+        this->db_optimize_filters_for_hits = ("TRUE" == get_env("TYPESENSE_DB_OPTIMIZE_FILTERS_FOR_HITS"));
+    }
+
+    if(!get_env("TYPESENSE_DB_PARANOID_MEMORY_CHECKS").empty()) {
+        this->db_paranoid_memory_checks = ("TRUE" == get_env("TYPESENSE_DB_PARANOID_MEMORY_CHECKS"));
+    }
+
     if(!get_env("TYPESENSE_MAX_INDEXING_CONCURRENCY").empty()) {
         this->max_indexing_concurrency = std::stoi(get_env("TYPESENSE_MAX_INDEXING_CONCURRENCY"));
     }
@@ -346,7 +414,7 @@ void Config::load_config_file(cmdline::parser& options) {
     INIReader reader(this->config_file);
 
     if (reader.ParseError() != 0) {
-        LOG(ERROR) << "Error while parsing config file, code = " << reader.ParseError();
+        TS_LOG(ERROR) << "Error while parsing config file, code = " << reader.ParseError();
         config_file_validity = -1;
         return ;
     }
@@ -569,6 +637,91 @@ void Config::load_config_file(cmdline::parser& options) {
 
     if(reader.Exists("server", "db-keep-log-file-num")) {
         this->db_keep_log_file_num = (size_t) reader.GetInteger("server", "db-keep-log-file-num", 5);
+    }
+
+    if(reader.Exists("server", "db-block-cache-size")) {
+        this->db_block_cache_size = (size_t) reader.GetInteger("server", "db-block-cache-size", 256*1048576);
+    }
+
+    if(reader.Exists("server", "db-rate-limit-bytes-per-sec")) {
+        this->db_rate_limit_bytes_per_sec = reader.GetInteger("server", "db-rate-limit-bytes-per-sec", 0);
+    }
+
+    if(reader.Exists("server", "db-level-compaction-dynamic-level-bytes")) {
+        auto val = reader.Get("server", "db-level-compaction-dynamic-level-bytes", "true");
+        this->db_level_compaction_dynamic_level_bytes = (val == "true");
+    }
+
+    if(reader.Exists("server", "db-block-size")) {
+        this->db_block_size = (uint32_t) reader.GetInteger("server", "db-block-size", 16*1024);
+    }
+
+    if(reader.Exists("server", "db-format-version")) {
+        this->db_format_version = (uint32_t) reader.GetInteger("server", "db-format-version", 7);
+    }
+
+    if(reader.Exists("server", "db-enable-statistics")) {
+        auto val = reader.Get("server", "db-enable-statistics", "true");
+        this->db_enable_statistics = (val == "true");
+    }
+
+    if(reader.Exists("server", "db-compression-parallel-threads")) {
+        this->db_compression_parallel_threads = (uint32_t) reader.GetInteger("server", "db-compression-parallel-threads", 4);
+    }
+
+    if(reader.Exists("server", "db-bytes-per-sync")) {
+        this->db_bytes_per_sync = (uint64_t) reader.GetInteger("server", "db-bytes-per-sync", 1048576);
+    }
+
+    if(reader.Exists("server", "db-max-manifest-file-size")) {
+        this->db_max_manifest_file_size = (uint64_t) reader.GetInteger("server", "db-max-manifest-file-size", 1048576);
+    }
+
+    if(reader.Exists("server", "db-enable-async-io")) {
+        auto val = reader.Get("server", "db-enable-async-io", "true");
+        this->db_enable_async_io = (val == "true");
+    }
+
+    if(reader.Exists("server", "db-offpeak-time-utc")) {
+        this->db_offpeak_time_utc = reader.Get("server", "db-offpeak-time-utc", "02:00-06:00");
+    }
+
+    if(reader.Exists("server", "db-unordered-write")) {
+        auto val = reader.Get("server", "db-unordered-write", "true");
+        this->db_unordered_write = (val == "true");
+    }
+
+    if(reader.Exists("server", "db-max-subcompactions")) {
+        this->db_max_subcompactions = reader.GetInteger("server", "db-max-subcompactions", 2);
+    }
+
+    if(reader.Exists("server", "db-max-background-jobs")) {
+        this->db_max_background_jobs = reader.GetInteger("server", "db-max-background-jobs", 0);
+    }
+
+    if(reader.Exists("server", "db-use-direct-reads")) {
+        auto val = reader.Get("server", "db-use-direct-reads", "false");
+        this->db_use_direct_reads = (val == "true");
+    }
+
+    if(reader.Exists("server", "db-use-direct-io-for-flush-and-compaction")) {
+        auto val = reader.Get("server", "db-use-direct-io-for-flush-and-compaction", "false");
+        this->db_use_direct_io_for_flush_and_compaction = (val == "true");
+    }
+
+    if(reader.Exists("server", "db-compaction-readahead-size")) {
+        this->db_compaction_readahead_size =
+            static_cast<uint64_t>(reader.GetInteger("server", "db-compaction-readahead-size", 0));
+    }
+
+    if(reader.Exists("server", "db-optimize-filters-for-hits")) {
+        auto val = reader.Get("server", "db-optimize-filters-for-hits", "false");
+        this->db_optimize_filters_for_hits = (val == "true");
+    }
+
+    if(reader.Exists("server", "db-paranoid-memory-checks")) {
+        auto val = reader.Get("server", "db-paranoid-memory-checks", "true");
+        this->db_paranoid_memory_checks = (val == "true");
     }
 
     if(reader.Exists("server", "max-indexing-concurrency")) {
@@ -802,6 +955,83 @@ void Config::load_config_cmd_args(cmdline::parser& options)  {
 
     if(options.exist("db-keep-log-file-num")) {
         this->db_keep_log_file_num = options.get<uint32_t>("db-keep-log-file-num");
+    }
+
+    if(options.exist("db-block-cache-size")) {
+        this->db_block_cache_size = options.get<uint64_t>("db-block-cache-size");
+    }
+
+    if(options.exist("db-rate-limit-bytes-per-sec")) {
+        this->db_rate_limit_bytes_per_sec = options.get<int64_t>("db-rate-limit-bytes-per-sec");
+    }
+
+    if(options.exist("db-level-compaction-dynamic-level-bytes")) {
+        this->db_level_compaction_dynamic_level_bytes = options.get<bool>("db-level-compaction-dynamic-level-bytes");
+    }
+
+    if(options.exist("db-block-size")) {
+        this->db_block_size = options.get<uint32_t>("db-block-size");
+    }
+
+    if(options.exist("db-format-version")) {
+        this->db_format_version = options.get<uint32_t>("db-format-version");
+    }
+
+    if(options.exist("db-enable-statistics")) {
+        this->db_enable_statistics = options.get<bool>("db-enable-statistics");
+    }
+
+    if(options.exist("db-compression-parallel-threads")) {
+        this->db_compression_parallel_threads = options.get<uint32_t>("db-compression-parallel-threads");
+    }
+
+    if(options.exist("db-bytes-per-sync")) {
+        this->db_bytes_per_sync = options.get<uint64_t>("db-bytes-per-sync");
+    }
+
+    if(options.exist("db-max-manifest-file-size")) {
+        this->db_max_manifest_file_size = options.get<uint64_t>("db-max-manifest-file-size");
+    }
+
+    if(options.exist("db-enable-async-io")) {
+        this->db_enable_async_io = options.get<bool>("db-enable-async-io");
+    }
+
+    if(options.exist("db-offpeak-time-utc")) {
+        this->db_offpeak_time_utc = options.get<std::string>("db-offpeak-time-utc");
+    }
+
+    if(options.exist("db-unordered-write")) {
+        this->db_unordered_write = options.get<bool>("db-unordered-write");
+    }
+
+    if(options.exist("db-max-subcompactions")) {
+        this->db_max_subcompactions = options.get<uint32_t>("db-max-subcompactions");
+    }
+
+    if(options.exist("db-max-background-jobs")) {
+        this->db_max_background_jobs = options.get<uint32_t>("db-max-background-jobs");
+    }
+
+    if(options.exist("db-use-direct-reads")) {
+        this->db_use_direct_reads = options.get<bool>("db-use-direct-reads");
+    }
+
+    if(options.exist("db-use-direct-io-for-flush-and-compaction")) {
+        this->db_use_direct_io_for_flush_and_compaction =
+            options.get<bool>("db-use-direct-io-for-flush-and-compaction");
+    }
+
+    if(options.exist("db-compaction-readahead-size")) {
+        this->db_compaction_readahead_size = options.get<uint64_t>("db-compaction-readahead-size");
+    }
+
+    if(options.exist("db-optimize-filters-for-hits")) {
+        this->db_optimize_filters_for_hits = options.get<bool>("db-optimize-filters-for-hits");
+    }
+
+    if(options.exist("db-paranoid-memory-checks")) {
+        this->db_paranoid_memory_checks = options.get<bool>("db-paranoid-memory-checks");
     }
 
     if(options.exist("max-indexing-concurrency")) {

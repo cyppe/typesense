@@ -5,10 +5,12 @@
 
 
 whisper_context* WhisperModel::validate_and_load_model(const std::string& model_path) {
-    return whisper_init_from_file(model_path.c_str());                                                              
+    whisper_context_params cparams = whisper_context_default_params();
+    return whisper_init_from_file_with_params(model_path.c_str(), cparams);
 }
 
-WhisperModel::WhisperModel(whisper_context* ctx, const std::string& model_name) : ctx(ctx), VQModel(model_name) {
+WhisperModel::WhisperModel(whisper_context* ctx, const std::string& model_name)
+    : VQModel(model_name), ctx(ctx) {
     // surpress whisper logs
     whisper_log_set([](enum ggml_log_level level, const char * text, void * user_data) {
     }, nullptr);
@@ -91,4 +93,3 @@ Option<std::string> WhisperModel::transcribe(const std::string& audio_base64) {
     std::string result = ss.str();
     return Option<std::string>(StringUtils::trim(result));
 }
-

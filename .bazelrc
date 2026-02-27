@@ -1,7 +1,35 @@
+# Full Bzlmod mode (Bazel 8+ and Bazel 9 compatible)
+# WORKSPACE is intentionally not used for external dependency resolution.
+
 build --incompatible_strict_action_env
-build --action_env=BAZEL_CXXOPTS="-std=c++17"
+build --action_env=BAZEL_CXXOPTS="-std=gnu++20"
 build --define=TYPESENSE_VERSION=\"nightly\"
-build --cxxopt="-std=c++17"
+build --cxxopt="-std=gnu++20"
+build --cxxopt="-include" --cxxopt="cstdint"
+# Scope deprecation-noise suppression to third-party Protobuf sources only.
+build --per_file_copt=external/protobuf\+.*@-Wno-deprecated-declarations
+build --host_per_file_copt=external/protobuf\+.*@-Wno-deprecated-declarations
+# Scope heavy third-party warning buckets to their dependency boundaries.
+build --per_file_copt=.*com_github_brpc_brpc.*@-Wno-deprecated-declarations
+build --per_file_copt=.*com_github_brpc_braft.*@-Wno-deprecated-declarations
+build --per_file_copt=.*com_github_brpc_brpc.*@-Wno-format-security
+build --per_file_copt=.*com_github_brpc_braft.*@-Wno-format-security
+build --per_file_copt=.*com_github_brpc_brpc.*@-Wno-sign-compare
+build --per_file_copt=.*com_github_brpc_braft.*@-Wno-sign-compare
+build --per_file_copt=.*com_github_brpc_braft.*@-Wno-overloaded-virtual
+build --per_file_copt=.*src/brpc/server\.cpp@-Wno-invalid-offsetof
+build --per_file_copt=.*src/brpc/socket\.cpp@-Wno-invalid-offsetof
+build --per_file_copt=.*src/brpc/policy/http2_rpc_protocol\.cpp@-Wno-invalid-offsetof
+build --per_file_copt=.*src/brpc/parallel_channel\.cpp@-Wno-invalid-offsetof
+build --per_file_copt=.*src/braft/(snapshot_throttle|file_reader|file_service|file_system_adaptor|log|node_manager)\.cpp@-w
+build --per_file_copt=external/\+new_git_repository\+lrucache/.*@-Wno-deprecated-declarations
+build --per_file_copt=external/\+new_git_repository\+onnx_runtime_extensions/.*@-Wno-pessimizing-move
+build --per_file_copt=.*clip_tokenizer.*@-Wno-sign-compare
+build --per_file_copt=.*clip_tokenizer.*@-Wno-unused-variable
+build --per_file_copt=.*quicly.*@-Wno-unused-but-set-variable
+# GCC 15 defaults C to gnu23; pin C dialect until third-party C deps are C23-clean.
+build --conlyopt="-std=gnu17"
+build --conlyopt="-D_GNU_SOURCE"
 build --strip=never
 build --define=BRPC_WITH_GLOG=true
 build --jobs=6
@@ -14,4 +42,28 @@ run --define=BRPC_WITH_GLOG=true
 
 build --enable_platform_specific_config
 
-build:linux --action_env=BAZEL_LINKLIBS="-l%:libstdc++.a -l%:libgcc.a"
+# --- Sanitizer configs ---
+build:sanitizer --strip=never
+build:sanitizer --copt -fno-omit-frame-pointer
+
+build:asan --config=sanitizer
+build:asan --define=mode=asan
+build:asan --copt -fsanitize=address,undefined
+build:asan --linkopt -fsanitize=address,undefined
+build:asan --copt -DASAN_BUILD
+build:asan --copt -DNO_JEMALLOC
+build:asan --copt -DADDRESS_SANITIZER=1
+build:asan --test_env=ASAN_OPTIONS=detect_leaks=1:color=always
+build:asan --test_env=LSAN_OPTIONS=suppressions=test/lsan_suppressions.txt
+build:asan --test_env=UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
+
+build:tsan --config=sanitizer
+build:tsan --define=mode=tsan
+build:tsan --copt -fsanitize=thread
+build:tsan --linkopt -fsanitize=thread
+build:tsan --copt -DTSAN_BUILD
+build:tsan --copt -DNO_JEMALLOC
+build:tsan --test_env=TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:history_size=4
+
+# Static linking of libstdc++/libgcc is handled by linkopts in BUILD file
+# BAZEL_LINKLIBS removed: Bazel 7+ treats the value as a single token (not split on spaces)

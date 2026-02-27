@@ -335,14 +335,15 @@ struct collection_search_args_t {
             drop_tokens_mode_str(std::move(drop_tokens_mode_str)), prioritize_num_matching_fields(prioritize_num_matching_fields), group_missing_values(group_missing_values),
             conversation(conversation), conversation_model_id(std::move(conversation_model_id)), conversation_id(std::move(conversation_id)),
             curation_tags(std::move(curation_tags)), voice_query(std::move(voice_query)), enable_typos_for_numerical_tokens(enable_typos_for_numerical_tokens),
-            enable_synonyms(enable_synonyms), demote_synonym_match(demote_synonym_match), synonym_prefix(synonym_prefix), synonym_num_typos(synonym_num_typos), enable_lazy_filter(enable_lazy_filter),
+            enable_synonyms(enable_synonyms), demote_synonym_match(demote_synonym_match), synonym_prefix(synonym_prefix), synonym_num_typos(synonym_num_typos),
+            synonym_sets(std::move(synonym_sets)), enable_lazy_filter(enable_lazy_filter),
             enable_typos_for_alpha_numerical_tokens(enable_typos_for_alpha_numerical_tokens), max_filter_by_candidates(max_filter_by_candidates),
             rerank_hybrid_matches(rerank_hybrid_matches), enable_analytics(enable_analytics), validate_field_names(validate_field_names),
             analytics_tag(analytics_tag),
             personalization_user_id(personalization_user_id), personalization_model_id(personalization_model_id),
             personalization_type(personalization_type), personalization_user_field(personalization_user_field),
             personalization_item_field(personalization_item_field), personalization_event_name(personalization_event_name), personalization_n_events(personalization_n_events),
-            synonym_sets(synonym_sets), diversity_lamda(diversity_lamda), group_max_candidates(group_max_candidates), diversity_limit(diversity_limit) {}
+            diversity_lamda(diversity_lamda), group_max_candidates(group_max_candidates), diversity_limit(diversity_limit) {}
 
     collection_search_args_t() = default;
 
@@ -526,10 +527,10 @@ private:
 
     static void do_highlighting(const tsl::htrie_map<char, field>& search_schema, const bool& enable_nested_fields,
                                 const std::vector<char>& symbols_to_index, const std::vector<char>& token_separators,
-                                const string& query, const std::vector<std::string>& raw_search_fields,
-                                const string& raw_query, const bool& enable_highlight_v1, const size_t& snippet_threshold,
-                                const size_t& highlight_affix_num_tokens, const string& highlight_start_tag,
-                                const string& highlight_end_tag, const std::vector<std::string>& highlight_field_names,
+                                const std::string& query, const std::vector<std::string>& raw_search_fields,
+                                const std::string& raw_query, const bool& enable_highlight_v1, const size_t& snippet_threshold,
+                                const size_t& highlight_affix_num_tokens, const std::string& highlight_start_tag,
+                                const std::string& highlight_end_tag, const std::vector<std::string>& highlight_field_names,
                                 const std::vector<std::string>& highlight_full_field_names,
                                 const std::vector<highlight_field_t>& highlight_items, const uint8_t* index_symbols,
                                 const KV* field_order_kv, const nlohmann::json& document, nlohmann::json& highlight_res,
@@ -542,7 +543,7 @@ private:
 
     bool does_curation_match(const curation_t& curation, std::string& query,
                              std::set<uint32_t>& excluded_set,
-                             std::string& actual_query, const std::string& curation_normalized_query, const string& filter_query,
+                             std::string& actual_query, const std::string& curation_normalized_query, const std::string& filter_query,
                              bool already_segmented,
                              const bool tags_matched,
                              const bool wildcard_tag_matched,
@@ -864,9 +865,11 @@ public:
 
     static uint32_t get_seq_id_from_key(const std::string & key);
 
-    Option<bool> get_document_from_store(const std::string & seq_id_key, nlohmann::json & document, bool raw_doc = false) const;
+    Option<bool> get_document_from_store(const std::string & seq_id_key, nlohmann::json & document,
+                                         bool raw_doc = false, bool fill_cache = true) const;
 
-    Option<bool> get_document_from_store(const uint32_t& seq_id, nlohmann::json & document, bool raw_doc = false) const;
+    Option<bool> get_document_from_store(const uint32_t& seq_id, nlohmann::json & document,
+                                         bool raw_doc = false, bool fill_cache = true) const;
 
     Option<uint32_t> index_in_memory(nlohmann::json & document, uint32_t seq_id,
                                      const index_operation_t op, const DIRTY_VALUES& dirty_values);
@@ -930,7 +933,8 @@ public:
                             const bool& return_doc=false, const bool& return_id=false,
                             const size_t remote_embedding_batch_size=200,
                             const size_t remote_embedding_timeout_ms=60000,
-                            const size_t remote_embedding_num_tries=2);
+                            const size_t remote_embedding_num_tries=2,
+                            const size_t index_batch_size=1000);
 
     Option<nlohmann::json> update_matching_filter(const std::string& filter_query,
                                                   const std::string & json_str,
@@ -1172,7 +1176,7 @@ public:
                                                  std::array<spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*, 3>& field_values,
                                                  const bool& validate_field_names = true) const;
 
-    int64_t reference_string_sort_score(const string &field_name,  const std::vector<uint32_t>& seq_ids,
+    int64_t reference_string_sort_score(const std::string &field_name,  const std::vector<uint32_t>& seq_ids,
                                         const bool& is_asc) const;
 
     bool is_referenced_in(const std::string& collection_name) const;
@@ -1228,7 +1232,7 @@ public:
                                  std::vector<uint32_t>& result) const;
 
     Option<int64_t> get_referenced_geo_distance_with_lock(const sort_by& sort_field, const bool& is_asc, const uint32_t& seq_id,
-                                                          const std::map<basic_string<char>, reference_filter_result_t>& references,
+                                                          const std::map<std::string, reference_filter_result_t>& references,
                                                           const S2LatLng& reference_lat_lng, const bool& round_distance) const;
 
     Option<int64_t> get_geo_distance_with_lock(const std::string& geo_field_name, const bool& is_asc,

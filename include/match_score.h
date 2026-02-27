@@ -17,9 +17,9 @@ struct token_positions_t {
 };
 
 struct TokenOffset {
-    uint8_t token_id;                            // token identifier
+    uint8_t token_id = 0;                        // token identifier
     uint16_t offset = MAX_DISPLACEMENT;          // token's offset in the text
-    uint32_t offset_index;                       // index of the offset in the offset vector
+    uint32_t offset_index = 0;                   // index of the offset in the offset vector
 
     bool operator()(const TokenOffset &a, const TokenOffset &b) {
         return a.offset > b.offset;
@@ -70,9 +70,9 @@ struct Match {
     static void print_token_offsets(std::vector<std::vector<uint16_t>> &token_offsets) {
         for (auto offsets: token_offsets) {
             for (auto offset: offsets) {
-                LOG(INFO) << offset << ", ";
+                TS_LOG(INFO) << offset << ", ";
             }
-            LOG(INFO) << "";
+            TS_LOG(INFO) << "";
         }
     }
 
@@ -210,7 +210,7 @@ struct Match {
             }
 
             // fill window with next possible smallest offset across available token this_token_offsets
-            const TokenOffset &smallest_offset = window.back();
+            const TokenOffset smallest_offset = window.back();
             window.pop_back();
 
             const uint8_t token_id = smallest_offset.token_id;

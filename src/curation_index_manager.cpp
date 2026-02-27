@@ -1,4 +1,5 @@
 #include "curation_index_manager.h"
+#include "logger.h"
 
 CurationIndexManager& CurationIndexManager::get_instance() {
     static CurationIndexManager instance{};
@@ -15,7 +16,7 @@ void CurationIndexManager::init_store(Store* store) {
 Option<CurationIndex*> CurationIndexManager::add_curation_index(const std::string& index_name, CurationIndex&& index, bool write_to_store) {
     auto res = curation_index_list.insert(curation_index_list.end(), std::move(index));
     if(curation_index_map.find(index_name) != curation_index_map.end()) {
-        LOG(INFO) << "Removing existing curation index: " << index_name;
+        TS_LOG(INFO) << "Removing existing curation index: " << index_name;
         curation_index_list.erase(curation_index_map[index_name]);
         curation_index_map.erase(index_name);
     }
@@ -32,7 +33,7 @@ Option<CurationIndex*> CurationIndexManager::add_curation_index(const std::strin
     if(curation_index_map.find(index_name) != curation_index_map.end()) {
         curation_index_list.erase(curation_index_map[index_name]);
         curation_index_map.erase(index_name);
-        LOG(INFO) << "Removed existing curation index: " << index_name;
+        TS_LOG(INFO) << "Removed existing curation index: " << index_name;
     }
     curation_index_map.emplace(index_name, res);
     if(write_to_store) {
@@ -103,7 +104,7 @@ Option<bool> CurationIndexManager::validate_curation_index(const nlohmann::json&
 void CurationIndexManager::load_curation_indices() {
     std::vector<std::string> index_names;
     if (!store) {
-        LOG(ERROR) << "Store not initialized for loading curation indices.";
+        TS_LOG(ERROR) << "Store not initialized for loading curation indices.";
         return;
     }
     store->scan_fill(
@@ -114,7 +115,7 @@ void CurationIndexManager::load_curation_indices() {
     for(const auto& name: index_names) {
         auto add_op = add_curation_index(name, false);
         if(!add_op.ok()) {
-            LOG(ERROR) << "Failed to add curation index: " << name << ", error: " << add_op.error();
+            TS_LOG(ERROR) << "Failed to add curation index: " << name << ", error: " << add_op.error();
             continue;
         }
         auto& index = *add_op.get();
@@ -127,13 +128,13 @@ void CurationIndexManager::load_curation_indices() {
             try {
                 ov_json = nlohmann::json::parse(curation_json);
             } catch(const nlohmann::json::parse_error& e) {
-                LOG(ERROR) << "Failed to parse curation JSON: " << curation_json << ", error: " << e.what();
+                TS_LOG(ERROR) << "Failed to parse curation JSON: " << curation_json << ", error: " << e.what();
                 continue;
             }
             curation_t ov;
             auto parse_op = curation_t::parse(ov_json, ov_json.value("id", std::string{}), ov);
             if(!parse_op.ok()) {
-                LOG(ERROR) << "Failed to parse curation: " << parse_op.error();
+                TS_LOG(ERROR) << "Failed to parse curation: " << parse_op.error();
                 continue;
             }
             index.add_curation(ov, false);

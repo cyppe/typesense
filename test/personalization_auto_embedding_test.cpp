@@ -5,42 +5,51 @@
 #include "field.h"
 #include "personalization_model_manager.h"
 #include <filesystem>
+#include <fstream>
 #include "json.hpp"
+#include "runfiles_utils.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class PersonalizationAutoEmbeddingTest : public ::testing::Test {
 protected:
     std::string temp_dir;
+    std::string test_root_path;
+    std::string state_dir_path;
+    std::string model_dir_path;
     Store *store;
     CollectionManager& collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
     std::string model_id = "test_model";
 
     void SetUp() override {
-        temp_dir = (std::filesystem::temp_directory_path() / "personalization_auto_embedding_test").string();
-        system(("rm -rf " + temp_dir + " && mkdir -p " + temp_dir).c_str());
+        temp_dir = typesense_test::make_test_temp_dir("personalization_auto_embedding_tmp");
+        typesense_test::reset_test_temp_dir(temp_dir);
+
+        test_root_path = typesense_test::make_test_temp_dir("personalization_auto_embedding");
+        model_dir_path = test_root_path + "/models";
+        state_dir_path = test_root_path + "/state";
 
         // Setup model directory
-        std::string test_dir = "/tmp/typesense_test/personalization_auto_embedding_test/models";
-        system(("rm -rf " + test_dir + " && mkdir -p " + test_dir).c_str());
-        EmbedderManager::set_model_dir(test_dir);
+        typesense_test::reset_test_temp_dir(model_dir_path);
+        EmbedderManager::set_model_dir(model_dir_path);
 
         // Create test collection
-        std::string state_dir_path = "/tmp/typesense_test/personalization_auto_embedding_test";
+        typesense_test::reset_test_temp_dir(state_dir_path);
         Config::get_instance().set_data_dir(state_dir_path);
 
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf " + state_dir_path + " && mkdir -p " + state_dir_path).c_str());
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
     }
 
     void TearDown() override {
-        std::string test_dir = "/tmp/typesense_test";
-        system(("rm -rf " + test_dir).c_str());
         collectionManager.dispose();
         PersonalizationModelManager::dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(temp_dir);
+        typesense_test::cleanup_test_temp_dir(test_root_path);
     }
 };
 
@@ -54,8 +63,12 @@ TEST_F(PersonalizationAutoEmbeddingTest, TestAutoEmbeddingFields) {
         {"type", "recommendation"}
     };
 
-    std::string archive_name = "test/resources/models.tar.gz";
+    std::string archive_name = resolve_test_path({
+        "test/resources/models.tar.gz",
+        "_main/test/resources/models.tar.gz",
+    });
     std::ifstream archive_file(archive_name, std::ios::binary);
+    ASSERT_TRUE(archive_file.is_open()) << "Unable to open archive: " << archive_name;
     std::string model_data((std::istreambuf_iterator<char>(archive_file)), std::istreambuf_iterator<char>());
     archive_file.close();
 
@@ -134,13 +147,13 @@ TEST_F(PersonalizationAutoEmbeddingTest, TestAutoEmbeddingFields) {
     nlohmann::json document0, document1;
     auto doc_op = collection->get_document_from_store(id0_op.get(), document0);
     ASSERT_TRUE(doc_op.ok());
-    ASSERT_EQ(document0["user_embedding"].size(), 256);
-    ASSERT_EQ(document0["item_embedding"].size(), 256);
+    ASSERT_EQ(document0["user_embedding"].size(), size_t{256});
+    ASSERT_EQ(document0["item_embedding"].size(), size_t{256});
 
     doc_op = collection->get_document_from_store(id1_op.get(), document1);
     ASSERT_TRUE(doc_op.ok());
-    ASSERT_EQ(document1["user_embedding"].size(), 256);
-    ASSERT_EQ(document1["item_embedding"].size(), 256);
+    ASSERT_EQ(document1["user_embedding"].size(), size_t{256});
+    ASSERT_EQ(document1["item_embedding"].size(), size_t{256});
 
     std::vector<std::string> json_lines_updated = {
         R"({"title": "Changed Title", "id": "0"})",
@@ -160,13 +173,13 @@ TEST_F(PersonalizationAutoEmbeddingTest, TestAutoEmbeddingFields) {
     auto doc_op_updated = collection->get_document_from_store(id0_op_updated.get(), document0_updated);
 
     ASSERT_TRUE(doc_op_updated.ok());
-    ASSERT_EQ(document0_updated["user_embedding"].size(), 256);
-    ASSERT_EQ(document0_updated["item_embedding"].size(), 256);
+    ASSERT_EQ(document0_updated["user_embedding"].size(), size_t{256});
+    ASSERT_EQ(document0_updated["item_embedding"].size(), size_t{256});
 
     doc_op_updated = collection->get_document_from_store(id1_op_updated.get(), document1_updated);
     ASSERT_TRUE(doc_op_updated.ok());
-    ASSERT_EQ(document1_updated["user_embedding"].size(), 256);
-    ASSERT_EQ(document1_updated["item_embedding"].size(), 256);
+    ASSERT_EQ(document1_updated["user_embedding"].size(), size_t{256});
+    ASSERT_EQ(document1_updated["item_embedding"].size(), size_t{256});
     
     bool user_embeddings_different = false;
     for (size_t i = 0; i < document0["user_embedding"].size(); i++) {

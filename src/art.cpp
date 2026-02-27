@@ -35,7 +35,7 @@
 #define MIN3(a, b, c) ((a) < (b) ? ((a) < (c) ? (a) : (c)) : ((b) < (c) ? (b) : (c)))
 
 #ifdef IGNORE_PRINTF
-#define printf(fmt, ...) (0)
+#define printf(fmt, ...) ((void)0)
 #endif
 
 #define microseconds std::chrono::duration_cast<std::chrono::microseconds>
@@ -1071,15 +1071,15 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
 
         /*if (IS_LEAF(n)) {
             art_leaf *l = (art_leaf *) LEAF_RAW(n);
-            LOG(INFO) << "Top node (leaf) score: " << l->max_score;
+            TS_LOG(INFO) << "Top node (leaf) score: " << l->max_score;
         } else {
-            LOG(INFO) << "Top node score: " << n->max_score;
+            TS_LOG(INFO) << "Top node score: " << n->max_score;
         }*/
 
         if (!n) continue;
         if (IS_LEAF(n)) {
             art_leaf *l = (art_leaf *) LEAF_RAW(n);
-            //LOG(INFO) << "END LEAF SCORE: " << l->max_score;
+            //TS_LOG(INFO) << "END LEAF SCORE: " << l->max_score;
             validate_and_add_leaf(l, last_token, prev_token, allowed_doc_ids, allowed_doc_ids_len,
                                   exclude_leaves, exact_leaf, results);
 
@@ -1095,7 +1095,7 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
         int idx;
         switch (n->type) {
             case NODE4:
-                //LOG(INFO)  << "NODE4, SCORE: " << n->max_score;
+                //TS_LOG(INFO)  << "NODE4, SCORE: " << n->max_score;
                 for (int i=0; i < n->num_children; i++) {
                     art_node* child = ((art_node4*)n)->children[i];
                     q.push(child);
@@ -1103,14 +1103,14 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
                 break;
 
             case NODE16:
-                //LOG(INFO)  << "NODE16, SCORE: " << n->max_score;
+                //TS_LOG(INFO)  << "NODE16, SCORE: " << n->max_score;
                 for (int i=0; i < n->num_children; i++) {
                     q.push(((art_node16*)n)->children[i]);
                 }
                 break;
 
             case NODE48:
-                //LOG(INFO)  << "NODE48, SCORE: " << n->max_score;
+                //TS_LOG(INFO)  << "NODE48, SCORE: " << n->max_score;
                 for (int i=0; i < 256; i++) {
                     idx = ((art_node48*)n)->keys[i];
                     if (!idx) continue;
@@ -1120,7 +1120,7 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
                 break;
 
             case NODE256:
-                //LOG(INFO)  << "NODE256, SCORE: " << n->max_score;
+                //TS_LOG(INFO)  << "NODE256, SCORE: " << n->max_score;
                 for (int i=0; i < 256; i++) {
                     if (!((art_node256*)n)->children[i]) continue;
                     q.push(((art_node256*)n)->children[i]);
@@ -1133,7 +1133,7 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
         }
     }
 
-    /*LOG(INFO) << "leaf results.size: " << results.size()
+    /*TS_LOG(INFO) << "leaf results.size: " << results.size()
               << ", filter_ids_length: " << filter_ids_length
               << ", num_large_lists: " << num_large_lists;*/
 
@@ -1172,7 +1172,7 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
         if (!n) continue;
         if (IS_LEAF(n)) {
             art_leaf *l = (art_leaf *) LEAF_RAW(n);
-            //LOG(INFO) << "END LEAF SCORE: " << l->max_score;
+            //TS_LOG(INFO) << "END LEAF SCORE: " << l->max_score;
 
             validate_and_add_leaf(l, prev_token, prev_leaf, exact_leaf, filter_result_iterator,
                                   exclude_leaves, results);
@@ -1191,7 +1191,7 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
         int idx;
         switch (n->type) {
             case NODE4:
-                //LOG(INFO)  << "NODE4, SCORE: " << n->max_score;
+                //TS_LOG(INFO)  << "NODE4, SCORE: " << n->max_score;
                 for (int i=0; i < n->num_children; i++) {
                     art_node* child = ((art_node4*)n)->children[i];
                     q.push(child);
@@ -1199,14 +1199,14 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
                 break;
 
             case NODE16:
-                //LOG(INFO)  << "NODE16, SCORE: " << n->max_score;
+                //TS_LOG(INFO)  << "NODE16, SCORE: " << n->max_score;
                 for (int i=0; i < n->num_children; i++) {
                     q.push(((art_node16*)n)->children[i]);
                 }
                 break;
 
             case NODE48:
-                //LOG(INFO)  << "NODE48, SCORE: " << n->max_score;
+                //TS_LOG(INFO)  << "NODE48, SCORE: " << n->max_score;
                 for (int i=0; i < 256; i++) {
                     idx = ((art_node48*)n)->keys[i];
                     if (!idx) continue;
@@ -1216,7 +1216,7 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
                 break;
 
             case NODE256:
-                //LOG(INFO)  << "NODE256, SCORE: " << n->max_score;
+                //TS_LOG(INFO)  << "NODE256, SCORE: " << n->max_score;
                 for (int i=0; i < 256; i++) {
                     if (!((art_node256*)n)->children[i]) continue;
                     q.push(((art_node256*)n)->children[i]);
@@ -1229,7 +1229,7 @@ int art_topk_iter(const art_node *root, token_ordering token_order, size_t max_r
         }
     }
 
-    /*LOG(INFO) << "leaf results.size: " << results.size()
+    /*TS_LOG(INFO) << "leaf results.size: " << results.size()
               << ", filter_ids_length: " << filter_ids_length
               << ", num_large_lists: " << num_large_lists;*/
 
@@ -1600,12 +1600,12 @@ static void art_fuzzy_recurse(unsigned char p, unsigned char c, const art_node *
 
     if (!n) return ;
 
-    const int columns = term_len+1;
-    int i=0, j=1, k=2;
-    int row0[columns];
-    int row1[columns];
-    int row2[columns];
-    int* rows[3] = {row0, row1, row2};
+    const int columns = term_len + 1;
+    int i = 0, j = 1, k = 2;
+    std::vector<int> row0(columns);
+    std::vector<int> row1(columns);
+    std::vector<int> row2(columns);
+    int* rows[3] = {row0.data(), row1.data(), row2.data()};
 
     copyIntArray2(irow, rows[i], columns);
     copyIntArray2(jrow, rows[j], columns);
@@ -1641,9 +1641,9 @@ static void art_fuzzy_recurse(unsigned char p, unsigned char c, const art_node *
         art_leaf *l = (art_leaf *) LEAF_RAW(n);
 
         //std::string leaf_str((const char*)l->key, l->key_len-1);
-        //LOG(INFO) << "leaf key: " << leaf_str;
+        //TS_LOG(INFO) << "leaf key: " << leaf_str;
         /*if(leaf_str == "illustrations") {
-            LOG(INFO) << "here";
+            TS_LOG(INFO) << "here";
         }*/
 
         // look past term_len to deal with trailing typo, e.g. searching "pltinum" on "platinum" @ max_cost = 1
@@ -1749,8 +1749,8 @@ int art_fuzzy_search(art_tree *t, const unsigned char *term, const int term_len,
                      std::vector<art_leaf *> &results, std::set<std::string>& exclude_leaves) {
 
     std::vector<const art_node*> nodes;
-    int irow[term_len + 1];
-    int jrow[term_len + 1];
+    std::vector<int> irow(term_len + 1);
+    std::vector<int> jrow(term_len + 1);
     for (int i = 0; i <= term_len; i++){
         irow[i] = jrow[i] = i;
     }
@@ -1759,24 +1759,24 @@ int art_fuzzy_search(art_tree *t, const unsigned char *term, const int term_len,
 
     if(IS_LEAF(t->root)) {
         art_leaf *l = (art_leaf *) LEAF_RAW(t->root);
-        art_fuzzy_recurse(0, l->key[0], t->root, 0, term, term_len, irow, jrow, min_cost, max_cost, prefix, nodes);
+        art_fuzzy_recurse(0, l->key[0], t->root, 0, term, term_len, irow.data(), jrow.data(), min_cost, max_cost, prefix, nodes);
     } else {
         if(t->root == nullptr) {
             return 0;
         }
 
         // send depth as -1 to indicate that this is a root node
-        art_fuzzy_recurse(0, 0, t->root, -1, term, term_len, irow, jrow, min_cost, max_cost, prefix, nodes);
+        art_fuzzy_recurse(0, 0, t->root, -1, term, term_len, irow.data(), jrow.data(), min_cost, max_cost, prefix, nodes);
     }
 
     //long long int time_micro = microseconds(std::chrono::high_resolution_clock::now() - begin).count();
-    //!LOG(INFO) << "Time taken for fuzz: " << time_micro << "us, size of nodes: " << nodes.size();
+    //!TS_LOG(INFO) << "Time taken for fuzz: " << time_micro << "us, size of nodes: " << nodes.size();
 
     //auto begin = std::chrono::high_resolution_clock::now();
 
     size_t key_len = prefix ? term_len + 1 : term_len;
     art_leaf* exact_leaf = (art_leaf *) art_search(t, term, key_len);
-    //LOG(INFO) << "exact_leaf: " << exact_leaf << ", term: " << term << ", term_len: " << term_len;
+    //TS_LOG(INFO) << "exact_leaf: " << exact_leaf << ", term: " << term << ", term_len: " << term_len;
 
     // documents that contain the previous token and/or filter ids
     size_t allowed_doc_ids_len = 0;
@@ -1810,7 +1810,7 @@ int art_fuzzy_search(art_tree *t, const unsigned char *term, const int term_len,
     /*auto time_micro = microseconds(std::chrono::high_resolution_clock::now() - begin).count();
 
     if(time_micro > 1000) {
-        LOG(INFO) << "Time taken for art_topk_iter: " << time_micro
+        TS_LOG(INFO) << "Time taken for art_topk_iter: " << time_micro
                   << "us, size of nodes: " << nodes.size()
                   << ", filter_ids_length: " << filter_ids_length;
     }*/
@@ -1829,8 +1829,8 @@ int art_fuzzy_search_i(art_tree *t, const unsigned char *term, const int term_le
                        std::vector<art_leaf *> &results, std::set<std::string>& exclude_leaves) {
 
     std::vector<const art_node*> nodes;
-    int irow[term_len + 1];
-    int jrow[term_len + 1];
+    std::vector<int> irow(term_len + 1);
+    std::vector<int> jrow(term_len + 1);
     for (int i = 0; i <= term_len; i++){
         irow[i] = jrow[i] = i;
     }
@@ -1839,24 +1839,24 @@ int art_fuzzy_search_i(art_tree *t, const unsigned char *term, const int term_le
 
     if(IS_LEAF(t->root)) {
         art_leaf *l = (art_leaf *) LEAF_RAW(t->root);
-        art_fuzzy_recurse(0, l->key[0], t->root, 0, term, term_len, irow, jrow, min_cost, max_cost, prefix, nodes);
+        art_fuzzy_recurse(0, l->key[0], t->root, 0, term, term_len, irow.data(), jrow.data(), min_cost, max_cost, prefix, nodes);
     } else {
         if(t->root == nullptr) {
             return 0;
         }
 
         // send depth as -1 to indicate that this is a root node
-        art_fuzzy_recurse(0, 0, t->root, -1, term, term_len, irow, jrow, min_cost, max_cost, prefix, nodes);
+        art_fuzzy_recurse(0, 0, t->root, -1, term, term_len, irow.data(), jrow.data(), min_cost, max_cost, prefix, nodes);
     }
 
     //long long int time_micro = microseconds(std::chrono::high_resolution_clock::now() - begin).count();
-    //!LOG(INFO) << "Time taken for fuzz: " << time_micro << "us, size of nodes: " << nodes.size();
+    //!TS_LOG(INFO) << "Time taken for fuzz: " << time_micro << "us, size of nodes: " << nodes.size();
 
     //auto begin = std::chrono::high_resolution_clock::now();
 
     size_t key_len = prefix ? term_len + 1 : term_len;
     art_leaf* exact_leaf = (art_leaf *) art_search(t, term, key_len);
-    //LOG(INFO) << "exact_leaf: " << exact_leaf << ", term: " << term << ", term_len: " << term_len;
+    //TS_LOG(INFO) << "exact_leaf: " << exact_leaf << ", term: " << term << ", term_len: " << term_len;
 
     for(auto node: nodes) {
         art_topk_iter(node, token_order, max_words,
@@ -1885,7 +1885,7 @@ int art_fuzzy_search_i(art_tree *t, const unsigned char *term, const int term_le
 
     /*auto time_micro = microseconds(std::chrono::high_resolution_clock::now() - begin).count();
     if(time_micro > 1000) {
-        LOG(INFO) << "Time taken for art_topk_iter: " << time_micro
+        TS_LOG(INFO) << "Time taken for art_topk_iter: " << time_micro
                   << "us, size of nodes: " << nodes.size()
                   << ", filter_ids_length: " << filter_result_iterator.approx_filter_ids_length;
     }*/

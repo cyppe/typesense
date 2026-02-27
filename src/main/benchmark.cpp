@@ -11,6 +11,7 @@
 #include "collection.h"
 #include "string_utils.h"
 #include "collection_manager.h"
+#include "logger.h"
 
 using namespace std;
 
@@ -181,7 +182,7 @@ void generate_word_freq() {
             std::string json_str = obj.dump();
             outfile << json_str << std::endl;
         } catch(...) {
-            LOG(ERROR) << "Failed parsing: " << json_line;
+            TS_LOG(ERROR) << "Failed parsing: " << json_line;
         }
     }
 

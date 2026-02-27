@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <collection_manager.h>
 #include "curation_index_manager.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class UnionTest : public ::testing::Test {
 protected:
@@ -12,7 +14,7 @@ protected:
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
 
-    std::string state_dir_path = "/tmp/typesense_test/union";
+    std::string state_dir_path;
 
     std::map<std::string, std::string> req_params{};
     std::vector<nlohmann::json> embedded_params;
@@ -21,14 +23,15 @@ protected:
     long now_ts = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 
     void setupCollection() {
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("union");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
         collectionManager.load(8, 1000);
 
-        EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+        EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     }
 
     void setupProductsCollection() {
@@ -65,7 +68,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = products->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -104,7 +107,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -152,7 +155,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -178,7 +181,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -211,7 +214,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -237,7 +240,7 @@ protected:
         for (auto const &json: documents) {
             auto add_op = collection_create_op.get()->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -364,7 +367,7 @@ protected:
             };
             auto add_op = products->add(json.dump());
             if (!add_op.ok()) {
-                LOG(INFO) << add_op.error();
+                TS_LOG(INFO) << add_op.error();
             }
             ASSERT_TRUE(add_op.ok());
         }
@@ -378,6 +381,7 @@ protected:
         collectionManager.dispose();
         EmbedderManager::get_instance().delete_all_text_embedders();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -392,9 +396,9 @@ TEST_F(UnionTest, ErrorHandling) {
 
     auto search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(404, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("`Products` collection not found.", json_res["error"]);
     json_res.clear();
     req_params.clear();
@@ -409,9 +413,9 @@ TEST_F(UnionTest, ErrorHandling) {
                 ])"_json;
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("No search fields specified for the query.", json_res["error"]);
     json_res.clear();
     req_params.clear();
@@ -432,9 +436,9 @@ TEST_F(UnionTest, ErrorHandling) {
                 ])"_json;
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("Error while initializing global parameters of union: Parameter `per_page` must be an unsigned"
               " integer.", json_res["error"]);
     json_res.clear();
@@ -459,9 +463,9 @@ TEST_F(UnionTest, ErrorHandling) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("Expected type of `age` sort_by (int32_field) at search index `1` to be the same as the type of `rating` "
               "sort_by (float_field) at search index `0`. Both `coll_array_fields` and `coll_bool` collections have "
               "declared a default sorting field of different type. Since union expects the searches to sort_by on the "
@@ -487,9 +491,9 @@ TEST_F(UnionTest, ErrorHandling) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("Expected size of `sort_by` parameter of all searches to be equal. The first union search sorts on "
               "{`_text_match: text_match`, `rating: float_field`} but the search at index `1` sorts on "
               "{`_text_match: text_match`, `_union_search_index: union_query_order`, `_seq_id: insertion_order`}.",
@@ -512,9 +516,9 @@ TEST_F(UnionTest, ErrorHandling) {
                 ])"_json;
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("Expected size of `sort_by` parameter of all searches to be equal. The first union search sorts on "
               "{`rating: float_field`, `_union_search_index: union_query_order`, `_seq_id: insertion_order`} "
               "but the search at index `1` sorts on {`rating: float_field`, `_text_match: text_match`}.", json_res["error"]);
@@ -537,9 +541,9 @@ TEST_F(UnionTest, ErrorHandling) {
                 ])"_json;
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("Expected type of `rating` sort_by (float_field) at search index `1` to be the same as the type of "
               "`popular` sort_by (bool_field) at search index `0`.", json_res["error"]);
     json_res.clear();
@@ -561,9 +565,9 @@ TEST_F(UnionTest, ErrorHandling) {
                 ])"_json;
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("Expected order of `rating` sort_by (DESC) at search index `1` to be the same as the order of `rating` "
               "sort_by (ASC) at search index `0`.", json_res["error"]);
     json_res.clear();
@@ -589,15 +593,15 @@ TEST_F(UnionTest, SameCollection) {
 
     auto search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(2, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["found"].get<size_t>());
     ASSERT_EQ(2, json_res["out_of"]);
-    ASSERT_EQ(2, json_res["hits"].size());
-    ASSERT_EQ(6, json_res["hits"][0]["document"].size());
-    ASSERT_EQ(1, json_res["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
+    ASSERT_EQ(size_t{6}, json_res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", json_res["hits"][0]["document"]["product_name"]);
 
-    ASSERT_EQ(6, json_res["hits"][1]["document"].size());
-    ASSERT_EQ(1, json_res["hits"][1]["document"].count("product_name"));
+    ASSERT_EQ(size_t{6}, json_res["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"].count("product_name"));
     ASSERT_EQ("shampoo", json_res["hits"][1]["document"]["product_name"]);
 
     ASSERT_EQ(json_res["hits"][0]["text_match"], json_res["hits"][1]["text_match"]);
@@ -621,16 +625,16 @@ TEST_F(UnionTest, SameCollection) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(2, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["found"].get<size_t>());
     ASSERT_EQ(2, json_res["out_of"]);
-    ASSERT_EQ(2, json_res["hits"].size());
-    ASSERT_EQ(5, json_res["hits"][0]["document"].size());
-    ASSERT_EQ(1, json_res["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
+    ASSERT_EQ(size_t{5}, json_res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("soap", json_res["hits"][0]["document"]["product_name"]);
-    ASSERT_EQ(0, json_res["hits"][0]["document"].count("embedding"));
+    ASSERT_EQ(size_t{0}, json_res["hits"][0]["document"].count("embedding"));
 
-    ASSERT_EQ(1, json_res["hits"][1]["document"].size());
-    ASSERT_EQ(1, json_res["hits"][1]["document"].count("product_name"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"].count("product_name"));
     ASSERT_EQ("shampoo", json_res["hits"][1]["document"]["product_name"]);
 
     ASSERT_EQ(json_res["hits"][0]["text_match"], json_res["hits"][1]["text_match"]);
@@ -654,19 +658,19 @@ TEST_F(UnionTest, SameCollection) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(2, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["found"].get<size_t>());
     ASSERT_EQ(2, json_res["out_of"]);
-    ASSERT_EQ(2, json_res["hits"].size());
-    ASSERT_EQ(1, json_res.count("search_time_ms"));
-    ASSERT_EQ(1, json_res.count("page"));
-    ASSERT_EQ(1, json_res["hits"][0]["document"].size());
-    ASSERT_EQ(1, json_res["hits"][0]["document"].count("product_name"));
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
+    ASSERT_EQ(size_t{1}, json_res.count("search_time_ms"));
+    ASSERT_EQ(size_t{1}, json_res.count("page"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"].count("product_name"));
     ASSERT_EQ("shampoo", json_res["hits"][0]["document"]["product_name"]);
 
-    ASSERT_EQ(5, json_res["hits"][1]["document"].size());
-    ASSERT_EQ(1, json_res["hits"][1]["document"].count("product_name"));
+    ASSERT_EQ(size_t{5}, json_res["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"].count("product_name"));
     ASSERT_EQ("soap", json_res["hits"][1]["document"]["product_name"]);
-    ASSERT_EQ(0, json_res["hits"][1]["document"].count("embedding"));
+    ASSERT_EQ(size_t{0}, json_res["hits"][1]["document"].count("embedding"));
 
     // Exact match gets better score.
     ASSERT_GT(json_res["hits"][0]["text_match"], json_res["hits"][1]["text_match"]);
@@ -697,36 +701,36 @@ TEST_F(UnionTest, DifferentCollections) {
 
     auto search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(2, json_res["found"].get<size_t>());
-    ASSERT_EQ(2, json_res["hits"].size());
+    ASSERT_EQ(size_t{2}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
 
     ASSERT_EQ(1, json_res["hits"][0]["search_index"]);
-    ASSERT_EQ(4, json_res["hits"][0]["document"].size());
-    ASSERT_EQ(1, json_res["hits"][0]["document"].count("name"));
+    ASSERT_EQ(size_t{4}, json_res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"].count("name"));
     ASSERT_EQ("Bread", json_res["hits"][0]["document"]["name"]);
-    ASSERT_EQ(1, json_res["hits"][0]["document"].count("UserFavoriteFoods"));
-    ASSERT_EQ(1, json_res["hits"][0]["document"].count("portions"));
-    ASSERT_EQ(1, json_res["hits"][0]["document"]["portions"].size());
-    ASSERT_EQ(1, json_res["hits"][0]["document"]["portions"][0].count("unit"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"].count("UserFavoriteFoods"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"].count("portions"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"]["portions"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"]["portions"][0].count("unit"));
 
     ASSERT_EQ(0, json_res["hits"][1]["search_index"]);
-    ASSERT_EQ(6, json_res["hits"][1]["document"].size());
-    ASSERT_EQ(1, json_res["hits"][1]["document"].count("title"));
+    ASSERT_EQ(size_t{6}, json_res["hits"][1]["document"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"].count("title"));
     ASSERT_EQ("Heavy", json_res["hits"][1]["document"]["title"]);
-    ASSERT_EQ(1, json_res["hits"][1]["document"].count("Foods"));
-    ASSERT_EQ(2, json_res["hits"][1]["document"]["Foods"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"].count("Foods"));
+    ASSERT_EQ(size_t{2}, json_res["hits"][1]["document"]["Foods"].size());
 
     ASSERT_EQ("Bread", json_res["hits"][1]["document"]["Foods"][0]["name"]);
-    ASSERT_EQ(1, json_res["hits"][1]["document"]["Foods"][0].count("portions"));
-    ASSERT_EQ(1, json_res["hits"][1]["document"]["Foods"][0]["portions"].size());
-    ASSERT_EQ(1, json_res["hits"][1]["document"]["Foods"][0]["portions"][0].count("unit"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"]["Foods"][0].count("portions"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"]["Foods"][0]["portions"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"]["Foods"][0]["portions"][0].count("unit"));
 
     ASSERT_EQ("Milk", json_res["hits"][1]["document"]["Foods"][1]["name"]);
-    ASSERT_EQ(1, json_res["hits"][1]["document"]["Foods"][1].count("portions"));
-    ASSERT_EQ(3, json_res["hits"][1]["document"]["Foods"][1]["portions"].size());
-    ASSERT_EQ(1, json_res["hits"][1]["document"]["Foods"][1]["portions"][0].count("unit"));
-    ASSERT_EQ(0, json_res["hits"][1]["document"]["Foods"][1]["portions"][1].count("unit"));
-    ASSERT_EQ(1, json_res["hits"][1]["document"]["Foods"][1]["portions"][2].count("unit"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"]["Foods"][1].count("portions"));
+    ASSERT_EQ(size_t{3}, json_res["hits"][1]["document"]["Foods"][1]["portions"].size());
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"]["Foods"][1]["portions"][0].count("unit"));
+    ASSERT_EQ(size_t{0}, json_res["hits"][1]["document"]["Foods"][1]["portions"][1].count("unit"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"]["Foods"][1]["portions"][2].count("unit"));
     json_res.clear();
     req_params.clear();
 
@@ -750,15 +754,15 @@ TEST_F(UnionTest, DifferentCollections) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(2, json_res["found"].get<size_t>());
-    ASSERT_EQ(2, json_res["hits"].size());
+    ASSERT_EQ(size_t{2}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
 
     ASSERT_EQ(0, json_res["hits"][0]["search_index"]);
-    ASSERT_EQ(1, json_res["hits"][0]["document"].count("calories"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][0]["document"].count("calories"));
     ASSERT_EQ(1500, json_res["hits"][0]["document"]["calories"]);
 
     ASSERT_EQ(1, json_res["hits"][1]["search_index"]);
-    ASSERT_EQ(1, json_res["hits"][1]["document"].count("quantity"));
+    ASSERT_EQ(size_t{1}, json_res["hits"][1]["document"].count("quantity"));
     ASSERT_EQ(500, json_res["hits"][1]["document"]["quantity"]);
     json_res.clear();
     req_params.clear();
@@ -803,7 +807,7 @@ TEST_F(UnionTest, Pagination) {
     ASSERT_EQ(10, json_res["found"]); // 5 documents from `coll_array_fields` and 5 documents from `coll_bool`.
     ASSERT_EQ(15, json_res["out_of"]);
     ASSERT_EQ(1, json_res["page"]);
-    ASSERT_EQ(2, json_res["hits"].size());
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
     ASSERT_EQ(0, json_res["hits"][0]["search_index"]);
     ASSERT_EQ("coll_bool", json_res["hits"][0]["collection"]);
     ASSERT_EQ("9", json_res["hits"][0]["document"]["id"]);
@@ -848,7 +852,7 @@ TEST_F(UnionTest, Pagination) {
     ASSERT_EQ(10, json_res["found"]); // 5 documents from `coll_array_fields` and 5 documents from `coll_bool`.
     ASSERT_EQ(15, json_res["out_of"]);
     ASSERT_EQ(3, json_res["page"]);
-    ASSERT_EQ(2, json_res["hits"].size());
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
     ASSERT_EQ("coll_bool", json_res["hits"][0]["collection"]);
     ASSERT_EQ("1", json_res["hits"][0]["document"]["id"]);
     ASSERT_EQ("The Godfather", json_res["hits"][0]["document"]["title"]);
@@ -888,7 +892,7 @@ TEST_F(UnionTest, Pagination) {
     ASSERT_EQ(10, json_res["found"]); // 5 documents from `coll_array_fields` and 5 documents from `coll_bool`.
     ASSERT_EQ(15, json_res["out_of"]);
     ASSERT_EQ(4, json_res["page"]);
-    ASSERT_EQ(2, json_res["hits"].size());
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
     ASSERT_EQ("coll_array_fields", json_res["hits"][0]["collection"]);
     ASSERT_EQ("3", json_res["hits"][0]["document"]["id"]);
     ASSERT_EQ("Jeremy Howard", json_res["hits"][0]["document"]["name"]);
@@ -919,7 +923,7 @@ TEST_F(UnionTest, Pagination) {
     ASSERT_EQ(500, json_res["found"]);
     ASSERT_EQ(500, json_res["out_of"]);
     ASSERT_EQ(4, json_res["page"]);
-    ASSERT_EQ(100, json_res["hits"].size());
+    ASSERT_EQ(size_t{100}, json_res["hits"].size());
     json_res.clear();
     req_params.clear();
 }
@@ -948,7 +952,7 @@ TEST_F(UnionTest, Sorting) {
     ASSERT_TRUE(search_op.ok());
     ASSERT_EQ(10, json_res["found"]); // 5 documents from `coll_array_fields` and 5 documents from `coll_bool`.
     ASSERT_EQ(15, json_res["out_of"]);
-    ASSERT_EQ(10, json_res["hits"].size());
+    ASSERT_EQ(size_t{10}, json_res["hits"].size());
     ASSERT_EQ("1", json_res["hits"][0]["document"]["id"]);
     ASSERT_EQ("Jeremy Howard", json_res["hits"][0]["document"]["name"]);
     ASSERT_EQ(9.999, json_res["hits"][0]["document"]["rating"]);
@@ -1009,7 +1013,7 @@ TEST_F(UnionTest, Sorting) {
     ASSERT_TRUE(search_op.ok());
     ASSERT_EQ(10, json_res["found"]); // 5 documents from `coll_array_fields` and 5 documents from `coll_bool`.
     ASSERT_EQ(15, json_res["out_of"]);
-    ASSERT_EQ(10, json_res["hits"].size());
+    ASSERT_EQ(size_t{10}, json_res["hits"].size());
     ASSERT_EQ("3", json_res["hits"][0]["document"]["id"]);
     ASSERT_EQ("Jeremy Howard", json_res["hits"][0]["document"]["name"]);
     ASSERT_EQ(0, json_res["hits"][0]["document"]["rating"]);
@@ -1099,7 +1103,7 @@ TEST_F(UnionTest, PinnedHits) {
         const auto& json = documents[i];
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1112,7 +1116,7 @@ TEST_F(UnionTest, PinnedHits) {
         const auto& json = documents[i];
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1136,7 +1140,7 @@ TEST_F(UnionTest, PinnedHits) {
     ASSERT_TRUE(search_op.ok());
     ASSERT_EQ(6, json_res["found"]);
     ASSERT_EQ(6, json_res["out_of"]);
-    ASSERT_EQ(6, json_res["hits"].size());
+    ASSERT_EQ(size_t{6}, json_res["hits"].size());
     ASSERT_EQ("1", json_res["hits"][0]["document"]["id"]); //any one id will be pinned incase of same ids across multiple collections
     ASSERT_EQ("2", json_res["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", json_res["hits"][2]["document"]["id"]);
@@ -1196,7 +1200,7 @@ TEST_F(UnionTest, PinnedHits) {
         const auto& json = documents[i];
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1209,7 +1213,7 @@ TEST_F(UnionTest, PinnedHits) {
         const auto& json = documents[i];
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1232,7 +1236,7 @@ TEST_F(UnionTest, PinnedHits) {
     ASSERT_TRUE(search_op.ok());
     ASSERT_EQ(6, json_res["found"]);
     ASSERT_EQ(6, json_res["out_of"]);
-    ASSERT_EQ(6, json_res["hits"].size());
+    ASSERT_EQ(size_t{6}, json_res["hits"].size());
     ASSERT_EQ("C1", json_res["hits"][0]["document"]["id"]);  //with unique ids, given ids will be pinned
     ASSERT_EQ("C2", json_res["hits"][1]["document"]["id"]);
     ASSERT_EQ("C0", json_res["hits"][2]["document"]["id"]);
@@ -1291,8 +1295,8 @@ TEST_F(UnionTest, CurationIncludesShouldNotCollapseInUnion) {
     auto search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
 
-    ASSERT_EQ(3, json_res["found"].get<size_t>());
-    ASSERT_EQ(3, json_res["hits"].size());
+    ASSERT_EQ(size_t{3}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, json_res["hits"].size());
     ASSERT_TRUE(json_res["hits"][0]["curated"].get<bool>());
     ASSERT_TRUE(json_res["hits"][1]["curated"].get<bool>());
     ASSERT_EQ("0", json_res["hits"][0]["document"]["id"]);
@@ -1355,7 +1359,7 @@ TEST_F(UnionTest, HybridSearchHasVectorDistance) {
     auto search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
 
-    ASSERT_EQ(2, json_res["hits"].size());
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
     ASSERT_EQ("coll1", json_res["hits"][0]["collection"]);
     ASSERT_EQ("coll2", json_res["hits"][1]["collection"]);
     ASSERT_TRUE(json_res["hits"][0].contains("vector_distance"));
@@ -1410,8 +1414,8 @@ TEST_F(UnionTest, RemoveDuplicatesWithUnion) {
     //default to remove duplicates
     auto search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(2, json_res["found"].get<size_t>());
-    ASSERT_EQ(2, json_res["hits"].size());
+    ASSERT_EQ(size_t{2}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["hits"].size());
     ASSERT_EQ("1", json_res["hits"][0]["document"]["id"]);
     ASSERT_EQ("0", json_res["hits"][1]["document"]["id"]);
 
@@ -1419,8 +1423,8 @@ TEST_F(UnionTest, RemoveDuplicatesWithUnion) {
     req_params = {{"remove_duplicates", "false"}};
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts, false);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(5, json_res["found"].get<size_t>());
-    ASSERT_EQ(5, json_res["hits"].size());
+    ASSERT_EQ(size_t{5}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, json_res["hits"].size());
     ASSERT_EQ("1", json_res["hits"][0]["document"]["id"]);
     ASSERT_EQ("0", json_res["hits"][1]["document"]["id"]);
     ASSERT_EQ("0", json_res["hits"][2]["document"]["id"]);
@@ -1479,14 +1483,14 @@ TEST_F(UnionTest, GroupingWithUnions) {
 
     auto search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(2, json_res["found"].get<size_t>());
-    ASSERT_EQ(2, json_res["grouped_hits"].size());
+    ASSERT_EQ(size_t{2}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["grouped_hits"].size());
 
-    ASSERT_EQ(2, json_res["grouped_hits"][0]["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["grouped_hits"][0]["found"].get<size_t>());
     ASSERT_EQ("Shampoo", json_res["grouped_hits"][0]["group_key"][0]);
     ASSERT_EQ("0", json_res["grouped_hits"][0]["hits"][0]["document"]["id"]);
 
-    ASSERT_EQ(1, json_res["grouped_hits"][1]["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["grouped_hits"][1]["found"].get<size_t>());
     ASSERT_EQ("Shampoo", json_res["grouped_hits"][1]["group_key"][0]);
     ASSERT_EQ("1", json_res["grouped_hits"][1]["hits"][0]["document"]["id"]);
 
@@ -1509,9 +1513,9 @@ TEST_F(UnionTest, GroupingWithUnions) {
     req_params.clear();
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("Invalid group_by searches count. All searches with union search should be uniform.", json_res["error"]);
 }
 
@@ -1560,7 +1564,7 @@ TEST_F(UnionTest, FacetingWithUnion) {
         const auto& json = countries[i];
         auto add_op = coll_countries->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1658,7 +1662,7 @@ TEST_F(UnionTest, FacetingWithUnion) {
         const auto& json = documents[i];
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1671,7 +1675,7 @@ TEST_F(UnionTest, FacetingWithUnion) {
         const auto& json = documents[i];
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1693,26 +1697,26 @@ TEST_F(UnionTest, FacetingWithUnion) {
 
     auto search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(10, json_res["found"].get<size_t>());
-    ASSERT_EQ(10, json_res["hits"].size());
+    ASSERT_EQ(size_t{10}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, json_res["hits"].size());
 
-    ASSERT_EQ(1, json_res["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"].size());
     ASSERT_EQ("country", json_res["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(6, json_res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{6}, json_res["facet_counts"][0]["counts"].size());
     ASSERT_EQ(6, json_res["facet_counts"][0]["stats"]["total_values"]);
 
     ASSERT_EQ("Germany", json_res["facet_counts"][0]["counts"][0]["value"]);
-    ASSERT_EQ(3, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{3}, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("Switzerland", json_res["facet_counts"][0]["counts"][1]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
     ASSERT_EQ("Italy", json_res["facet_counts"][0]["counts"][2]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
     ASSERT_EQ("United States", json_res["facet_counts"][0]["counts"][3]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
     ASSERT_EQ("France", json_res["facet_counts"][0]["counts"][4]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
     ASSERT_EQ("England", json_res["facet_counts"][0]["counts"][5]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
 
 
 
@@ -1735,41 +1739,41 @@ TEST_F(UnionTest, FacetingWithUnion) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(10, json_res["found"].get<size_t>());
-    ASSERT_EQ(10, json_res["hits"].size());
-    ASSERT_EQ(2, json_res["facet_counts"].size());
+    ASSERT_EQ(size_t{10}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, json_res["hits"].size());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"].size());
 
     ASSERT_EQ("rating", json_res["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(6, json_res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{6}, json_res["facet_counts"][0]["counts"].size());
     ASSERT_EQ(6, json_res["facet_counts"][0]["stats"]["total_values"]);
     ASSERT_EQ("4.8", json_res["facet_counts"][0]["counts"][0]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("4.7", json_res["facet_counts"][0]["counts"][1]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
     ASSERT_EQ("4.4", json_res["facet_counts"][0]["counts"][2]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
     ASSERT_EQ("4.1", json_res["facet_counts"][0]["counts"][3]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
     ASSERT_EQ("4.5", json_res["facet_counts"][0]["counts"][4]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
     ASSERT_EQ("4.2", json_res["facet_counts"][0]["counts"][5]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
 
     ASSERT_EQ("country", json_res["facet_counts"][1]["field_name"]);
-    ASSERT_EQ(6, json_res["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{6}, json_res["facet_counts"][1]["counts"].size());
     ASSERT_EQ(6, json_res["facet_counts"][1]["stats"]["total_values"]);
     ASSERT_EQ("Germany", json_res["facet_counts"][1]["counts"][0]["value"]);
-    ASSERT_EQ(3, json_res["facet_counts"][1]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{3}, json_res["facet_counts"][1]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("Switzerland", json_res["facet_counts"][1]["counts"][1]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][1]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][1]["counts"][1]["count"].get<size_t>());
     ASSERT_EQ("Italy", json_res["facet_counts"][1]["counts"][2]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][1]["counts"][2]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][1]["counts"][2]["count"].get<size_t>());
     ASSERT_EQ("United States", json_res["facet_counts"][1]["counts"][3]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][1]["counts"][3]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][1]["counts"][3]["count"].get<size_t>());
     ASSERT_EQ("France", json_res["facet_counts"][1]["counts"][4]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][1]["counts"][4]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][1]["counts"][4]["count"].get<size_t>());
     ASSERT_EQ("England", json_res["facet_counts"][1]["counts"][5]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][1]["counts"][5]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][1]["counts"][5]["count"].get<size_t>());
 
     //range facets
     req_params.clear();
@@ -1789,18 +1793,18 @@ TEST_F(UnionTest, FacetingWithUnion) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(10, json_res["found"].get<size_t>());
-    ASSERT_EQ(10, json_res["hits"].size());
+    ASSERT_EQ(size_t{10}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, json_res["hits"].size());
 
-    ASSERT_EQ(1, json_res["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"].size());
     ASSERT_EQ("rating", json_res["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"].size());
     ASSERT_EQ(2, json_res["facet_counts"][0]["stats"]["total_values"]);
 
     ASSERT_EQ("great", json_res["facet_counts"][0]["counts"][0]["value"]);
-    ASSERT_EQ(5, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{5}, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("exceptional", json_res["facet_counts"][0]["counts"][1]["value"]);
-    ASSERT_EQ(5, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{5}, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
 
     //facet sorting by alpha asc
     req_params.clear();
@@ -1820,23 +1824,23 @@ TEST_F(UnionTest, FacetingWithUnion) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"].size());
     ASSERT_EQ("country", json_res["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(6, json_res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{6}, json_res["facet_counts"][0]["counts"].size());
     ASSERT_EQ(6, json_res["facet_counts"][0]["stats"]["total_values"]);
 
     ASSERT_EQ("England", json_res["facet_counts"][0]["counts"][0]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("France", json_res["facet_counts"][0]["counts"][1]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
     ASSERT_EQ("Germany", json_res["facet_counts"][0]["counts"][2]["value"]);
-    ASSERT_EQ(3, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
+    ASSERT_EQ(size_t{3}, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
     ASSERT_EQ("Italy", json_res["facet_counts"][0]["counts"][3]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
     ASSERT_EQ("Switzerland", json_res["facet_counts"][0]["counts"][4]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
     ASSERT_EQ("United States", json_res["facet_counts"][0]["counts"][5]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
 
     //facet sorting by alpha desc
     req_params.clear();
@@ -1856,23 +1860,23 @@ TEST_F(UnionTest, FacetingWithUnion) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"].size());
     ASSERT_EQ("country", json_res["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(6, json_res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{6}, json_res["facet_counts"][0]["counts"].size());
     ASSERT_EQ(6, json_res["facet_counts"][0]["stats"]["total_values"]);
 
     ASSERT_EQ("United States", json_res["facet_counts"][0]["counts"][0]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("Switzerland", json_res["facet_counts"][0]["counts"][1]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
     ASSERT_EQ("Italy", json_res["facet_counts"][0]["counts"][2]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
     ASSERT_EQ("Germany", json_res["facet_counts"][0]["counts"][3]["value"]);
-    ASSERT_EQ(3, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
+    ASSERT_EQ(size_t{3}, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
     ASSERT_EQ("France", json_res["facet_counts"][0]["counts"][4]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
     ASSERT_EQ("England", json_res["facet_counts"][0]["counts"][5]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
 
     // facet with reference - join on faceted fields and get response
     req_params.clear();
@@ -1894,26 +1898,26 @@ TEST_F(UnionTest, FacetingWithUnion) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(10, json_res["found"].get<size_t>());
-    ASSERT_EQ(10, json_res["hits"].size());
+    ASSERT_EQ(size_t{10}, json_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, json_res["hits"].size());
 
-    ASSERT_EQ(1, json_res["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"].size());
     ASSERT_EQ("$Countries(country_name)", json_res["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(6, json_res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{6}, json_res["facet_counts"][0]["counts"].size());
     ASSERT_EQ(6, json_res["facet_counts"][0]["stats"]["total_values"]);
 
     ASSERT_EQ("Italy", json_res["facet_counts"][0]["counts"][0]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("Germany", json_res["facet_counts"][0]["counts"][1]["value"]);
-    ASSERT_EQ(2, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
+    ASSERT_EQ(size_t{2}, json_res["facet_counts"][0]["counts"][1]["count"].get<size_t>());
     ASSERT_EQ("United States", json_res["facet_counts"][0]["counts"][2]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][2]["count"].get<size_t>());
     ASSERT_EQ("Switzerland", json_res["facet_counts"][0]["counts"][3]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][3]["count"].get<size_t>());
     ASSERT_EQ("France", json_res["facet_counts"][0]["counts"][4]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][4]["count"].get<size_t>());
     ASSERT_EQ("England", json_res["facet_counts"][0]["counts"][5]["value"]);
-    ASSERT_EQ(1, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, json_res["facet_counts"][0]["counts"][5]["count"].get<size_t>());
 }
 
 TEST_F(UnionTest, FacetingWithUnionsValidation) {
@@ -1988,9 +1992,9 @@ TEST_F(UnionTest, FacetingWithUnionsValidation) {
 
     auto search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("`facet_query` should be uniform across searches for faceting with union search.", json_res["error"]);
 
     // facet startegy should be uniform
@@ -2013,9 +2017,9 @@ TEST_F(UnionTest, FacetingWithUnionsValidation) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("`facet_strategy` should be uniform across searches for faceting with union search.", json_res["error"]);
 
     // facet field should be uniform
@@ -2038,9 +2042,9 @@ TEST_F(UnionTest, FacetingWithUnionsValidation) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("facet fields should be uniform across searches for faceting with union search.", json_res["error"]);
 
     req_params.clear();
@@ -2062,9 +2066,9 @@ TEST_F(UnionTest, FacetingWithUnionsValidation) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("facet fields should be uniform across searches for faceting with union search.", json_res["error"]);
 
     // facet return parent should be consistent across searches
@@ -2089,9 +2093,9 @@ TEST_F(UnionTest, FacetingWithUnionsValidation) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
     ASSERT_EQ(400, json_res["code"]);
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
     ASSERT_EQ("`facet_return_parent` should be uniform across searches for faceting with union search.", json_res["error"]);
 
     // if facet fields are different then it's alright
@@ -2114,8 +2118,8 @@ TEST_F(UnionTest, FacetingWithUnionsValidation) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(0, json_res.count("code"));
-    ASSERT_EQ(0, json_res.count("error"));
+    ASSERT_EQ(size_t{0}, json_res.count("code"));
+    ASSERT_EQ(size_t{0}, json_res.count("error"));
 
     //reference facets fails if not sharing common joined collection
     req_params.clear();
@@ -2137,8 +2141,8 @@ TEST_F(UnionTest, FacetingWithUnionsValidation) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
 
     //fields different sort params
     req_params.clear();
@@ -2158,6 +2162,6 @@ TEST_F(UnionTest, FacetingWithUnionsValidation) {
 
     search_op = collectionManager.do_union(req_params, embedded_params, searches, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, json_res.count("code"));
-    ASSERT_EQ(1, json_res.count("error"));
+    ASSERT_EQ(size_t{1}, json_res.count("code"));
+    ASSERT_EQ(size_t{1}, json_res.count("error"));
 }

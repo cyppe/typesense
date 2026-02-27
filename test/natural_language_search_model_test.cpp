@@ -134,7 +134,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsOpenAIFailure) {
   auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 500);
+  ASSERT_EQ(result.code(), 500u);
   ASSERT_EQ(result.error(), "Failed to get response from OpenAI: 400");
 }
 
@@ -152,7 +152,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsOpenAIInvalidJSON) {
   auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 500);
+  ASSERT_EQ(result.code(), 500u);
   ASSERT_EQ(result.error(), "Failed to parse OpenAI response: Invalid JSON");
 }
 
@@ -188,7 +188,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsOpenAIInvalidResponse
   auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 500);
+  ASSERT_EQ(result.code(), 500u);
   ASSERT_EQ(result.error(), "No valid response from OpenAI");
 }
 
@@ -229,7 +229,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsOpenAIInvalidContentR
   auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 500);
+  ASSERT_EQ(result.code(), 500u);
   ASSERT_EQ(result.error(), "No valid response content from OpenAI");
 }
 
@@ -281,7 +281,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsCloudflareResponseFai
     auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 500);
+    ASSERT_EQ(result.code(), 500u);
     ASSERT_EQ(result.error(), "Cloudflare API response JSON parse error: Invalid JSON");
 }
 
@@ -313,7 +313,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsCloudflareInvalidResp
   auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 500);
+  ASSERT_EQ(result.code(), 500u);
   ASSERT_EQ(result.error(), "Invalid format from Cloudflare API");
 }
 
@@ -332,7 +332,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsCloudflareFailure) {
   auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 500);
+  ASSERT_EQ(result.code(), 500u);
   ASSERT_EQ(result.error(), "Cloudflare API error: HTTP 400");
 }
 
@@ -381,7 +381,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsJSONFailure) {
   auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 500);
+  ASSERT_EQ(result.code(), 500u);
   ASSERT_EQ(result.error(), "Could not extract search parameters");
 }
 
@@ -430,7 +430,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsRegexJSONFailure) {
   auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 500);
+  ASSERT_EQ(result.code(), 500u);
   ASSERT_EQ(result.error(), "Regex JSON parse failed on content");
 }
 
@@ -513,7 +513,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateModelFailure) {
 
   auto result = NaturalLanguageSearchModel::validate_model(model_config);
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 400);
+  ASSERT_EQ(result.code(), 400u);
   ASSERT_EQ(result.error(), "Property `model_name` is not provided or not a string.");
 
   model_config = R"({
@@ -523,7 +523,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateModelFailure) {
 
   result = NaturalLanguageSearchModel::validate_model(model_config);
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 400);
+  ASSERT_EQ(result.code(), 400u);
   ASSERT_EQ(result.error(), "Property `api_key` is missing or is not a non-empty string.");
 
   model_config = R"({
@@ -534,7 +534,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateModelFailure) {
 
   result = NaturalLanguageSearchModel::validate_model(model_config);
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 400);
+  ASSERT_EQ(result.code(), 400u);
   ASSERT_EQ(result.error(), "Property `max_bytes` is not provided or not a positive integer.");
 
   model_config = R"({
@@ -546,7 +546,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateModelFailure) {
 
   result = NaturalLanguageSearchModel::validate_model(model_config);
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 400);
+  ASSERT_EQ(result.code(), 400u);
   ASSERT_EQ(result.error(), "Property `temperature` must be a number between 0 and 2.");
 
   model_config = R"({
@@ -557,7 +557,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateModelFailure) {
 
   result = NaturalLanguageSearchModel::validate_model(model_config);
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 400);
+  ASSERT_EQ(result.code(), 400u);
   ASSERT_EQ(result.error(), "Property `account_id` is missing or is not a non-empty string.");
 
   model_config = R"({
@@ -568,7 +568,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateModelFailure) {
 
   result = NaturalLanguageSearchModel::validate_model(model_config);
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 400);
+  ASSERT_EQ(result.code(), 400u);
   ASSERT_EQ(result.error(), "Property `api_key` is missing or is not a non-empty string.");
 
   model_config = R"({
@@ -579,7 +579,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateModelFailure) {
 
   result = NaturalLanguageSearchModel::validate_model(model_config);
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 400);
+  ASSERT_EQ(result.code(), 400u);
   ASSERT_EQ(result.error(), "Property `max_bytes` is not provided or not a positive integer.");
 
   model_config = R"({
@@ -590,7 +590,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateModelFailure) {
 
   result = NaturalLanguageSearchModel::validate_model(model_config);
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 400);
+  ASSERT_EQ(result.code(), 400u);
   ASSERT_EQ(result.error(), "Property `api_url` is missing or is not a non-empty string.");
 
   model_config = R"({
@@ -602,7 +602,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateModelFailure) {
 
   result = NaturalLanguageSearchModel::validate_model(model_config);
   ASSERT_FALSE(result.ok());
-  ASSERT_EQ(result.code(), 400);
+  ASSERT_EQ(result.code(), 400u);
   ASSERT_EQ(result.error(), "Property `temperature` must be a number between 0 and 2.");
 }
 
@@ -765,7 +765,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsGoogleFailure) {
     auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 500);
+    ASSERT_EQ(result.code(), 500u);
     ASSERT_EQ(result.error(), "Failed to get response from Google Gemini: Google Gemini API error: HTTP 500");
 }
 
@@ -789,7 +789,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsGoogleInvalidResponse
     auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 500);
+    ASSERT_EQ(result.code(), 500u);
     ASSERT_EQ(result.error(), "No valid candidates in Google Gemini response");
 }
 
@@ -898,8 +898,8 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsGCPTokenRefresh) {
     ASSERT_EQ(params["q"], "products");
     
     // Verify all three requests were made
-    ASSERT_EQ(NaturalLanguageSearchModel::get_num_captured_requests(), 3);
-    
+    ASSERT_EQ(NaturalLanguageSearchModel::get_num_captured_requests(), size_t{3});
+
     // First request: Initial API call that gets 401
     const auto& first_request = NaturalLanguageSearchModel::get_captured_request(0);
     ASSERT_TRUE(first_request.url.find("https://us-central1-aiplatform.googleapis.com") != std::string::npos);
@@ -989,7 +989,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsGCPRequestBody) {
     // Check contents
     ASSERT_TRUE(request_body.contains("contents"));
     ASSERT_TRUE(request_body["contents"].is_array());
-    ASSERT_EQ(request_body["contents"].size(), 1);
+    ASSERT_EQ(request_body["contents"].size(), size_t{1});
     
     // Verify headers
     auto headers = NaturalLanguageSearchModel::get_last_request_headers();
@@ -1024,7 +1024,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateOpenAIModelWithValidAPIKey) {
     ASSERT_TRUE(result.ok());
     
     // Verify validation API call was made
-    ASSERT_EQ(NaturalLanguageSearchModel::get_num_captured_requests(), 1);
+    ASSERT_EQ(NaturalLanguageSearchModel::get_num_captured_requests(), size_t{1});
     std::string url = NaturalLanguageSearchModel::get_last_request_url();
     ASSERT_EQ(url, "https://api.openai.com/v1/chat/completions");
     
@@ -1194,7 +1194,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateGCPModelWithTokenRefresh) {
     ASSERT_TRUE(result.ok());
     
     // Verify 3 API calls were made (initial, refresh, retry)
-    ASSERT_EQ(NaturalLanguageSearchModel::get_num_captured_requests(), 3);
+    ASSERT_EQ(NaturalLanguageSearchModel::get_num_captured_requests(), size_t{3});
 }
 
 TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsGCPDifferentRegions) {
@@ -1320,7 +1320,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsAzureSuccess) {
     ASSERT_EQ(request_body["temperature"], 0.0);
     ASSERT_EQ(request_body["max_tokens"], 1024);
     ASSERT_TRUE(request_body.contains("messages"));
-    ASSERT_EQ(request_body["messages"].size(), 2);
+    ASSERT_EQ(request_body["messages"].size(), size_t{2});
     ASSERT_EQ(request_body["messages"][0]["role"], "system");
     ASSERT_EQ(request_body["messages"][1]["role"], "user");
     ASSERT_EQ(request_body["messages"][1]["content"], "Find expensive laptops");
@@ -1387,7 +1387,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsAzureFailure) {
     auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 500);
+    ASSERT_EQ(result.code(), 500u);
     ASSERT_EQ(result.error(), "Failed to get response from Azure OpenAI: Azure OpenAI API error: The API deployment for this resource does not exist.");
 }
 
@@ -1406,7 +1406,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsAzureTimeout) {
     auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 500);
+    ASSERT_EQ(result.code(), 500u);
     ASSERT_EQ(result.error(), "Failed to get response from Azure OpenAI: Azure OpenAI API timeout.");
 }
 
@@ -1433,7 +1433,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsAzureInvalidResponse)
     auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 500);
+    ASSERT_EQ(result.code(), 500u);
     ASSERT_EQ(result.error(), "No valid choices in Azure OpenAI response");
 }
 
@@ -1461,7 +1461,7 @@ TEST_F(NaturalLanguageSearchModelTest, GenerateSearchParamsAzureInvalidContent) 
     auto result = NaturalLanguageSearchModel::generate_search_params(query, collection_schema_prompt, model_config);
 
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 500);
+    ASSERT_EQ(result.code(), 500u);
     ASSERT_EQ(result.error(), "No valid content in Azure OpenAI response");
 }
 
@@ -1491,7 +1491,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateAzureModelSuccess) {
     auto result = NaturalLanguageSearchModel::validate_model(model_config);
     ASSERT_TRUE(result.ok());
     
-    ASSERT_EQ(NaturalLanguageSearchModel::get_num_captured_requests(), 1);
+    ASSERT_EQ(NaturalLanguageSearchModel::get_num_captured_requests(), size_t{1});
     std::string url = NaturalLanguageSearchModel::get_last_request_url();
     ASSERT_EQ(url, "https://test.openai.azure.com/openai/deployments/gpt-35-turbo/chat/completions?api-version=2024-02-15-preview");
     
@@ -1538,7 +1538,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateAzureModelFailureMissingAPIKey) {
     
     auto result = NaturalLanguageSearchModel::validate_model(model_config);
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 400);
+    ASSERT_EQ(result.code(), 400u);
     ASSERT_EQ(result.error(), "Property `api_key` is missing or is not a non-empty string.");
 }
 
@@ -1551,7 +1551,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateAzureModelFailureMissingURL) {
     
     auto result = NaturalLanguageSearchModel::validate_model(model_config);
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 400);
+    ASSERT_EQ(result.code(), 400u);
     ASSERT_EQ(result.error(), "Property `url` is missing or is not a non-empty string.");
 }
 
@@ -1566,7 +1566,7 @@ TEST_F(NaturalLanguageSearchModelTest, ValidateAzureModelFailureInvalidTemperatu
     
     auto result = NaturalLanguageSearchModel::validate_model(model_config);
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 400);
+    ASSERT_EQ(result.code(), 400u);
     ASSERT_EQ(result.error(), "Property `temperature` must be a number between 0 and 2.");
 }
 

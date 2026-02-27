@@ -17,6 +17,11 @@ config_setting(
     define_values = {"enable_jemalloc_lg_page16": "1"},
 )
 
+config_setting(
+    name = "linux",
+    constraint_values = ["@platforms//os:linux"],
+)
+
 configure_make(
     name = "jemalloc",
     args = ["-j8"],
@@ -28,7 +33,8 @@ configure_make(
         "//conditions:default": {},
     }),
     configure_options = select({
-        ":linux_arm64_with_lg_page16": ["--with-lg-page=16", "--disable-cache-oblivious"],
+        ":linux_arm64_with_lg_page16": ["je_cv_strerror_r_returns_char_with_gnu_source=yes", "--with-lg-page=16", "--disable-cache-oblivious"],
+        ":linux": ["je_cv_strerror_r_returns_char_with_gnu_source=yes", "--disable-cache-oblivious"],
         "//conditions:default": ["--disable-cache-oblivious"],
     }),
     lib_source = ":all_srcs",

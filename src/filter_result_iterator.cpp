@@ -10,6 +10,7 @@
 #include <s2/s2builder.h>
 #include <timsort.hpp>
 #include "filter_result_iterator.h"
+#include "logger.h"
 #include "index.h"
 #include "posting.h"
 #include "collection_manager.h"
@@ -831,8 +832,6 @@ void filter_result_iterator_t::next() {
     }
 
     if (filter_node->isOperator) {
-        auto last_seq_id = seq_id;
-
         // Advance the subtrees and then apply operators to arrive at the next valid doc.
         if (filter_node->filter_operator == AND) {
             left_it->next();
@@ -1212,20 +1211,26 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
                     if (enable_lazy_evaluation) {
                         raw_id_lists = num_tree->search(comparator, value, range_end_value);
                     } else {
+                        size_t result_size = filter_result.count;
                         num_tree->range_inclusive_search(value, range_end_value, &filter_result.docs,
-                                                             reinterpret_cast<size_t &>(filter_result.count));
+                                                         result_size);
+                        filter_result.count = static_cast<uint32_t>(result_size);
                     }
                     fi++;
                 } else {
                     if (enable_lazy_evaluation) {
                         raw_id_lists = num_tree->search(comparator, value);
                     } else if (a_filter.comparators[fi] == NOT_EQUALS) {
+                        size_t result_size = filter_result.count;
                         numeric_not_equals_filter(num_tree, value,
                                                   index->seq_ids->uncompress(), index->seq_ids->num_ids(),
-                                                  filter_result.docs, reinterpret_cast<size_t &>(filter_result.count));
+                                                  filter_result.docs, result_size);
+                        filter_result.count = static_cast<uint32_t>(result_size);
                     } else {
+                        size_t result_size = filter_result.count;
                         num_tree->search(a_filter.comparators[fi], value, &filter_result.docs,
-                                         reinterpret_cast<size_t &>(filter_result.count));
+                                         result_size);
+                        filter_result.count = static_cast<uint32_t>(result_size);
                     }
                 }
 
@@ -1370,20 +1375,26 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
                     if (enable_lazy_evaluation) {
                         raw_id_lists = num_tree->search(comparator, float_int64, range_end_value);
                     } else {
+                        size_t result_size = filter_result.count;
                         num_tree->range_inclusive_search(float_int64, range_end_value, &filter_result.docs,
-                                                         reinterpret_cast<size_t &>(filter_result.count));
+                                                         result_size);
+                        filter_result.count = static_cast<uint32_t>(result_size);
                     }
                     fi++;
                 } else {
                     if (enable_lazy_evaluation) {
                         raw_id_lists = num_tree->search(comparator, float_int64);
                     } else if (a_filter.comparators[fi] == NOT_EQUALS) {
+                        size_t result_size = filter_result.count;
                         numeric_not_equals_filter(num_tree, float_int64,
                                                   index->seq_ids->uncompress(), index->seq_ids->num_ids(),
-                                                  filter_result.docs, reinterpret_cast<size_t &>(filter_result.count));
+                                                  filter_result.docs, result_size);
+                        filter_result.count = static_cast<uint32_t>(result_size);
                     } else {
+                        size_t result_size = filter_result.count;
                         num_tree->search(a_filter.comparators[fi], float_int64, &filter_result.docs,
-                                         reinterpret_cast<size_t &>(filter_result.count));
+                                         result_size);
+                        filter_result.count = static_cast<uint32_t>(result_size);
                     }
                 }
 
@@ -1546,7 +1557,6 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
             if (is_polygon) {
                 const int num_verts = int(filter_value_parts.size()) / 2;
                 std::vector<S2Point> vertices;
-                double sum = 0.0;
 
                 for (size_t point_index = 0; point_index < size_t(num_verts); point_index++) {
                     double lat = std::stod(filter_value_parts[point_index * 2]);
@@ -1569,8 +1579,8 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
                 if (loop->FindValidationError(&error)) {
                     delete loop;
                     status = Option<bool>(400, "Polygon" + (a_filter.values.size() > 1 ?
-                                                                " at position " + std::to_string(fi + 1) : "")
-                                                                + " is invalid: " + error.text());
+                                                                 " at position " + std::to_string(fi + 1) : "")
+                                                                + " is invalid: " + std::string(error.message()));
                     validity = invalid;
                     return;
                 } else {
@@ -1648,7 +1658,8 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
                     bool point_found = false;
 
                     // any one point should exist
-                    for (size_t li = 0; li < lat_lngs[0]; li++) {
+                    const size_t lat_lng_count = static_cast<size_t>(lat_lngs[0]);
+                    for (size_t li = 0; li < lat_lng_count; li++) {
                         int64_t lat_lng = lat_lngs[li + 1];
                         S2LatLng s2_lat_lng;
                         GeoPoint::unpack_lat_lng(lat_lng, s2_lat_lng);
@@ -1788,7 +1799,7 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
                 uint32_t* all_result_ids = nullptr;
                 size_t all_result_ids_len = 0;
                 std::vector<std::string> group_by_fields;
-                std::set<uint64> query_hashes;
+                std::set<uint64_t> query_hashes;
                 size_t typo_tokens_threshold = 0;
                 size_t min_len_1typo = 0;
                 size_t min_len_2typo = 0;
@@ -3147,7 +3158,7 @@ bool filter_result_iterator_t::validate_object_filter_helper(Index const* const 
 
         bool match_found = false;
 
-        for(auto i = 0; i < filter_exp.values.size(); ++i) {
+        for(size_t i = 0; i < filter_exp.values.size(); ++i) {
             if(match_found) {
                 break;
             }
@@ -3240,7 +3251,7 @@ bool filter_result_iterator_t::validate_object_filter() {
         StringUtils::split(object_field_name, results, ".");
 
         nlohmann::json return_doc = document;
-        for(auto i = 0; i < results.size(); ++i) {
+        for(size_t i = 0; i < results.size(); ++i) {
             return_doc = return_doc[results[i]];
         }
 
@@ -3263,7 +3274,7 @@ bool filter_result_iterator_t::validate_object_filter() {
             const Option<bool>& document_op = collection->get_document_from_store(seq_id_key, document);
 
             if (!document_op.ok()) {
-                LOG(ERROR) << "Document fetch error. " << document_op.error();
+                TS_LOG(ERROR) << "Document fetch error. " << document_op.error();
                 continue;
             }
 
@@ -3286,7 +3297,7 @@ bool filter_result_iterator_t::validate_object_filter() {
     const Option<bool>& document_op = collection->get_document_from_store(seq_id_key, document);
 
     if (!document_op.ok()) {
-        LOG(ERROR) << "Document fetch error. " << document_op.error();
+        TS_LOG(ERROR) << "Document fetch error. " << document_op.error();
         return false;
     }
 

@@ -1,0 +1,131 @@
+name: sanitizer-testing
+
+on:
+  schedule:
+    - cron: "0 4 * * *"   # 4 AM UTC daily, offset from flake-detection (2 AM)
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  asan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Restore Bazel cache
+        id: bazel-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-asan-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ github.workflow }}-asan-
+
+      - name: Build CI Bazel image
+        run: scripts/bazel_in_docker.sh --build-image-only
+
+      - name: Setup test model artifacts
+        run: curl https://dl.typesense.org/ci/tyrec/tyrec-1-models.tar.gz > ./test/resources/models.tar.gz
+
+      - name: Prewarm e5-small model cache
+        run: bash test/scripts/prewarm_e5_small_model.sh "${{ github.workspace }}/tmp/ci-models"
+
+      - name: Run ASAN+UBSAN test suite
+        run: >
+          scripts/bazel_in_docker.sh test
+          --config=asan
+          --cache_test_results=no
+          --test_output=errors
+          --test_summary=detailed
+          --flaky_test_attempts=2
+          //:typesense-test
+          --test_timeout=1800
+          --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+
+      - name: Save Bazel cache
+        if: always() && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-asan-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+
+      - name: Upload sanitizer logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: asan-test-logs
+          path: bazel-testlogs/
+          if-no-files-found: warn
+
+      - name: Report Bazel cache size
+        if: always()
+        run: du -sh ${{ github.workspace }}/.cache/bazel-docker/*/ 2>/dev/null || true
+
+  tsan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Restore Bazel cache
+        id: bazel-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-tsan-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ github.workflow }}-tsan-
+
+      - name: Build CI Bazel image
+        run: scripts/bazel_in_docker.sh --build-image-only
+
+      - name: Setup test model artifacts
+        run: curl https://dl.typesense.org/ci/tyrec/tyrec-1-models.tar.gz > ./test/resources/models.tar.gz
+
+      - name: Prewarm e5-small model cache
+        run: bash test/scripts/prewarm_e5_small_model.sh "${{ github.workspace }}/tmp/ci-models"
+
+      - name: Run TSAN test suite
+        run: >
+          scripts/bazel_in_docker.sh test
+          --config=tsan
+          --cache_test_results=no
+          --test_output=errors
+          --test_summary=detailed
+          --flaky_test_attempts=2
+          //:typesense-test
+          --test_timeout=1800
+          --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+
+      - name: Save Bazel cache
+        if: always() && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-tsan-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+
+      - name: Upload sanitizer logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: tsan-test-logs
+          path: bazel-testlogs/
+          if-no-files-found: warn
+
+      - name: Report Bazel cache size
+        if: always()
+        run: du -sh ${{ github.workspace }}/.cache/bazel-docker/*/ 2>/dev/null || true

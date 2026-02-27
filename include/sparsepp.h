@@ -967,74 +967,98 @@ namespace SPP_NAMESPACE
     };
 
     template <>
-    struct spp_hash<bool> : public std::unary_function<bool, size_t>
+    struct spp_hash<bool>
     {
+        typedef bool argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(bool __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<char> : public std::unary_function<char, size_t>
+    struct spp_hash<char>
     {
+        typedef char argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(char __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<signed char> : public std::unary_function<signed char, size_t>
+    struct spp_hash<signed char>
     {
+        typedef signed char argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(signed char __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<unsigned char> : public std::unary_function<unsigned char, size_t>
+    struct spp_hash<unsigned char>
     {
+        typedef unsigned char argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(unsigned char __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<wchar_t> : public std::unary_function<wchar_t, size_t>
+    struct spp_hash<wchar_t>
     {
+        typedef wchar_t argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(wchar_t __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<short> : public std::unary_function<short, size_t>
+    struct spp_hash<short>
     {
+        typedef short argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(short __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<unsigned short> : public std::unary_function<unsigned short, size_t>
+    struct spp_hash<unsigned short>
     {
+        typedef unsigned short argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(unsigned short __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<int> : public std::unary_function<int, size_t>
+    struct spp_hash<int>
     {
+        typedef int argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(int __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<unsigned int> : public std::unary_function<unsigned int, size_t>
+    struct spp_hash<unsigned int>
     {
+        typedef unsigned int argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(unsigned int __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<long> : public std::unary_function<long, size_t>
+    struct spp_hash<long>
     {
+        typedef long argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(long __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<unsigned long> : public std::unary_function<unsigned long, size_t>
+    struct spp_hash<unsigned long>
     {
+        typedef unsigned long argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(unsigned long __v) const SPP_NOEXCEPT {return static_cast<size_t>(__v);}
     };
 
     template <>
-    struct spp_hash<float> : public std::unary_function<float, size_t>
+    struct spp_hash<float>
     {
+        typedef float argument_type;
+        typedef size_t result_type;
         SPP_INLINE size_t operator()(float __v) const SPP_NOEXCEPT
         {
             // -0.0 and 0.0 should return same hash
@@ -1946,10 +1970,12 @@ SPP_START_NAMESPACE
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
     template <class T, class row_it, class col_it, class iter_type>
-    class Two_d_iterator : public std::iterator<iter_type, T>
+    class Two_d_iterator
     {
     public:
         typedef Two_d_iterator iterator;
+        typedef iter_type iterator_category;
+        typedef ptrdiff_t difference_type;
 
         // T can be std::pair<K, V>, but we need to return std::pair<const K, V>
         // ---------------------------------------------------------------------
@@ -2082,6 +2108,8 @@ SPP_START_NAMESPACE
             }
         }
 
+        Two_d_destructive_iterator(const Two_d_destructive_iterator&) = default;
+
         // Arithmetic: we just do arithmetic on pos.  We don't even need to
         // do bounds checking, since STL doesn't consider that its job.  :-)
         // NOTE: this is not amortized constant time!  What do we do about it?
@@ -2112,7 +2140,7 @@ SPP_START_NAMESPACE
         }
 
     private:
-        Two_d_destructive_iterator& operator=(const Two_d_destructive_iterator &o);
+        Two_d_destructive_iterator& operator=(const Two_d_destructive_iterator&) = delete;
 
         Alloc &_alloc;
     };

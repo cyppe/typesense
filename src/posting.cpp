@@ -254,7 +254,8 @@ void posting_t::upsert(void*& obj, uint32_t id, const std::vector<uint32_t>& off
             return;
         }
 
-        if((list->capacity + extra_capacity_required) > COMPACT_LIST_THRESHOLD_LENGTH) {
+        const int64_t compact_threshold = static_cast<int64_t>(COMPACT_LIST_THRESHOLD_LENGTH);
+        if((static_cast<int64_t>(list->capacity) + extra_capacity_required) > compact_threshold) {
             // we have to convert to a full posting list
             posting_list_t* full_list = list->to_full_posting_list();
             free(list);

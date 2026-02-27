@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <set>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -10,6 +11,8 @@
 #include "synonym_index_manager.h"
 #include "curation_index_manager.h"
 #include "search_analytics.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionManagerTest : public ::testing::Test {
 protected:
@@ -21,11 +24,12 @@ protected:
     Collection *collection1;
     std::vector<sort_by> sort_fields;
     nlohmann::json schema;
+    std::string state_dir_path;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/coll_manager_test_db";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("coll_manager_test_db");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         analytic_store = new Store(state_dir_path + "/analytics");
@@ -89,6 +93,7 @@ protected:
         }
         analyticsManager.stop();
         delete analytic_store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -100,11 +105,11 @@ TEST_F(CollectionManagerTest, CollectionCreation) {
     tsl::htrie_map<char, field> schema = collection1->get_schema();
     std::vector<std::string> facet_fields_expected = {"cast"};
 
-    ASSERT_EQ(0, collection1->get_collection_id());
-    ASSERT_EQ(0, collection1->get_next_seq_id());
+    ASSERT_EQ(uint32_t{0}, collection1->get_collection_id());
+    ASSERT_EQ(uint32_t{0}, collection1->get_next_seq_id());
     ASSERT_EQ(facet_fields_expected, collection1->get_facet_fields());
     // product_id_sequence_id is also included
-    ASSERT_EQ(3, collection1->get_sort_fields().size());
+    ASSERT_EQ(size_t{3}, collection1->get_sort_fields().size());
     ASSERT_EQ("location", collection1->get_sort_fields()[0].name);
     ASSERT_EQ("product_id_sequence_id", collection1->get_sort_fields()[1].name);
     ASSERT_EQ("points", collection1->get_sort_fields()[2].name);
@@ -112,7 +117,7 @@ TEST_F(CollectionManagerTest, CollectionCreation) {
     ASSERT_EQ("points", collection1->get_default_sorting_field());
     ASSERT_EQ(false, schema.at("not_stored").index);
 
-    ASSERT_EQ(1, collection1->get_reference_fields().size());
+    ASSERT_EQ(size_t{1}, collection1->get_reference_fields().size());
     ASSERT_EQ("Products", collection1->get_reference_fields().at("product_id").collection);
     ASSERT_EQ("product_id", collection1->get_reference_fields().at("product_id").field);
 
@@ -134,9 +139,9 @@ TEST_F(CollectionManagerTest, CollectionCreation) {
     store->get(Collection::get_next_seq_id_key("collection1"), next_seq_id);
     store->get(CollectionManager::NEXT_COLLECTION_ID_KEY, next_collection_id);
 
-    ASSERT_EQ(5, num_keys);
+    ASSERT_EQ(size_t{5}, num_keys);
     // we already call `collection1->get_next_seq_id` above, which is side-effecting
-    ASSERT_EQ(1, StringUtils::deserialize_uint32_t(next_seq_id));
+    ASSERT_EQ(uint32_t{1}, StringUtils::deserialize_uint32_t(next_seq_id));
 
     nlohmann::json expected_meta_json = R"(
         {
@@ -391,16 +396,16 @@ TEST_F(CollectionManagerTest, ShouldInitCollection) {
     ASSERT_TRUE(init_op.ok());
     auto collection = init_op.get();
     ASSERT_EQ("foobar", collection->get_name());
-    ASSERT_EQ(100, collection->get_collection_id());
-    ASSERT_EQ(2, collection->get_fields().size());
+    ASSERT_EQ(uint32_t{100}, collection->get_collection_id());
+    ASSERT_EQ(size_t{2}, collection->get_fields().size());
     ASSERT_EQ("foo", collection->get_default_sorting_field());
-    ASSERT_EQ(0, collection->get_created_at());
+    ASSERT_EQ(size_t{0}, collection->get_created_at());
 
     ASSERT_FALSE(collection->get_fields().at(0).infix);
     ASSERT_FALSE(collection->get_fields().at(0).sort);
     ASSERT_EQ("", collection->get_fields().at(0).locale);
 
-    ASSERT_EQ(128, collection->get_fields().at(1).num_dim);
+    ASSERT_EQ(uint32_t{128}, collection->get_fields().at(1).num_dim);
 
     delete collection;
 
@@ -415,15 +420,15 @@ TEST_F(CollectionManagerTest, ShouldInitCollection) {
     init_op = collectionManager.init_collection(collection_meta2, 100, store, 1.0f, referenced_ins);
     ASSERT_TRUE(init_op.ok());
     collection = init_op.get();
-    ASSERT_EQ(12345, collection->get_created_at());
+    ASSERT_EQ(uint64_t{12345}, collection->get_created_at());
 
     std::vector<char> expected_symbols = {'+'};
     std::vector<char> expected_separators = {'-'};
 
-    ASSERT_EQ(1, collection->get_token_separators().size());
+    ASSERT_EQ(size_t{1}, collection->get_token_separators().size());
     ASSERT_EQ('-', collection->get_token_separators()[0]);
 
-    ASSERT_EQ(1, collection->get_symbols_to_index().size());
+    ASSERT_EQ(size_t{1}, collection->get_symbols_to_index().size());
     ASSERT_EQ('+', collection->get_symbols_to_index()[0]);
 
     ASSERT_TRUE(collection->get_fields().at(0).infix);
@@ -435,7 +440,7 @@ TEST_F(CollectionManagerTest, ShouldInitCollection) {
 
 TEST_F(CollectionManagerTest, GetAllCollections) {
     std::vector<std::shared_ptr<Collection>> collection_vec = collectionManager.get_collections().get();
-    ASSERT_EQ(1, collection_vec.size());
+    ASSERT_EQ(size_t{1}, collection_vec.size());
     ASSERT_STREQ("collection1", collection_vec[0]->get_name().c_str());
 
     // try creating one more collection
@@ -449,7 +454,7 @@ TEST_F(CollectionManagerTest, GetAllCollections) {
 
     collectionManager.create_collection(new_schema);
     collection_vec = collectionManager.get_collections().get();
-    ASSERT_EQ(2, collection_vec.size());
+    ASSERT_EQ(size_t{2}, collection_vec.size());
 
     // most recently created collection first
     ASSERT_STREQ("collection2", collection_vec[0]->get_name().c_str());
@@ -466,7 +471,7 @@ TEST_F(CollectionManagerTest, RestoreRecordsOnRestart) {
     while (std::getline(infile, json_line)) {
         auto op = collection1->add(json_line);
         if (!op.ok()) {
-            LOG(INFO) << op.error();
+            TS_LOG(INFO) << op.error();
         }
         ASSERT_TRUE(op.ok());
     }
@@ -548,10 +553,10 @@ TEST_F(CollectionManagerTest, RestoreRecordsOnRestart) {
     std::vector<std::string> facets;
 
     nlohmann::json results = collection1->search("thomas", search_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     tsl::htrie_map<char, field> schema = collection1->get_schema();
-    ASSERT_EQ(schema.count("product_id_sequence_id"), 1);
+    ASSERT_EQ(schema.count("product_id_sequence_id"), size_t{1});
 
     auto products_schema_json =
             R"({
@@ -566,9 +571,9 @@ TEST_F(CollectionManagerTest, RestoreRecordsOnRestart) {
     ASSERT_TRUE(collection_create_op.ok());
 
     auto async_ref_fields = collection_create_op.get()->get_async_referenced_ins();
-    ASSERT_EQ(1, async_ref_fields.size());
-    ASSERT_EQ(1, async_ref_fields.count("product_id"));
-    ASSERT_EQ(1, async_ref_fields["product_id"].size());
+    ASSERT_EQ(size_t{1}, async_ref_fields.size());
+    ASSERT_EQ(size_t{1}, async_ref_fields.count("product_id"));
+    ASSERT_EQ(size_t{1}, async_ref_fields["product_id"].size());
     ASSERT_EQ("collection1", async_ref_fields["product_id"].begin()->collection);
     ASSERT_EQ("product_id", async_ref_fields["product_id"].begin()->field);
 
@@ -576,12 +581,12 @@ TEST_F(CollectionManagerTest, RestoreRecordsOnRestart) {
     collectionManager.dispose();
     delete store;
 
-    store = new Store("/tmp/typesense_test/coll_manager_test_db");
+    store = new Store(state_dir_path);
     collectionManager.init(store, 1.0, "auth_key", quit);
     auto load_op = collectionManager.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
 
     ASSERT_TRUE(load_op.ok());
@@ -591,18 +596,18 @@ TEST_F(CollectionManagerTest, RestoreRecordsOnRestart) {
 
     std::vector<std::string> facet_fields_expected = {"cast"};
 
-    ASSERT_EQ(0, collection1->get_collection_id());
-    ASSERT_EQ(18, collection1->get_next_seq_id());
+    ASSERT_EQ(uint32_t{0}, collection1->get_collection_id());
+    ASSERT_EQ(uint32_t{18}, collection1->get_next_seq_id());
     ASSERT_EQ(facet_fields_expected, collection1->get_facet_fields());
     // product_id_sequence_id is also included
-    ASSERT_EQ(3, collection1->get_sort_fields().size());
+    ASSERT_EQ(size_t{3}, collection1->get_sort_fields().size());
     ASSERT_EQ("location", collection1->get_sort_fields()[0].name);
     ASSERT_EQ("product_id_sequence_id", collection1->get_sort_fields()[1].name);
     ASSERT_EQ("points", collection1->get_sort_fields()[2].name);
     ASSERT_EQ(schema.size(), collection1->get_schema().size());
     ASSERT_EQ("points", collection1->get_default_sorting_field());
 
-    ASSERT_EQ(1, collection1->get_reference_fields().size());
+    ASSERT_EQ(size_t{1}, collection1->get_reference_fields().size());
     ASSERT_EQ("Products", collection1->get_reference_fields().at("product_id").collection);
     ASSERT_EQ("product_id", collection1->get_reference_fields().at("product_id").field);
 
@@ -614,42 +619,47 @@ TEST_F(CollectionManagerTest, RestoreRecordsOnRestart) {
     ASSERT_EQ(false, restored_schema.at("not_stored").index);
     ASSERT_TRUE(restored_schema.at("person").nested);
     ASSERT_EQ(2, restored_schema.at("person").nested_array);
-    ASSERT_EQ(128, restored_schema.at("vec").num_dim);
-    ASSERT_EQ(restored_schema.count("product_id_sequence_id"), 1);
+    ASSERT_EQ(uint32_t{128}, restored_schema.at("vec").num_dim);
+    ASSERT_EQ(restored_schema.count("product_id_sequence_id"), size_t{1});
 
     ASSERT_TRUE(collection1->get_enable_nested_fields());
 
-    ASSERT_EQ(2, ov_manager.list_curation_items("index", 0, 0).get().size());
-    ASSERT_STREQ("exclude-rule", ov_manager.list_curation_items("index", 0, 0).get()[0]["id"].get<std::string>().c_str());
-    ASSERT_STREQ("include-rule", ov_manager.list_curation_items("index", 0, 0).get()[1]["id"].get<std::string>().c_str());
+    auto curation_items = ov_manager.list_curation_items("index", 0, 0).get();
+    ASSERT_EQ(size_t{2}, curation_items.size());
+
+    std::set<std::string> curation_ids;
+    for(const auto& item : curation_items) {
+        curation_ids.insert(item["id"].get<std::string>());
+    }
+    ASSERT_EQ(curation_ids, std::set<std::string>({"exclude-rule", "include-rule"}));
 
     const auto& synonym_index = SynonymIndexManager::get_instance().get_synonym_index("index").get();
     const auto& synonyms = synonym_index->get_synonyms().get();
 
     ASSERT_STREQ("id1", synonyms.at(0)->id.c_str());
-    ASSERT_EQ(2, synonyms.at(0)->root.size());
-    ASSERT_EQ(1, synonyms.at(0)->synonyms.size());
+    ASSERT_EQ(size_t{2}, synonyms.at(0)->root.size());
+    ASSERT_EQ(size_t{1}, synonyms.at(0)->synonyms.size());
 
     ASSERT_STREQ("id3", synonyms.at(1)->id.c_str());
-    ASSERT_EQ(0, synonyms.at(1)->root.size());
-    ASSERT_EQ(2, synonyms.at(1)->synonyms.size());
+    ASSERT_EQ(size_t{0}, synonyms.at(1)->root.size());
+    ASSERT_EQ(size_t{2}, synonyms.at(1)->synonyms.size());
 
     std::vector<char> expected_symbols = {'+'};
     std::vector<char> expected_separators = {'-'};
 
-    ASSERT_EQ(1, collection1->get_token_separators().size());
+    ASSERT_EQ(size_t{1}, collection1->get_token_separators().size());
     ASSERT_EQ('-', collection1->get_token_separators()[0]);
 
-    ASSERT_EQ(1, collection1->get_symbols_to_index().size());
+    ASSERT_EQ(size_t{1}, collection1->get_symbols_to_index().size());
     ASSERT_EQ('+', collection1->get_symbols_to_index()[0]);
 
     results = collection1->search("thomas", search_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     async_ref_fields = collectionManager.get_collection("Products").get()->get_async_referenced_ins();
-    ASSERT_EQ(1, async_ref_fields.size());
-    ASSERT_EQ(1, async_ref_fields.count("product_id"));
-    ASSERT_EQ(1, async_ref_fields["product_id"].size());
+    ASSERT_EQ(size_t{1}, async_ref_fields.size());
+    ASSERT_EQ(size_t{1}, async_ref_fields.count("product_id"));
+    ASSERT_EQ(size_t{1}, async_ref_fields["product_id"].size());
     ASSERT_EQ("collection1", async_ref_fields["product_id"].begin()->collection);
     ASSERT_EQ("product_id", async_ref_fields["product_id"].begin()->field);
 }
@@ -677,8 +687,8 @@ TEST_F(CollectionManagerTest, VerifyEmbeddedParametersOfScopedAPIKey) {
     ASSERT_TRUE(coll1->add(doc2.dump()).ok());
 
     auto results = coll1->search("*", {"title"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     std::map<std::string, std::string> req_params;
     req_params["collection"] = "coll1";
@@ -695,8 +705,8 @@ TEST_F(CollectionManagerTest, VerifyEmbeddedParametersOfScopedAPIKey) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // existing filter should be augmented
@@ -709,8 +719,8 @@ TEST_F(CollectionManagerTest, VerifyEmbeddedParametersOfScopedAPIKey) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
 
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_EQ("(year: 1922) && (points: 200)", req_params["filter_by"]);
 
@@ -770,7 +780,7 @@ TEST_F(CollectionManagerTest, QuerySuggestionsShouldBeTrimmed) {
 
     // check that suggestions have been trimmed
     // auto popular_queries = AnalyticsManager::get_instance().get_popular_queries();
-    // ASSERT_EQ(2, popular_queries["top_queries"]->get_user_prefix_queries()[""].size());
+    // ASSERT_EQ(size_t{2}, popular_queries["top_queries"]->get_user_prefix_queries()[""].size());
     // ASSERT_EQ("tom", popular_queries["top_queries"]->get_user_prefix_queries()[""][0].query);
     // ASSERT_EQ("", popular_queries["top_queries"]->get_user_prefix_queries()[""][1].query);
 
@@ -829,7 +839,7 @@ TEST_F(CollectionManagerTest, NoHitsQueryAggregation) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
 
-    ASSERT_EQ(1, SearchAnalytics::get_instance().get_nohits_prefix_queries_size());
+    ASSERT_EQ(size_t{1}, SearchAnalytics::get_instance().get_nohits_prefix_queries_size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -857,8 +867,8 @@ TEST_F(CollectionManagerTest, RestoreAutoSchemaDocsOnRestart) {
 
     infile.close();
 
-    ASSERT_EQ(1, coll1->get_collection_id());
-    ASSERT_EQ(3, coll1->get_sort_fields().size());
+    ASSERT_EQ(uint32_t{1}, coll1->get_collection_id());
+    ASSERT_EQ(size_t{3}, coll1->get_sort_fields().size());
 
     // index a document with a 2 bad field values with COERCE_OR_DROP setting
     // `title` is an integer and `average` is a string
@@ -876,7 +886,7 @@ TEST_F(CollectionManagerTest, RestoreAutoSchemaDocsOnRestart) {
     auto load_op = collectionManager2.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
 
     ASSERT_TRUE(load_op.ok());
@@ -887,26 +897,26 @@ TEST_F(CollectionManagerTest, RestoreAutoSchemaDocsOnRestart) {
     std::vector<std::string> facet_fields_expected = {};
     auto restored_schema = restored_coll->get_schema();
 
-    ASSERT_EQ(1, restored_coll->get_collection_id());
-    ASSERT_EQ(7, restored_coll->get_next_seq_id());
-    ASSERT_EQ(7, restored_coll->get_num_documents());
+    ASSERT_EQ(uint32_t{1}, restored_coll->get_collection_id());
+    ASSERT_EQ(uint32_t{7}, restored_coll->get_next_seq_id());
+    ASSERT_EQ(uint32_t{7}, restored_coll->get_num_documents());
     ASSERT_EQ(facet_fields_expected, restored_coll->get_facet_fields());
-    ASSERT_EQ(3, restored_coll->get_sort_fields().size());
+    ASSERT_EQ(size_t{3}, restored_coll->get_sort_fields().size());
     ASSERT_EQ("average", restored_coll->get_sort_fields()[0].name);
     ASSERT_EQ("is_valid", restored_coll->get_sort_fields()[1].name);
     ASSERT_EQ("max", restored_coll->get_sort_fields()[2].name);
 
     // ensures that the "id" field is not added to the schema
-    ASSERT_EQ(6, restored_schema.size());
+    ASSERT_EQ(size_t{6}, restored_schema.size());
 
     ASSERT_EQ("max", restored_coll->get_default_sorting_field());
 
-    ASSERT_EQ(1, restored_schema.count("title"));
-    ASSERT_EQ(1, restored_schema.count("max"));
-    ASSERT_EQ(1, restored_schema.count("description"));
-    ASSERT_EQ(1, restored_schema.count("scores"));
-    ASSERT_EQ(1, restored_schema.count("average"));
-    ASSERT_EQ(1, restored_schema.count("is_valid"));
+    ASSERT_EQ(size_t{1}, restored_schema.count("title"));
+    ASSERT_EQ(size_t{1}, restored_schema.count("max"));
+    ASSERT_EQ(size_t{1}, restored_schema.count("description"));
+    ASSERT_EQ(size_t{1}, restored_schema.count("scores"));
+    ASSERT_EQ(size_t{1}, restored_schema.count("average"));
+    ASSERT_EQ(size_t{1}, restored_schema.count("is_valid"));
 
     // all detected schema are optional fields, while defined schema is not
 
@@ -921,23 +931,23 @@ TEST_F(CollectionManagerTest, RestoreAutoSchemaDocsOnRestart) {
     // try searching for record with bad data
     auto results = restored_coll->search("12345", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // int to string conversion should be done for `title` while `average` field must be dropped
     ASSERT_STREQ("12345", results["hits"][0]["document"]["title"].get<std::string>().c_str());
-    ASSERT_EQ(0, results["hits"][0]["document"].count("average"));
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"].count("average"));
 
-    ASSERT_EQ(2, results["hits"][0]["document"]["scores"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"]["scores"].size());
     ASSERT_EQ(22, results["hits"][0]["document"]["scores"][0]);
     ASSERT_EQ(44, results["hits"][0]["document"]["scores"][1]);
 
     // try sorting on `average`, a field that not all records have
-    ASSERT_EQ(7, restored_coll->get_num_documents());
+    ASSERT_EQ(uint32_t{7}, restored_coll->get_num_documents());
 
     sort_fields = { sort_by("average", "DESC") };
     results = restored_coll->search("*", {"title"}, "", {}, {sort_fields}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(7, results["hits"].size());
+    ASSERT_EQ(size_t{7}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
     collectionManager2.drop_collection("coll1");
@@ -956,7 +966,7 @@ TEST_F(CollectionManagerTest, RestorePresetsOnRestart) {
     auto load_op = collectionManager2.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
 
     ASSERT_TRUE(load_op.ok());
@@ -995,17 +1005,17 @@ TEST_F(CollectionManagerTest, RestoreNestedDocsOnRestart) {
     auto res_op = coll1->search("foobar", {"details"}, "", {}, {}, {0}, 10, 1,
                             token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
     res_op = coll1->search("foobar", {"company.name"}, "", {}, {}, {0}, 10, 1,
                            token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
     res_op = coll1->search("foobar", {"person"}, "", {}, {}, {0}, 10, 1,
                            token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
     // create a new collection manager to ensure that it restores the records from the disk backed store
     CollectionManager& collectionManager2 = CollectionManager::get_instance();
@@ -1013,7 +1023,7 @@ TEST_F(CollectionManagerTest, RestoreNestedDocsOnRestart) {
     auto load_op = collectionManager2.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
 
     ASSERT_TRUE(load_op.ok());
@@ -1024,17 +1034,17 @@ TEST_F(CollectionManagerTest, RestoreNestedDocsOnRestart) {
     res_op = restored_coll->search("foobar", {"details"}, "", {}, {}, {0}, 10, 1,
                            token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
     res_op = restored_coll->search("foobar", {"company.name"}, "", {}, {}, {0}, 10, 1,
                            token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
     res_op = restored_coll->search("foobar", {"person"}, "", {}, {}, {0}, 10, 1,
                            token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
     collectionManager2.drop_collection("coll1");
@@ -1064,7 +1074,7 @@ TEST_F(CollectionManagerTest, RestoreCoercedDocValuesOnRestart) {
     auto res_op = coll1->search("*", {}, "product.price:>0", {}, {}, {0}, 10, 1,
                                 token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
     // create a new collection manager to ensure that it restores the records from the disk backed store
     CollectionManager& collectionManager2 = CollectionManager::get_instance();
@@ -1072,7 +1082,7 @@ TEST_F(CollectionManagerTest, RestoreCoercedDocValuesOnRestart) {
     auto load_op = collectionManager2.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
 
     ASSERT_TRUE(load_op.ok());
@@ -1083,7 +1093,7 @@ TEST_F(CollectionManagerTest, RestoreCoercedDocValuesOnRestart) {
     res_op = restored_coll->search("*", {}, "product.price:>0", {}, {}, {0}, 10, 1,
                                    token_ordering::FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
     collectionManager2.drop_collection("coll1");
@@ -1118,12 +1128,12 @@ TEST_F(CollectionManagerTest, DropCollectionCleanly) {
         num_keys += 1;
     }
 
-    ASSERT_EQ(1, num_keys);
+    ASSERT_EQ(size_t{1}, num_keys);
     ASSERT_TRUE(it->status().ok());
 
     ASSERT_EQ(nullptr, collectionManager.get_collection("collection1").get());
     ASSERT_EQ(nullptr, collectionManager.get_collection_with_id(0).get());
-    ASSERT_EQ(1, collectionManager.get_next_collection_id());
+    ASSERT_EQ(uint32_t{1}, collectionManager.get_next_collection_id());
 
     delete it;
 }
@@ -1163,8 +1173,8 @@ TEST_F(CollectionManagerTest, AuthWithMultiSearchKeys) {
 
 TEST_F(CollectionManagerTest, Symlinking) {
     CollectionManager & cmanager = CollectionManager::get_instance();
-    std::string state_dir_path = "/tmp/typesense_test/cmanager_test_db";
-    system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+    std::string state_dir_path = typesense_test::make_test_temp_dir("cmanager_test_db");
+    typesense_test::reset_test_temp_dir(state_dir_path);
     Store *new_store = new Store(state_dir_path);
     cmanager.init(new_store, 1.0, "auth_key", quit);
     cmanager.load(8, 1000);
@@ -1173,9 +1183,9 @@ TEST_F(CollectionManagerTest, Symlinking) {
     Option<std::string> collection_option = cmanager.resolve_symlink("collection");
 
     ASSERT_FALSE(collection_option.ok());
-    ASSERT_EQ(404, collection_option.code());
+    ASSERT_EQ(404u, collection_option.code());
 
-    ASSERT_EQ(0, cmanager.get_symlinks().size());
+    ASSERT_EQ(size_t{0}, cmanager.get_symlinks().size());
 
     // symlink name cannot be the same as an existing collection
     Option<bool> inserted = cmanager.upsert_symlink("collection1", "collection_2018");
@@ -1196,7 +1206,7 @@ TEST_F(CollectionManagerTest, Symlinking) {
     ASSERT_TRUE(collection_option.ok());
     ASSERT_EQ("company_2018", collection_option.get());
 
-    ASSERT_EQ(2, cmanager.get_symlinks().size());
+    ASSERT_EQ(size_t{2}, cmanager.get_symlinks().size());
 
     // update existing symlink
     inserted = cmanager.upsert_symlink("company", "company_2019");
@@ -1218,7 +1228,7 @@ TEST_F(CollectionManagerTest, Symlinking) {
 
     // try to list collections now
     nlohmann::json summaries = cmanager.get_collection_summaries().get();
-    ASSERT_EQ(0, summaries.size());
+    ASSERT_EQ(size_t{0}, summaries.size());
 
     // remap alias to another non-existing collection
     inserted = cmanager.upsert_symlink("collection1_link", "collection2");
@@ -1232,7 +1242,7 @@ TEST_F(CollectionManagerTest, Symlinking) {
     ASSERT_TRUE(deleted.ok());
     collection_option = cmanager.resolve_symlink("collection");
     ASSERT_FALSE(collection_option.ok());
-    ASSERT_EQ(404, collection_option.code());
+    ASSERT_EQ(404u, collection_option.code());
 
     // try adding a few more symlinks
     cmanager.upsert_symlink("company_1", "company_2018");
@@ -1266,8 +1276,8 @@ TEST_F(CollectionManagerTest, LoadMultipleCollections) {
     store = nullptr;
 
     CollectionManager & cmanager = CollectionManager::get_instance();
-    std::string state_dir_path = "/tmp/typesense_test/cmanager_test_db";
-    system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+    std::string state_dir_path = typesense_test::make_test_temp_dir("cmanager_test_db");
+    typesense_test::reset_test_temp_dir(state_dir_path);
     Store *new_store = new Store(state_dir_path);
     cmanager.init(new_store, 1.0, "auth_key", quit);
     cmanager.load(8, 1000);
@@ -1285,7 +1295,7 @@ TEST_F(CollectionManagerTest, LoadMultipleCollections) {
         cmanager.create_collection("collection" + std::to_string(i), 4, schema, "points").get();
     }
 
-    ASSERT_EQ(100, cmanager.get_collections().get().size());
+    ASSERT_EQ(size_t{100}, cmanager.get_collections().get().size());
 
     cmanager.dispose();
     delete new_store;
@@ -1294,7 +1304,7 @@ TEST_F(CollectionManagerTest, LoadMultipleCollections) {
     cmanager.init(new_store, 1.0, "auth_key", quit);
     cmanager.load(8, 1000);
 
-    ASSERT_EQ(100, cmanager.get_collections().get().size());
+    ASSERT_EQ(size_t{100}, cmanager.get_collections().get().size());
 
     for(size_t i = 0; i < 100; i++) {
         collectionManager.drop_collection("collection" + std::to_string(i));
@@ -1361,7 +1371,7 @@ TEST_F(CollectionManagerTest, ParseSortByClause) {
     ASSERT_EQ("_eval", sort_fields[0].name);
     ASSERT_FALSE(sort_fields[0].eval_expressions.empty());
     ASSERT_EQ("brand:nike && foo:bar", sort_fields[0].eval_expressions[0]);
-    ASSERT_EQ(1, sort_fields[0].eval.scores.size());
+    ASSERT_EQ(size_t{1}, sort_fields[0].eval.scores.size());
     ASSERT_EQ(1, sort_fields[0].eval.scores[0]);
     ASSERT_EQ("DESC", sort_fields[0].order);
     ASSERT_EQ("points", sort_fields[1].name);
@@ -1371,10 +1381,10 @@ TEST_F(CollectionManagerTest, ParseSortByClause) {
     sort_by_parsed = CollectionManager::parse_sort_by_str("_eval([(brand:nike || brand:air):3, (brand:adidas):2]):DESC", sort_fields);
     ASSERT_TRUE(sort_by_parsed);
     ASSERT_EQ("_eval", sort_fields[0].name);
-    ASSERT_EQ(2, sort_fields[0].eval_expressions.size());
+    ASSERT_EQ(size_t{2}, sort_fields[0].eval_expressions.size());
     ASSERT_EQ("brand:nike || brand:air", sort_fields[0].eval_expressions[0]);
     ASSERT_EQ("brand:adidas", sort_fields[0].eval_expressions[1]);
-    ASSERT_EQ(2, sort_fields[0].eval.scores.size());
+    ASSERT_EQ(size_t{2}, sort_fields[0].eval.scores.size());
     ASSERT_EQ(3, sort_fields[0].eval.scores[0]);
     ASSERT_EQ(2, sort_fields[0].eval.scores[1]);
     ASSERT_EQ("DESC", sort_fields[0].order);
@@ -1383,7 +1393,7 @@ TEST_F(CollectionManagerTest, ParseSortByClause) {
     sort_by_parsed = CollectionManager::parse_sort_by_str("points:desc, loc(24.56,10.45):ASC, "
                                                           "$Customers(product_price:DESC)", sort_fields);
     ASSERT_TRUE(sort_by_parsed);
-    ASSERT_EQ(3, sort_fields.size());
+    ASSERT_EQ(size_t{3}, sort_fields.size());
     ASSERT_EQ("points", sort_fields[0].name);
     ASSERT_EQ("DESC", sort_fields[0].order);
     ASSERT_EQ("loc(24.56,10.45)", sort_fields[1].name);
@@ -1394,11 +1404,11 @@ TEST_F(CollectionManagerTest, ParseSortByClause) {
     sort_by_parsed = CollectionManager::parse_sort_by_str("_eval(brand:nike && foo:bar):DESC, "
                                                           "$Customers(product_price:DESC)", sort_fields);
     ASSERT_TRUE(sort_by_parsed);
-    ASSERT_EQ(2, sort_fields.size());
+    ASSERT_EQ(size_t{2}, sort_fields.size());
     ASSERT_EQ("_eval", sort_fields[0].name);
     ASSERT_FALSE(sort_fields[0].eval_expressions.empty());
     ASSERT_EQ("brand:nike && foo:bar", sort_fields[0].eval_expressions[0]);
-    ASSERT_EQ(1, sort_fields[0].eval.scores.size());
+    ASSERT_EQ(size_t{1}, sort_fields[0].eval.scores.size());
     ASSERT_EQ(1, sort_fields[0].eval.scores[0]);
     ASSERT_EQ("DESC", sort_fields[0].order);
     ASSERT_EQ("$Customers(product_price:DESC)", sort_fields[1].name);
@@ -1407,7 +1417,7 @@ TEST_F(CollectionManagerTest, ParseSortByClause) {
     sort_by_parsed = CollectionManager::parse_sort_by_str("$foo(bar:ASC), "
                                                           "$Customers(product_price:DESC)", sort_fields);
     ASSERT_TRUE(sort_by_parsed);
-    ASSERT_EQ(2, sort_fields.size());
+    ASSERT_EQ(size_t{2}, sort_fields.size());
     ASSERT_EQ("$foo(bar:ASC)", sort_fields[0].name);
     ASSERT_EQ("$Customers(product_price:DESC)", sort_fields[1].name);
 
@@ -1420,21 +1430,21 @@ TEST_F(CollectionManagerTest, ParseSortByClause) {
     sort_fields.clear();
     sort_by_parsed = CollectionManager::parse_sort_by_str("$Customers(product_price:DESC, $foo(bar:asc))", sort_fields);
     ASSERT_TRUE(sort_by_parsed);
-    ASSERT_EQ(2, sort_fields.size());
+    ASSERT_EQ(size_t{2}, sort_fields.size());
     ASSERT_EQ("$Customers(product_price:DESC, )", sort_fields[0].name);
     ASSERT_EQ("$foo(bar:asc)", sort_fields[1].name);
     ASSERT_TRUE(sort_fields[1].is_nested_join_sort_by());
-    ASSERT_EQ(2, sort_fields[1].nested_join_collection_names.size());
+    ASSERT_EQ(size_t{2}, sort_fields[1].nested_join_collection_names.size());
     ASSERT_EQ("Customers", sort_fields[1].nested_join_collection_names[0]);
     ASSERT_EQ("foo", sort_fields[1].nested_join_collection_names[1]);
 
     sort_fields.clear();
     sort_by_parsed = CollectionManager::parse_sort_by_str("$foo($bar($baz(field:asc)))", sort_fields);
     ASSERT_TRUE(sort_by_parsed);
-    ASSERT_EQ(1, sort_fields.size());
+    ASSERT_EQ(size_t{1}, sort_fields.size());
     ASSERT_EQ("$baz(field:asc)", sort_fields[0].name);
     ASSERT_TRUE(sort_fields[0].is_nested_join_sort_by());
-    ASSERT_EQ(3, sort_fields[0].nested_join_collection_names.size());
+    ASSERT_EQ(size_t{3}, sort_fields[0].nested_join_collection_names.size());
     ASSERT_EQ("foo", sort_fields[0].nested_join_collection_names[0]);
     ASSERT_EQ("bar", sort_fields[0].nested_join_collection_names[1]);
     ASSERT_EQ("baz", sort_fields[0].nested_join_collection_names[2]);
@@ -1442,24 +1452,24 @@ TEST_F(CollectionManagerTest, ParseSortByClause) {
     sort_fields.clear();
     sort_by_parsed = CollectionManager::parse_sort_by_str("$Customers(product_price:DESC, $foo($bar( _eval(brand:nike && foo:bar):DESC), baz:asc))", sort_fields);
     ASSERT_TRUE(sort_by_parsed);
-    ASSERT_EQ(3, sort_fields.size());
+    ASSERT_EQ(size_t{3}, sort_fields.size());
     ASSERT_EQ("$Customers(product_price:DESC, )", sort_fields[0].name);
     ASSERT_EQ("$bar( _eval(brand:nike && foo:bar):DESC)", sort_fields[1].name);
     ASSERT_TRUE(sort_fields[1].is_nested_join_sort_by());
-    ASSERT_EQ(3, sort_fields[1].nested_join_collection_names.size());
+    ASSERT_EQ(size_t{3}, sort_fields[1].nested_join_collection_names.size());
     ASSERT_EQ("Customers", sort_fields[1].nested_join_collection_names[0]);
     ASSERT_EQ("foo", sort_fields[1].nested_join_collection_names[1]);
     ASSERT_EQ("bar", sort_fields[1].nested_join_collection_names[2]);
     ASSERT_EQ("$foo(baz:asc)", sort_fields[2].name);
     ASSERT_TRUE(sort_fields[2].is_nested_join_sort_by());
-    ASSERT_EQ(2, sort_fields[2].nested_join_collection_names.size());
+    ASSERT_EQ(size_t{2}, sort_fields[2].nested_join_collection_names.size());
     ASSERT_EQ("Customers", sort_fields[2].nested_join_collection_names[0]);
     ASSERT_EQ("foo", sort_fields[2].nested_join_collection_names[1]);
 
     sort_fields.clear();
     sort_by_parsed = CollectionManager::parse_sort_by_str("", sort_fields);
     ASSERT_TRUE(sort_by_parsed);
-    ASSERT_EQ(0, sort_fields.size());
+    ASSERT_EQ(size_t{0}, sort_fields.size());
 
     sort_fields.clear();
     sort_by_parsed = CollectionManager::parse_sort_by_str("foobar:", sort_fields);
@@ -1492,19 +1502,19 @@ TEST_F(CollectionManagerTest, Presets) {
     preset_obj["query_by"] = "bar";
     collectionManager.upsert_preset("preset2", preset_obj);
 
-    ASSERT_EQ(2, collectionManager.get_presets().size());
+    ASSERT_EQ(size_t{2}, collectionManager.get_presets().size());
 
     // try fetching individual presets
     nlohmann::json preset;
     auto preset_op = collectionManager.get_preset("preset1", preset);
     ASSERT_TRUE(preset_op.ok());
-    ASSERT_EQ(1, preset.size());
+    ASSERT_EQ(size_t{1}, preset.size());
     ASSERT_EQ("foo", preset["query_by"]);
 
     preset.clear();
     preset_op = collectionManager.get_preset("preset2", preset);
     ASSERT_TRUE(preset_op.ok());
-    ASSERT_EQ(1, preset.size());
+    ASSERT_EQ(size_t{1}, preset.size());
     ASSERT_EQ("bar", preset["query_by"]);
 
     // delete a preset
@@ -1515,21 +1525,21 @@ TEST_F(CollectionManagerTest, Presets) {
     auto status = store->get(CollectionManager::get_preset_key("preset2"), val);
     ASSERT_EQ(StoreStatus::NOT_FOUND, status);
 
-    ASSERT_EQ(1, collectionManager.get_presets().size());
+    ASSERT_EQ(size_t{1}, collectionManager.get_presets().size());
     preset.clear();
     preset_op = collectionManager.get_preset("preset2", preset);
     ASSERT_FALSE(preset_op.ok());
-    ASSERT_EQ(404, preset_op.code());
+    ASSERT_EQ(404u, preset_op.code());
 
     // should be able to restore state on init
     collectionManager.dispose();
     delete store;
 
-    store = new Store("/tmp/typesense_test/coll_manager_test_db");
+    store = new Store(state_dir_path);
     collectionManager.init(store, 1.0, "auth_key", quit);
     collectionManager.load(8, 1000);
 
-    ASSERT_EQ(1, collectionManager.get_presets().size());
+    ASSERT_EQ(size_t{1}, collectionManager.get_presets().size());
     preset.clear();
     preset_op = collectionManager.get_preset("preset1", preset);
     ASSERT_TRUE(preset_op.ok());
@@ -1551,7 +1561,7 @@ TEST_F(CollectionManagerTest, CloneCollection) {
     auto create_op = collectionManager.create_collection(schema);
     ASSERT_EQ("", create_op.error());
     ASSERT_TRUE(create_op.ok());
-    auto coll1 = create_op.get();
+    (void)create_op.get();
 
     nlohmann::json synonym1 = R"({
         "id": "ipod-synonyms",
@@ -1583,12 +1593,12 @@ TEST_F(CollectionManagerTest, CloneCollection) {
     auto coll2 = collectionManager.get_collection_unsafe("coll2");
     ASSERT_FALSE(coll2 == nullptr);
     ASSERT_EQ("coll2", coll2->get_name());
-    ASSERT_EQ(1, coll2->get_fields().size());
-    ASSERT_EQ(1, ov_manager.list_curation_items("index", 0, 0).get().size());
+    ASSERT_EQ(size_t{1}, coll2->get_fields().size());
+    ASSERT_EQ(size_t{1}, ov_manager.list_curation_items("index", 0, 0).get().size());
     ASSERT_EQ("", coll2->get_fallback_field_type());
 
-    ASSERT_EQ(1, coll2->get_symbols_to_index().size());
-    ASSERT_EQ(2, coll2->get_token_separators().size());
+    ASSERT_EQ(size_t{1}, coll2->get_symbols_to_index().size());
+    ASSERT_EQ(size_t{2}, coll2->get_token_separators().size());
 
     ASSERT_EQ('+', coll2->get_symbols_to_index().at(0));
     ASSERT_EQ('-', coll2->get_token_separators().at(0));
@@ -1597,10 +1607,10 @@ TEST_F(CollectionManagerTest, CloneCollection) {
 
 TEST_F(CollectionManagerTest, ReferencedInBacklog) {
     auto referenced_ins = collectionManager._get_referenced_ins();
-    ASSERT_EQ(1, referenced_ins.count("Products"));
+    ASSERT_EQ(size_t{1}, referenced_ins.count("Products"));
 
     auto const& map = referenced_ins.at("Products");
-    ASSERT_EQ(1, map.size());
+    ASSERT_EQ(size_t{1}, map.size());
     auto const& references = map.at("collection1");
     ASSERT_EQ("collection1", references.collection);
     ASSERT_EQ("product_id", references.field);
@@ -1619,7 +1629,7 @@ TEST_F(CollectionManagerTest, ReferencedInBacklog) {
 
     referenced_ins = collectionManager._get_referenced_ins();
     // Not deleting ref_info even after creation of Products collection.
-    ASSERT_EQ(1, referenced_ins.count("Products"));
+    ASSERT_EQ(size_t{1}, referenced_ins.count("Products"));
 
     auto get_reference_field_op = create_op.get()->get_referenced_in_field_with_lock("collection1");
     ASSERT_TRUE(get_reference_field_op.ok());
@@ -1646,14 +1656,14 @@ TEST_F(CollectionManagerTest, ExcludeFieldsInCollectionListing) {
     ASSERT_TRUE(create_op.ok());
 
     nlohmann::json coll_json_summaries = collectionManager.get_collection_summaries(10, 0, {"fields"}).get();
-    ASSERT_EQ(2, coll_json_summaries.size());
+    ASSERT_EQ(size_t{2}, coll_json_summaries.size());
 
     for(auto coll_json: coll_json_summaries) {
         ASSERT_FALSE(coll_json.contains("fields"));
     }
 
     coll_json_summaries = collectionManager.get_collection_summaries(10, 0, {}).get();
-    ASSERT_EQ(2, coll_json_summaries.size());
+    ASSERT_EQ(size_t{2}, coll_json_summaries.size());
 
     for(auto coll_json: coll_json_summaries) {
         ASSERT_TRUE(coll_json.contains("fields"));
@@ -1661,8 +1671,6 @@ TEST_F(CollectionManagerTest, ExcludeFieldsInCollectionListing) {
 }
 
 TEST_F(CollectionManagerTest, CollectionCreationWithMetadata) {
-    CollectionManager & collectionManager3 = CollectionManager::get_instance();
-
     nlohmann::json schema1 = R"({
         "name": "collection_meta",
         "enable_nested_fields": true,
@@ -1707,7 +1715,7 @@ TEST_F(CollectionManagerTest, CollectionCreationWithMetadata) {
     store->get(Collection::get_meta_key("collection_meta"), collection_meta_json);
     store->get(Collection::get_next_seq_id_key("collection_meta"), next_seq_id);
 
-    //LOG(INFO) << collection_meta_json;
+    //TS_LOG(INFO) << collection_meta_json;
 
     nlohmann::json expected_meta_json = R"(
         {
@@ -1818,7 +1826,7 @@ TEST_F(CollectionManagerTest, CollectionCreationWithMetadata) {
     op = collectionManager.create_collection(schema2);
     ASSERT_TRUE(op.ok());
     Collection* coll2 = op.get();
-    ASSERT_EQ(0, coll2->get_summary_json().count("metadata"));
+    ASSERT_EQ(size_t{0}, coll2->get_summary_json().count("metadata"));
 }
 
 TEST_F(CollectionManagerTest, PopulateReferencedIns) {
@@ -1848,10 +1856,10 @@ TEST_F(CollectionManagerTest, PopulateReferencedIns) {
     std::map<std::string, std::map<std::string, reference_info_t>> referenced_ins;
     CollectionManager::_populate_referenced_ins(collection_meta_jsons, referenced_ins);
 
-    ASSERT_EQ(2, referenced_ins.size());
-    ASSERT_EQ(1, referenced_ins.count("A"));
-    ASSERT_EQ(1, referenced_ins["A"].size());
-    ASSERT_EQ(1, referenced_ins["A"].count("B"));
+    ASSERT_EQ(size_t{2}, referenced_ins.size());
+    ASSERT_EQ(size_t{1}, referenced_ins.count("A"));
+    ASSERT_EQ(size_t{1}, referenced_ins["A"].size());
+    ASSERT_EQ(size_t{1}, referenced_ins["A"].count("B"));
     ASSERT_EQ("B", referenced_ins["A"].at("B").collection);
     ASSERT_EQ("a_ref", referenced_ins["A"].at("B").field);
     ASSERT_FALSE(referenced_ins["A"].at("B").is_async);
@@ -1859,9 +1867,9 @@ TEST_F(CollectionManagerTest, PopulateReferencedIns) {
     ASSERT_EQ("string", referenced_ins["A"].at("B").referenced_field.type);
     ASSERT_FALSE(referenced_ins["A"].at("B").referenced_field.index);
 
-    ASSERT_EQ(1, referenced_ins.count("C"));
-    ASSERT_EQ(1, referenced_ins["C"].size());
-    ASSERT_EQ(1, referenced_ins["C"].count("B"));
+    ASSERT_EQ(size_t{1}, referenced_ins.count("C"));
+    ASSERT_EQ(size_t{1}, referenced_ins["C"].size());
+    ASSERT_EQ(size_t{1}, referenced_ins["C"].count("B"));
     ASSERT_EQ("B", referenced_ins["C"].at("B").collection);
     ASSERT_EQ("c_ref", referenced_ins["C"].at("B").field);
     ASSERT_TRUE(referenced_ins["C"].at("B").is_async);
@@ -1897,7 +1905,7 @@ TEST_F(CollectionManagerTest, CollectionPagination) {
     limit=2;
     auto collection_op = collectionManager.get_collections(limit);
     auto collections_vec = collection_op.get();
-    ASSERT_EQ(2, collections_vec.size());
+    ASSERT_EQ(size_t{2}, collections_vec.size());
     ASSERT_EQ("cp2", collections_vec[0]->get_name());
     ASSERT_EQ("cp5", collections_vec[1]->get_name());
 
@@ -1905,7 +1913,7 @@ TEST_F(CollectionManagerTest, CollectionPagination) {
     offset=3;
     collection_op = collectionManager.get_collections(limit, offset);
     collections_vec = collection_op.get();
-    ASSERT_EQ(2, collections_vec.size());
+    ASSERT_EQ(size_t{2}, collections_vec.size());
     ASSERT_EQ("cp1", collections_vec[0]->get_name());
     ASSERT_EQ("cp4", collections_vec[1]->get_name());
 
@@ -1913,7 +1921,7 @@ TEST_F(CollectionManagerTest, CollectionPagination) {
     offset=1; limit=0;
     collection_op = collectionManager.get_collections(limit, offset);
     collections_vec = collection_op.get();
-    ASSERT_EQ(4, collections_vec.size());
+    ASSERT_EQ(size_t{4}, collections_vec.size());
     ASSERT_EQ("cp5", collections_vec[0]->get_name());
     ASSERT_EQ("cp3", collections_vec[1]->get_name());
     ASSERT_EQ("cp1", collections_vec[2]->get_name());
@@ -1923,14 +1931,14 @@ TEST_F(CollectionManagerTest, CollectionPagination) {
     offset=4, limit=1;
     collection_op = collectionManager.get_collections(limit, offset);
     collections_vec = collection_op.get();
-    ASSERT_EQ(1, collections_vec.size());
+    ASSERT_EQ(size_t{1}, collections_vec.size());
     ASSERT_EQ("cp4", collections_vec[0]->get_name());
 
     //if limit is greater than number of collection then return all from offset
     offset=0; limit=8;
     collection_op = collectionManager.get_collections(limit, offset);
     collections_vec = collection_op.get();
-    ASSERT_EQ(5, collections_vec.size());
+    ASSERT_EQ(size_t{5}, collections_vec.size());
     ASSERT_EQ("cp2", collections_vec[0]->get_name());
     ASSERT_EQ("cp5", collections_vec[1]->get_name());
     ASSERT_EQ("cp3", collections_vec[2]->get_name());
@@ -1940,7 +1948,7 @@ TEST_F(CollectionManagerTest, CollectionPagination) {
     offset=3; limit=4;
     collection_op = collectionManager.get_collections(limit, offset);
     collections_vec = collection_op.get();
-    ASSERT_EQ(2, collections_vec.size());
+    ASSERT_EQ(size_t{2}, collections_vec.size());
     ASSERT_EQ("cp1", collections_vec[0]->get_name());
     ASSERT_EQ("cp4", collections_vec[1]->get_name());
 
@@ -1960,7 +1968,7 @@ TEST_F(CollectionManagerTest, HideQueryFromAnalytics) {
       
     std::vector<field> fields2 = {field("q", field_types::STRING, false, false, true, "", -1, 1),
                                  field("count", field_types::INT32, false),};
-    Collection* top_queries2 = collectionManager.create_collection("top_queries2", 1, fields2, "count").get();
+    (void)collectionManager.create_collection("top_queries2", 1, fields2, "count").get();
 
     nlohmann::json doc1;
     doc1["id"] = "0";
@@ -2005,14 +2013,14 @@ TEST_F(CollectionManagerTest, HideQueryFromAnalytics) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
 
-    ASSERT_EQ(0, SearchAnalytics::get_instance().get_popular_prefix_queries_size());
+    ASSERT_EQ(size_t{0}, SearchAnalytics::get_instance().get_popular_prefix_queries_size());
 
     req_params["enable_analytics"] = "true";
 
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
 
-    ASSERT_EQ(1, SearchAnalytics::get_instance().get_popular_prefix_queries_size());
+    ASSERT_EQ(size_t{1}, SearchAnalytics::get_instance().get_popular_prefix_queries_size());
 
     collectionManager.drop_collection("coll3");
 }
@@ -2056,7 +2064,7 @@ TEST_F(CollectionManagerTest, CloneCollectionWithDocuments) {
 
 
     // Verify source collection has 3 documents
-    ASSERT_EQ(3, src_collection->get_num_documents());
+    ASSERT_EQ(uint32_t{3}, src_collection->get_num_documents());
 
     // Test 1: Clone collection WITHOUT copying documents (existing behavior)
     nlohmann::json clone_req = R"({
@@ -2068,7 +2076,7 @@ TEST_F(CollectionManagerTest, CloneCollectionWithDocuments) {
     
     Collection* cloned_collection_no_docs = clone_op.get();
     ASSERT_EQ("cloned_collection_no_docs", cloned_collection_no_docs->get_name());
-    ASSERT_EQ(0, cloned_collection_no_docs->get_num_documents()); // No documents copied
+    ASSERT_EQ(uint32_t{0}, cloned_collection_no_docs->get_num_documents()); // No documents copied
     
     // Test 2: Clone collection WITH copying documents
     nlohmann::json clone_req_with_docs = R"({
@@ -2080,25 +2088,25 @@ TEST_F(CollectionManagerTest, CloneCollectionWithDocuments) {
     
     Collection* cloned_collection_with_docs = clone_with_docs_op.get();
     ASSERT_EQ("cloned_collection_with_docs", cloned_collection_with_docs->get_name());
-    ASSERT_EQ(3, cloned_collection_with_docs->get_num_documents()); // Documents copied
+    ASSERT_EQ(uint32_t{3}, cloned_collection_with_docs->get_num_documents()); // Documents copied
 
     // Test 3: Verify documents are searchable in cloned collection
     auto search_results = cloned_collection_with_docs->search("First", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, search_results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, search_results["found"].get<size_t>());
     ASSERT_EQ("1", search_results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("First document", search_results["hits"][0]["document"]["title"].get<std::string>());
 
     search_results = cloned_collection_with_docs->search("*", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(3, search_results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, search_results["found"].get<size_t>());
     
     // Also search the source collection and dump results
     auto src_search_results = src_collection->search("*", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(3, src_search_results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, src_search_results["found"].get<size_t>());
 
     // Test 6: Verify original collection is unchanged
-    ASSERT_EQ(3, src_collection->get_num_documents());
+    ASSERT_EQ(uint32_t{3}, src_collection->get_num_documents());
     auto orig_search_results = src_collection->search("*", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(3, orig_search_results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, orig_search_results["found"].get<size_t>());
 
     // Clean up
     collectionManager.drop_collection("source_collection");

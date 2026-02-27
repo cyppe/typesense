@@ -1,5 +1,6 @@
 #include <store.h>
 #include "field.h"
+#include "logger.h"
 #include "magic_enum.hpp"
 #include "embedder_manager.h"
 #include "personalization_model_manager.h"
@@ -103,7 +104,7 @@ void field::add_default_json_values(nlohmann::json& json) {
 
 Option<bool> field::json_field_to_field(bool enable_nested_fields, nlohmann::json& field_json,
                                         std::vector<field>& the_fields,
-                                        string& fallback_field_type, size_t& num_auto_detect_fields,
+                                        std::string& fallback_field_type, size_t& num_auto_detect_fields,
                                         const std::string& collection_name) {
     add_default_json_values(field_json);
 
@@ -428,7 +429,7 @@ Option<bool> field::json_field_to_field(bool enable_nested_fields, nlohmann::jso
     }
 
     if(field_json[fields::type] == field_types::GEOPOINT && field_json[fields::sort] == false) {
-        LOG(WARNING) << "Forcing geopoint field `" << field_json[fields::name].get<std::string>() << "` to be sortable.";
+        TS_LOG(WARNING) << "Forcing geopoint field `" << field_json[fields::name].get<std::string>() << "` to be sortable.";
         field_json[fields::sort] = true;
     }
 
@@ -789,7 +790,7 @@ void field::compact_nested_fields(tsl::htrie_map<char, field>& nested_fields) {
     }
 }
 
-Option<bool> field::json_fields_to_fields(bool enable_nested_fields, nlohmann::json &fields_json, string &fallback_field_type,
+Option<bool> field::json_fields_to_fields(bool enable_nested_fields, nlohmann::json &fields_json, std::string &fallback_field_type,
                                           std::vector<field>& the_fields, const std::string& collection_name) {
     size_t num_auto_detect_fields = 0;
     const tsl::htrie_map<char, field> dummy_search_schema;
@@ -799,7 +800,7 @@ Option<bool> field::json_fields_to_fields(bool enable_nested_fields, nlohmann::j
         if(field_json["name"] == "id") {
             // No field should exist with the name "id" as it is reserved for internal use
             // We cannot throw an error here anymore since that will break backward compatibility!
-            LOG(WARNING) << "Collection schema cannot contain a field with name `id`. Ignoring field.";
+            TS_LOG(WARNING) << "Collection schema cannot contain a field with name `id`. Ignoring field.";
             continue;
         }
         auto op = json_field_to_field(enable_nested_fields,
@@ -833,7 +834,6 @@ Option<bool> field::validate_and_init_embed_field(const tsl::htrie_map<char, fie
                                     "` can only refer to string or string array fields when mapping is provided.";
     bool found_mapping = field_json[fields::embed].contains(fields::mapping);
 
-    bool found_image_field = false;
     for(auto& field_name : field_json[fields::embed][fields::from].get<std::vector<std::string>>()) {
 
         auto embed_field = std::find_if(fields_json.begin(), fields_json.end(), [&field_name](const nlohmann::json& x) {
@@ -886,7 +886,7 @@ Option<bool> field::validate_and_init_embed_field(const tsl::htrie_map<char, fie
         }
     }
     
-    LOG(INFO) << "Model init done.";
+    TS_LOG(INFO) << "Model init done.";
     field_json[fields::num_dim] = num_dim;
     the_field.num_dim = num_dim;
 
@@ -955,7 +955,7 @@ nlohmann::json field::field_to_json_field(const struct field& field) {
     return field_val;
 }
 
-Option<bool> field::fields_to_json_fields(const std::vector<field>& fields, const string& default_sorting_field,
+Option<bool> field::fields_to_json_fields(const std::vector<field>& fields, const std::string& default_sorting_field,
                                           nlohmann::json& fields_json) {
     bool found_default_sorting_field = false;
 

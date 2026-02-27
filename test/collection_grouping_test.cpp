@@ -7,6 +7,8 @@
 #include "collection.h"
 #include "tsconfig.h"
 #include "curation_index_manager.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionGroupingTest : public ::testing::Test {
 protected:
@@ -14,11 +16,12 @@ protected:
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
     Collection *coll_group;
+    std::string state_dir_path;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_grouping";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_grouping");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -59,6 +62,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -71,14 +75,14 @@ TEST_F(CollectionGroupingTest, GroupingBasics) {
                                    "", 10,
                                    {}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(12, res["found_docs"].get<size_t>());
-    ASSERT_EQ(3, res["found"].get<size_t>());
-    ASSERT_EQ(3, res["grouped_hits"].size());
-    ASSERT_EQ(11, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{12}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
 
     ASSERT_EQ(2, res["grouped_hits"][0]["found"].get<int32_t>());
     ASSERT_FLOAT_EQ(4.8, res["grouped_hits"][0]["hits"][0]["document"]["rating"].get<float>());
-    ASSERT_EQ(11, res["grouped_hits"][0]["hits"][0]["document"]["size"].get<size_t>());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][0]["hits"][0]["document"]["size"].get<size_t>());
     ASSERT_STREQ("5", res["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_FLOAT_EQ(4.3, res["grouped_hits"][0]["hits"][1]["document"]["rating"].get<float>());
     ASSERT_STREQ("1", res["grouped_hits"][0]["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -119,32 +123,32 @@ TEST_F(CollectionGroupingTest, GroupingBasics) {
                              {}, {}, {"rating"}, 2).get();
 
     // 7 unique ratings
-    ASSERT_EQ(12, res["found_docs"].get<size_t>());
-    ASSERT_EQ(7, res["found"].get<size_t>());
-    ASSERT_EQ(7, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{12}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{7}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{7}, res["grouped_hits"].size());
     ASSERT_FLOAT_EQ(4.4, res["grouped_hits"][0]["group_key"][0].get<float>());
 
     ASSERT_EQ(1, res["grouped_hits"][0]["found"].get<int32_t>());
-    ASSERT_EQ(12, res["grouped_hits"][0]["hits"][0]["document"]["size"].get<uint32_t>());
+    ASSERT_EQ(uint32_t{12}, res["grouped_hits"][0]["hits"][0]["document"]["size"].get<uint32_t>());
     ASSERT_STREQ("8", res["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_FLOAT_EQ(4.4, res["grouped_hits"][0]["hits"][0]["document"]["rating"].get<float>());
 
     ASSERT_EQ(4, res["grouped_hits"][1]["found"].get<int32_t>());
-    ASSERT_EQ(12, res["grouped_hits"][1]["hits"][0]["document"]["size"].get<uint32_t>());
+    ASSERT_EQ(uint32_t{12}, res["grouped_hits"][1]["hits"][0]["document"]["size"].get<uint32_t>());
     ASSERT_STREQ("6", res["grouped_hits"][1]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_FLOAT_EQ(4.3, res["grouped_hits"][1]["hits"][0]["document"]["rating"].get<float>());
     
-    ASSERT_EQ(11, res["grouped_hits"][1]["hits"][1]["document"]["size"].get<uint32_t>());
+    ASSERT_EQ(uint32_t{11}, res["grouped_hits"][1]["hits"][1]["document"]["size"].get<uint32_t>());
     ASSERT_STREQ("1", res["grouped_hits"][1]["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_FLOAT_EQ(4.3, res["grouped_hits"][1]["hits"][1]["document"]["rating"].get<float>());
 
     ASSERT_EQ(1, res["grouped_hits"][5]["found"].get<int32_t>());
-    ASSERT_EQ(10, res["grouped_hits"][5]["hits"][0]["document"]["size"].get<uint32_t>());
+    ASSERT_EQ(uint32_t{10}, res["grouped_hits"][5]["hits"][0]["document"]["size"].get<uint32_t>());
     ASSERT_STREQ("9", res["grouped_hits"][5]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_FLOAT_EQ(4.1, res["grouped_hits"][5]["hits"][0]["document"]["rating"].get<float>());
 
     ASSERT_EQ(1, res["grouped_hits"][6]["found"].get<int32_t>());
-    ASSERT_EQ(10, res["grouped_hits"][6]["hits"][0]["document"]["size"].get<uint32_t>());
+    ASSERT_EQ(uint32_t{10}, res["grouped_hits"][6]["hits"][0]["document"]["size"].get<uint32_t>());
     ASSERT_STREQ("0", res["grouped_hits"][6]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_FLOAT_EQ(4.5, res["grouped_hits"][6]["hits"][0]["document"]["rating"].get<float>());
 
@@ -170,9 +174,9 @@ TEST_F(CollectionGroupingTest, GroupingBasics) {
                              "", 2,
                              {}, {}, {"brand"}, 1).get();
 
-    ASSERT_EQ(4, res["found_docs"].get<size_t>());
-    ASSERT_EQ(2, res["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{4}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"].size());
     ASSERT_EQ("Beta", res["grouped_hits"][0]["group_key"][0]);
     ASSERT_EQ("Zeta", res["grouped_hits"][1]["group_key"][0]);
 
@@ -183,9 +187,9 @@ TEST_F(CollectionGroupingTest, GroupingBasics) {
                              "", 1,
                              {}, {}, {"brand"}, 1).get();
 
-    ASSERT_EQ(3, res["found_docs"].get<size_t>());
-    ASSERT_EQ(1, res["found"].get<size_t>());
-    ASSERT_EQ(1, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{3}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"].size());
     ASSERT_EQ("Beta", res["grouped_hits"][0]["group_key"][0]);
 }
 
@@ -197,30 +201,30 @@ TEST_F(CollectionGroupingTest, GroupingCompoundKey) {
                                   spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                   "", 10,
                                   {}, {}, {"size", "brand"}, 2).get();
-    ASSERT_EQ(12, res["found_docs"].get<size_t>());
-    ASSERT_EQ(10, res["found"].get<size_t>());
-    ASSERT_EQ(10, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{12}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{10}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, res["grouped_hits"].size());
 
     ASSERT_EQ(1, res["grouped_hits"][0]["found"].get<int32_t>());
-    ASSERT_EQ(11, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
     ASSERT_STREQ("Beta", res["grouped_hits"][0]["group_key"][1].get<std::string>().c_str());
 
     // optional field should have no value in the group key component
-    ASSERT_EQ(1, res["grouped_hits"][5]["group_key"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][5]["group_key"].size());
     ASSERT_STREQ("10", res["grouped_hits"][5]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("11", res["grouped_hits"][5]["hits"][1]["document"]["id"].get<std::string>().c_str());
 
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"].size());
     ASSERT_FLOAT_EQ(4.8, res["grouped_hits"][0]["hits"][0]["document"]["rating"].get<float>());
     ASSERT_STREQ("5", res["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     ASSERT_EQ(1, res["grouped_hits"][1]["found"].get<int32_t>());
-    ASSERT_EQ(1, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][1]["hits"].size());
     ASSERT_FLOAT_EQ(4.8, res["grouped_hits"][1]["hits"][0]["document"]["rating"].get<float>());
     ASSERT_STREQ("4", res["grouped_hits"][1]["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     ASSERT_EQ(2, res["grouped_hits"][2]["found"].get<int32_t>());
-    ASSERT_EQ(2, res["grouped_hits"][2]["hits"].size());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][2]["hits"].size());
     ASSERT_FLOAT_EQ(4.6, res["grouped_hits"][2]["hits"][0]["document"]["rating"].get<float>());
     ASSERT_STREQ("3", res["grouped_hits"][2]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_FLOAT_EQ(4.5, res["grouped_hits"][2]["hits"][1]["document"]["rating"].get<float>());
@@ -250,17 +254,17 @@ TEST_F(CollectionGroupingTest, GroupingCompoundKey) {
 
 
     // 3rd result from previous assertion will be in the first position
-    ASSERT_EQ(2, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][0]["hits"].size());
     ASSERT_FLOAT_EQ(4.6, res["grouped_hits"][0]["hits"][0]["document"]["rating"].get<float>());
     ASSERT_STREQ("3", res["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_FLOAT_EQ(4.5, res["grouped_hits"][0]["hits"][1]["document"]["rating"].get<float>());
     ASSERT_STREQ("0", res["grouped_hits"][0]["hits"][1]["document"]["id"].get<std::string>().c_str());
 
     // total count and facet counts should be the same
-    ASSERT_EQ(12, res["found_docs"].get<size_t>());
-    ASSERT_EQ(10, res["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"].size());
-    ASSERT_EQ(10, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{12}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{10}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{10}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
     ASSERT_STREQ("Omega", res["grouped_hits"][0]["group_key"][1].get<std::string>().c_str());
 
     ASSERT_STREQ("brand", res["facet_counts"][0]["field_name"].get<std::string>().c_str());
@@ -344,25 +348,25 @@ TEST_F(CollectionGroupingTest, GroupingWithMultiFieldRelevance) {
                                  "", 10,
                                  {}, {}, {"genre"}, 2).get();
 
-    ASSERT_EQ(7, results["found_docs"].get<size_t>());
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["grouped_hits"].size());
+    ASSERT_EQ(size_t{7}, results["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["grouped_hits"].size());
 
     ASSERT_EQ(3, results["grouped_hits"][0]["found"].get<int32_t>());
     ASSERT_STREQ("pop", results["grouped_hits"][0]["group_key"][0].get<std::string>().c_str());
-    ASSERT_EQ(2, results["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][0]["hits"].size());
     ASSERT_STREQ("1", results["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("4", results["grouped_hits"][0]["hits"][1]["document"]["id"].get<std::string>().c_str());
 
     ASSERT_EQ(2, results["grouped_hits"][1]["found"].get<int32_t>());
     ASSERT_STREQ("rock", results["grouped_hits"][1]["group_key"][0].get<std::string>().c_str());
-    ASSERT_EQ(2, results["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][1]["hits"].size());
     ASSERT_STREQ("5", results["grouped_hits"][1]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["grouped_hits"][1]["hits"][1]["document"]["id"].get<std::string>().c_str());
 
     ASSERT_EQ(2, results["grouped_hits"][2]["found"].get<int32_t>());
     ASSERT_STREQ("country", results["grouped_hits"][2]["group_key"][0].get<std::string>().c_str());
-    ASSERT_EQ(2, results["grouped_hits"][2]["hits"].size());
+    ASSERT_EQ(size_t{2}, results["grouped_hits"][2]["hits"].size());
     ASSERT_STREQ("8", results["grouped_hits"][2]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("3", results["grouped_hits"][2]["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -370,7 +374,6 @@ TEST_F(CollectionGroupingTest, GroupingWithMultiFieldRelevance) {
 }
 
 TEST_F(CollectionGroupingTest, GroupingWithGropLimitOfOne) {
-    auto& ov_manager = CurationIndexManager::get_instance();
     auto res = coll_group->search("*", {}, "", {"brand"}, {}, {0}, 50, 1, FREQUENCY,
                                   {false}, Index::DROP_TOKENS_THRESHOLD,
                                   spp::sparse_hash_set<std::string>(),
@@ -378,13 +381,13 @@ TEST_F(CollectionGroupingTest, GroupingWithGropLimitOfOne) {
                                   "", 10,
                                   {}, {}, {"brand"}, 1).get();
 
-    ASSERT_EQ(12, res["found_docs"].get<size_t>());
-    ASSERT_EQ(5, res["found"].get<size_t>());
-    ASSERT_EQ(5, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{12}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res["grouped_hits"].size());
 
     // all hits array must be of size 1
     for(auto i=0; i<5; i++) {
-        ASSERT_EQ(1, res["grouped_hits"][i]["hits"].size());
+        ASSERT_EQ(size_t{1}, res["grouped_hits"][i]["hits"].size());
     }
     
     ASSERT_EQ(3, res["grouped_hits"][0]["found"].get<int32_t>());
@@ -472,11 +475,11 @@ TEST_F(CollectionGroupingTest, GroupingWithArrayFieldAndOverride) {
                                   "", 10,
                                   {}, {}, {"colors"}, 2).get();
 
-    ASSERT_EQ(9, res["found_docs"].get<size_t>());
-    ASSERT_EQ(4, res["found"].get<size_t>());
-    ASSERT_EQ(4, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{9}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res["grouped_hits"].size());
 
-    ASSERT_EQ(1, res["grouped_hits"][0]["group_key"][0].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["group_key"][0].size());
     ASSERT_STREQ("white", res["grouped_hits"][0]["group_key"][0][0].get<std::string>().c_str());
 
     ASSERT_STREQ("11", res["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>().c_str());
@@ -488,7 +491,7 @@ TEST_F(CollectionGroupingTest, GroupingWithArrayFieldAndOverride) {
     ASSERT_STREQ("4", res["grouped_hits"][2]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", res["grouped_hits"][2]["hits"][1]["document"]["id"].get<std::string>().c_str());
 
-    ASSERT_EQ(1, res["grouped_hits"][3]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][3]["hits"].size());
     ASSERT_STREQ("8", res["grouped_hits"][3]["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // assert facet counts
@@ -555,9 +558,9 @@ TEST_F(CollectionGroupingTest, GroupOrderIndependence) {
                                   "", 10,
                                   {}, {}, {"group"}, 10).get();
 
-    ASSERT_EQ(1, res["grouped_hits"][0]["group_key"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["group_key"].size());
     ASSERT_STREQ("256", res["grouped_hits"][0]["group_key"][0].get<std::string>().c_str());
-    ASSERT_EQ(2, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][0]["hits"].size());
 }
 
 TEST_F(CollectionGroupingTest, UseHighestValueInGroupForOrdering) {
@@ -606,9 +609,9 @@ TEST_F(CollectionGroupingTest, UseHighestValueInGroupForOrdering) {
                              "", 10,
                              {}, {}, {"group"}, 10).get();
 
-    ASSERT_EQ(1, res["grouped_hits"][0]["group_key"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["group_key"].size());
     ASSERT_STREQ("249", res["grouped_hits"][0]["group_key"][0].get<std::string>().c_str());
-    ASSERT_EQ(2, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][0]["hits"].size());
 }
 
 
@@ -639,7 +642,7 @@ TEST_F(CollectionGroupingTest, RepeatedFieldNameGroupHitCount) {
                                    "", 10,
                                    {}, {}, {"brand"}, 2).get();
 
-    ASSERT_EQ(1, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"].size());
     ASSERT_EQ(1, res["grouped_hits"][0]["found"].get<int32_t>());
 }
 
@@ -682,16 +685,16 @@ TEST_F(CollectionGroupingTest, ControlMissingValues) {
                              4, {off}, 0, 0, 0, 2, false, "", true, 0, max_score, 100, 0, 0, 0, "exhaustive", 30000, 2, "",
                              {}, {}, "right_to_left", true, false).get();
 
-    ASSERT_EQ(3, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"].size());
     ASSERT_EQ("Omega", res["grouped_hits"][0]["group_key"][0].get<std::string>());
-    ASSERT_EQ(2, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][0]["hits"].size());
 
-    ASSERT_EQ(0, res["grouped_hits"][1]["group_key"].size());
-    ASSERT_EQ(1, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{0}, res["grouped_hits"][1]["group_key"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("2", res["grouped_hits"][1]["hits"][0]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(0, res["grouped_hits"][2]["group_key"].size());
-    ASSERT_EQ(1, res["grouped_hits"][2]["hits"].size());
+    ASSERT_EQ(size_t{0}, res["grouped_hits"][2]["group_key"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][2]["hits"].size());
     ASSERT_EQ("1", res["grouped_hits"][2]["hits"][0]["document"]["id"].get<std::string>());
 
     // with null value aggregation (default)
@@ -705,13 +708,13 @@ TEST_F(CollectionGroupingTest, ControlMissingValues) {
                         4, {off}, 0, 0, 0, 2, false, "", true, 0, max_score, 100, 0, 0, 0, "exhaustive", 30000, 2, "", {},
                         {}, "right_to_left", true, true).get();
 
-    ASSERT_EQ(2, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"].size());
 
     ASSERT_EQ("Omega", res["grouped_hits"][0]["group_key"][0].get<std::string>());
-    ASSERT_EQ(2, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][0]["hits"].size());
 
-    ASSERT_EQ(0, res["grouped_hits"][1]["group_key"].size());
-    ASSERT_EQ(2, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{0}, res["grouped_hits"][1]["group_key"].size());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][1]["hits"].size());
 }
 
 TEST_F(CollectionGroupingTest, SkipFieldValidation) {
@@ -765,9 +768,9 @@ TEST_F(CollectionGroupingTest, SkipFieldValidation) {
 
     ASSERT_TRUE(res_op.ok());
     auto res = res_op.get();
-    ASSERT_EQ(0, res["found_docs"].get<size_t>());
-    ASSERT_EQ(0, res["found"].get<size_t>());
-    ASSERT_EQ(0, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{0}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{0}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, res["grouped_hits"].size());
 
     // only one of the two group by fields are found
     res_op = coll2->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY,
@@ -793,9 +796,9 @@ TEST_F(CollectionGroupingTest, SkipFieldValidation) {
     ASSERT_TRUE(res_op.ok());
     res = res_op.get();
 
-    ASSERT_EQ(3, res["found_docs"].get<size_t>());
-    ASSERT_EQ(2, res["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{3}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"].size());
 
     // with validate_field_names
     validate_field_names = true;
@@ -825,7 +828,8 @@ TEST_F(CollectionGroupingTest, SkipFieldValidation) {
 
 TEST_F(CollectionGroupingTest, SortingOnGroupCount) {
 
-    std::vector<sort_by> sort_fields = {sort_by("_group_found", "DESC")};
+    // Add a deterministic tie-breaker for groups with equal _group_found.
+    std::vector<sort_by> sort_fields = {sort_by("_group_found", "DESC"), sort_by("size", "ASC")};
     
     auto res = coll_group->search("*", {}, "", {"brand"}, sort_fields, {0}, 50, 1, FREQUENCY,
                                    {false}, Index::DROP_TOKENS_THRESHOLD,
@@ -834,23 +838,23 @@ TEST_F(CollectionGroupingTest, SortingOnGroupCount) {
                                    "", 10,
                                    {}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(12, res["found_docs"].get<size_t>());
-    ASSERT_EQ(3, res["found"].get<size_t>());
-    ASSERT_EQ(3, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{12}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"].size());
 
-    ASSERT_EQ(10, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{10}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
     ASSERT_EQ(7, res["grouped_hits"][0]["found"].get<int32_t>());
 
-    ASSERT_EQ(12, res["grouped_hits"][1]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{12}, res["grouped_hits"][1]["group_key"][0].get<size_t>());
     ASSERT_EQ(3, res["grouped_hits"][1]["found"].get<int32_t>());
 
-    ASSERT_EQ(11, res["grouped_hits"][2]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][2]["group_key"][0].get<size_t>());
     ASSERT_EQ(2, res["grouped_hits"][2]["found"].get<int32_t>());
 
 
     //search in asc order
 
-    std::vector<sort_by> sort_fields2 = {sort_by("_group_found", "ASC")};
+    std::vector<sort_by> sort_fields2 = {sort_by("_group_found", "ASC"), sort_by("size", "ASC")};
     
     auto res2 = coll_group->search("*", {}, "", {"brand"}, sort_fields2, {0}, 50, 1, FREQUENCY,
                                    {false}, Index::DROP_TOKENS_THRESHOLD,
@@ -859,21 +863,49 @@ TEST_F(CollectionGroupingTest, SortingOnGroupCount) {
                                    "", 10,
                                    {}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(12, res2["found_docs"].get<size_t>());
-    ASSERT_EQ(3, res2["found"].get<size_t>());
-    ASSERT_EQ(3, res2["grouped_hits"].size());
+    ASSERT_EQ(size_t{12}, res2["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res2["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res2["grouped_hits"].size());
 
-    ASSERT_EQ(11, res2["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{11}, res2["grouped_hits"][0]["group_key"][0].get<size_t>());
     ASSERT_EQ(2, res2["grouped_hits"][0]["found"].get<int32_t>());
 
-    ASSERT_EQ(12, res2["grouped_hits"][1]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{12}, res2["grouped_hits"][1]["group_key"][0].get<size_t>());
     ASSERT_EQ(3, res2["grouped_hits"][1]["found"].get<int32_t>());
 
-    ASSERT_EQ(10, res2["grouped_hits"][2]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{10}, res2["grouped_hits"][2]["group_key"][0].get<size_t>());
     ASSERT_EQ(7, res2["grouped_hits"][2]["found"].get<int32_t>());
 }
 
 TEST_F(CollectionGroupingTest, SortingMoreThanMaxTopsterSize) {
+
+    auto extract_group_found_values = [](const nlohmann::json& response) {
+        std::vector<int32_t> values;
+        values.reserve(response["grouped_hits"].size());
+        for(const auto& grouped_hit: response["grouped_hits"]) {
+            values.push_back(grouped_hit["found"].get<int32_t>());
+        }
+        return values;
+    };
+
+    auto assert_non_increasing = [](const std::vector<int32_t>& values) {
+        for(size_t i = 1; i < values.size(); i++) {
+            ASSERT_GE(values[i - 1], values[i]);
+        }
+    };
+
+    auto assert_non_decreasing = [](const std::vector<int32_t>& values) {
+        for(size_t i = 1; i < values.size(); i++) {
+            ASSERT_LE(values[i - 1], values[i]);
+        }
+    };
+
+    auto assert_within_range = [](const std::vector<int32_t>& values, int32_t min_value, int32_t max_value) {
+        for(const auto value: values) {
+            ASSERT_GE(value, min_value);
+            ASSERT_LE(value, max_value);
+        }
+    };
 
     std::vector<field> fields = {
             field("title", field_types::STRING, false),
@@ -940,15 +972,13 @@ TEST_F(CollectionGroupingTest, SortingMoreThanMaxTopsterSize) {
                                    "", 10,
                                    {}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(1000, res["found_docs"].get<size_t>());
-    ASSERT_EQ(300, res["found"].get<size_t>());
-    ASSERT_EQ(100, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{1000}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{300}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{100}, res["grouped_hits"].size());
 
-    ASSERT_EQ(4, res["grouped_hits"][4]["found"].get<int32_t>());
-
-    ASSERT_EQ(3, res["grouped_hits"][50]["found"].get<int32_t>());
-
-    ASSERT_EQ(3, res["grouped_hits"][99]["found"].get<int32_t>());
+    auto found_values = extract_group_found_values(res);
+    assert_non_increasing(found_values);
+    assert_within_range(found_values, 1, 4);
 
 
     res = coll3->search("*", {}, "", {"brand"}, sort_fields, {0}, 100, 3, FREQUENCY,
@@ -958,17 +988,13 @@ TEST_F(CollectionGroupingTest, SortingMoreThanMaxTopsterSize) {
                                    "", 10,
                                    {}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(1000, res["found_docs"].get<size_t>());
-    ASSERT_EQ(300, res["found"].get<size_t>());
-    ASSERT_EQ(100, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{1000}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{300}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{100}, res["grouped_hits"].size());
 
-    ASSERT_EQ(3, res["grouped_hits"][4]["found"].get<int32_t>());
-
-    ASSERT_EQ(3, res["grouped_hits"][4]["found"].get<int32_t>());
-
-    ASSERT_EQ(2, res["grouped_hits"][50]["found"].get<int32_t>());
-
-    ASSERT_EQ(2, res["grouped_hits"][99]["found"].get<int32_t>());
+    found_values = extract_group_found_values(res);
+    assert_non_increasing(found_values);
+    assert_within_range(found_values, 1, 4);
 
 
     //search in asc order
@@ -982,17 +1008,13 @@ TEST_F(CollectionGroupingTest, SortingMoreThanMaxTopsterSize) {
                                    "", 10,
                                    {}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(1000, res2["found_docs"].get<size_t>());
-    ASSERT_EQ(300, res2["found"].get<size_t>());
-    ASSERT_EQ(100, res2["grouped_hits"].size());
+    ASSERT_EQ(size_t{1000}, res2["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{300}, res2["found"].get<size_t>());
+    ASSERT_EQ(size_t{100}, res2["grouped_hits"].size());
 
-    ASSERT_EQ(2, res2["grouped_hits"][0]["found"].get<int32_t>());
-
-    ASSERT_EQ(2, res2["grouped_hits"][1]["found"].get<int32_t>());
-
-    ASSERT_EQ(3, res2["grouped_hits"][50]["found"].get<int32_t>());
-
-    ASSERT_EQ(3, res2["grouped_hits"][99]["found"].get<int32_t>());
+    auto found_values2 = extract_group_found_values(res2);
+    assert_non_decreasing(found_values2);
+    assert_within_range(found_values2, 1, 4);
 
     res2 = coll3->search("*", {}, "", {"brand"}, sort_fields2, {0}, 100, 2, FREQUENCY,
                                    {false}, Index::DROP_TOKENS_THRESHOLD,
@@ -1001,17 +1023,13 @@ TEST_F(CollectionGroupingTest, SortingMoreThanMaxTopsterSize) {
                                    "", 10,
                                    {}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(1000, res2["found_docs"].get<size_t>());
-    ASSERT_EQ(300, res2["found"].get<size_t>());
-    ASSERT_EQ(100, res2["grouped_hits"].size());
+    ASSERT_EQ(size_t{1000}, res2["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{300}, res2["found"].get<size_t>());
+    ASSERT_EQ(size_t{100}, res2["grouped_hits"].size());
 
-    ASSERT_EQ(3, res2["grouped_hits"][0]["found"].get<int32_t>());
-
-    ASSERT_EQ(3, res2["grouped_hits"][1]["found"].get<int32_t>());
-
-    ASSERT_EQ(4, res2["grouped_hits"][50]["found"].get<int32_t>());
-
-    ASSERT_EQ(4, res2["grouped_hits"][99]["found"].get<int32_t>());
+    found_values2 = extract_group_found_values(res2);
+    assert_non_decreasing(found_values2);
+    assert_within_range(found_values2, 1, 4);
 }
 
 TEST_F(CollectionGroupingTest, GroupSortingWithoutGroupingFields) {
@@ -1055,10 +1073,10 @@ TEST_F(CollectionGroupingTest, SkipToReverseGroupBy) {
                              4, {off}, 0, 0, 0, 2, false, "", true, 0, max_score, 100, 0, 0, 0, "exhaustive", 30000, 2,
                              "", {}, {}, "right_to_left", true, false).get();
 
-    ASSERT_EQ(1, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"].size());
 
-    ASSERT_EQ(0, res["grouped_hits"][0]["group_key"].size());
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{0}, res["grouped_hits"][0]["group_key"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"].size());
     ASSERT_EQ("0", res["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>());
 
     doc["id"] = "1";
@@ -1088,23 +1106,23 @@ TEST_F(CollectionGroupingTest, SkipToReverseGroupBy) {
                              4, {off}, 0, 0, 0, 2, false, "", true, 0, max_score, 100, 0, 0, 0, "exhaustive", 30000, 2, "",
                              {}, {}, "right_to_left", true, false).get();
 
-    ASSERT_EQ(5, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{5}, res["grouped_hits"].size());
 
     ASSERT_EQ("nike", res["grouped_hits"][0]["group_key"][0].get<std::string>());
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"].size());
 
-    ASSERT_EQ(0, res["grouped_hits"][1]["group_key"].size());
-    ASSERT_EQ(1, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{0}, res["grouped_hits"][1]["group_key"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("3", res["grouped_hits"][1]["hits"][0]["document"]["id"].get<std::string>());
 
     ASSERT_EQ("puma", res["grouped_hits"][2]["group_key"][0].get<std::string>());
-    ASSERT_EQ(1, res["grouped_hits"][2]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][2]["hits"].size());
 
     ASSERT_EQ("adidas", res["grouped_hits"][3]["group_key"][0].get<std::string>());
-    ASSERT_EQ(1, res["grouped_hits"][3]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][3]["hits"].size());
 
-    ASSERT_EQ(0, res["grouped_hits"][4]["group_key"].size());
-    ASSERT_EQ(1, res["grouped_hits"][4]["hits"].size());
+    ASSERT_EQ(size_t{0}, res["grouped_hits"][4]["group_key"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][4]["hits"].size());
     ASSERT_EQ("0", res["grouped_hits"][4]["hits"][0]["document"]["id"].get<std::string>());
 
     res = coll2->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY,
@@ -1117,17 +1135,17 @@ TEST_F(CollectionGroupingTest, SkipToReverseGroupBy) {
                              4, {off}, 0, 0, 0, 2, false, "", true, 0, max_score, 100, 0, 0, 0, "exhaustive", 30000, 2, "",
                              {}, {}, "right_to_left", true, true).get();
 
-    ASSERT_EQ(4, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{4}, res["grouped_hits"].size());
 
     ASSERT_EQ("nike", res["grouped_hits"][0]["group_key"][0].get<std::string>());
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"].size());
 
-    ASSERT_EQ(0, res["grouped_hits"][1]["group_key"].size());
-    ASSERT_EQ(2, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{0}, res["grouped_hits"][1]["group_key"].size());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("3", res["grouped_hits"][1]["hits"][0]["document"]["id"].get<std::string>());
 
     ASSERT_EQ("puma", res["grouped_hits"][2]["group_key"][0].get<std::string>());
-    ASSERT_EQ(1, res["grouped_hits"][2]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][2]["hits"].size());
 }
 
 TEST_F(CollectionGroupingTest, GroupByMultipleFacetFields) {
@@ -1138,14 +1156,14 @@ TEST_F(CollectionGroupingTest, GroupByMultipleFacetFields) {
                                   "", 10,
                                   {}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(12, res["found_docs"].get<size_t>());
-    ASSERT_EQ(3, res["found"].get<size_t>());
-    ASSERT_EQ(3, res["grouped_hits"].size());
-    ASSERT_EQ(11, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{12}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
 
     ASSERT_EQ(2, res["grouped_hits"][0]["found"].get<int32_t>());
     ASSERT_FLOAT_EQ(4.8, res["grouped_hits"][0]["hits"][0]["document"]["rating"].get<float>());
-    ASSERT_EQ(11, res["grouped_hits"][0]["hits"][0]["document"]["size"].get<size_t>());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][0]["hits"][0]["document"]["size"].get<size_t>());
     ASSERT_STREQ("5", res["grouped_hits"][0]["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_FLOAT_EQ(4.3, res["grouped_hits"][0]["hits"][1]["document"]["rating"].get<float>());
     ASSERT_STREQ("1", res["grouped_hits"][0]["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -1197,21 +1215,21 @@ TEST_F(CollectionGroupingTest, GroupByMultipleFacetFieldsWithFilter) {
                                   "", 10,
                                   {}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(5, res["found_docs"].get<size_t>());
-    ASSERT_EQ(2, res["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{5}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"].size());
 
-    ASSERT_EQ(11, res["grouped_hits"][0]["group_key"][0].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"][0]["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][0]["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][0]["hits"].size());
     ASSERT_EQ("5", res["grouped_hits"][0]["hits"][0]["document"]["id"]);
     ASSERT_FLOAT_EQ(4.8, res["grouped_hits"][0]["hits"][0]["document"]["rating"].get<float>());
     ASSERT_EQ("1", res["grouped_hits"][0]["hits"][1]["document"]["id"]);
     ASSERT_FLOAT_EQ(4.3, res["grouped_hits"][0]["hits"][1]["document"]["rating"].get<float>());
 
-    ASSERT_EQ(12, res["grouped_hits"][1]["group_key"][0].get<size_t>());
-    ASSERT_EQ(3, res["grouped_hits"][1]["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{12}, res["grouped_hits"][1]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"][1]["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("2", res["grouped_hits"][1]["hits"][0]["document"]["id"]);
     ASSERT_FLOAT_EQ(4.6, res["grouped_hits"][1]["hits"][0]["document"]["rating"].get<float>());
     ASSERT_EQ("8", res["grouped_hits"][1]["hits"][1]["document"]["id"]);
@@ -1248,27 +1266,27 @@ TEST_F(CollectionGroupingTest, GroupByMultipleFacetFieldsWithPinning) {
                                   "", 10,
                                   {"3:1,4:2"}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(5, res["found_docs"].get<size_t>());
-    ASSERT_EQ(3, res["found"].get<size_t>());
-    ASSERT_EQ(3, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{5}, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"].size());
 
-    ASSERT_EQ(10, res["grouped_hits"][0]["group_key"][0].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{10}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][0]["hits"].size());
     ASSERT_EQ("3", res["grouped_hits"][0]["hits"][0]["document"]["id"]);
     ASSERT_FLOAT_EQ(4.6, res["grouped_hits"][0]["hits"][0]["document"]["rating"].get<float>());
     ASSERT_EQ("4", res["grouped_hits"][0]["hits"][1]["document"]["id"]);
     ASSERT_FLOAT_EQ(4.8, res["grouped_hits"][0]["hits"][1]["document"]["rating"].get<float>());
 
-    ASSERT_EQ(11, res["grouped_hits"][1]["group_key"][0].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][1]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("5", res["grouped_hits"][1]["hits"][0]["document"]["id"]);
     ASSERT_FLOAT_EQ(4.8, res["grouped_hits"][1]["hits"][0]["document"]["rating"].get<float>());
     ASSERT_EQ("1", res["grouped_hits"][1]["hits"][1]["document"]["id"]);
     ASSERT_FLOAT_EQ(4.3, res["grouped_hits"][1]["hits"][1]["document"]["rating"].get<float>());
 
-    ASSERT_EQ(12, res["grouped_hits"][2]["group_key"][0].get<size_t>());
-    ASSERT_EQ(3, res["grouped_hits"][2]["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"][2]["hits"].size());
+    ASSERT_EQ(size_t{12}, res["grouped_hits"][2]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"][2]["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][2]["hits"].size());
     ASSERT_EQ("2", res["grouped_hits"][2]["hits"][0]["document"]["id"]);
     ASSERT_FLOAT_EQ(4.6, res["grouped_hits"][2]["hits"][0]["document"]["rating"].get<float>());
     ASSERT_EQ("8", res["grouped_hits"][2]["hits"][1]["document"]["id"]);
@@ -1305,15 +1323,15 @@ TEST_F(CollectionGroupingTest, GroupByPinnedHitsOrder) {
                                   "", 1,
                                   {"6:1,1:2"}, {}, {"size"}, 1).get();
 
-    ASSERT_EQ(4, res["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{4}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"].size());
 
-    ASSERT_EQ(12, res["grouped_hits"][0]["group_key"][0].get<size_t>());
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{12}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"].size());
     ASSERT_EQ("6", res["grouped_hits"][0]["hits"][0]["document"]["id"]);
 
-    ASSERT_EQ(11, res["grouped_hits"][1]["group_key"][0].get<size_t>());
-    ASSERT_EQ(1, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][1]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("1", res["grouped_hits"][1]["hits"][0]["document"]["id"]);
 
     // with group limit 2
@@ -1324,15 +1342,15 @@ TEST_F(CollectionGroupingTest, GroupByPinnedHitsOrder) {
                              "", 1,
                              {"6:1,1:2"}, {}, {"size"}, 2).get();
 
-    ASSERT_EQ(4, res["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"].size());
-    ASSERT_EQ(12, res["grouped_hits"][0]["group_key"][0].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{4}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{12}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][0]["hits"].size());
     ASSERT_EQ("6", res["grouped_hits"][0]["hits"][0]["document"]["id"]);
     ASSERT_EQ("2", res["grouped_hits"][0]["hits"][1]["document"]["id"]);
 
-    ASSERT_EQ(11, res["grouped_hits"][1]["group_key"][0].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][1]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("1", res["grouped_hits"][1]["hits"][0]["document"]["id"]);
     ASSERT_EQ("5", res["grouped_hits"][1]["hits"][1]["document"]["id"]);
 
@@ -1344,15 +1362,15 @@ TEST_F(CollectionGroupingTest, GroupByPinnedHitsOrder) {
                                   "", 1,
                                   {"5:1,8:2"}, {}, {"size"}, 1).get();
 
-    ASSERT_EQ(4, res["found"].get<size_t>());
-    ASSERT_EQ(2, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{4}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res["grouped_hits"].size());
 
-    ASSERT_EQ(11, res["grouped_hits"][0]["group_key"][0].get<size_t>());
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"].size());
     ASSERT_EQ("5", res["grouped_hits"][0]["hits"][0]["document"]["id"]);
 
-    ASSERT_EQ(12, res["grouped_hits"][1]["group_key"][0].get<size_t>());
-    ASSERT_EQ(1, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{12}, res["grouped_hits"][1]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("8", res["grouped_hits"][1]["hits"][0]["document"]["id"]);
 
     //random order
@@ -1363,19 +1381,19 @@ TEST_F(CollectionGroupingTest, GroupByPinnedHitsOrder) {
                              "", 1,
                              {"5:1,8:2,0:3"}, {}, {"size"}, 1).get();
 
-    ASSERT_EQ(6, res["found"].get<size_t>());
-    ASSERT_EQ(3, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{6}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"].size());
 
-    ASSERT_EQ(11, res["grouped_hits"][0]["group_key"][0].get<size_t>());
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{11}, res["grouped_hits"][0]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"].size());
     ASSERT_EQ("5", res["grouped_hits"][0]["hits"][0]["document"]["id"]);
 
-    ASSERT_EQ(12, res["grouped_hits"][1]["group_key"][0].get<size_t>());
-    ASSERT_EQ(1, res["grouped_hits"][1]["hits"].size());
+    ASSERT_EQ(size_t{12}, res["grouped_hits"][1]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][1]["hits"].size());
     ASSERT_EQ("8", res["grouped_hits"][1]["hits"][0]["document"]["id"]);
 
-    ASSERT_EQ(10, res["grouped_hits"][2]["group_key"][0].get<size_t>());
-    ASSERT_EQ(1, res["grouped_hits"][2]["hits"].size());
+    ASSERT_EQ(size_t{10}, res["grouped_hits"][2]["group_key"][0].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][2]["hits"].size());
     ASSERT_EQ("0", res["grouped_hits"][2]["hits"][0]["document"]["id"]);
 }
 
@@ -1470,9 +1488,9 @@ TEST_F(CollectionGroupingTest, GroupByPerPage) {
                              "", 1,
                              {}, {}, {"fabric_id"}, 1).get();
 
-    ASSERT_EQ(5, res["found"].get<size_t>());
-    ASSERT_EQ(4, res["grouped_hits"].size());
-    ASSERT_EQ(7, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{7}, res["found_docs"].get<size_t>());
 
     ASSERT_EQ("1005", res["grouped_hits"][0]["group_key"][0]);
     ASSERT_EQ("1002", res["grouped_hits"][1]["group_key"][0]);
@@ -1487,9 +1505,9 @@ TEST_F(CollectionGroupingTest, GroupByPerPage) {
                                 "", 1,
                                 {}, {}, {"fabric_id"}, 1).get();
 
-    ASSERT_EQ(5, res["found"].get<size_t>());
-    ASSERT_EQ(5, res["grouped_hits"].size());
-    ASSERT_EQ(7, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{7}, res["found_docs"].get<size_t>());
 
     ASSERT_EQ("1005", res["grouped_hits"][0]["group_key"][0]);
     ASSERT_EQ("1002", res["grouped_hits"][1]["group_key"][0]);
@@ -1538,9 +1556,9 @@ TEST_F(CollectionGroupingTest, GroupByWithSplitJoinTokens) {
                                 "", 1,
                                 {}, {}, {"product_id"}, 1).get();
 
-    ASSERT_EQ(1, res["found"].get<size_t>());
-    ASSERT_EQ(1, res["grouped_hits"].size());
-    ASSERT_EQ(1, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{1}, res["found_docs"].get<size_t>());
 }
 
 TEST_F(CollectionGroupingTest, GroupByWithEmptyValue) {
@@ -1577,9 +1595,9 @@ TEST_F(CollectionGroupingTest, GroupByWithEmptyValue) {
     ASSERT_TRUE(res_op.ok());
     auto res = res_op.get();
 
-    ASSERT_EQ(3, res["found"].get<size_t>());
-    ASSERT_EQ(3, res["grouped_hits"].size());
-    ASSERT_EQ(3, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{3}, res["found_docs"].get<size_t>());
 }
 
 TEST_F(CollectionGroupingTest, GroupByWithCommaValue) {
@@ -1616,9 +1634,9 @@ TEST_F(CollectionGroupingTest, GroupByWithCommaValue) {
     ASSERT_TRUE(res_op.ok());
     auto res = res_op.get();
 
-    ASSERT_EQ(3, res["found"].get<size_t>());
-    ASSERT_EQ(3, res["grouped_hits"].size());
-    ASSERT_EQ(3, res["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{3}, res["found_docs"].get<size_t>());
 }
 
 TEST_F(CollectionGroupingTest, SortByEval) {
@@ -1757,7 +1775,7 @@ TEST_F(CollectionGroupingTest, SortByEval) {
     for (auto const &json: documents) {
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -1793,57 +1811,57 @@ TEST_F(CollectionGroupingTest, SortByEval) {
 
     nlohmann::json res_obj = nlohmann::json::parse(json_res);
     // Validate top-level keys
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["found_docs"].get<size_t>());
-    ASSERT_EQ(5, res_obj["out_of"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["found_docs"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["out_of"].get<size_t>());
 
     // Validate facet_counts
     ASSERT_TRUE(res_obj["facet_counts"].is_array());
-    ASSERT_EQ(6, res_obj["facet_counts"].size());
+    ASSERT_EQ(size_t{6}, res_obj["facet_counts"].size());
 
     // Validate offer.seller._id facet
     ASSERT_EQ("offer.seller._id", res_obj["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(5, res_obj["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{5}, res_obj["facet_counts"][0]["counts"].size());
     ASSERT_EQ(1, res_obj["facet_counts"][0]["counts"][0]["count"]);
     ASSERT_EQ("r_0NRwMuoO", res_obj["facet_counts"][0]["counts"][0]["value"]);
 
     // Validate category facet
     ASSERT_EQ("category", res_obj["facet_counts"][1]["field_name"]);
-    ASSERT_EQ(1, res_obj["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][1]["counts"].size());
     ASSERT_EQ(5, res_obj["facet_counts"][1]["counts"][0]["count"]);
     ASSERT_EQ("Test Category", res_obj["facet_counts"][1]["counts"][0]["value"]);
 
     // Validate subCategory facet
     ASSERT_EQ("subCategory", res_obj["facet_counts"][2]["field_name"]);
-    ASSERT_EQ(1, res_obj["facet_counts"][2]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][2]["counts"].size());
     ASSERT_EQ(5, res_obj["facet_counts"][2]["counts"][0]["count"]);
     ASSERT_EQ("Test SubCategory", res_obj["facet_counts"][2]["counts"][0]["value"]);
 
     // Validate department facet
     ASSERT_EQ("department", res_obj["facet_counts"][3]["field_name"]);
-    ASSERT_EQ(1, res_obj["facet_counts"][3]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][3]["counts"].size());
     ASSERT_EQ(5, res_obj["facet_counts"][3]["counts"][0]["count"]);
     ASSERT_EQ("Test Department", res_obj["facet_counts"][3]["counts"][0]["value"]);
 
     // Validate product.brand facet
     ASSERT_EQ("product.brand", res_obj["facet_counts"][4]["field_name"]);
-    ASSERT_EQ(1, res_obj["facet_counts"][4]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][4]["counts"].size());
     ASSERT_EQ(5, res_obj["facet_counts"][4]["counts"][0]["count"]);
     ASSERT_EQ("Test Brand", res_obj["facet_counts"][4]["counts"][0]["value"]);
 
     // Validate collections.names facet
     ASSERT_EQ("collections.names", res_obj["facet_counts"][5]["field_name"]);
-    ASSERT_EQ(1, res_obj["facet_counts"][5]["counts"].size());
+    ASSERT_EQ(size_t{1}, res_obj["facet_counts"][5]["counts"].size());
     ASSERT_EQ(5, res_obj["facet_counts"][5]["counts"][0]["count"]);
     ASSERT_EQ("top-200-produtos", res_obj["facet_counts"][5]["counts"][0]["value"]);
 
     // Validate grouped_hits
-    ASSERT_EQ(5, res_obj["grouped_hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["grouped_hits"].size());
 
     for (size_t i = 0; i < res_obj["grouped_hits"].size(); ++i) {
         auto& hit_group = res_obj["grouped_hits"][i];
-        ASSERT_EQ(1, hit_group["found"].get<size_t>());
-        ASSERT_EQ(1, hit_group["hits"].size());
+        ASSERT_EQ(size_t{1}, hit_group["found"].get<size_t>());
+        ASSERT_EQ(size_t{1}, hit_group["hits"].size());
 
         auto& document = hit_group["hits"][0]["document"];
         ASSERT_EQ("Test Category", document["category"].get<std::string>());
@@ -1899,21 +1917,21 @@ TEST_F(CollectionGroupingTest, HighCardinalityField) {
 
     auto res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(397, res_obj["found"]);
-    ASSERT_EQ(50, res_obj["grouped_hits"].size());
+    ASSERT_EQ(size_t{50}, res_obj["grouped_hits"].size());
 
     req_params["page"] = "8";
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(397, res_obj["found"]);
-    ASSERT_EQ(47, res_obj["grouped_hits"].size());
+    ASSERT_EQ(size_t{47}, res_obj["grouped_hits"].size());
 
     req_params["page"] = "9";
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(397, res_obj["found"]);
-    ASSERT_EQ(0, res_obj["grouped_hits"].size());
+    ASSERT_EQ(size_t{0}, res_obj["grouped_hits"].size());
 }
 
 TEST_F(CollectionGroupingTest, InfixSearch) {
@@ -1964,11 +1982,11 @@ TEST_F(CollectionGroupingTest, InfixSearch) {
     ASSERT_EQ(1, res_obj["found"]);
     ASSERT_EQ(2, res_obj["found_docs"]);
 
-    ASSERT_EQ(1, res_obj["grouped_hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["grouped_hits"].size());
     ASSERT_EQ(2, res_obj["grouped_hits"][0]["found"]);
-    ASSERT_EQ(1, res_obj["grouped_hits"][0]["group_key"].size());
+    ASSERT_EQ(size_t{1}, res_obj["grouped_hits"][0]["group_key"].size());
     ASSERT_EQ("KXSECPRESSMENTION", res_obj["grouped_hits"][0]["group_key"][0]);
-    ASSERT_EQ(2, res_obj["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["grouped_hits"][0]["hits"].size());
 
     ASSERT_EQ("1", res_obj["grouped_hits"][0]["hits"][0]["document"]["id"]);
     ASSERT_EQ("0", res_obj["grouped_hits"][0]["hits"][1]["document"]["id"]);
@@ -2020,7 +2038,7 @@ TEST_F(CollectionGroupingTest, GroupMaxCandidates) {
     ASSERT_TRUE(search_op.ok());
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(986, res_obj["found"]);
-    ASSERT_EQ(50, res_obj["grouped_hits"].size());
+    ASSERT_EQ(size_t{50}, res_obj["grouped_hits"].size());
 
     req_params["page"] = "20";
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
@@ -2028,7 +2046,7 @@ TEST_F(CollectionGroupingTest, GroupMaxCandidates) {
     res_obj = nlohmann::json::parse(json_res);
     // Actual `found` count is returned when we get to the last page.
     ASSERT_EQ(991, res_obj["found"]);
-    ASSERT_EQ(41, res_obj["grouped_hits"].size());
+    ASSERT_EQ(size_t{41}, res_obj["grouped_hits"].size());
 
     req_params = {
             {"collection", "coll"},

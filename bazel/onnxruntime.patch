@@ -1,0 +1,10 @@
+--- a/cmake/external/extensions.cmake
++++ b/cmake/external/extensions.cmake
+@@ -45,6 +45,7 @@
+     EXCLUDE_FROM_ALL
+   )
+   onnxruntime_fetchcontent_makeavailable(extensions)
++  set(onnxruntime_EXTENSIONS_PATH ${extensions_SOURCE_DIR})
+ else()
+   # when onnxruntime-extensions is not a subdirectory of onnxruntime,
+   # output binary directory must be explicitly specified.

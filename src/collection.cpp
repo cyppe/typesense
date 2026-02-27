@@ -170,7 +170,7 @@ Collection::~Collection() {
     if (vq_model) {
         vq_model->dec_collection_ref_count();
         if (vq_model->get_collection_ref_count() == 0) {
-            LOG(INFO) << "Unloading voice query model " << vq_model->get_model_name();
+            TS_LOG(INFO) << "Unloading voice query model " << vq_model->get_model_name();
             VQModelManager::get_instance().delete_model(vq_model->get_model_name());
         }
     }
@@ -222,20 +222,53 @@ Option<bool> Collection::update_async_references_with_lock(const std::string& re
     std::vector<std::string> buffer;
     buffer.reserve(filter_result.count);
 
+    std::vector<std::string> seq_id_keys;
+    seq_id_keys.reserve(filter_result.count);
+    for(uint32_t i = 0; i < filter_result.count; i++) {
+        seq_id_keys.emplace_back(get_seq_id_key(filter_result.docs[i]));
+    }
+
+    std::vector<StoreStatus> fetched_doc_statuses;
+    std::vector<std::string> fetched_docs;
+    store->multi_get(seq_id_keys, fetched_doc_statuses, fetched_docs, false);
+
+    auto load_existing_document = [&](uint32_t index, uint32_t seq_id, nlohmann::json& existing_document) -> bool {
+        if(index >= fetched_doc_statuses.size() || index >= fetched_docs.size()) {
+            TS_LOG(ERROR) << "`" << name << "` collection: Missing fetched result for sequence ID `" << seq_id << "`.";
+            return false;
+        }
+
+        const auto status = fetched_doc_statuses[index];
+        if(status == StoreStatus::NOT_FOUND) {
+            TS_LOG(ERROR) << "`" << name << "` collection: Sequence ID `" << seq_id
+                          << "` exists, but document is missing.";
+            return false;
+        }
+
+        if(status == StoreStatus::ERROR) {
+            TS_LOG(ERROR) << "`" << name << "` collection: Error fetching JSON document for sequence ID: " << seq_id;
+            return false;
+        }
+
+        try {
+            existing_document = nlohmann::json::parse(fetched_docs[index]);
+        } catch(...) {
+            TS_LOG(ERROR) << "`" << name << "` collection: Error while parsing stored document with sequence ID: "
+                          << seq_id;
+            return false;
+        }
+
+        return true;
+    };
+
     for (uint32_t i = 0; i < filter_result.count; i++) {
         auto const& seq_id = filter_result.docs[i];
 
         nlohmann::json existing_document;
-        auto get_doc_op = get_document_from_store(get_seq_id_key(seq_id), existing_document);
-        if (!get_doc_op.ok()) {
-            if (get_doc_op.code() == 404) {
-                LOG(ERROR) << "`" << name << "` collection: Sequence ID `" << seq_id << "` exists, but document is missing.";
-                continue;
-            }
-
-            LOG(ERROR) << "`" << name << "` collection: " << get_doc_op.error();
+        if(!load_existing_document(i, seq_id, existing_document)) {
             continue;
         }
+
         auto const id = existing_document["id"].get<std::string>();
         auto const reference_helper_field_name = field_name + fields::REFERENCE_HELPER_FIELD_SUFFIX;
 
@@ -300,7 +333,7 @@ Option<doc_seq_id_t> Collection::to_doc(const std::string & json_str, nlohmann::
     try {
         document = nlohmann::json::parse(json_str);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         return Option<doc_seq_id_t>(400, std::string("Bad JSON: ") + e.what());
     }
 
@@ -504,7 +537,7 @@ Option<nlohmann::json> Collection::add(const std::string & json_str,
         try {
             res_doc = nlohmann::json::parse(json_lines[0]);
         } catch(const std::exception& e) {
-            LOG(ERROR) << "JSON error: " << e.what();
+            TS_LOG(ERROR) << "JSON error: " << e.what();
             return Option<nlohmann::json>(400, std::string("Bad JSON: ") + e.what());
         }
 
@@ -570,10 +603,11 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
                                     const DIRTY_VALUES& dirty_values, const bool& return_doc, const bool& return_id,
                                     const size_t remote_embedding_batch_size,
                                     const size_t remote_embedding_timeout_ms,
-                                    const size_t remote_embedding_num_tries) {
+                                    const size_t remote_embedding_num_tries,
+                                    const size_t index_batch_size) {
     std::vector<index_record> index_records;
 
-    const size_t index_batch_size = 1000;
+    const size_t effective_index_batch_size = std::max<size_t>(1, index_batch_size);
     size_t num_indexed = 0;
     //bool exceeds_memory_limit = false;
 
@@ -675,7 +709,7 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
 
         do_batched_index:
 
-        if((i+1) % index_batch_size == 0 || i == json_lines.size()-1 || repeated_doc) {
+        if((i+1) % effective_index_batch_size == 0 || i == json_lines.size()-1 || repeated_doc) {
             batch_index(index_records, json_lines, num_indexed, return_doc, return_id, remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries);
 
             if(found_batch_new_field) {
@@ -723,7 +757,7 @@ Option<nlohmann::json> Collection::update_matching_filter(const std::string& fil
     try {
         update_document = nlohmann::json::parse(json_str);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         return Option<nlohmann::json>(400, std::string("Bad JSON: ") + e.what());
     }
 
@@ -770,18 +804,41 @@ Option<nlohmann::json> Collection::update_matching_filter(const std::string& fil
         }
 
         for (size_t i = 0; i < filter_result.count;) {
-            for (int buffer_counter = 0; buffer_counter < batch_size && i < filter_result.count;) {
-                uint32_t seq_id = filter_result.docs[i++];
-                nlohmann::json existing_document;
+            std::vector<uint32_t> seq_ids_batch;
+            seq_ids_batch.reserve(batch_size);
+            std::vector<std::string> seq_id_keys;
+            seq_id_keys.reserve(batch_size);
 
-                auto get_doc_op = get_document_from_store(get_seq_id_key(seq_id), existing_document);
-                if (!get_doc_op.ok()) {
+            for(int buffer_counter = 0; buffer_counter < batch_size && i < filter_result.count; buffer_counter++) {
+                uint32_t seq_id = filter_result.docs[i++];
+                seq_ids_batch.push_back(seq_id);
+                seq_id_keys.emplace_back(get_seq_id_key(seq_id));
+            }
+
+            std::vector<StoreStatus> fetched_doc_statuses;
+            std::vector<std::string> fetched_docs;
+            store->multi_get(seq_id_keys, fetched_doc_statuses, fetched_docs, false);
+
+            for(size_t j = 0; j < seq_ids_batch.size(); j++) {
+                if(j >= fetched_doc_statuses.size() || j >= fetched_docs.size()) {
+                    TS_LOG(ERROR) << "`" << name << "` collection: Missing fetched result for sequence ID `"
+                                  << seq_ids_batch[j] << "`.";
+                    continue;
+                }
+
+                if(fetched_doc_statuses[j] != StoreStatus::FOUND) {
+                    continue;
+                }
+
+                nlohmann::json existing_document;
+                try {
+                    existing_document = nlohmann::json::parse(fetched_docs[j]);
+                } catch(...) {
                     continue;
                 }
 
                 update_document["id"] = existing_document["id"].get<std::string>();
                 buffer.push_back(update_document.dump());
-                buffer_counter++;
             }
 
             auto res = add_many(buffer, dummy, index_operation_t::UPDATE, "", dirty_values);
@@ -800,60 +857,92 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
 
     batch_index_in_memory(index_records, remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries, true);
 
-    // store only documents that were indexed in-memory successfully
+    // Aggregate all successful document writes into a single WriteBatch for efficiency.
+    // This reduces RocksDB memtable flushes from N to 1 per batch (typically 1000 docs).
+    rocksdb::WriteBatch aggregated_batch;
+    std::vector<size_t> batch_record_indices;  // track which records are in the batch
+
+    for(size_t i = 0; i < index_records.size(); i++) {
+        auto& index_record = index_records[i];
+        if(!index_record.indexed.ok()) continue;
+
+        if(index_record.is_update) {
+            remove_flat_fields(index_record.new_doc);
+            for(auto& field: fields) {
+                if(!field.store) {
+                    index_record.new_doc.erase(field.name);
+                }
+            }
+            const std::string& serialized_json = index_record.new_doc.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore);
+            aggregated_batch.Put(get_seq_id_key(index_record.seq_id), serialized_json);
+        } else {
+            remove_flat_fields(index_record.doc);
+            for(auto& field: fields) {
+                if(!field.store) {
+                    index_record.doc.erase(field.name);
+                }
+            }
+            const std::string& seq_id_str = std::to_string(index_record.seq_id);
+            const std::string& serialized_json = index_record.doc.dump(-1, ' ', false,
+                                                                       nlohmann::detail::error_handler_t::ignore);
+            aggregated_batch.Put(get_doc_id_key(index_record.doc["id"]), seq_id_str);
+            aggregated_batch.Put(get_seq_id_key(index_record.seq_id), serialized_json);
+        }
+        batch_record_indices.push_back(i);
+    }
+
+    // Attempt single aggregated write (covers both inserts and updates)
+    if(!batch_record_indices.empty()) {
+        bool write_ok = store->batch_write(aggregated_batch);
+
+        if(write_ok) {
+            // All writes succeeded — mark all records as indexed
+            for(size_t idx : batch_record_indices) {
+                num_indexed++;
+                index_records[idx].index_success();
+            }
+        } else {
+            // Aggregated write failed — fall back to per-document writes for error granularity
+            TS_LOG(WARNING) << "Aggregated batch write failed, falling back to per-document writes";
+            for(size_t idx : batch_record_indices) {
+                auto& index_record = index_records[idx];
+                bool doc_write_ok = false;
+
+                if(index_record.is_update) {
+                    const std::string& serialized_json = index_record.new_doc.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore);
+                    doc_write_ok = store->insert(get_seq_id_key(index_record.seq_id), serialized_json);
+                    if(!doc_write_ok) {
+                        TS_LOG(ERROR) << "Update to disk failed. Will restore old document";
+                        remove_document(index_record.new_doc, index_record.seq_id, false);
+                        index_in_memory(index_record.old_doc, index_record.seq_id, index_record.operation, index_record.dirty_values);
+                    }
+                } else {
+                    rocksdb::WriteBatch single_batch;
+                    single_batch.Put(get_doc_id_key(index_record.doc["id"]), std::to_string(index_record.seq_id));
+                    single_batch.Put(get_seq_id_key(index_record.seq_id),
+                                     index_record.doc.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore));
+                    doc_write_ok = store->batch_write(single_batch);
+                    if(!doc_write_ok) {
+                        TS_LOG(ERROR) << "Write to disk failed. Will restore old document";
+                        remove_document(index_record.doc, index_record.seq_id, false);
+                    }
+                }
+
+                if(doc_write_ok) {
+                    num_indexed++;
+                    index_record.index_success();
+                } else {
+                    index_record.index_failure(500, "Could not write to on-disk storage.");
+                }
+            }
+        }
+    }
+
+    // Build response JSON for all records
     for(auto& index_record: index_records) {
         nlohmann::json res;
 
         if(index_record.indexed.ok()) {
-            if(index_record.is_update) {
-                remove_flat_fields(index_record.new_doc);
-                for(auto& field: fields) {
-                    if(!field.store) {
-                        index_record.new_doc.erase(field.name);
-                    }
-                }
-                const std::string& serialized_json = index_record.new_doc.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore);
-
-                bool write_ok = store->insert(get_seq_id_key(index_record.seq_id), serialized_json);
-
-                if(!write_ok) {
-                    // we will attempt to reindex the old doc on a best-effort basis
-                    LOG(ERROR) << "Update to disk failed. Will restore old document";
-                    remove_document(index_record.new_doc, index_record.seq_id, false);
-                    index_in_memory(index_record.old_doc, index_record.seq_id, index_record.operation, index_record.dirty_values);
-                    index_record.index_failure(500, "Could not write to on-disk storage.");
-                } else {
-                    num_indexed++;
-                    index_record.index_success();
-                }
-
-            } else {
-                // remove flattened field values before storing on disk
-                remove_flat_fields(index_record.doc);
-                for(auto& field: fields) {
-                    if(!field.store) {
-                        index_record.doc.erase(field.name);
-                    }
-                }
-                const std::string& seq_id_str = std::to_string(index_record.seq_id);
-                const std::string& serialized_json = index_record.doc.dump(-1, ' ', false,
-                                                                           nlohmann::detail::error_handler_t::ignore);
-
-                rocksdb::WriteBatch batch;
-                batch.Put(get_doc_id_key(index_record.doc["id"]), seq_id_str);
-                batch.Put(get_seq_id_key(index_record.seq_id), serialized_json);
-                bool write_ok = store->batch_write(batch);
-
-                if(!write_ok) {
-                    // remove from in-memory store to keep the state synced
-                    LOG(ERROR) << "Write to disk failed. Will restore old document";
-                    remove_document(index_record.doc, index_record.seq_id, false);
-                    index_record.index_failure(500, "Could not write to on-disk storage.");
-                } else {
-                    num_indexed++;
-                    index_record.index_success();
-                }
-            }
 
             res["success"] = index_record.indexed.ok();
 
@@ -966,7 +1055,7 @@ size_t Collection::batch_index_in_memory(std::vector<index_record>& index_record
 
 bool Collection::does_curation_match(const curation_t& curation, std::string& query,
                                      std::set<uint32_t>& excluded_set,
-                                     string& actual_query, const std::string& curation_normalized_query, const string& filter_query,
+                                     std::string& actual_query, const std::string& curation_normalized_query, const std::string& filter_query,
                                      bool already_segmented,
                                      const bool tags_matched,
                                      const bool wildcard_tag_matched,
@@ -1017,7 +1106,7 @@ bool Collection::does_curation_match(const curation_t& curation, std::string& qu
             synonym_reduction(tokens, curation.rule.locale, results, synonym_prefix, synonym_num_typos);
 
             if(!results.empty()) {
-                int i = 0;
+                size_t i = 0;
                 while(!query_match && i < results.size()) {
                     auto vec = results[i];
                     auto token = StringUtils::join(vec, " ");
@@ -1082,7 +1171,7 @@ bool Collection::does_curation_match(const curation_t& curation, std::string& qu
     return true;
 }
 
-Option<bool> Collection::curate_results(string& actual_query, const string& filter_query,
+Option<bool> Collection::curate_results(std::string& actual_query, const std::string& filter_query,
                                 bool enable_curations, bool already_segmented,
                                 const std::set<std::string>& tags,
                                 const std::map<size_t, std::vector<std::string>>& pinned_hits,
@@ -1127,7 +1216,6 @@ Option<bool> Collection::curate_results(string& actual_query, const string& filt
             }
             for(const auto& kv : list_op.get()) { 
               // compute normalize query
-              auto& curation = kv.second;
               curation_set_curations.push_back(kv.second); 
             }
         }
@@ -1287,8 +1375,6 @@ Option<bool> Collection::validate_and_standardize_sort_fields(const std::vector<
                                                               const uint32_t& union_search_index) const {
 
     uint32_t eval_sort_count = 0;
-    size_t num_sort_expressions = 0;
-
     for(size_t i = 0; i < sort_fields.size(); i++) {
         const sort_by& _sort_field = sort_fields[i];
 
@@ -2028,7 +2114,7 @@ Option<bool> Collection::extract_field_name(const std::string& field_name,
 }
 
 Option<int64_t> Collection::get_referenced_geo_distance_with_lock(const sort_by& sort_field, const bool& is_asc, const uint32_t& seq_id,
-                                                                  const std::map<basic_string<char>, reference_filter_result_t>& references,
+                                                                  const std::map<std::string, reference_filter_result_t>& references,
                                                                   const S2LatLng& reference_lat_lng, const bool& round_distance) const {
     std::shared_lock lock(mutex);
     return index->get_referenced_geo_distance(sort_field, is_asc, seq_id, references, reference_lat_lng, round_distance);
@@ -2090,7 +2176,6 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
     const spp::sparse_hash_set<std::string>& exclude_fields = coll_args.exclude_fields;
     const size_t& max_facet_values = coll_args.max_facet_values;
     const std::string& simple_facet_query = coll_args.simple_facet_query;
-    const std::string& highlight_full_fields = coll_args.highlight_full_fields;
     const size_t& typo_tokens_threshold = coll_args.typo_tokens_threshold;
     const std::string& pinned_hits_str = coll_args.pinned_hits_str;
     const std::string& hidden_hits_str = coll_args.hidden_hits_str;
@@ -2101,7 +2186,6 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
     const bool& prioritize_exact_match = coll_args.prioritize_exact_match;
     const bool& pre_segmented_query = coll_args.pre_segmented_query;
     const bool& enable_curations = coll_args.enable_curations;
-    const std::string& highlight_fields = coll_args.highlight_fields;
     const bool& exhaustive_search = coll_args.exhaustive_search;
     const size_t& search_stop_millis = coll_args.search_cutoff_ms;
     const size_t& min_len_1typo = coll_args.min_len_1typo;
@@ -2128,9 +2212,6 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
     const std::string& drop_tokens_mode = coll_args.drop_tokens_mode_str;
     const bool& prioritize_num_matching_fields = coll_args.prioritize_num_matching_fields;
     const bool& group_missing_values = coll_args.group_missing_values;
-    const bool& conversation = coll_args.conversation;
-    const std::string& conversation_model_id = coll_args.conversation_model_id;
-    const std::string& conversation_id = coll_args.conversation_id;
     const std::string& curation_tags_str = coll_args.curation_tags;
     const std::string& voice_query = coll_args.voice_query;
     const bool& enable_typos_for_numerical_tokens = coll_args.enable_typos_for_numerical_tokens;
@@ -2562,7 +2643,7 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
         }
     }
 
-    int per_page_max = Config::get_instance().get_max_per_page();
+    size_t per_page_max = static_cast<size_t>(Config::get_instance().get_max_per_page());
 
     if(per_page > per_page_max) {
         std::string message = "Only upto " + std::to_string(per_page_max) + " hits can be fetched per page.";
@@ -2635,25 +2716,25 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
     bool filter_curated_hits = filter_curated_hits_option || filter_curated_hits_curations;
 
     /*for(auto& kv: included_ids) {
-        LOG(INFO) << "key: " << kv.first;
+        TS_LOG(INFO) << "key: " << kv.first;
         for(auto val: kv.second) {
-            LOG(INFO) << val;
+            TS_LOG(INFO) << val;
         }
     }
 
-    LOG(INFO) << "Excludes:";
+    TS_LOG(INFO) << "Excludes:";
 
     for(auto id: excluded_ids) {
-        LOG(INFO) << id;
+        TS_LOG(INFO) << id;
     }
 
-    LOG(INFO) << "included_ids size: " << included_ids.size();
+    TS_LOG(INFO) << "included_ids size: " << included_ids.size();
     for(auto& group: included_ids) {
         for(uint32_t& seq_id: group.second) {
-            LOG(INFO) << "seq_id: " << seq_id;
+            TS_LOG(INFO) << "seq_id: " << seq_id;
         }
 
-        LOG(INFO) << "----";
+        TS_LOG(INFO) << "----";
     }
     */
 
@@ -2671,7 +2752,7 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
     bool is_group_by_query = group_by_fields.size() > 0;
     bool is_vector_query = !vector_query.field_name.empty();
 
-    //LOG(INFO) << "Num indices used for querying: " << indices.size();
+    //TS_LOG(INFO) << "Num indices used for querying: " << indices.size();
     std::vector<query_tokens_t> field_query_tokens;
     std::vector<std::string> q_include_tokens;
     std::vector<std::string> q_unstemmed_tokens;
@@ -2787,7 +2868,6 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
 
     // search all indices
 
-    size_t index_id = 0;
     index_args = std::make_unique<search_args>(field_query_tokens, weighted_search_fields,
                                                match_type, facets, included_ids, excluded_ids,
                                                sort_fields_std, facet_query, num_typos, max_facet_values,
@@ -2980,24 +3060,11 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
     const auto& highlight_end_tag = coll_args.highlight_end_tag;
     const auto& group_by_fields = search_params->group_by_fields;
     const auto& ref_include_exclude_fields_vec = coll_args.ref_include_exclude_fields_vec;
-    const auto& conversation = coll_args.conversation;
     const auto& match_type = coll_args.match_type;
     const auto& field_query_tokens = search_params->field_query_tokens;
-    const auto& vector_query_str = coll_args.vector_query;
-    const auto& conversation_model_id = coll_args.conversation_model_id;
-    const auto& max_facet_values = coll_args.max_facet_values;
-    const auto& facet_return_parent = coll_args.facet_return_parent;
     const auto& voice_query = coll_args.voice_query;
     const auto& total = search_params->found_count;
-    const auto& personalization_user_id = coll_args.personalization_user_id;
-    const auto& personalization_model_id = coll_args.personalization_model_id;
-    const auto& personalization_type = coll_args.personalization_type;
-    const auto& personalization_user_field = coll_args.personalization_user_field;
-    const auto& personalization_item_field = coll_args.personalization_item_field;
-    const auto& personalization_n_events = coll_args.personalization_n_events;
-    
 
-    auto& conversation_id = coll_args.conversation_id;
 
     auto& raw_result_kvs = search_params->raw_result_kvs;
     auto& curation_result_kvs = search_params->curation_result_kvs;
@@ -3166,7 +3233,6 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
     }
 
     std::string facet_query_last_token;
-    size_t facet_query_num_tokens = 0;       // used to identify drop token scenario
 
     if(!facet_query.query.empty()) {
         // identify facet hash tokens
@@ -3183,7 +3249,6 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
         Tokenizer(facet_query.query, normalise, !fq_field.is_string(), fq_field.locale,
                   symbols, separators, fq_field.get_stemmer()).tokenize(facet_query_tokens);
 
-        facet_query_num_tokens = facet_query_tokens.size();
         facet_query_last_token = facet_query_tokens.empty() ? "" : facet_query_tokens.back();
     }
 
@@ -3245,7 +3310,7 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
             const Option<bool> & document_op = get_document_from_store(seq_id_key, document);
 
             if(!document_op.ok()) {
-                LOG(ERROR) << "Document fetch error. " << document_op.error();
+                TS_LOG(ERROR) << "Document fetch error. " << document_op.error();
                 continue;
             }
             nlohmann::json broken_ref_doc{};
@@ -3400,17 +3465,17 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
     }
 
     //long long int timeMillis = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - begin).count();
-    //!LOG(INFO) << "Time taken for result calc: " << timeMillis << "us";
+    //!TS_LOG(INFO) << "Time taken for result calc: " << timeMillis << "us";
     //!store->print_memory_usage();
     return Option<nlohmann::json>(result);
 }
 
 void Collection::do_highlighting(const tsl::htrie_map<char, field>& search_schema, const bool& enable_nested_fields,
                                  const std::vector<char>& symbols_to_index, const std::vector<char>& token_separators,
-                                 const string& query, const std::vector<std::string>& raw_search_fields,
-                                 const string& raw_query, const bool& enable_highlight_v1, const size_t& snippet_threshold,
-                                 const size_t& highlight_affix_num_tokens, const string& highlight_start_tag,
-                                 const string& highlight_end_tag, const std::vector<std::string>& highlight_field_names,
+                                 const std::string& query, const std::vector<std::string>& raw_search_fields,
+                                 const std::string& raw_query, const bool& enable_highlight_v1, const size_t& snippet_threshold,
+                                 const size_t& highlight_affix_num_tokens, const std::string& highlight_start_tag,
+                                 const std::string& highlight_end_tag, const std::vector<std::string>& highlight_field_names,
                                  const std::vector<std::string>& highlight_full_field_names,
                                  const std::vector<highlight_field_t>& highlight_items, const uint8_t* index_symbols,
                                  const KV* field_order_kv, const nlohmann::json& document, nlohmann::json& highlight_res,
@@ -3854,7 +3919,7 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
             const Option<bool>& document_op = coll->get_document_from_store(seq_id_key, document);
 
             if (!document_op.ok()) {
-                LOG(ERROR) << "Document fetch error. " << document_op.error();
+                TS_LOG(ERROR) << "Document fetch error. " << document_op.error();
                 continue;
             }
             nlohmann::json broken_ref_doc{};
@@ -4023,7 +4088,7 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
     //populate facets
     result["facet_counts"] = nlohmann::json::array();
 
-    for(auto search_index = 0; search_index < searches.size(); ++search_index) {
+    for(size_t search_index = 0; search_index < searches.size(); search_index++) {
         const auto& search_params = search_params_guards[search_index].get();
 
         if(!search_params->facets.empty()) {
@@ -4052,9 +4117,9 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
 }
 
 void Collection::expand_search_query(const tsl::htrie_map<char, field>& search_schema, const std::vector<char>& symbols_to_index,const std::vector<char>& token_separators,
-                                     const string& raw_query, size_t offset, size_t total, const search_args* search_params,
+                                     const std::string& raw_query, size_t offset, size_t total, const search_args* search_params,
                                      const std::vector<std::vector<KV*>>& result_group_kvs,
-                                     const std::vector<std::string>& raw_search_fields, string& first_q) {
+                                     const std::vector<std::string>& raw_search_fields, std::string& first_q) {
     if(!Config::get_instance().get_enable_search_analytics()) {
         return ;
     }
@@ -4187,7 +4252,6 @@ void Collection::process_search_field_weights(const std::vector<search_field_t>&
                 }
             }
 
-            const auto& search_field = search_fields[index_weight.first];
             const auto weight = query_by_weights[i];
             const size_t orig_index = index_weight.first;
             auto wsearch_field = search_fields[orig_index];
@@ -4584,8 +4648,8 @@ void Collection::parse_search_query(const std::string &query, std::vector<std::s
         if(!stopwords_set.empty()) {
             const auto &stopword_op = StopwordsManager::get_instance().get_stopword(stopwords_set, stopwordStruct);
             if (!stopword_op.ok()) {
-                LOG(ERROR) << stopword_op.error();
-                LOG(ERROR) << "Error fetching stopword_list for stopword " << stopwords_set;
+                TS_LOG(ERROR) << stopword_op.error();
+                TS_LOG(ERROR) << "Error fetching stopword_list for stopword " << stopwords_set;
             }
         }
 
@@ -4717,19 +4781,19 @@ bool Collection::facet_value_to_string(const facet &a_facet, const facet_count_t
             return false;
         }
 
-        LOG(ERROR) << "Could not find field " << a_facet.field_name << " in document during faceting.";
-        LOG(ERROR) << "Facet field type: " << search_schema.at(a_facet.field_name).type;
-        LOG(ERROR) << "Actual document: " << document;
+        TS_LOG(ERROR) << "Could not find field " << a_facet.field_name << " in document during faceting.";
+        TS_LOG(ERROR) << "Facet field type: " << search_schema.at(a_facet.field_name).type;
+        TS_LOG(ERROR) << "Actual document: " << document;
         return false;
     }
 
     if(search_schema.at(a_facet.field_name).is_array()) {
         size_t array_sz = document[a_facet.field_name].size();
         if(facet_count.array_pos >= array_sz) {
-            LOG(ERROR) << "Facet field array size " << array_sz << " lesser than array pos " <<  facet_count.array_pos
+            TS_LOG(ERROR) << "Facet field array size " << array_sz << " lesser than array pos " <<  facet_count.array_pos
                        << " for facet field " << a_facet.field_name;
-            LOG(ERROR) << "Facet field type: " << search_schema.at(a_facet.field_name).type;
-            LOG(ERROR) << "Actual document: " << document;
+            TS_LOG(ERROR) << "Facet field type: " << search_schema.at(a_facet.field_name).type;
+            TS_LOG(ERROR) << "Actual document: " << document;
             return false;
         }
     }
@@ -4738,7 +4802,7 @@ bool Collection::facet_value_to_string(const facet &a_facet, const facet_count_t
                                                  document[a_facet.field_name], fallback_field_type,
                                                  DIRTY_VALUES::COERCE_OR_REJECT);
     if(!coerce_op.ok()) {
-        LOG(ERROR) << "Bad type for field " << a_facet.field_name << ", document: " << document;
+        TS_LOG(ERROR) << "Bad type for field " << a_facet.field_name << ", document: " << document;
         return false;
     }
 
@@ -4932,7 +4996,7 @@ void Collection::highlight_result(const bool& enable_nested_fields, const std::v
         /*std::string qtok_buff;
         for(auto it = qtoken_leaves.begin(); it != qtoken_leaves.end(); ++it) {
             it.key(qtok_buff);
-            LOG(INFO) << "Token: " << qtok_buff << ", root_len: " << it.value().root_len;
+            TS_LOG(INFO) << "Token: " << qtok_buff << ", root_len: " << it.value().root_len;
         }*/
 
         if(!qtoken_leaves.empty()) {
@@ -4956,7 +5020,7 @@ void Collection::highlight_result(const bool& enable_nested_fields, const std::v
                 uint64_t this_match_score = this_match.get_match_score(1, token_positions.size(), 0);
                 match_indices.emplace_back(this_match, this_match_score, array_index);
 
-                /*LOG(INFO) << "doc_id: " << document["id"] << ", search_field: " << search_field.name
+                /*TS_LOG(INFO) << "doc_id: " << document["id"] << ", search_field: " << search_field.name
                           << ", words_present: " << size_t(this_match.words_present)
                           << ", match_score: " << this_match_score
                           << ", match.distance: " << size_t(this_match.distance);*/
@@ -4988,8 +5052,9 @@ void Collection::highlight_result(const bool& enable_nested_fields, const std::v
             // Since we will iterate on both matching and non-matching array elements for highlighting,
             // we need to check if `array_i`exists within match_indices vec.
 
+            const size_t array_index = static_cast<size_t>(array_i);
             for (size_t match_index = 0; match_index < match_indices.size(); match_index++) {
-                if (match_indices[match_index].index == array_i) {
+                if (match_indices[match_index].index == array_index) {
                     matched_index = match_index;
                     break;
                 }
@@ -5114,7 +5179,7 @@ void Collection::highlight_result(const bool& enable_nested_fields, const std::v
             continue;
         }
 
-        /*LOG(INFO) << "field: " << document[search_field.name] << ", id: " << field_order_kv->key
+        /*TS_LOG(INFO) << "field: " << document[search_field.name] << ", id: " << field_order_kv->key
                   << ", index: " << match_index.index;*/
 
         std::string text;
@@ -5630,8 +5695,8 @@ bool Collection::handle_highlight_text(std::string& text, const bool& normalise,
     return true;
 }
 
-void Collection::highlight_text(const string& highlight_start_tag, const string& highlight_end_tag,
-                                  const string& text,
+void Collection::highlight_text(const std::string& highlight_start_tag, const std::string& highlight_end_tag,
+                                  const std::string& text,
                                   const std::map<size_t, size_t>& token_offsets,
                                   size_t snippet_end_offset, std::vector<std::string>& matched_tokens,
                                   std::map<size_t, size_t>::iterator& offset_it,
@@ -5667,7 +5732,7 @@ void Collection::highlight_text(const string& highlight_start_tag, const string&
 
                 for(size_t j = 0; j < token_len; j++) {
                     if((snippet_start_offset + j) >= text.size()) {
-                        LOG(ERROR) << "??? snippet_start_offset: " << snippet_start_offset
+                        TS_LOG(ERROR) << "??? snippet_start_offset: " << snippet_start_offset
                                   << ", offset_it->first: " << offset_it->first
                                   << ", offset_it->second: " << offset_it->second
                                   << ", end_offset: " << end_offset
@@ -5707,7 +5772,7 @@ Option<nlohmann::json> Collection::get(const std::string & id) const {
     StoreStatus doc_status = store->get(get_seq_id_key(seq_id), parsed_document);
 
     if(doc_status == StoreStatus::NOT_FOUND) {
-        LOG(ERROR) << "Sequence ID exists, but document is missing for id: " << id;
+        TS_LOG(ERROR) << "Sequence ID exists, but document is missing for id: " << id;
         return Option<nlohmann::json>(404, "Could not find a document with id: " + id);
     }
 
@@ -5789,21 +5854,52 @@ void Collection::cascade_remove_docs(const std::string& field_name, const uint32
     std::vector<std::string> buffer;
     buffer.reserve(filter_result.count);
 
+    std::vector<std::string> seq_id_keys;
+    seq_id_keys.reserve(filter_result.count);
+    for(uint32_t i = 0; i < filter_result.count; i++) {
+        seq_id_keys.emplace_back(get_seq_id_key(filter_result.docs[i]));
+    }
+
+    std::vector<StoreStatus> fetched_doc_statuses;
+    std::vector<std::string> fetched_docs;
+    store->multi_get(seq_id_keys, fetched_doc_statuses, fetched_docs, false);
+
+    auto load_existing_document = [&](uint32_t index, uint32_t seq_id, nlohmann::json& existing_document) -> bool {
+        if(index >= fetched_doc_statuses.size() || index >= fetched_docs.size()) {
+            TS_LOG(ERROR) << "`" << name << "` collection: Missing fetched result for sequence ID `" << seq_id << "`.";
+            return false;
+        }
+
+        const auto status = fetched_doc_statuses[index];
+        if(status == StoreStatus::NOT_FOUND) {
+            TS_LOG(ERROR) << "`" << name << "` collection: Sequence ID `" << seq_id
+                          << "` exists, but document is missing.";
+            return false;
+        }
+
+        if(status == StoreStatus::ERROR) {
+            TS_LOG(ERROR) << "`" << name << "` collection: Error fetching JSON document for sequence ID: " << seq_id;
+            return false;
+        }
+
+        try {
+            existing_document = nlohmann::json::parse(fetched_docs[index]);
+        } catch(...) {
+            TS_LOG(ERROR) << "`" << name << "` collection: Error while parsing stored document with sequence ID: "
+                          << seq_id;
+            return false;
+        }
+
+        return true;
+    };
+
     if (is_field_singular) {
         // Delete all the docs where reference helper field has value `seq_id`.
         for (uint32_t i = 0; i < filter_result.count; i++) {
             auto const& seq_id = filter_result.docs[i];
 
             nlohmann::json existing_document;
-            auto get_doc_op = get_document_from_store(get_seq_id_key(seq_id), existing_document);
-
-            if (!get_doc_op.ok()) {
-                if (get_doc_op.code() == 404) {
-                    LOG(ERROR) << "`" << name << "` collection: Sequence ID `" << seq_id << "` exists, but document is missing.";
-                    continue;
-                }
-
-                LOG(ERROR) << "`" << name << "` collection: " << get_doc_op.error();
+            if(!load_existing_document(i, seq_id, existing_document)) {
                 continue;
             }
 
@@ -5843,11 +5939,11 @@ void Collection::cascade_remove_docs(const std::string& field_name, const uint32
         }
 
         if (ref_doc.count(ref_field_name) == 0) {
-            LOG(ERROR) << "`" << ref_coll_name << "` collection doc `" << ref_doc.dump() << "` is missing `" <<
+            TS_LOG(ERROR) << "`" << ref_coll_name << "` collection doc `" << ref_doc.dump() << "` is missing `" <<
                        ref_field_name << "` field.";
             return;
         } else if (ref_doc.at(ref_field_name).is_array()) {
-            LOG(ERROR) << "`" << ref_coll_name << "` collection doc `" << ref_doc.dump() << "` field `" <<
+            TS_LOG(ERROR) << "`" << ref_coll_name << "` collection doc `" << ref_doc.dump() << "` field `" <<
                                  ref_field_name << "` is an array.";
             return;
         }
@@ -5858,41 +5954,33 @@ void Collection::cascade_remove_docs(const std::string& field_name, const uint32
             auto const& seq_id = filter_result.docs[i];
 
             nlohmann::json existing_document;
-            auto get_doc_op = get_document_from_store(get_seq_id_key(seq_id), existing_document);
-
-            if (!get_doc_op.ok()) {
-                if (get_doc_op.code() == 404) {
-                    LOG(ERROR) << "`" << name << "` collection: Sequence ID `" << seq_id << "` exists, but document is missing.";
-                    continue;
-                }
-
-                LOG(ERROR) << "`" << name << "` collection: " << get_doc_op.error();
+            if(!load_existing_document(i, seq_id, existing_document)) {
                 continue;
             }
 
             if (existing_document.count("id") == 0) {
-                LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` is missing `id` field.";
+                TS_LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` is missing `id` field.";
             } else if (existing_document.count(field_name) == 0) {
-                LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` is missing `" <<
+                TS_LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` is missing `" <<
                                 field_name << "` field.";
             } else if (!existing_document.at(field_name).is_array()) {
-                LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` field `" <<
+                TS_LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` field `" <<
                                 field_name << "` is not an array.";
             } else if (existing_document.at(field_name).empty()) {
-                LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` field `" <<
+                TS_LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` field `" <<
                                 field_name << "` is empty.";
             } else if (existing_document.at(field_name)[0].type() != ref_doc.at(ref_field_name).type()) {
-                LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() <<
+                TS_LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() <<
                                 "` at field `" << field_name << "` elements do not match the type of `" << ref_coll_name <<
                                 "` collection doc `"<< ref_doc.dump() << "` at field `" << ref_field_name << "`.";
             } else if (existing_document.count(ref_helper_field_name) == 0) {
-                LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` is missing `" <<
+                TS_LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` is missing `" <<
                                 ref_helper_field_name << "` field.";
             } else if (!existing_document.at(ref_helper_field_name).is_array()) {
-                LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` field `" <<
+                TS_LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` field `" <<
                                 ref_helper_field_name << "` is not an array.";
             } else if (existing_document[field_name].size() != existing_document[ref_helper_field_name].size()) {
-                LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` reference field `" <<
+                TS_LOG(ERROR) << "`" << name << "` collection doc `" << existing_document.dump() << "` reference field `" <<
                            field_name << "` values and its reference helper field `" << ref_helper_field_name <<
                            "` values differ in count.";
             }
@@ -5976,7 +6064,7 @@ Option<std::string> Collection::remove(const std::string & id, const bool remove
 
     if(!get_doc_op.ok()) {
         if(get_doc_op.code() == 404) {
-            LOG(ERROR) << "Sequence ID exists, but document is missing for id: " << id;
+            TS_LOG(ERROR) << "Sequence ID exists, but document is missing for id: " << id;
             return Option<std::string>(404, "Could not find a document with id: " + id);
         }
 
@@ -6187,21 +6275,23 @@ Option<bool> Collection::update_apikey(const nlohmann::json& model_config, const
 }
 
 Option<bool> Collection::get_document_from_store(const uint32_t& seq_id,
-                                                 nlohmann::json& document, bool raw_doc) const {
-    return get_document_from_store(get_seq_id_key(seq_id), document, raw_doc);
+                                                 nlohmann::json& document,
+                                                 bool raw_doc, bool fill_cache) const {
+    return get_document_from_store(get_seq_id_key(seq_id), document, raw_doc, fill_cache);
 }
 
 Option<bool> Collection::get_document_from_store(const std::string &seq_id_key,
-                                                 nlohmann::json& document, bool raw_doc) const {
+                                                 nlohmann::json& document,
+                                                 bool raw_doc, bool fill_cache) const {
     std::string json_doc_str;
-    StoreStatus json_doc_status = store->get(seq_id_key, json_doc_str);
+    StoreStatus json_doc_status = store->get(seq_id_key, json_doc_str, fill_cache);
 
     if(json_doc_status != StoreStatus::FOUND) {
         if(json_doc_status == StoreStatus::NOT_FOUND) {
             const auto seq_id = get_seq_id_from_key(seq_id_key);
             std::shared_lock lock(mutex);
             if (index->validate_seq_id(seq_id)) {
-                LOG(ERROR) << "Document having seq_id `" << seq_id << "` present in index but not in store.";
+                TS_LOG(ERROR) << "Document having seq_id `" << seq_id << "` present in index but not in store.";
             }
             return Option<bool>(404, ERROR_could_not_locate_document_in_store + std::to_string(seq_id));
         }
@@ -6310,7 +6400,7 @@ void Collection::synonym_reduction(const std::vector<std::string>& tokens,
     for(const auto& synonym_set : synonym_sets_merged) {
         auto synonym_index_op = SynonymIndexManager::get_instance().get_synonym_index(synonym_set);
         if(!synonym_index_op.ok()) {
-            LOG(ERROR) << "Error while fetching synonym index for set: " << synonym_set
+            TS_LOG(ERROR) << "Error while fetching synonym index for set: " << synonym_set
                        << ", error: " << synonym_index_op.error();
             continue;
         }
@@ -6493,7 +6583,7 @@ Option<bool> Collection::batch_alter_data(const std::vector<field>& alter_fields
                         bool write_ok = store->insert(get_seq_id_key(index_record.seq_id), serialized_json);
 
                         if(!write_ok) {
-                            LOG(ERROR) << "Inserting doc with new embedding field failed for seq id: " << index_record.seq_id;
+                            TS_LOG(ERROR) << "Inserting doc with new embedding field failed for seq id: " << index_record.seq_id;
                             index_record.index_failure(500, "Could not write to on-disk storage.");
                         } else {
                             index_record.index_success();
@@ -6509,7 +6599,7 @@ Option<bool> Collection::batch_alter_data(const std::vector<field>& alter_fields
                     bool write_ok = store->insert(get_seq_id_key(index_record.seq_id), serialized_json);
 
                     if(!write_ok) {
-                        LOG(ERROR) << "Inserting doc with new reference field failed for seq id: " << index_record.seq_id;
+                        TS_LOG(ERROR) << "Inserting doc with new reference field failed for seq id: " << index_record.seq_id;
                         index_record.index_failure(500, "Could not write to on-disk storage.");
                     } else {
                         index_record.index_success();
@@ -6527,12 +6617,12 @@ Option<bool> Collection::batch_alter_data(const std::vector<field>& alter_fields
 
             if(time_elapsed > 30) {
                 begin = std::chrono::high_resolution_clock::now();
-                LOG(INFO) << "Altered " << altered_docs << " so far.";
+                TS_LOG(INFO) << "Altered " << altered_docs << " so far.";
             }
         }
     }
 
-    LOG(INFO) << "Finished altering " << altered_docs << " document(s).";
+    TS_LOG(INFO) << "Finished altering " << altered_docs << " document(s).";
     shlock.unlock();
     ulock.lock();
 
@@ -6587,7 +6677,7 @@ Option<bool> Collection::alter(nlohmann::json& alter_payload) {
 
     alter_in_progress = true;
 
-    LOG(INFO) << "Collection " << name << " is being prepared for alter...";
+    TS_LOG(INFO) << "Collection " << name << " is being prepared for alter...";
 
     // Validate that all stored documents are compatible with the proposed schema changes.
     std::vector<field> del_fields;
@@ -6601,7 +6691,7 @@ Option<bool> Collection::alter(nlohmann::json& alter_payload) {
                                               del_fields, update_fields, this_fallback_field_type);
     if(!validate_op.ok()) {
         auto error = "Alter failed validation: " + validate_op.error();
-        LOG(INFO) << error;
+        TS_LOG(INFO) << error;
         check_store_alter_status_msg(false, error);
         reset_alter_status_counters();
         return validate_op;
@@ -6609,7 +6699,7 @@ Option<bool> Collection::alter(nlohmann::json& alter_payload) {
 
     if(!this_fallback_field_type.empty() && !fallback_field_type.empty()) {
         auto error = "Alter failed: schema already contains a `.*` field.";
-        LOG(INFO) << error;
+        TS_LOG(INFO) << error;
         check_store_alter_status_msg(false, error);
         reset_alter_status_counters();
         return Option<bool>(400, "The schema already contains a `.*` field.");
@@ -6622,26 +6712,26 @@ Option<bool> Collection::alter(nlohmann::json& alter_payload) {
         fallback_field_type = this_fallback_field_type;
     }
 
-    LOG(INFO) << "Alter payload validation is successful...";
+    TS_LOG(INFO) << "Alter payload validation is successful...";
     if(!reindex_fields.empty()) {
-        LOG(INFO) << "Processing field additions and deletions first...";
+        TS_LOG(INFO) << "Processing field additions and deletions first...";
     }
 
     auto batch_alter_op = batch_alter_data(addition_fields, del_fields, fallback_field_type);
     if(!batch_alter_op.ok()) {
         auto error = "Alter failed during alter data: " + batch_alter_op.error();
-        LOG(INFO) << error;
+        TS_LOG(INFO) << error;
         check_store_alter_status_msg(false, error);
         reset_alter_status_counters();
         return batch_alter_op;
     }
 
     if(!reindex_fields.empty()) {
-        LOG(INFO) << "Processing field modifications now...";
+        TS_LOG(INFO) << "Processing field modifications now...";
         batch_alter_op = batch_alter_data(reindex_fields, {}, fallback_field_type);
         if(!batch_alter_op.ok()) {
             auto error = "Alter failed during alter data: " + batch_alter_op.error();
-            LOG(INFO) << error;
+            TS_LOG(INFO) << error;
             check_store_alter_status_msg(false, error);
             reset_alter_status_counters();
             return batch_alter_op;
@@ -6720,7 +6810,7 @@ Option<bool> Collection::prune_doc(nlohmann::json& doc,
     while(it != doc.end()) {
         std::string nested_name = parent_name + (parent_name.empty() ? it.key() : "." + it.key());
 
-        //LOG(INFO) << "it.key(): " << it.key() << ", nested_name: " << nested_name;
+        //TS_LOG(INFO) << "it.key(): " << it.key() << ", nested_name: " << nested_name;
 
         // use prefix lookup to prune non-matching sub-trees early
         auto prefix_it = include_names.equal_prefix_range(nested_name);
@@ -6761,7 +6851,6 @@ Option<bool> Collection::prune_doc(nlohmann::json& doc,
                 // NOTE: we will not support array of array of nested objects
                 primitive_array = primitive_array && !arr_it.value().is_object();
                 if(arr_it.value().is_object()) {
-                    bool orig_ele_empty = arr_it.value().empty();
                     prune_doc(arr_it.value(), include_names, exclude_names, nested_name, depth+1);
                     // don't remove empty array objects to help frontend
                 }
@@ -6803,7 +6892,7 @@ Option<bool> Collection::validate_alter_payload(nlohmann::json& schema_changes,
         return Option<bool>(400, "Bad JSON.");
     }
 
-    LOG(INFO) << "Schema changes: " << schema_changes.dump();
+    TS_LOG(INFO) << "Schema changes: " << schema_changes.dump();
 
     if(schema_changes.size() != 1) {
         return Option<bool>(400, "Only `fields` and `metadata` can be updated at the moment.");
@@ -7211,7 +7300,7 @@ Option<bool> Collection::validate_alter_payload(nlohmann::json& schema_changes,
 
             if(time_elapsed > 30) {
                 begin = std::chrono::high_resolution_clock::now();
-                LOG(INFO) << "Verified " << validated_docs << " so far.";
+                TS_LOG(INFO) << "Verified " << validated_docs << " so far.";
             }
         }
 
@@ -7457,7 +7546,7 @@ Option<Index*> Collection::init_index(const bool& is_live_request, const std::st
                     return Option<Index*>(op.code(), op.error());
                 }
 
-                LOG(ERROR) << op.error() + " `" + field.name + "` field is not indexed.";
+                TS_LOG(ERROR) << op.error() + " `" + field.name + "` field is not indexed.";
                 search_schema.erase(field.name);
                 nested_fields.erase(field.name);
                 skipped_reference_helper_fields.insert(field.name + fields::REFERENCE_HELPER_FIELD_SUFFIX);
@@ -7544,7 +7633,6 @@ Option<bool> Collection::parse_facet(const std::string& facet_field, std::vector
     std::string sort_field = "";
     bool colon_found = false;
     bool top_k_found = false;
-    bool sort_found = false;
     unsigned facet_param_count = 0;
     unsigned commaCount = 0;
     bool is_wildcard = false;
@@ -7594,7 +7682,7 @@ Option<bool> Collection::parse_facet(const std::string& facet_field, std::vector
         return Option<bool>(true);
     }
 
-    for (int i = 0; i < facet_field.size();) {
+    for (size_t i = 0; i < facet_field.size();) {
         if (facet_field[i] == '(') {
             //facet field name complete, check validity
             if (search_schema.count(facet_field_name) == 0 || !search_schema.at(facet_field_name).facet) {
@@ -7649,8 +7737,7 @@ Option<bool> Collection::parse_facet(const std::string& facet_field, std::vector
             StringUtils::trim(param_str);
 
             if (param_str == "sort_by") { //sort_by params
-                sort_found = true;
-                for (i; facet_field.size(); i++) {
+                for (; i < facet_field.size(); i++) {
                     if (facet_field[i] == ',' || facet_field[i] == ')') {
                         break;
                     } else {
@@ -7702,7 +7789,7 @@ Option<bool> Collection::parse_facet(const std::string& facet_field, std::vector
                 top_k_found = true;
                 param_str.clear();
                 i++; //skip :
-                for (i; i < facet_field.size(); i++) {
+                for (; i < facet_field.size(); i++) {
                     if (facet_field[i] == ',' || facet_field[i] == ')') {
                         break;
                     }
@@ -8067,7 +8154,7 @@ void Collection::hide_credential(nlohmann::json& json, const std::string& creden
     }
 }
 
-Option<bool> Collection::truncate_after_top_k(const string &field_name, size_t k) {
+Option<bool> Collection::truncate_after_top_k(const std::string &field_name, size_t k) {
     std::shared_lock slock(mutex);
 
     std::vector<uint32_t> seq_ids;
@@ -8082,7 +8169,7 @@ Option<bool> Collection::truncate_after_top_k(const string &field_name, size_t k
     for(auto seq_id: seq_ids) {
         auto remove_op = remove_if_found(seq_id);
         if(!remove_op.ok()) {
-            LOG(ERROR) << "Error while truncating top k: " << remove_op.error();
+            TS_LOG(ERROR) << "Error while truncating top k: " << remove_op.error();
         }
     }
 
@@ -8099,7 +8186,7 @@ Option<bool> Collection::reference_populate_sort_mapping(int *sort_order, std::v
                                                   validate_field_names);
 }
 
-int64_t Collection::reference_string_sort_score(const string &field_name,  const std::vector<uint32_t>& seq_ids,
+int64_t Collection::reference_string_sort_score(const std::string &field_name,  const std::vector<uint32_t>& seq_ids,
                                                 const bool& is_asc) const {
     std::shared_lock lock(mutex);
     return index->reference_string_sort_score(field_name, seq_ids, is_asc);
@@ -8141,7 +8228,7 @@ std::set<update_reference_info_t> Collection::add_referenced_in(const std::strin
     std::set<update_reference_info_t> update_ref_infos;
     auto it = search_schema.find(referenced_field_name);
     if (referenced_field_name != "id" && it == search_schema.end()) {
-        LOG(ERROR) << "Field `" << referenced_field_name << "` not found in the collection `" << name <<
+        TS_LOG(ERROR) << "Field `" << referenced_field_name << "` not found in the collection `" << name <<
                    "` which is referenced in `" << collection_name << "." << field_name + "`.";
         return update_ref_infos;
     }
@@ -8166,7 +8253,7 @@ void Collection::remove_referenced_in(const std::string& collection_name, const 
 
         auto it = search_schema.find(referenced_field_name);
         if (referenced_field_name != "id" && it == search_schema.end()) {
-            LOG(ERROR) << "Field `" << referenced_field_name << "` not found in the collection `" << name <<
+            TS_LOG(ERROR) << "Field `" << referenced_field_name << "` not found in the collection `" << name <<
                        "` which is referenced in `" << collection_name << "." << field_name + "`.";
             return;
         }
@@ -8513,7 +8600,7 @@ Option<size_t> Collection::remove_all_docs() {
         try {
             document = nlohmann::json::parse(doc_string);
         } catch(const std::exception& e) {
-            LOG(ERROR) << "JSON error: " << e.what();
+            TS_LOG(ERROR) << "JSON error: " << e.what();
             return Option<size_t>(400, "Bad JSON.");
         }
 
@@ -8527,7 +8614,7 @@ Option<size_t> Collection::remove_all_docs() {
 
             if(time_elapsed > 30) {
                 begin = std::chrono::high_resolution_clock::now();
-                LOG(INFO) << "Removed " << num_docs_removed << " so far.";
+                TS_LOG(INFO) << "Removed " << num_docs_removed << " so far.";
             }
         }
 
@@ -8960,9 +9047,11 @@ Option<bool> collection_search_args_t::init(std::map<std::string, std::string>& 
     }
 
     if(!max_candidates) {
-        max_candidates = exhaustive_search ? Index::COMBINATION_MAX_LIMIT :
-                         (coll_num_documents < 500000 ? Index::NUM_CANDIDATES_DEFAULT_MAX :
-                          Index::NUM_CANDIDATES_DEFAULT_MIN);
+        max_candidates = exhaustive_search
+                         ? static_cast<size_t>(Index::COMBINATION_MAX_LIMIT)
+                         : (coll_num_documents < 500000
+                            ? static_cast<size_t>(Index::NUM_CANDIDATES_DEFAULT_MAX)
+                            : static_cast<size_t>(Index::NUM_CANDIDATES_DEFAULT_MIN));
     }
 
     if(group_by_fields.empty()) {
@@ -9141,7 +9230,9 @@ Option<bool> Collection::populate_facets(std::vector<facet> facets, size_t max_f
                 auto facet_range_iter = a_facet.facet_range_map.find(kv.first);
                 if(facet_range_iter != a_facet.facet_range_map.end()){
                     auto & facet_count = kv.second;
-                    facet_value_t facet_value = {facet_range_iter->second.range_label, std::string(), facet_count.count};
+                    facet_value_t facet_value = {facet_range_iter->second.range_label, std::string(),
+                                                 facet_count.count, facet_count.sort_field_val,
+                                                 nlohmann::json(), std::string()};
 
                     if(!a_facet.reference_collection_name.empty()) {
                         const auto& ref_coll_name = a_facet.reference_collection_alias_name.empty() ?
@@ -9224,12 +9315,12 @@ Option<bool> Collection::populate_facets(std::vector<facet> facets, size_t max_f
                         continue;
                     }
 
-                    std::vector<string>& ftokens = a_facet.is_intersected ? a_facet.fvalue_tokens[facet_count.fvalue] :
+                    std::vector<std::string>& ftokens = a_facet.is_intersected ? a_facet.fvalue_tokens[facet_count.fvalue] :
                                                    a_facet.hash_tokens[facet_count.fhash];
 
                     tsl::htrie_map<char, token_leaf> qtoken_leaves;
 
-                    //LOG(INFO) << "working on hash_tokens for hash " << kv.first << " with size " << ftokens.size();
+                    //TS_LOG(INFO) << "working on hash_tokens for hash " << kv.first << " with size " << ftokens.size();
                     for(size_t ti = 0; ti < ftokens.size(); ti++) {
                         if(the_field.is_bool()) {
                             if(ftokens[ti] == "1") {
@@ -9285,7 +9376,7 @@ Option<bool> Collection::populate_facets(std::vector<facet> facets, size_t max_f
                     const std::string &seq_id_key = get_seq_id_key((uint32_t) facet_count.doc_id);
                     const Option<bool> &document_op = get_document_from_store(seq_id_key, document);
                     if (!document_op.ok()) {
-                        LOG(ERROR) << "Facet fetch error. " << document_op.error();
+                        TS_LOG(ERROR) << "Facet fetch error. " << document_op.error();
                         continue;
                     }
                     parent = get_facet_parent(the_field.name, document, value, the_field.is_array());
@@ -9293,7 +9384,7 @@ Option<bool> Collection::populate_facets(std::vector<facet> facets, size_t max_f
 
                 const auto& highlighted_text = highlight.snippets.empty() ? value : highlight.snippets[0];
                 facet_value_t facet_value = {value, highlighted_text, facet_count.count,
-                                             facet_count.sort_field_val, parent};
+                                             facet_count.sort_field_val, parent, std::string()};
 
                 if(!a_facet.reference_collection_name.empty()) {
                     const auto& ref_coll_name = a_facet.reference_collection_alias_name.empty() ?
@@ -9548,7 +9639,7 @@ Option<bool> Collection::include_related_docs(nlohmann::json& doc, const uint32_
                 auto const& schema = get_schema();
                 auto it = schema.find(field_name);
                 if (it != schema.end() && !it->optional) {
-                    LOG(ERROR) << "Error while getting related ids: " + get_references_op.error();
+                    TS_LOG(ERROR) << "Error while getting related ids: " + get_references_op.error();
                 }
                 return Option<bool>(true);
             }
@@ -9566,7 +9657,7 @@ Option<bool> Collection::include_related_docs(nlohmann::json& doc, const uint32_
             auto const& schema = get_schema();
             auto it = schema.find(field_name);
             if (it != schema.end() && !it->optional) {
-                LOG(ERROR) << "Error while getting related ids: " + get_references_op.error();
+                TS_LOG(ERROR) << "Error while getting related ids: " + get_references_op.error();
             }
             return Option<bool>(true);
         }
@@ -9592,13 +9683,13 @@ Option<bool> Collection::fix_broken_reference(const std::string& seq_id_key, con
     auto update_op = update_matching_filter("id:" + document["id"].get<std::string>(), document.dump(),
                                             dirty_values);
     if (!update_op.ok()) {
-        LOG(ERROR) << "Document update error. " << update_op.error();
+        TS_LOG(ERROR) << "Document update error. " << update_op.error();
         return Option<bool>(1, "");
     }
 
     auto document_op = get_document_from_store(seq_id_key, document);
     if(!document_op.ok()) {
-        LOG(ERROR) << "Document fetch error. " << document_op.error();
+        TS_LOG(ERROR) << "Document fetch error. " << document_op.error();
         return Option<bool>(1, "");
     }
 

@@ -7,20 +7,23 @@
 #include <posting.h>
 #include <chrono>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class FilterTest : public ::testing::Test {
 protected:
     Store *store;
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_join";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("filter");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -34,6 +37,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -104,7 +108,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
 
     for (uint32_t i = 0; i < 5; i++) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_contains_test.validity);
-        ASSERT_EQ(i, iter_contains_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_contains_test.seq_id);
         iter_contains_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_contains_test.validity);
@@ -121,7 +125,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
 
     for (uint32_t i = 0; i < 5; i++) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_contains_multi_test.validity);
-        ASSERT_EQ(i, iter_contains_multi_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_contains_multi_test.seq_id);
         iter_contains_multi_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_contains_multi_test.validity);
@@ -138,7 +142,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
 
     for (uint32_t i = 0; i < 5; i++) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_exact_match_1_test.validity);
-        ASSERT_EQ(i, iter_exact_match_1_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_exact_match_1_test.seq_id);
         iter_exact_match_1_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_exact_match_1_test.validity);
@@ -167,7 +171,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     std::vector<int> expected = {0, 2, 3, 4};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_exact_match_multi_test.validity);
-        ASSERT_EQ(i, iter_exact_match_multi_test.seq_id);
+        ASSERT_EQ(i, static_cast<int>(iter_exact_match_multi_test.seq_id));
         iter_exact_match_multi_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_exact_match_multi_test.validity);
@@ -185,7 +189,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {1, 3};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_not_equals_test.validity);
-        ASSERT_EQ(i, iter_not_equals_test.seq_id);
+        ASSERT_EQ(i, static_cast<int>(iter_not_equals_test.seq_id));
         iter_not_equals_test.next();
     }
 
@@ -215,7 +219,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {2, 4, 5};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_or_test.validity);
-        ASSERT_EQ(i, iter_or_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_or_test.seq_id);
         iter_or_test.next();
     }
 
@@ -233,12 +237,12 @@ TEST_F(FilterTest, FilterTreeIterator) {
 
     ASSERT_EQ(filter_result_iterator_t::valid, iter_complex_filter_test.validity);
     ASSERT_EQ(0, iter_complex_filter_test.is_valid(3));
-    ASSERT_EQ(4, iter_complex_filter_test.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(4), iter_complex_filter_test.seq_id);
 
     expected = {4, 5};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_complex_filter_test.validity);
-        ASSERT_EQ(i, iter_complex_filter_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_complex_filter_test.seq_id);
         iter_complex_filter_test.next();
     }
 
@@ -259,7 +263,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {1, 0, 1, 0, 1, 1, -1};
     for (uint32_t i = 0; i < validate_ids.size(); i++) {
         ASSERT_EQ(expected[i], iter_validate_ids_test1.is_valid(validate_ids[i]));
-        ASSERT_EQ(seq_ids[i], iter_validate_ids_test1.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_validate_ids_test1.seq_id);
     }
 
     delete filter_tree_root;
@@ -276,7 +280,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {0, 1, 0, 0, 0, 1, -1};
     for (uint32_t i = 0; i < validate_ids.size(); i++) {
         ASSERT_EQ(expected[i], iter_validate_ids_test2.is_valid(validate_ids[i]));
-        ASSERT_EQ(seq_ids[i], iter_validate_ids_test2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_validate_ids_test2.seq_id);
     }
 
     delete filter_tree_root;
@@ -297,7 +301,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {1, 0, 0, 0, 1, -1, -1};
     for (uint32_t i = 0; i < validate_ids.size(); i++) {
         ASSERT_EQ(expected[i], iter_validate_ids_test3.is_valid(validate_ids[i]));
-        ASSERT_EQ(seq_ids[i], iter_validate_ids_test3.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_validate_ids_test3.seq_id);
     }
 
     // Lazy evaluation.
@@ -310,7 +314,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {1, 0, 0, 0, 1, -1, -1};
     for (uint32_t i = 0; i < validate_ids.size(); i++) {
         ASSERT_EQ(expected[i], iter_validate_ids_test3.is_valid(validate_ids[i]));
-        ASSERT_EQ(seq_ids[i], iter_validate_ids_test3.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_validate_ids_test3.seq_id);
     }
 
     delete filter_tree_root;
@@ -380,7 +384,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {0, 2, 3, 4};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_reset_test.validity);
-        ASSERT_EQ(i, iter_reset_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_reset_test.seq_id);
         iter_reset_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_reset_test.validity);
@@ -389,7 +393,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
 
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_reset_test.validity);
-        ASSERT_EQ(i, iter_reset_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_reset_test.seq_id);
         iter_reset_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_reset_test.validity);
@@ -403,7 +407,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {0, 2, 3, 4};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_move_assignment_test.validity);
-        ASSERT_EQ(i, iter_move_assignment_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_move_assignment_test.seq_id);
         iter_move_assignment_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_move_assignment_test.validity);
@@ -423,11 +427,11 @@ TEST_F(FilterTest, FilterTreeIterator) {
 
     iter_to_array_test.compute_iterators();
     filter_ids_length = iter_to_array_test.to_filter_id_array(filter_ids);
-    ASSERT_EQ(3, filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(3), filter_ids_length);
 
     expected = {0, 2, 4};
     for (uint32_t i = 0; i < filter_ids_length; i++) {
-        ASSERT_EQ(expected[i], filter_ids[i]);
+        ASSERT_EQ(static_cast<uint32_t>(expected[i]), filter_ids[i]);
     }
 
     delete[] filter_ids;
@@ -440,11 +444,11 @@ TEST_F(FilterTest, FilterTreeIterator) {
     uint32_t* and_result = nullptr;
     uint32_t and_result_length;
     and_result_length = iter_and_scalar_test.and_scalar(a_ids, 6, and_result);
-    ASSERT_EQ(2, and_result_length);
+    ASSERT_EQ(static_cast<uint32_t>(2), and_result_length);
 
     expected = {0, 4};
     for (uint32_t i = 0; i < and_result_length; i++) {
-        ASSERT_EQ(expected[i], and_result[i]);
+        ASSERT_EQ(static_cast<uint32_t>(expected[i]), and_result[i]);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_and_scalar_test.validity);
 
@@ -479,7 +483,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     filter_iter_guard.reset(iter_add_phrase_ids_test);
 
     ASSERT_EQ(filter_result_iterator_t::valid, iter_add_phrase_ids_test->validity);
-    ASSERT_EQ(2, iter_add_phrase_ids_test->seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(2), iter_add_phrase_ids_test->seq_id);
     delete filter_tree_root;
 
     filter_tree_root = nullptr;
@@ -495,7 +499,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {0, 2, 4};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_string_multi_value_test.validity);
-        ASSERT_EQ(i, iter_string_multi_value_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_string_multi_value_test.seq_id);
         iter_string_multi_value_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_multi_value_test.validity);
@@ -514,7 +518,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {2, 4};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_string_equals_test.validity);
-        ASSERT_EQ(i, iter_string_equals_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_string_equals_test.seq_id);
         iter_string_equals_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_equals_test.validity);
@@ -534,7 +538,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {0, 2, 4};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_string_equals_test_2.validity);
-        ASSERT_EQ(i, iter_string_equals_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_string_equals_test_2.seq_id);
         iter_string_equals_test_2.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_equals_test_2.validity);
@@ -552,7 +556,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {1, 5, 6};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_string_not_equals_test_2.validity);
-        ASSERT_EQ(i, iter_string_not_equals_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_string_not_equals_test_2.seq_id);
         iter_string_not_equals_test_2.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_not_equals_test_2.validity);
@@ -602,12 +606,12 @@ TEST_F(FilterTest, FilterTreeIterator) {
                                                       enable_lazy_evaluation);
     ASSERT_TRUE(iter_boolean_test.init_status().ok());
     ASSERT_TRUE(iter_boolean_test._get_is_filter_result_initialized());
-    ASSERT_EQ(2, iter_boolean_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(2), iter_boolean_test.approx_filter_ids_length);
 
     expected = {6, 8};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_boolean_test.validity);
-        ASSERT_EQ(i, iter_boolean_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_boolean_test.seq_id);
         iter_boolean_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_boolean_test.validity);
@@ -622,12 +626,12 @@ TEST_F(FilterTest, FilterTreeIterator) {
                                                         enable_lazy_evaluation);
     ASSERT_TRUE(iter_boolean_test_2.init_status().ok());
     ASSERT_FALSE(iter_boolean_test_2._get_is_filter_result_initialized());
-    ASSERT_EQ(8, iter_boolean_test_2.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(8), iter_boolean_test_2.approx_filter_ids_length);
 
     expected = {0, 1, 2, 3, 4, 5, 7, 9};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_boolean_test_2.validity);
-        ASSERT_EQ(i, iter_boolean_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_boolean_test_2.seq_id);
         iter_boolean_test_2.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_boolean_test_2.validity);
@@ -637,7 +641,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
     expected = {0, 1, 2, 3, 4, 5, 7, 9};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_boolean_test_2.validity);
-        ASSERT_EQ(i, iter_boolean_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_boolean_test_2.seq_id);
         iter_boolean_test_2.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_boolean_test_2.validity);
@@ -645,11 +649,11 @@ TEST_F(FilterTest, FilterTreeIterator) {
     iter_boolean_test_2.reset();
     ASSERT_EQ(0, iter_boolean_test_2.is_valid(6));
     ASSERT_EQ(filter_result_iterator_t::valid, iter_boolean_test_2.validity);
-    ASSERT_EQ(7, iter_boolean_test_2.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(7), iter_boolean_test_2.seq_id);
 
     ASSERT_EQ(0, iter_boolean_test_2.is_valid(8));
     ASSERT_EQ(filter_result_iterator_t::valid, iter_boolean_test_2.validity);
-    ASSERT_EQ(9, iter_boolean_test_2.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(9), iter_boolean_test_2.seq_id);
 
     ASSERT_EQ(-1, iter_boolean_test_2.is_valid(10));
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_boolean_test_2.validity);
@@ -675,12 +679,12 @@ TEST_F(FilterTest, FilterTreeIterator) {
                                                                   enable_lazy_evaluation);
     ASSERT_TRUE(iter_string_prefix_value_test.init_status().ok());
     ASSERT_FALSE(iter_string_prefix_value_test._get_is_filter_result_initialized());
-    ASSERT_EQ(3, iter_string_prefix_value_test.approx_filter_ids_length); // document 0 and 2 have been deleted.
+    ASSERT_EQ(static_cast<uint32_t>(3), iter_string_prefix_value_test.approx_filter_ids_length); // document 0 and 2 have been deleted.
 
     expected = {4, 8};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, iter_string_prefix_value_test.validity);
-        ASSERT_EQ(i, iter_string_prefix_value_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), iter_string_prefix_value_test.seq_id);
         iter_string_prefix_value_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_prefix_value_test.validity);
@@ -695,7 +699,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
                                                                     enable_lazy_evaluation);
     ASSERT_TRUE(iter_string_prefix_value_test_2.init_status().ok());
     ASSERT_FALSE(iter_string_prefix_value_test_2._get_is_filter_result_initialized());
-    ASSERT_EQ(4, iter_string_prefix_value_test_2.approx_filter_ids_length); // 7 total docs, 3 approx count for equals.
+    ASSERT_EQ(static_cast<uint32_t>(4), iter_string_prefix_value_test_2.approx_filter_ids_length); // 7 total docs, 3 approx count for equals.
 
     validate_ids = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
     seq_ids = {1, 2, 3, 4, 5, 6, 7, 8, 9, 9};
@@ -711,7 +715,7 @@ TEST_F(FilterTest, FilterTreeIterator) {
         if (expected[i] == 1) {
             iter_string_prefix_value_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_string_prefix_value_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_string_prefix_value_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_prefix_value_test_2.validity);
 
@@ -719,6 +723,9 @@ TEST_F(FilterTest, FilterTreeIterator) {
 }
 
 TEST_F(FilterTest, FilterTreeIteratorTimeout) {
+    constexpr uint64_t kTimeoutUs = 100000; // 100 ms
+    constexpr auto kHalfTimeoutDelay = std::chrono::milliseconds(50);
+
     auto count = 20;
     auto filter_ids = new uint32_t[count];
     for (auto i = 0; i < count; i++) {
@@ -727,11 +734,11 @@ TEST_F(FilterTest, FilterTreeIteratorTimeout) {
     auto filter_iterator = new filter_result_iterator_t(filter_ids, count, DEFAULT_FILTER_BY_CANDIDATES,
                                                         std::chrono::duration_cast<std::chrono::microseconds>(
                                                         std::chrono::system_clock::now().time_since_epoch()).count(),
-                                                        10000000); // Timeout after 10 seconds
+                                                        kTimeoutUs);
     std::unique_ptr<filter_result_iterator_t> filter_iter_guard(filter_iterator);
 
     ASSERT_EQ(filter_result_iterator_t::valid, filter_iterator->validity);
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::this_thread::sleep_for(kHalfTimeoutDelay);
 
     for (auto i = 0; i < 20; i++) {
         ASSERT_EQ(filter_result_iterator_t::valid, filter_iterator->validity);
@@ -741,7 +748,7 @@ TEST_F(FilterTest, FilterTreeIteratorTimeout) {
 
     filter_iterator->reset();
     ASSERT_EQ(filter_result_iterator_t::valid, filter_iterator->validity);
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    std::this_thread::sleep_for(kHalfTimeoutDelay);
 
     for (auto i = 0; i < 9; i++) {
         ASSERT_EQ(filter_result_iterator_t::valid, filter_iterator->validity);
@@ -756,14 +763,14 @@ TEST_F(FilterTest, FilterTreeIteratorTimeout) {
     auto result = new filter_result_t();
     filter_iterator->get_n_ids(count, excluded_result_index, nullptr, 0, result);
 
-    ASSERT_EQ(0, result->count); // Shouldn't return results
+    ASSERT_EQ(static_cast<uint32_t>(0), result->count); // Shouldn't return results
     delete result;
 
     filter_iterator->reset(true);
     result = new filter_result_t();
     filter_iterator->get_n_ids(count, excluded_result_index, nullptr, 0, result, true);
 
-    ASSERT_EQ(count, result->count); // With `curation_timeout` true, we should get result.
+    ASSERT_EQ(static_cast<uint32_t>(count), result->count); // With `curation_timeout` true, we should get result.
     delete result;
 }
 
@@ -803,7 +810,7 @@ TEST_F(FilterTest, FilterTreeInitialization) {
 
     ASSERT_TRUE(iter_left_subtree_0_matches.init_status().ok());
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_left_subtree_0_matches.validity);
-    ASSERT_EQ(0, iter_left_subtree_0_matches.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(0), iter_left_subtree_0_matches.approx_filter_ids_length);
     ASSERT_TRUE(iter_left_subtree_0_matches._get_is_filter_result_initialized());
     ASSERT_EQ(nullptr, iter_left_subtree_0_matches._get_left_it());
     ASSERT_EQ(nullptr, iter_left_subtree_0_matches._get_right_it());
@@ -820,7 +827,7 @@ TEST_F(FilterTest, FilterTreeInitialization) {
 
     ASSERT_TRUE(iter_right_subtree_0_matches.init_status().ok());
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_right_subtree_0_matches.validity);
-    ASSERT_EQ(0, iter_right_subtree_0_matches.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(0), iter_right_subtree_0_matches.approx_filter_ids_length);
     ASSERT_TRUE(iter_right_subtree_0_matches._get_is_filter_result_initialized());
     ASSERT_EQ(nullptr, iter_right_subtree_0_matches._get_left_it());
     ASSERT_EQ(nullptr, iter_right_subtree_0_matches._get_right_it());
@@ -837,7 +844,7 @@ TEST_F(FilterTest, FilterTreeInitialization) {
 
     ASSERT_TRUE(iter_inner_subtree_0_matches.init_status().ok());
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_inner_subtree_0_matches.validity);
-    ASSERT_EQ(0, iter_inner_subtree_0_matches.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(0), iter_inner_subtree_0_matches.approx_filter_ids_length);
     ASSERT_FALSE(iter_inner_subtree_0_matches._get_is_filter_result_initialized());
     ASSERT_NE(nullptr, iter_inner_subtree_0_matches._get_left_it());
     ASSERT_NE(nullptr, iter_inner_subtree_0_matches._get_right_it());
@@ -882,7 +889,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
     std::vector<int> expected = {1, 3};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, computed_not_equals_test.validity);
-        ASSERT_EQ(i, computed_not_equals_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), computed_not_equals_test.seq_id);
         computed_not_equals_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, computed_not_equals_test.validity);
@@ -912,7 +919,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_string_not_equals_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_string_not_equals_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_string_not_equals_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_not_equals_test.validity);
 
@@ -925,7 +932,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
                                                                       enable_lazy_evaluation);
     ASSERT_TRUE(iter_string_array_not_equals_test.init_status().ok());
     ASSERT_FALSE(iter_string_array_not_equals_test._get_is_filter_result_initialized());
-    ASSERT_EQ(5, iter_string_array_not_equals_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(5), iter_string_array_not_equals_test.approx_filter_ids_length);
 
     validate_ids = {0, 1, 2, 3, 4, 5};
     seq_ids = {1, 2, 3, 4, 5, 5};
@@ -937,7 +944,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_string_array_not_equals_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_string_array_not_equals_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_string_array_not_equals_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_array_not_equals_test.validity);
 
@@ -987,7 +994,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_string_not_equals_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_string_not_equals_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_string_not_equals_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_not_equals_test_2.validity);
 
@@ -1006,7 +1013,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_string_not_equals_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_string_not_equals_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_string_not_equals_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_string_not_equals_test_2.validity);
 
@@ -1032,7 +1039,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_not_equals_or_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_or_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_or_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_or_test.validity);
 
@@ -1056,7 +1063,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_not_equals_or_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_or_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_or_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_or_test_2.validity);
 
@@ -1085,7 +1092,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_not_equals_and_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_and_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_and_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_and_test.validity);
 
@@ -1106,7 +1113,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_not_equals_and_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_and_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_and_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_and_test.validity);
 
@@ -1135,7 +1142,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_not_equals_and_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_and_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_and_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_and_test_2.validity);
 
@@ -1156,7 +1163,7 @@ TEST_F(FilterTest, NotEqualsStringFilter) {
         if (expected[i] == 1) {
             iter_not_equals_and_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_and_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_and_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_and_test_2.validity);
 
@@ -1202,7 +1209,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
     std::vector<int> expected = {1, 3};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, computed_greater_than_test.validity);
-        ASSERT_EQ(i, computed_greater_than_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), computed_greater_than_test.seq_id);
         computed_greater_than_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, computed_greater_than_test.validity);
@@ -1232,7 +1239,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_greater_than_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_greater_than_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_greater_than_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_greater_than_test.validity);
 
@@ -1247,7 +1254,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_greater_than_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_greater_than_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_greater_than_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_greater_than_test.validity);
 
@@ -1269,7 +1276,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_greater_than_test_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_greater_than_test_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_greater_than_test_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_greater_than_test_non_lazy.validity);
     }
@@ -1296,7 +1303,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_not_equals_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_test.validity);
 
@@ -1318,7 +1325,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_not_equals_test_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_not_equals_test_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_test_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_test_non_lazy.validity);
     }
@@ -1350,7 +1357,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_not_equals_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_test_2.validity);
 
@@ -1372,7 +1379,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_not_equals_test_2_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_not_equals_test_2_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_test_2_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_test_2_non_lazy.validity);
     }
@@ -1403,7 +1410,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_multivalue_filter.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_multivalue_filter.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter.validity);
 
@@ -1425,7 +1432,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_multivalue_filter_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_multivalue_filter_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_non_lazy.validity);
     }
@@ -1457,7 +1464,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_multivalue_filter_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_multivalue_filter_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_2.validity);
 
@@ -1479,7 +1486,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_multivalue_filter_2_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_multivalue_filter_2_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_2_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_2_non_lazy.validity);
     }
@@ -1515,7 +1522,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_multivalue_filter_3.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_multivalue_filter_3.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_3.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_3.validity);
 
@@ -1537,7 +1544,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_multivalue_filter_3_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_multivalue_filter_3_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_3_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_3_non_lazy.validity);
     }
@@ -1556,7 +1563,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
     expected = {0, 3};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, computed_greater_than_test_2.validity);
-        ASSERT_EQ(i, computed_greater_than_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), computed_greater_than_test_2.seq_id);
         computed_greater_than_test_2.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, computed_greater_than_test_2.validity);
@@ -1586,7 +1593,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_greater_than_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_greater_than_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_greater_than_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_greater_than_test_2.validity);
 
@@ -1605,7 +1612,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_greater_than_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_greater_than_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_greater_than_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_greater_than_test_2.validity);
 
@@ -1631,7 +1638,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_not_equals_test_3.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_test_3.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_test_3.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_test_3.validity);
 
@@ -1653,7 +1660,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_not_equals_test_3_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_not_equals_test_3_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_test_3_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_test_3_non_lazy.validity);
     }
@@ -1685,7 +1692,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_not_equals_test_4.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_not_equals_test_4.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_test_4.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_test_4.validity);
 
@@ -1707,7 +1714,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_not_equals_test_4_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_not_equals_test_4_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_not_equals_test_4_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_not_equals_test_4_non_lazy.validity);
     }
@@ -1738,7 +1745,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_multivalue_filter_4.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_multivalue_filter_4.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_4.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_4.validity);
 
@@ -1760,7 +1767,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_multivalue_filter_4_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_multivalue_filter_4_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_4_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_4_non_lazy.validity);
     }
@@ -1792,7 +1799,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_multivalue_filter_5.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_multivalue_filter_5.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_5.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_5.validity);
 
@@ -1814,7 +1821,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_multivalue_filter_5_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_multivalue_filter_5_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_5_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_5_non_lazy.validity);
     }
@@ -1850,7 +1857,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
         if (expected[i] == 1) {
             iter_multivalue_filter_6.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_multivalue_filter_6.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_6.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_6.validity);
 
@@ -1872,7 +1879,7 @@ TEST_F(FilterTest, NumericFilterIterator) {
             if (expected[i] == 1) {
                 iter_multivalue_filter_6_non_lazy.next();
             }
-            ASSERT_EQ(seq_ids[i], iter_multivalue_filter_6_non_lazy.seq_id);
+            ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_multivalue_filter_6_non_lazy.seq_id);
         }
         ASSERT_EQ(filter_result_iterator_t::invalid, iter_multivalue_filter_6_non_lazy.validity);
     }
@@ -1930,7 +1937,7 @@ TEST_F(FilterTest, StandaloneExclamationFilterSyntax) {
     ASSERT_TRUE(filter_op.ok());
 
     auto results = coll->search("*", {}, "age:![25]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
     ASSERT_EQ("Bob", results["hits"][0]["document"]["name"].get<std::string>());
 
     delete filter_tree_root;
@@ -1941,7 +1948,7 @@ TEST_F(FilterTest, StandaloneExclamationFilterSyntax) {
     ASSERT_TRUE(filter_op.ok());
 
     results = coll->search("*", {}, "age:![25, 30]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(0), results["found"].get<size_t>());
 
     delete filter_tree_root;
     filter_tree_root = nullptr;
@@ -1951,7 +1958,7 @@ TEST_F(FilterTest, StandaloneExclamationFilterSyntax) {
     ASSERT_TRUE(filter_op.ok());
 
     results = coll->search("*", {}, "rating:![4.5]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(2), results["found"].get<size_t>());
 
     delete filter_tree_root;
     filter_tree_root = nullptr;
@@ -1961,7 +1968,7 @@ TEST_F(FilterTest, StandaloneExclamationFilterSyntax) {
     ASSERT_TRUE(filter_op.ok());
 
     results = coll->search("*", {}, "is_active:![true]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
     ASSERT_EQ("Bob", results["hits"][0]["document"]["name"].get<std::string>());
 
     delete filter_tree_root;
@@ -1972,7 +1979,7 @@ TEST_F(FilterTest, StandaloneExclamationFilterSyntax) {
     ASSERT_TRUE(filter_op.ok());
 
     results = coll->search("*", {}, "is_active:![true, false]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(0), results["found"].get<size_t>());
 
     delete filter_tree_root;
     filter_tree_root = nullptr;
@@ -2084,24 +2091,24 @@ TEST_F(FilterTest, StandaloneExclamationSingleValues) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll->search("*", {}, "age:25", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(2), results["found"].get<size_t>());
 
     results = coll->search("*", {}, "age:!25", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
     ASSERT_EQ("Bob", results["hits"][0]["document"]["name"].get<std::string>());
 
     results = coll->search("*", {}, "rating:4.5", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
     ASSERT_EQ("Alice", results["hits"][0]["document"]["name"].get<std::string>());
 
     results = coll->search("*", {}, "rating:!4.5", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(2), results["found"].get<size_t>());
 
     results = coll->search("*", {}, "is_active:true", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(2), results["found"].get<size_t>());
 
     results = coll->search("*", {}, "is_active:!true", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
     ASSERT_EQ("Bob", results["hits"][0]["document"]["name"].get<std::string>());
 
     auto results_traditional = coll->search("*", {}, "age:!=25", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
@@ -2112,14 +2119,14 @@ TEST_F(FilterTest, StandaloneExclamationSingleValues) {
               results_new["hits"][0]["document"]["name"].get<std::string>());
 
     results = coll->search("*", {}, "age:!=25", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
     ASSERT_EQ("Bob", results["hits"][0]["document"]["name"].get<std::string>());
 
     results = coll->search("*", {}, "rating:!=4.5", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(2), results["found"].get<size_t>());
 
     results = coll->search("*", {}, "is_active:!=true", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(static_cast<size_t>(1), results["found"].get<size_t>());
     ASSERT_EQ("Bob", results["hits"][0]["document"]["name"].get<std::string>());
 
     collectionManager.drop_collection("Collection");
@@ -2167,7 +2174,7 @@ TEST_F(FilterTest, PrefixStringFilter) {
     std::vector<int> expected = {0};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, computed_exact_prefix_test.validity);
-        ASSERT_EQ(i, computed_exact_prefix_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), computed_exact_prefix_test.seq_id);
         computed_exact_prefix_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, computed_exact_prefix_test.validity);
@@ -2186,7 +2193,7 @@ TEST_F(FilterTest, PrefixStringFilter) {
     expected = {0, 1};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, computed_contains_prefix_test.validity);
-        ASSERT_EQ(i, computed_contains_prefix_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), computed_contains_prefix_test.seq_id);
         computed_contains_prefix_test.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, computed_contains_prefix_test.validity);
@@ -2238,7 +2245,7 @@ TEST_F(FilterTest, PrefixStringFilter) {
         if (expected[i] == 1) {
             iter_exact_prefix_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_exact_prefix_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_exact_prefix_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_exact_prefix_test.validity);
 
@@ -2271,7 +2278,7 @@ TEST_F(FilterTest, PrefixStringFilter) {
         if (expected[i] == 1) {
             iter_contains_prefix_test.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_contains_prefix_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_contains_prefix_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_contains_prefix_test.validity);
 
@@ -2289,7 +2296,7 @@ TEST_F(FilterTest, PrefixStringFilter) {
     expected = {2, 4};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, computed_exact_prefix_test_2.validity);
-        ASSERT_EQ(i, computed_exact_prefix_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), computed_exact_prefix_test_2.seq_id);
         computed_exact_prefix_test_2.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, computed_exact_prefix_test_2.validity);
@@ -2308,7 +2315,7 @@ TEST_F(FilterTest, PrefixStringFilter) {
     expected = {2, 4};
     for (auto const& i : expected) {
         ASSERT_EQ(filter_result_iterator_t::valid, computed_contains_prefix_test_2.validity);
-        ASSERT_EQ(i, computed_contains_prefix_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(i), computed_contains_prefix_test_2.seq_id);
         computed_contains_prefix_test_2.next();
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, computed_contains_prefix_test_2.validity);
@@ -2357,7 +2364,7 @@ TEST_F(FilterTest, PrefixStringFilter) {
         if (expected[i] == 1) {
             iter_exact_prefix_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_exact_prefix_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_exact_prefix_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_exact_prefix_test_2.validity);
 
@@ -2390,7 +2397,7 @@ TEST_F(FilterTest, PrefixStringFilter) {
         if (expected[i] == 1) {
             iter_contains_prefix_test_2.next();
         }
-        ASSERT_EQ(seq_ids[i], iter_contains_prefix_test_2.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), iter_contains_prefix_test_2.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, iter_contains_prefix_test_2.validity);
 
@@ -2437,7 +2444,7 @@ TEST_F(FilterTest, IdFilterIterator) {
                                                        enable_lazy_evaluation);
     ASSERT_TRUE(all_ids_match_test.init_status().ok());
     ASSERT_FALSE(all_ids_match_test._get_is_filter_result_initialized());
-    ASSERT_EQ(4, all_ids_match_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(4), all_ids_match_test.approx_filter_ids_length);
 
     std::vector<uint32_t> validate_ids = {0, 1, 3, 4};
     std::vector<uint32_t> seq_ids = {1, 2, 3, 3};
@@ -2453,13 +2460,13 @@ TEST_F(FilterTest, IdFilterIterator) {
         if (expected[i] == 1) {
             all_ids_match_test.next();
         }
-        ASSERT_EQ(seq_ids[i], all_ids_match_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), all_ids_match_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, all_ids_match_test.validity);
 
     all_ids_match_test.reset();
     ASSERT_EQ(filter_result_iterator_t::valid, all_ids_match_test.validity);
-    ASSERT_EQ(0, all_ids_match_test.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(0), all_ids_match_test.seq_id);
     ASSERT_EQ(1, all_ids_match_test.is_valid(2));
 
     all_ids_match_test.compute_iterators();
@@ -2479,7 +2486,7 @@ TEST_F(FilterTest, IdFilterIterator) {
                                                       enable_lazy_evaluation);
     ASSERT_TRUE(no_ids_match_test.init_status().ok());
     ASSERT_TRUE(no_ids_match_test._get_is_filter_result_initialized());
-    ASSERT_EQ(0, no_ids_match_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(0), no_ids_match_test.approx_filter_ids_length);
     ASSERT_EQ(filter_result_iterator_t::invalid, no_ids_match_test.validity);
 
     delete filter_tree_root;
@@ -2523,7 +2530,7 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
     for (auto const& json: documents) {
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -2537,8 +2544,8 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
                                                             enable_lazy_evaluation);
     ASSERT_TRUE(root_object_filter_test.init_status().ok());
     ASSERT_FALSE(root_object_filter_test._get_is_filter_result_initialized());
-    ASSERT_EQ(3, root_object_filter_test.approx_filter_ids_length);
-    ASSERT_EQ(1, root_object_filter_test.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(3), root_object_filter_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(1), root_object_filter_test.seq_id);
 
     std::vector<uint32_t> validate_ids = {0, 1, 2, 3, 4, 5};    // Equivalent to `take_id()` call.
     std::vector<int> expected = {0, 1, 0, 0, 1, -1};            // The result of `is_valid()` call.
@@ -2554,7 +2561,7 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
         if (expected[i] == 1) { // We call `next()` in `take_id()` when there is a match.
             root_object_filter_test.next();
         }
-        ASSERT_EQ(seq_ids[i], root_object_filter_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), root_object_filter_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, root_object_filter_test.validity);
 
@@ -2567,15 +2574,15 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
 
     root_object_filter_test.compute_iterators();
     ASSERT_TRUE(root_object_filter_test._get_is_filter_result_initialized());
-    ASSERT_EQ(2, root_object_filter_test.approx_filter_ids_length);
-    ASSERT_EQ(1, root_object_filter_test.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(2), root_object_filter_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(1), root_object_filter_test.seq_id);
 
     uint32_t excluded_result_index = 0;
     auto result = new filter_result_t();
     root_object_filter_test.get_n_ids(2, excluded_result_index, nullptr, 0, result);
-    ASSERT_EQ(2, result->count);
-    ASSERT_EQ(1, result->docs[0]);
-    ASSERT_EQ(4, result->docs[1]);
+    ASSERT_EQ(static_cast<uint32_t>(2), result->count);
+    ASSERT_EQ(static_cast<uint32_t>(1), result->docs[0]);
+    ASSERT_EQ(static_cast<uint32_t>(4), result->docs[1]);
     delete result;
 
     delete filter_tree_root;
@@ -2586,8 +2593,8 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
                                                             enable_lazy_evaluation);
     ASSERT_TRUE(root_object_filter_test.init_status().ok());
     ASSERT_FALSE(root_object_filter_test._get_is_filter_result_initialized());
-    ASSERT_EQ(4, root_object_filter_test.approx_filter_ids_length);
-    ASSERT_EQ(0, root_object_filter_test.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(4), root_object_filter_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(0), root_object_filter_test.seq_id);
 
     validate_ids = {0, 1, 2, 3, 4, 5};    // Equivalent to `take_id()` call.
     expected = {1, 0, 1, 1, -1, -1};      // The result of `is_valid()` call.
@@ -2603,7 +2610,7 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
         if (expected[i] == 1) { // We call `next()` in `take_id()` when there is a match.
             root_object_filter_test.next();
         }
-        ASSERT_EQ(seq_ids[i], root_object_filter_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), root_object_filter_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, root_object_filter_test.validity);
 
@@ -2618,8 +2625,8 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
                                                        enable_lazy_evaluation);
     ASSERT_TRUE(or_object_filters_test.init_status().ok());
     ASSERT_FALSE(or_object_filters_test._get_is_filter_result_initialized());
-    ASSERT_EQ(7, or_object_filters_test.approx_filter_ids_length);
-    ASSERT_EQ(0, or_object_filters_test.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(7), or_object_filters_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(0), or_object_filters_test.seq_id);
 
     validate_ids = {0, 1, 2, 3, 4, 5};
     expected = {1, 1, 1, 1, 1, -1};
@@ -2635,7 +2642,7 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
         if (expected[i] == 1) { // We call `next()` in `take_id()` when there is a match.
             or_object_filters_test.next();
         }
-        ASSERT_EQ(seq_ids[i], or_object_filters_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), or_object_filters_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, root_object_filter_test.validity);
 
@@ -2651,8 +2658,8 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
                                                            enable_lazy_evaluation);
     ASSERT_TRUE(or_object_filter_test.init_status().ok());
     ASSERT_FALSE(or_object_filter_test._get_is_filter_result_initialized());
-    ASSERT_EQ(3, or_object_filter_test.approx_filter_ids_length);
-    ASSERT_EQ(0, or_object_filter_test.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(3), or_object_filter_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(0), or_object_filter_test.seq_id);
 
     validate_ids = {0, 1, 2, 3, 4, 5};
     expected = {1, 0, 0, 0, 1, -1};
@@ -2668,7 +2675,7 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
         if (expected[i] == 1) { // We call `next()` in `take_id()` when there is a match.
             or_object_filter_test.next();
         }
-        ASSERT_EQ(seq_ids[i], or_object_filter_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), or_object_filter_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, root_object_filter_test.validity);
 
@@ -2684,8 +2691,8 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
                                                        enable_lazy_evaluation);
     ASSERT_TRUE(and_object_filter_test.init_status().ok());
     ASSERT_FALSE(and_object_filter_test._get_is_filter_result_initialized());
-    ASSERT_EQ(4, and_object_filter_test.approx_filter_ids_length);
-    ASSERT_EQ(0, and_object_filter_test.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(4), and_object_filter_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(0), and_object_filter_test.seq_id);
 
     validate_ids = {0, 1, 2, 3, 4, 5};
     expected = {1, 0, 1, 1, -1, -1};
@@ -2701,7 +2708,7 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
         if (expected[i] == 1) { // We call `next()` in `take_id()` when there is a match.
             and_object_filter_test.next();
         }
-        ASSERT_EQ(seq_ids[i], and_object_filter_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), and_object_filter_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, and_object_filter_test.validity);
 
@@ -2715,8 +2722,8 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
                                                            enable_lazy_evaluation);
     ASSERT_TRUE(not_object_filter_test.init_status().ok());
     ASSERT_FALSE(not_object_filter_test._get_is_filter_result_initialized());
-    ASSERT_EQ(3, not_object_filter_test.approx_filter_ids_length);
-    ASSERT_EQ(1, not_object_filter_test.seq_id);
+    ASSERT_EQ(static_cast<uint32_t>(3), not_object_filter_test.approx_filter_ids_length);
+    ASSERT_EQ(static_cast<uint32_t>(1), not_object_filter_test.seq_id);
 
     validate_ids = {0, 1, 2, 3, 4, 5};
     expected = {0, 1, 0, 0, 1, -1};
@@ -2732,7 +2739,7 @@ TEST_F(FilterTest, ObjectFitlterIterator) {
         if (expected[i] == 1) { // We call `next()` in `take_id()` when there is a match.
             not_object_filter_test.next();
         }
-        ASSERT_EQ(seq_ids[i], not_object_filter_test.seq_id);
+        ASSERT_EQ(static_cast<uint32_t>(seq_ids[i]), not_object_filter_test.seq_id);
     }
     ASSERT_EQ(filter_result_iterator_t::invalid, not_object_filter_test.validity);
 
@@ -2774,8 +2781,8 @@ TEST_F(FilterTest, FilterReferences) {
 
         for (size_t j = 0; j < collection_names[i].size(); j++) {
             const auto& name = collection_names[i][j];
-            ASSERT_EQ(1, fit->reference.count(name));
-            ASSERT_EQ(1, fit->reference[name].count);
+            ASSERT_EQ(static_cast<size_t>(1), fit->reference.count(name));
+            ASSERT_EQ(static_cast<size_t>(1), fit->reference[name].count);
 
             const auto& ref_id = ref_ids[i][j];
             ASSERT_EQ(ref_id, fit->reference[name].docs[0]);

@@ -7,20 +7,23 @@
 #include "collection.h"
 #include "synonym_index_manager.h"
 #include "curation_index_manager.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionSpecificTest : public ::testing::Test {
 protected:
     Store *store;
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_specific";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_specific");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -48,6 +51,7 @@ protected:
         SynonymIndexManager::get_instance().dispose();
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -67,8 +71,8 @@ TEST_F(CollectionSpecificTest, SearchTextWithHyphen) {
     auto results = coll1->search("open-access-may-become-mandatory-for-nih-funded-research",
                                  {"title"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     collectionManager.drop_collection("coll1");
@@ -97,11 +101,11 @@ TEST_F(CollectionSpecificTest, ExplicitHighlightFieldsConfig) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {1}, 10000, true, false, true, "description,author").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ(2, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["highlights"].size());
 
     ASSERT_EQ("description", results["hits"][0]["highlights"][0]["field"].get<std::string>());
     ASSERT_EQ("A story about a <mark>brown</mark> <mark>fox</mark> who was fast.", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
@@ -116,11 +120,11 @@ TEST_F(CollectionSpecificTest, ExplicitHighlightFieldsConfig) {
                             {"description"}, 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1}, 10000, true, false, true, "description,author").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ(2, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["highlights"].size());
     ASSERT_FALSE(results["hits"][0]["document"].contains("description"));
 
     ASSERT_EQ("description", results["hits"][0]["highlights"][0]["field"].get<std::string>());
@@ -133,9 +137,9 @@ TEST_F(CollectionSpecificTest, ExplicitHighlightFieldsConfig) {
                             {"description"}, 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1,1}, 10000, true, false, true, "description").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("description", results["hits"][0]["highlights"][0]["field"].get<std::string>());
     ASSERT_EQ("A story about a brown <mark>fox</mark> who was fast.", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_FALSE(results["hits"][0]["highlights"][0].contains("value"));
@@ -147,9 +151,9 @@ TEST_F(CollectionSpecificTest, ExplicitHighlightFieldsConfig) {
                             {"description"}, 10, "", 30, 4, "description", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1,1}, 10000, true, false, true, "description").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
 
     ASSERT_EQ("description", results["hits"][0]["highlights"][0]["field"].get<std::string>());
     ASSERT_EQ("A story about a brown <mark>fox</mark> who was fast.", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
@@ -163,9 +167,9 @@ TEST_F(CollectionSpecificTest, ExplicitHighlightFieldsConfig) {
                             {"description"}, 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1,1}, 10000, true, false, true, "description,author").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
 
     // wildcard query without search field names
 
@@ -174,9 +178,9 @@ TEST_F(CollectionSpecificTest, ExplicitHighlightFieldsConfig) {
                             {"description"}, 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1,1}, 10000, true, false, true, "description,author").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
 
     // highlight field that does not exist
 
@@ -185,9 +189,9 @@ TEST_F(CollectionSpecificTest, ExplicitHighlightFieldsConfig) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>", {1}, 10000, true, false, true, "not-found").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -220,7 +224,7 @@ TEST_F(CollectionSpecificTest, ExactSingleFieldMatch) {
                                  4, "title", 10).get();
 
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ(0, results["hits"][0]["text_match_info"]["typo_prefix_score"]);
@@ -232,7 +236,7 @@ TEST_F(CollectionSpecificTest, ExactSingleFieldMatch) {
                             spp::sparse_hash_set<std::string>(), spp::sparse_hash_set<std::string>(), 10, "", 30,
                             4, "title", 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ(0, results["hits"][0]["text_match_info"]["typo_prefix_score"]);
 
@@ -269,7 +273,7 @@ TEST_F(CollectionSpecificTest, CheckProgressiveTypoSearching) {
                                  spp::sparse_hash_set<std::string>(), spp::sparse_hash_set<std::string>(), 10, "", 30,
                                  4, "title", 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ(2, results["hits"][0]["text_match_info"]["typo_prefix_score"]);
 
@@ -279,7 +283,7 @@ TEST_F(CollectionSpecificTest, CheckProgressiveTypoSearching) {
                             spp::sparse_hash_set<std::string>(), spp::sparse_hash_set<std::string>(), 10, "", 30,
                             4, "title", 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ(2, results["hits"][0]["text_match_info"]["typo_prefix_score"]);
@@ -316,7 +320,7 @@ TEST_F(CollectionSpecificTest, OrderMultiFieldFuzzyMatch) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 40, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {1, 1}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -328,7 +332,7 @@ TEST_F(CollectionSpecificTest, OrderMultiFieldFuzzyMatch) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 40, {}, {}, {}, 0,
                             "<mark>", "</mark>", {2, 1}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -357,7 +361,7 @@ TEST_F(CollectionSpecificTest, TypoBeforeDropTokens) {
     auto results = coll1->search("Josh Lixson", {"title"}, "", {}, {}, {2}, 10,
                                  1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("Josh Lixson", {"title"}, "", {}, {}, {2}, 10,
@@ -365,7 +369,7 @@ TEST_F(CollectionSpecificTest, TypoBeforeDropTokens) {
                             10, spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -388,7 +392,7 @@ TEST_F(CollectionSpecificTest, DropTokensValueWhenTokensAreSplit) {
     auto results = coll1->search("blueray", {"title"}, "", {}, {}, {2}, 10,
                                  1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ(0, results["hits"][0]["text_match_info"]["num_tokens_dropped"]);
 
@@ -423,7 +427,7 @@ TEST_F(CollectionSpecificTest, FieldWeighting) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 40, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {1, 4}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -458,7 +462,7 @@ TEST_F(CollectionSpecificTest, MultiFieldArrayRepeatingTokens) {
     auto results = coll1->search("rv345 cisco 18", {"title", "description", "attrs"}, "", {}, {}, {1}, 10,
                                  1, FREQUENCY, {true, true, true}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -489,7 +493,7 @@ TEST_F(CollectionSpecificTest, ExactMatchOnPrefix) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 1).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
@@ -516,7 +520,7 @@ TEST_F(CollectionSpecificTest, TypoPrefixSearchWithoutPrefixEnabled) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -538,12 +542,12 @@ TEST_F(CollectionSpecificTest, PrefixWithTypos) {
     auto results = coll1->search("maria", {"title"}, "", {}, {}, {2}, 10,
                                  1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("maria", {"title"}, "", {}, {}, {2}, 10,
                             1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -582,8 +586,8 @@ TEST_F(CollectionSpecificTest, PrefixVsExactMatch) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 10).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ASSERT_STREQ("2", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("3", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -609,12 +613,12 @@ TEST_F(CollectionSpecificTest, PrefixWithTypos2) {
     auto results = coll1->search("maria", {"title"}, "", {}, {}, {2}, 10,
                                  1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("maria", {"title"}, "", {}, {}, {2}, 10,
                             1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -720,7 +724,7 @@ TEST_F(CollectionSpecificTest, DeleteOverridesOnDiskDuringCollDropAndSynonymsSho
 
     auto get_op = SynonymIndexManager::get_instance().get_synonym_index("index");
     ASSERT_TRUE(get_op.ok());
-    ASSERT_EQ(1, get_op.get()->get_synonyms().get().size());
+    ASSERT_EQ(size_t{1}, get_op.get()->get_synonyms().get().size());
 }
 
 TEST_F(CollectionSpecificTest, SingleCharMatchFullFieldHighlight) {
@@ -742,7 +746,7 @@ TEST_F(CollectionSpecificTest, SingleCharMatchFullFieldHighlight) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "title", 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     ASSERT_EQ("Which of the following is <mark>a</mark> probable sign of infection?",
@@ -807,7 +811,7 @@ TEST_F(CollectionSpecificTest, GuardAgainstIdFieldInSchema) {
 
     Collection* coll1 = collectionManager.create_collection(schema).get();
 
-    ASSERT_EQ(0, coll1->get_schema().count("id"));
+    ASSERT_EQ(size_t{0}, coll1->get_schema().count("id"));
 
     collectionManager.drop_collection("coll1");
 }
@@ -853,12 +857,12 @@ TEST_F(CollectionSpecificTest, HighlightSecondaryFieldWithPrefixMatch) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 40, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {1, 1}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(2, results["hits"][1]["highlights"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][1]["highlights"].size());
 
     ASSERT_EQ("<mark>Function</mark>s and Equations",
               results["hits"][1]["highlights"][0]["snippet"].get<std::string>());
@@ -889,7 +893,7 @@ TEST_F(CollectionSpecificTest, HighlightWithDropTokens) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "description", 40, {}, {}, {}, 0,
                                  "<mark>", "</mark>").get();
 
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     ASSERT_EQ("<mark>HPE</mark> <mark>Aruba</mark> <mark>AP-575</mark> 802.11ax Wireless Access Point - "
@@ -922,7 +926,7 @@ TEST_F(CollectionSpecificTest, HighlightLongFieldWithDropTokens) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "description", 1, {}, {}, {}, 0,
                                  "<mark>", "</mark>").get();
 
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     ASSERT_EQ("Tripp Lite USB C to VGA Multiport Video Adapter Converter w/ USB-A Hub, "
@@ -967,10 +971,10 @@ TEST_F(CollectionSpecificTest, HighlightWithTypoTokensAndPrefixSearch) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                                  "<mark>", "</mark>").get();
 
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ(2, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["highlights"].size());
 
     ASSERT_EQ("<mark>Pandaabear</mark> <mark>Bas</mark>ic",
               results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
@@ -979,7 +983,7 @@ TEST_F(CollectionSpecificTest, HighlightWithTypoTokensAndPrefixSearch) {
               results["hits"][0]["highlights"][1]["snippet"].get<std::string>());
 
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
-    ASSERT_EQ(2, results["hits"][1]["highlights"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][1]["highlights"].size());
 
     ASSERT_EQ("<mark>Pandaabear</mark>",
               results["hits"][1]["highlights"][0]["snippet"].get<std::string>());
@@ -993,18 +997,18 @@ TEST_F(CollectionSpecificTest, HighlightWithTypoTokensAndPrefixSearch) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                             "<mark>", "</mark>").get();
 
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(2, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("<mark>Pandaabear</mark> <mark>Bas</mark>ic",
               results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_EQ("<mark>Pandaabear</mark>",
               results["hits"][0]["highlights"][1]["snippet"].get<std::string>());
 
-    ASSERT_EQ(2, results["hits"][1]["highlights"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][1]["highlights"].size());
     ASSERT_EQ("<mark>Pandaabear</mark>",
               results["hits"][1]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_EQ("Panda's <mark>Bas</mark>ement",
@@ -1017,18 +1021,18 @@ TEST_F(CollectionSpecificTest, HighlightWithTypoTokensAndPrefixSearch) {
                   spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 1, {}, {}, {}, 0,
                   "<mark>", "</mark>").get();
 
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(2, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("<mark>Pandaabear</mark> <mark>Bas</mark>ic",
               results["hits"][0]["highlights"][0]["snippets"][0].get<std::string>());
     ASSERT_EQ("<mark>Pandaabear</mark>",
               results["hits"][0]["highlights"][1]["snippet"].get<std::string>());
 
-    ASSERT_EQ(2, results["hits"][1]["highlights"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][1]["highlights"].size());
     ASSERT_EQ("<mark>Pandaabear</mark>",
               results["hits"][1]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_EQ("Panda's <mark>Bas</mark>ement",
@@ -1058,7 +1062,7 @@ TEST_F(CollectionSpecificTest, PrefixSearchOnlyOnLastToken) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "concat", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>").get();
 
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1089,7 +1093,7 @@ TEST_F(CollectionSpecificTest, TokenStartingWithSameLetterAsPrevToken) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 10, {}, {}, {}, 0,
                                  "<mark>", "</mark>").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1125,7 +1129,7 @@ TEST_F(CollectionSpecificTest, CrossFieldMatchingExactMatchOnSingleField) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 10, {}, {}, {}, 0,
                                  "<mark>", "</mark>").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ(0, results["hits"][0]["text_match_info"]["num_tokens_dropped"]);
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
@@ -1138,7 +1142,7 @@ TEST_F(CollectionSpecificTest, CrossFieldMatchingExactMatchOnSingleField) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 10, {}, {}, {}, 0,
                             "<mark>", "</mark>").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ(0, results["hits"][0]["text_match_info"]["num_tokens_dropped"]);
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
@@ -1169,8 +1173,8 @@ TEST_F(CollectionSpecificTest, HighlightEmptyArray) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 10, {}, {}, {}, 0,
                                  "<mark>", "</mark>").get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("name", results["hits"][0]["highlights"][0]["field"]);
 
     collectionManager.drop_collection("coll1");
@@ -1199,8 +1203,8 @@ TEST_F(CollectionSpecificTest, CustomSeparators) {
                                  "<mark>", "</mark>",{}, 1000,
                                  true, false, true, "", true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("name", results["hits"][0]["highlights"][0]["field"]);
     ASSERT_EQ("alpha-beta-<mark>gamma</mark>-omega-zeta", results["hits"][0]["highlights"][0]["snippet"]);
 
@@ -1212,8 +1216,8 @@ TEST_F(CollectionSpecificTest, CustomSeparators) {
                             "<mark>", "</mark>",{}, 1000,
                             true, false, true, "", false).get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("name", results["hits"][0]["highlights"][0]["field"]);
     ASSERT_EQ("alpha-beta-<mark>gamma</mark>-<mark>omega</mark>-zeta", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -1255,8 +1259,8 @@ TEST_F(CollectionSpecificTest, CustomSymbolsForIndexing) {
     ).get();
 
     nlohmann::json coll_summary = coll1->get_summary_json();
-    ASSERT_EQ(1, coll_summary["symbols_to_index"].size());
-    ASSERT_EQ(0, coll_summary["token_separators"].size());
+    ASSERT_EQ(size_t{1}, coll_summary["symbols_to_index"].size());
+    ASSERT_EQ(size_t{0}, coll_summary["token_separators"].size());
 
     ASSERT_EQ("+", coll_summary["symbols_to_index"][0].get<std::string>());
 
@@ -1281,9 +1285,9 @@ TEST_F(CollectionSpecificTest, CustomSymbolsForIndexing) {
                                  "<mark>", "</mark>",{}, 1000,
                                  true, false, true, "", false).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ(1, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["highlights"].size());
     ASSERT_EQ("name", results["hits"][0]["highlights"][0]["field"].get<std::string>());
     ASSERT_EQ("Yes, <mark>C++</mark> is great!", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -1302,7 +1306,7 @@ TEST_F(CollectionSpecificTest, CustomSymbolsForIndexing) {
                                  "<mark>", "</mark>",{}, 1000,
                                  true, false, true, "", false).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1344,8 +1348,8 @@ TEST_F(CollectionSpecificTest, CustomSeparatorsHandleQueryVariations) {
     ).get();
 
     nlohmann::json coll_summary = coll1->get_summary_json();
-    ASSERT_EQ(0, coll_summary["symbols_to_index"].size());
-    ASSERT_EQ(5, coll_summary["token_separators"].size());
+    ASSERT_EQ(size_t{0}, coll_summary["symbols_to_index"].size());
+    ASSERT_EQ(size_t{5}, coll_summary["token_separators"].size());
 
     ASSERT_EQ("-", coll_summary["token_separators"][0].get<std::string>());
     ASSERT_EQ(".", coll_summary["token_separators"][1].get<std::string>());
@@ -1380,7 +1384,7 @@ TEST_F(CollectionSpecificTest, CustomSeparatorsHandleQueryVariations) {
                                  "<mark>", "</mark>",{}, 1000,
                                  true, false, true, "", false).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>bofrost</mark>*<mark>dienstl</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -1392,7 +1396,7 @@ TEST_F(CollectionSpecificTest, CustomSeparatorsHandleQueryVariations) {
                             "<mark>", "</mark>",{}, 1000,
                             true, false, true, "", false).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>bofrost</mark>*<mark>dienstl</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -1404,7 +1408,7 @@ TEST_F(CollectionSpecificTest, CustomSeparatorsHandleQueryVariations) {
                             "<mark>", "</mark>",{}, 1000,
                             true, false, true, "", false).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>bofrost</mark>*<mark>dienstl</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -1416,7 +1420,7 @@ TEST_F(CollectionSpecificTest, CustomSeparatorsHandleQueryVariations) {
                             "<mark>", "</mark>",{}, 1000,
                             true, false, true, "", false).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>1</mark>&<mark>1</mark> Internet Limited", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -1428,7 +1432,7 @@ TEST_F(CollectionSpecificTest, CustomSeparatorsHandleQueryVariations) {
                             "<mark>", "</mark>",{}, 1000,
                             true, false, true, "", false).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>1</mark>&<mark>1</mark> Internet Limited", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -1440,7 +1444,7 @@ TEST_F(CollectionSpecificTest, CustomSeparatorsHandleQueryVariations) {
                             "<mark>", "</mark>",{}, 1000,
                             true, false, true, "", false).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>just</mark>...<mark>grilled</mark>", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -1493,7 +1497,7 @@ TEST_F(CollectionSpecificTest, TypoCorrectionWithFaceting) {
                                  "<mark>", "</mark>", {}, 1000,
                                  true, false, true, "", true).get();
 
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
 
     results = coll1->search("salt", {"name", "brand"},
                             "brand: Salpices", {"brand"}, {}, {2}, 10,
@@ -1503,7 +1507,7 @@ TEST_F(CollectionSpecificTest, TypoCorrectionWithFaceting) {
                             "<mark>", "</mark>", {}, 1000,
                             true, false, true, "", true).get();
 
-    ASSERT_EQ(3, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
 
     // without exhaustive search, count be just 1 for non-filtered query
 
@@ -1515,7 +1519,7 @@ TEST_F(CollectionSpecificTest, TypoCorrectionWithFaceting) {
                             "<mark>", "</mark>", {}, 1000,
                             true, false, true, "", false).get();
 
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1553,7 +1557,7 @@ TEST_F(CollectionSpecificTest, MultiFieldVerbatimMatchesShouldBeWeighted) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 10, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {6, 1, 1}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1589,7 +1593,7 @@ TEST_F(CollectionSpecificTest, ZeroWeightedField) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 10, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {1, 0}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1635,7 +1639,7 @@ TEST_F(CollectionSpecificTest, ImportDocumentWithRepeatingIDInTheSameBatch) {
                                  "<mark>", "</mark>", {0},
                                  1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("Levis", results["hits"][0]["document"]["name"].get<std::string>());
 
@@ -1744,14 +1748,14 @@ TEST_F(CollectionSpecificTest, UpsertOfTwoDocsWithSameIdWithinSameBatch) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_TRUE(results["hits"][0]["document"].contains("points"));
     ASSERT_FALSE(results["hits"][0]["document"].contains("last_chance"));
     ASSERT_EQ(200, results["hits"][0]["document"]["points"].get<int32_t>());
 
-    ASSERT_EQ(1, coll1->_get_index()->_get_numerical_index().at("points")->size());
-    ASSERT_EQ(0, coll1->_get_index()->_get_numerical_index().at("last_chance")->size());
+    ASSERT_EQ(size_t{1}, coll1->_get_index()->_get_numerical_index().at("points")->size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_numerical_index().at("last_chance")->size());
 
     // update without doc id
 
@@ -1796,12 +1800,12 @@ TEST_F(CollectionSpecificTest, UpdateUpsertOfDocWithMissingFields) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ(1, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"].size());
 
-    ASSERT_EQ(0, coll1->_get_index()->_get_numerical_index().at("points")->size());
-    ASSERT_EQ(0, coll1->_get_index()->_get_numerical_index().at("last_chance")->size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_numerical_index().at("points")->size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_numerical_index().at("last_chance")->size());
 
     // put the original doc back
     ASSERT_TRUE(coll1->add(doc1.dump(), UPSERT).ok());
@@ -1813,8 +1817,8 @@ TEST_F(CollectionSpecificTest, UpdateUpsertOfDocWithMissingFields) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());
 
     // update doc with missing fields: existing fields should NOT be removed
 
@@ -1833,12 +1837,12 @@ TEST_F(CollectionSpecificTest, UpdateUpsertOfDocWithMissingFields) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ(3, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{3}, results["hits"][0]["document"].size());
 
-    ASSERT_EQ(1, coll1->_get_index()->_get_numerical_index().at("points")->size());
-    ASSERT_EQ(1, coll1->_get_index()->_get_numerical_index().at("last_chance")->size());
+    ASSERT_EQ(size_t{1}, coll1->_get_index()->_get_numerical_index().at("points")->size());
+    ASSERT_EQ(size_t{1}, coll1->_get_index()->_get_numerical_index().at("last_chance")->size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1908,7 +1912,7 @@ TEST_F(CollectionSpecificTest, VerbatimMatchShouldConsiderTokensMatchedAcrossAll
                                  "<mark>", "</mark>", {1, 1},
                                  1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1935,11 +1939,11 @@ TEST_F(CollectionSpecificTest, VerbatimMatchShouldConsiderTokensMatchedAcrossAll
                             "<mark>", "</mark>", {1, 1},
                             1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1971,7 +1975,7 @@ TEST_F(CollectionSpecificTest, CustomNumTyposConfiguration) {
                                  "<mark>", "</mark>", {1},
                                  1000, true, false, true, "", false, 60000*100).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("asd", {"brand"},
                             "", {}, {}, {2}, 10,
@@ -1981,7 +1985,7 @@ TEST_F(CollectionSpecificTest, CustomNumTyposConfiguration) {
                             "<mark>", "</mark>", {1},
                             1000, true, false, true, "", false, 60000*100, 3, 7).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // 2 typos are not tolerated by default on 6-len word
 
@@ -1993,7 +1997,7 @@ TEST_F(CollectionSpecificTest, CustomNumTyposConfiguration) {
                             "<mark>", "</mark>", {1},
                             1000, true, false, true, "", false, 60000*100).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("bixger", {"brand"},
                             "", {}, {}, {2}, 10,
@@ -2003,7 +2007,7 @@ TEST_F(CollectionSpecificTest, CustomNumTyposConfiguration) {
                             "<mark>", "</mark>", {1},
                             1000, true, false, true, "", false, 60000*100, 3, 6).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2027,7 +2031,7 @@ TEST_F(CollectionSpecificTest, RepeatingStringArrayTokens) {
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
 
     auto results = coll1->search("spools", {"tags"}, "", {}, {}, {2}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // when the second document containing a token cannot fit compact posting list
     tags = {"foobar"};
@@ -2043,7 +2047,7 @@ TEST_F(CollectionSpecificTest, RepeatingStringArrayTokens) {
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
 
     results = coll1->search("foobar", {"tags"}, "", {}, {}, {2}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2061,7 +2065,7 @@ TEST_F(CollectionSpecificTest, HighlightOnPrefixRegression) {
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
 
     auto results = coll1->search("and", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2092,7 +2096,7 @@ TEST_F(CollectionSpecificTest, DroppedTokensShouldNotBeUsedForPrefixSearch) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("cat shoe", {"title"},
@@ -2102,7 +2106,7 @@ TEST_F(CollectionSpecificTest, DroppedTokensShouldNotBeUsedForPrefixSearch) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -2119,62 +2123,62 @@ TEST_F(CollectionSpecificTest, SearchShouldSplitAndJoinTokens) {
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
 
     auto results = coll1->search("non stick", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("pressurecooker", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("nonstick pressurecooker", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("the pressurecooker", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("pressurecooker great", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // splitting requires tokens to co-occur as a phrase in the dataset
 
     results = coll1->search("the pressureis", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("greatcooker", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("t h e", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("c o o k e r", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // three word split won't work
 
     results = coll1->search("nonstickpressurecooker", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // only first 5 words of the query are used for concat/split
 
     results = coll1->search("nonstick pressure cooker is a greatinvention", {"title"}, "", {}, {}, {0}, 10, 1,
                             FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("nonstick pressure cooker is a gr eat", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY,
                             {false}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // don't join when feature is disabled
     results = coll1->search("non stick", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0,
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000*1000, 4, 7, off).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // don't split when feature is disabled
     results = coll1->search("pressurecooker", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0,
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000*1000, 4, 7, off).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // drop tokens should not happen on tokens split
     doc["title"] = "Pressure Copper vessel";
@@ -2183,7 +2187,7 @@ TEST_F(CollectionSpecificTest, SearchShouldSplitAndJoinTokens) {
     results = coll1->search("pressurecopper", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10,
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("Pressure Copper vessel", results["hits"][0]["document"]["title"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2207,12 +2211,12 @@ TEST_F(CollectionSpecificTest, SplitJoinTokenAlways) {
 
     // return only query match docs as default
     auto results = coll1->search("non stick", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
 
     results = coll1->search("nonstick", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     // in always mode, both results should be returned
@@ -2220,7 +2224,7 @@ TEST_F(CollectionSpecificTest, SplitJoinTokenAlways) {
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000*1000, 4, 7, always).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -2229,7 +2233,7 @@ TEST_F(CollectionSpecificTest, SplitJoinTokenAlways) {
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000*1000, 4, 7, always).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][2]["document"]["id"].get<std::string>());
@@ -2258,27 +2262,27 @@ TEST_F(CollectionSpecificTest, SplitJoinTokenShouldNotBePrefixSearched) {
 
     // "cookwareable" should not match
     auto results = coll1->search("cook ware", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
     results = coll1->search("nonscratchable", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("pottery nonscratchable", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("pottery nonscratch", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("nonscratch", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // prefix search on non-joined token should work
     results = coll1->search("nonscratchable po", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 0).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2318,7 +2322,7 @@ TEST_F(CollectionSpecificTest, TokenCountOfWordsFarApart) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 1, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -2356,7 +2360,7 @@ TEST_F(CollectionSpecificTest, SingleFieldTokenCountOfWordsFarApart) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 10, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("1", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -2369,7 +2373,7 @@ TEST_F(CollectionSpecificTest, SingleFieldTokenCountOfWordsFarApart) {
                              spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 1, {}, {}, {}, 0,
                              "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     collectionManager.drop_collection("coll1");
@@ -2396,7 +2400,7 @@ TEST_F(CollectionSpecificTest, SingleHyphenInQueryNotToBeTreatedAsExclusion) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     collectionManager.drop_collection("coll1");
 }
 
@@ -2407,7 +2411,7 @@ TEST_F(CollectionSpecificTest, DuplicateFieldsNotAllowed) {
 
     ASSERT_FALSE(create_op.ok());
     ASSERT_EQ(create_op.error(), "There are duplicate field names in the schema.");
-    ASSERT_EQ(create_op.code(), 400);
+    ASSERT_EQ(create_op.code(), 400u);
 
     // with dynamic field
     fields = {field("title_.*", field_types::STRING, false, true),
@@ -2417,7 +2421,7 @@ TEST_F(CollectionSpecificTest, DuplicateFieldsNotAllowed) {
 
     ASSERT_FALSE(create_op.ok());
     ASSERT_EQ(create_op.error(), "There are duplicate field names in the schema.");
-    ASSERT_EQ(create_op.code(), 400);
+    ASSERT_EQ(create_op.code(), 400u);
 
     // but allow string* with resolved field
     fields = {field("title", "string*", false, true),
@@ -2470,7 +2474,7 @@ TEST_F(CollectionSpecificTest, SimplePrefixQueryHighlight) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("The Hound of the <mark>Basker</mark>villes", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_EQ("The Hound of the <mark>Basker</mark>villes", results["hits"][0]["highlights"][0]["value"].get<std::string>());
 
@@ -2481,7 +2485,7 @@ TEST_F(CollectionSpecificTest, SimplePrefixQueryHighlight) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("The Hound of the <mark>Baskerv</mark>illes", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_EQ("The Hound of the <mark>Baskerv</mark>illes", results["hits"][0]["highlights"][0]["value"].get<std::string>());
 
@@ -2494,7 +2498,7 @@ TEST_F(CollectionSpecificTest, SimplePrefixQueryHighlight) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("The <mark>Hound</mark> <mark>of</mark> the <mark>Baskerv</mark>illes", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
     ASSERT_EQ("The <mark>Hound</mark> <mark>of</mark> the <mark>Baskerv</mark>illes", results["hits"][0]["highlights"][0]["value"].get<std::string>());
 
@@ -2529,93 +2533,93 @@ TEST_F(CollectionSpecificTest, PhraseSearch) {
     // without phrase search
 
     auto results = coll1->search(R"(down there by)", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 0).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
     // with phrase search (with padded space before after double quote
     results = coll1->search(R"(" down there by ")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>Down</mark> <mark>There</mark> <mark>by</mark> the Train", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
     // phrase search with exclusion
     results = coll1->search(R"("by the" -train)", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("Then and there <mark>by</mark> <mark>the</mark> down", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
     // exclusion of an entire phrase
     results = coll1->search(R"(-"by the down")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
-    ASSERT_EQ(0, results["hits"][0]["highlights"].size());
-    ASSERT_EQ(0, results["hits"][1]["highlights"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["highlights"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][1]["highlights"].size());
 
     results = coll1->search(R"(-"by the")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     // phrase search with token with no matching doc
     results = coll1->search(R"("by the dinosaur")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // phrase search with no matching document
     results = coll1->search(R"("by the state")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // phrase search with filter condition
     results = coll1->search(R"("there by the")", {"title"}, "points:>=1", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     // exclude phrase with tokens that don't have any document matched
     results = coll1->search(R"(-"by the dinosaur")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     // phrase with normal non-matching token
     results = coll1->search(R"("by the" state)", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search(R"("by the" and)", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // phrase with normal matching token
     results = coll1->search(R"("by the" and)", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // order of tokens in phrase must be respected
     results = coll1->search(R"("train by the")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search(R"("train the by")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search(R"("train the")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search(R"("trooper state")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // two phrases
     results = coll1->search(R"("by the" "then and")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>Then</mark> <mark>and</mark> there <mark>by</mark> <mark>the</mark> down", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
     results = coll1->search(R"("by the" "there by")", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // two phrases with filter
     results = coll1->search(R"("by the" "there by")", {"title"}, "points:>=1", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     // single token phrase
     results = coll1->search(R"("trooper")", {"title"}, "points:>=1", {}, {}, {0}, 10, 1, FREQUENCY, {false}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2640,12 +2644,12 @@ TEST_F(CollectionSpecificTest, PhraseSearchMultiBlockToken) {
     auto results = coll1->search(R"("is train")", {"title"},
                                  "", {}, {}, {2}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search(R"("train is")", {"title"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("300", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2673,17 +2677,17 @@ TEST_F(CollectionSpecificTest, PhraseSearchMultipleFields) {
     auto results = coll1->search(R"("dog shoemaker")", {"title", "description"},
                                  "", {}, {}, {2, 2}, 10, 1, FREQUENCY, {true, true}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search(R"("dog and cat")", {"title", "description"},
                             "", {}, {}, {2, 2}, 10, 1, FREQUENCY, {true, true}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search(R"("dog and cat")", {"title", "description"},
                             "description: about", {}, {}, {2, 2}, 10, 1, FREQUENCY, {true, true}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2714,7 +2718,7 @@ TEST_F(CollectionSpecificTest, PhraseSearchMultipleFieldsWithWeights) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 40, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {10, 2}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -2725,7 +2729,7 @@ TEST_F(CollectionSpecificTest, PhraseSearchMultipleFieldsWithWeights) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 40, {}, {}, {}, 0,
                             "<mark>", "</mark>", {2, 10}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -2761,7 +2765,7 @@ TEST_F(CollectionSpecificTest, HandleLargeWeights) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {1, 2}, 1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_TRUE(results["hits"][0]["text_match"].get<size_t>() > results["hits"][1]["text_match"].get<size_t>());
@@ -2773,7 +2777,7 @@ TEST_F(CollectionSpecificTest, HandleLargeWeights) {
                             spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                             "<mark>", "</mark>", {128, 130}, 1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
     ASSERT_TRUE(results["hits"][0]["text_match"].get<size_t>() > results["hits"][1]["text_match"].get<size_t>());
@@ -2810,7 +2814,7 @@ TEST_F(CollectionSpecificTest, VerbatimMatchShouldOverpowerHigherWeightedField) 
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {4, 1}, 1000, true).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -2845,7 +2849,7 @@ TEST_F(CollectionSpecificTest, DropTokensTillOneToken) {
     auto results = coll1->search("harry malcolm roscow", {"title"},
                                  "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -2854,7 +2858,7 @@ TEST_F(CollectionSpecificTest, DropTokensTillOneToken) {
     results = coll1->search("harry malcolm roscow", {"title"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2885,14 +2889,14 @@ TEST_F(CollectionSpecificTest, NegationOfTokens) {
     auto results = coll1->search("galaxy -buds -maska -cover", {"title"},
                                  "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(0, results["hits"].size());
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("-white -bronze -bijeli", {"title"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2919,50 +2923,50 @@ TEST_F(CollectionSpecificTest, HyphenDetectionInQueryTokens) {
 
     auto results = coll1->search("https://example-site.com/page_name", {"url"},
                                  "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("example-site.com/page_name", {"url"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("example-site.com/page", {"url"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("example-site.com", {"url"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("example-site", {"url"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("site.com/page", {"url"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("site", {"url"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("com/page_name", {"url"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2992,7 +2996,7 @@ TEST_F(CollectionSpecificTest, PhraseSearchOnLongText) {
     auto results = coll1->search("\"have it be\"", {"title"},
                                  "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -3023,7 +3027,7 @@ TEST_F(CollectionSpecificTest, RepeatedTokensInArray) {
     auto results = coll1->search("harry", {"tags"},
                                  "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_EQ(results["hits"][0]["text_match"].get<size_t>(), results["hits"][1]["text_match"].get<size_t>());
     ASSERT_EQ(results["hits"][1]["text_match"].get<size_t>(), results["hits"][2]["text_match"].get<size_t>());
 
@@ -3046,8 +3050,8 @@ TEST_F(CollectionSpecificTest, NonIndexField) {
     auto results = coll1->search("harry", {"title"},
                                  "", {}, {}, {2}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, coll1->_get_index()->_get_search_index().size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, coll1->_get_index()->_get_search_index().size());
 
     std::map<std::string, std::string> req_params = {
             {"collection", "coll1"},
@@ -3062,9 +3066,9 @@ TEST_F(CollectionSpecificTest, NonIndexField) {
     collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
 
     results = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(3, results["hits"][0].at("document").size());
-    ASSERT_EQ(1, results["hits"][0].at("document").count("description"));
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"][0].at("document").size());
+    ASSERT_EQ(size_t{1}, results["hits"][0].at("document").count("description"));
 
     req_params = {
             {"collection", "coll1"},
@@ -3075,9 +3079,9 @@ TEST_F(CollectionSpecificTest, NonIndexField) {
     collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
 
     results = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["hits"][0].at("document").size());
-    ASSERT_EQ(1, results["hits"][0].at("document").count("title"));
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0].at("document").size());
+    ASSERT_EQ(size_t{1}, results["hits"][0].at("document").count("title"));
 
     collectionManager.drop_collection("coll1");
 }
@@ -3105,7 +3109,7 @@ TEST_F(CollectionSpecificTest, HighlightPrefixProperly) {
     auto results = coll1->search("cindrella o", {"title"},
                                  "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("<mark>Cinderella</mark>: the story.", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -3136,7 +3140,7 @@ TEST_F(CollectionSpecificTest, DontHighlightPunctuation) {
     auto results = coll1->search("readability", {"title"},
                                  "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3146,21 +3150,21 @@ TEST_F(CollectionSpecificTest, DontHighlightPunctuation) {
     results = coll1->search("clutter", {"title"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("Too much <mark>clutter</mark>-- use readability.js to clean up the page.", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
     results = coll1->search("ensure", {"title"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ("??<mark>Ensure</mark>! readability, use a legible font.", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
+    ASSERT_EQ("?\?<mark>Ensure</mark>! readability, use a legible font.", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
     results = coll1->search("dmonte", {"title"},
                             "", {}, {}, {2}, 10, 1, FREQUENCY, {true}, 1).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("'<mark>DMonte</mark> Harris", results["hits"][0]["highlights"][0]["snippet"].get<std::string>());
 
@@ -3201,7 +3205,7 @@ TEST_F(CollectionSpecificTest, ExactMatchWithoutClosingSymbol) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
 
     nlohmann::json result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("0", result["hits"][0]["document"]["id"]);
     ASSERT_EQ("Hampi", result["hits"][0]["document"]["title"]);
 
@@ -3216,7 +3220,7 @@ TEST_F(CollectionSpecificTest, ExactMatchWithoutClosingSymbol) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
 
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, result["hits"].size());
+    ASSERT_EQ(size_t{2}, result["hits"].size());
     ASSERT_EQ("2", result["hits"][0]["document"]["id"]);
     ASSERT_EQ("Taj Mahal", result["hits"][0]["document"]["title"]);
     ASSERT_EQ("1", result["hits"][1]["document"]["id"]);
@@ -3273,7 +3277,7 @@ TEST_F(CollectionSpecificTest, TruncationFilteringTest) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("1", result["hits"][0]["document"]["id"]);
 
     // filter by exact URL match with longer URL (should find only exact match)
@@ -3289,7 +3293,7 @@ TEST_F(CollectionSpecificTest, TruncationFilteringTest) {
     ASSERT_TRUE(search_op.ok());
 
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("2", result["hits"][0]["document"]["id"]);
 
     // filter by exact URL match with no truncation (should find exact match)
@@ -3305,7 +3309,7 @@ TEST_F(CollectionSpecificTest, TruncationFilteringTest) {
     ASSERT_TRUE(search_op.ok());
 
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("1", result["hits"][0]["document"]["id"]);
 
     // filter by exact URL match with aggressive truncation (should find exact match)
@@ -3321,7 +3325,7 @@ TEST_F(CollectionSpecificTest, TruncationFilteringTest) {
     ASSERT_TRUE(search_op.ok());
 
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("1", result["hits"][0]["document"]["id"]);
 
     // filter by very long URL that gets truncated (should find exact match)
@@ -3337,7 +3341,7 @@ TEST_F(CollectionSpecificTest, TruncationFilteringTest) {
     ASSERT_TRUE(search_op.ok());
 
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("3", result["hits"][0]["document"]["id"]);
 }
 
@@ -3386,7 +3390,7 @@ TEST_F(CollectionSpecificTest, TruncationEdgeCasesTest) {
     ASSERT_TRUE(search_op.ok());
 
     nlohmann::json result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("1", result["hits"][0]["document"]["id"]);
 
     // exact match for 6-character text (should find only doc2, even though it gets truncated)
@@ -3402,7 +3406,7 @@ TEST_F(CollectionSpecificTest, TruncationEdgeCasesTest) {
     ASSERT_TRUE(search_op.ok());
 
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("2", result["hits"][0]["document"]["id"]);
 
     // exact match for very long text (should find only doc3, even though it gets truncated)
@@ -3418,6 +3422,6 @@ TEST_F(CollectionSpecificTest, TruncationEdgeCasesTest) {
     ASSERT_TRUE(search_op.ok());
 
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("3", result["hits"][0]["document"]["id"]);
 }

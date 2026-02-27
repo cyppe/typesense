@@ -198,6 +198,10 @@ const benchmarkOptionSchema = z.object({
   yes: z.boolean(),
   binaries: z.tuple([z.string(), z.string()]),
   apiKey: z.string(),
+  port: z
+    .string()
+    .transform((value) => parseInt(value))
+    .pipe(z.number().int().min(1024).max(65535)),
   batchSize: z
     .string()
     .transform((value) => parseInt(value))
@@ -208,6 +212,7 @@ const benchmarkOptionSchema = z.object({
     },
     { message: "Duration must be in the format of <number><s/m/h/d>" },
   ),
+  serverArgs: z.array(z.string()).optional(),
 });
 
 const BenchmarkOptionsSchemaWithFailurePoints = benchmarkOptionSchema
@@ -216,10 +221,12 @@ const BenchmarkOptionsSchemaWithFailurePoints = benchmarkOptionSchema
   .omit({
     config: true,
     batchSize: true,
+    port: true,
   })
   .merge(
     z.object({
       batchSize: z.number().min(0),
+      port: z.number().int().min(1024).max(65535),
     }),
   );
 
@@ -254,7 +261,7 @@ class Benchmarks {
   private readonly isInCi: boolean;
   private readonly commitHashes: [string, string];
   private readonly percentagesForFailure: BenchmarkConfig["failureThresholds"];
-  private readonly port: (typeof TypesenseProcessManager.nodeToPortMap)[number]["http"];
+  private readonly port: number;
   private readonly spinner: Ora;
   private readonly benchmarkGroupsByCommitHash: Record<string, BenchmarkGroup>;
   private readonly reproductionService: ReproductionService;
@@ -264,7 +271,7 @@ class Benchmarks {
     batchSize: number;
     duration: string;
     apiKey: string;
-    port: (typeof TypesenseProcessManager.nodeToPortMap)[number]["http"];
+    port: number;
     services: ServiceContainer;
     spinner: Ora;
     workingDirectory: string;
@@ -330,18 +337,26 @@ class Benchmarks {
       return errAsync(new Error(`No benchmark group found for ${commitHash}`));
     }
 
-    return benchmarkGroup.processManager
-      .initNode(benchmarkGroup.dataDirectory, this.port)
-      .map((node) => benchmarkGroup.processManager.startProcess(node, { multiNode: false }))
+    const pm = benchmarkGroup.processManager;
+
+    return pm.cleanupStaleContainers()
+      .andThen(() => pm.ensurePortsAvailable())
+      .andThen(() => pm.initNode(benchmarkGroup.dataDirectory, this.port))
+      .andThen((node) => pm.startProcess(node, { multiNode: false }))
+      .andThen((controller) => {
+        this.spinner.start(`Waiting for Typesense health on port ${this.port}...`);
+        return pm.getHealth(this.port).map(() => controller);
+      })
       .map(() => {
-        this.spinner.succeed(`Typesense process started for ${commitHash}`);
+        this.spinner.succeed(`Typesense process started and healthy for ${commitHash}`);
       });
   }
 
   private handleResults(results: { searchResults: FormattedSearchResult[] }): ResultAsync<void, { message: string }> {
     const { searchResults } = results;
     const failingBenchmarks = searchResults.filter((row) => {
-      const threshold = this.percentagesForFailure[row.scenario][`${row.vus}vu`];
+      const threshold = this.percentagesForFailure[row.scenario]?.[`${row.vus}vu`];
+      if (!threshold) return false; // Skip threshold check for scenarios without configured thresholds (e.g. concurrent_*)
       return row.percentageChange > threshold.percentage && row.newValue > row.oldValue + threshold.milliseconds;
     });
     const passingBenchmarks = searchResults.filter((row) => !failingBenchmarks.includes(row));
@@ -357,7 +372,8 @@ class Benchmarks {
       if (failingBenchmarks.length > 0) {
         const failures = failingBenchmarks
           .map((row) => {
-            const threshold = this.percentagesForFailure[row.scenario][`${row.vus}vu`];
+            const threshold = this.percentagesForFailure[row.scenario]?.[`${row.vus}vu`];
+            if (!threshold) return `${row.metric} for ${row.displayVariable || `${row.scenario} (${row.vus}vu)`} changed by ${row.formattedPercentageChange}`;
             return `${row.metric} for ${row.displayVariable || `${row.scenario} (${row.vus}vu)`} changed by ${row.formattedPercentageChange} (threshold: ${threshold.percentage}%) or exceeded the time threshold of ${threshold.milliseconds}ms`;
           })
           .join("\n");
@@ -392,6 +408,13 @@ class Benchmarks {
       GROUP BY "scenario", "vus", "commitHash"
     `;
 
+    const concurrentSearchQuery = `
+      SELECT PERCENTILE("value", 95) AS "p95_value"
+      FROM "concurrent_search_processing_time_ms"
+      WHERE "commitHash" = '${this.commitHashes[0]}' OR "commitHash" = '${this.commitHashes[1]}'
+      GROUP BY "scenario", "vus", "commitHash"
+    `;
+
     return ResultAsync.combine([
       ResultAsync.fromPromise(
         influx.query<{
@@ -406,7 +429,24 @@ class Benchmarks {
         influx.query<{ commitHash: string; mean_import_duration: number }>(indexDurationQuery),
         toErrorWithMessage,
       ),
-    ]).andThen((results) => this.mapResults({ indexResults: results[1], searchResults: results[0] }));
+      ResultAsync.fromPromise(
+        influx.query<{
+          commitHash: string;
+          scenario: string;
+          vus: string;
+          p95_value: number;
+        }>(concurrentSearchQuery),
+        toErrorWithMessage,
+      ),
+    ]).andThen((results) => {
+      // Merge concurrent results into search results with "concurrent_" prefix on scenario name
+      const concurrentResults = results[2].map((r) => ({
+        ...r,
+        scenario: `concurrent_${r.scenario}`,
+      }));
+      const mergedSearchResults = [...results[0], ...concurrentResults];
+      return this.mapResults({ indexResults: results[1], searchResults: mergedSearchResults });
+    });
   }
 
   public startContainers(): ResultAsync<void, ErrorWithMessage> {
@@ -878,9 +918,91 @@ class Benchmarks {
       .andThen(() => this.getHistoricalResults());
   }
 
+  private collectRocksDBMetrics(commitHash: string): ResultAsync<void, ErrorWithMessage> {
+    this.spinner.start(`Collecting RocksDB metrics for ${commitHash}`);
+
+    return ResultAsync.fromPromise(
+      (async () => {
+        const url = `http://localhost:${this.port}/debug?rocksdb_stats=true`;
+        const metricsUrl = `http://localhost:${this.port}/metrics.json`;
+        const statsUrl = `http://localhost:${this.port}/stats.json`;
+
+        const headers = { "X-TYPESENSE-API-KEY": this.apiKey };
+        const fetchOpts = { headers, signal: AbortSignal.timeout(10000) };
+
+        const results: Record<string, unknown> = { commitHash, timestamp: new Date().toISOString() };
+
+        try {
+          const debugRes = await fetch(url, fetchOpts);
+          if (debugRes.ok) {
+            const debugData = await debugRes.json() as Record<string, unknown>;
+            results["rocksdb_properties"] = debugData["rocksdb_properties"] ?? {};
+            // Log key metrics
+            const props = debugData["rocksdb_properties"] as Record<string, string> | undefined;
+            if (props) {
+              logger.info(`[${commitHash}] RocksDB Metrics:`);
+              logger.info(`  Block cache usage: ${props["block_cache_usage"]} / ${props["block_cache_capacity"]}`);
+              logger.info(`  Memtable size: ${props["cur_size_all_mem_tables"]}`);
+              logger.info(`  Live data size: ${props["estimate_live_data_size"]}`);
+              logger.info(`  L0 files: ${props["num_files_at_level0"]}`);
+              logger.info(`  Running compactions: ${props["num_running_compactions"]}`);
+              logger.info(`  Write stopped: ${props["is_write_stopped"]}`);
+              logger.info(`  Delayed write rate: ${props["actual_delayed_write_rate"]}`);
+              logger.info(`  Estimated keys: ${props["estimate_num_keys"]}`);
+            }
+          }
+        } catch { /* debug endpoint may not be available on upstream */ }
+
+        try {
+          const metricsRes = await fetch(metricsUrl, fetchOpts);
+          if (metricsRes.ok) {
+            results["system_metrics"] = await metricsRes.json();
+          }
+        } catch { /* ignore */ }
+
+        try {
+          const statsRes = await fetch(statsUrl, fetchOpts);
+          if (statsRes.ok) {
+            results["api_stats"] = await statsRes.json();
+          }
+        } catch { /* ignore */ }
+
+        // Write metrics to file for later analysis
+        const fs = await import("fs/promises");
+        const metricsDir = path.join(this.workingDirectory, "metrics");
+        await fs.mkdir(metricsDir, { recursive: true });
+        const filename = `${commitHash}-${Date.now()}.json`;
+        await fs.writeFile(
+          path.join(metricsDir, filename),
+          JSON.stringify(results, null, 2),
+        );
+        logger.info(`Metrics saved to ${path.join(metricsDir, filename)}`);
+      })(),
+      toErrorWithMessage,
+    ).map(() => {
+      this.spinner.succeed(`RocksDB metrics collected for ${commitHash}`);
+    });
+  }
+
   private performBenchmarks(commitHashes: string[]) {
+    let metricsContainerId: string | undefined;
+
     return this.createDataDirectories()
       .andThen(() => this.services.get("fs").downloadTypesenseDataset(K6Benchmarks.DATASET_URL))
+      .andThen(() => {
+        // Start continuous metrics collector in background using first commit's k6 instance
+        const firstGroup = this.benchmarkGroupsByCommitHash[commitHashes[0]!];
+        if (!firstGroup) {
+          return okAsync(undefined);
+        }
+        return firstGroup.k6Benchmark
+          .startMetricsCollectionInBackground("20m")
+          .map((id) => { metricsContainerId = id; })
+          .orElse((e) => {
+            logger.warn(`Failed to start metrics collector: ${e.message}`);
+            return okAsync(undefined);
+          });
+      })
       .andThen(() =>
         commitHashes.reduce(
           (promise, commitHash, index) =>
@@ -893,7 +1015,48 @@ class Benchmarks {
                 }
                 return benchmarkGroup.k6Benchmark
                   .performIndexingBenchmark()
+                  .andThen(() => this.collectRocksDBMetrics(commitHash))
                   .andThen(() => benchmarkGroup.k6Benchmark.performSearchBenchmark())
+                  .andThen(() => this.collectRocksDBMetrics(commitHash))
+                  // Stress import: parallel chunked writes at different chunk sizes
+                  .andThen(() => {
+                    this.spinner.start(`Running stress import for ${commitHash}...`);
+                    return benchmarkGroup.k6Benchmark.performStressImportBenchmark({
+                      vus: 4,
+                      chunkSize: 1000,
+                      duration: "30s",
+                    });
+                  })
+                  .andThen(() =>
+                    benchmarkGroup.k6Benchmark.performStressImportBenchmark({
+                      vus: 4,
+                      chunkSize: 5000,
+                      duration: "30s",
+                    }),
+                  )
+                  .andThen(() =>
+                    benchmarkGroup.k6Benchmark.performStressImportBenchmark({
+                      vus: 8,
+                      chunkSize: 5000,
+                      duration: "30s",
+                    }),
+                  )
+                  // Concurrent search + import: measures search latency during active writes
+                  // Non-fatal — this benchmark is experimental and should not block the main results
+                  .andThen(() => {
+                    this.spinner.start(`Running concurrent search+import for ${commitHash}...`);
+                    return benchmarkGroup.k6Benchmark.performConcurrentBenchmark({
+                      searchVus: 50,
+                      importVus: 4,
+                      chunkSize: 1000,
+                      duration: "30s",
+                    }).orElse((e) => {
+                      logger.warn(`Concurrent benchmark failed (non-fatal): ${e.message}`);
+                      this.spinner.warn("Concurrent benchmark failed — continuing with remaining benchmarks");
+                      return okAsync(undefined);
+                    });
+                  })
+                  .andThen(() => this.collectRocksDBMetrics(commitHash))
                   .map(() => {
                     this.spinner.succeed(`Benchmarks complete for ${commitHash}`);
 
@@ -915,7 +1078,20 @@ class Benchmarks {
             }),
           okAsync<void, ErrorWithMessage>(undefined),
         ),
-      );
+      )
+      .andThen((result) => {
+        // Stop the metrics collector
+        if (metricsContainerId) {
+          const firstGroup = this.benchmarkGroupsByCommitHash[commitHashes[0]!];
+          if (firstGroup) {
+            return firstGroup.k6Benchmark
+              .stopMetricsCollection(metricsContainerId)
+              .map(() => result)
+              .orElse(() => okAsync(result));
+          }
+        }
+        return okAsync(result);
+      });
   }
 }
 
@@ -940,9 +1116,16 @@ const benchmark = new Command()
   .option("-b, --binaries <paths...>", "Paths of the pre-built Typesense binaries to compare")
   .option("-f, --fail <percentage>", "Percentage of regression to fail the test", "50")
   .option("--api-key <key>", "API key to use for the Typesense Process.", "xyz")
+  .option("--port <port>", "Base HTTP port for Typesense (gRPC = port - 1). Use a non-default port if 8108 is taken.", "8108")
   .option("--config <path>", "Path for config file")
   .option("--batch-size <num>", "Batch size for indexing operations", "100")
   .option("--duration <num>", "Duration for each search benchmark", "1s")
+  .option(
+    "--server-args <arg>",
+    "Additional argument to pass to typesense-server (repeatable, e.g. --server-args --max-indexing-concurrency=16 --server-args --db-block-size=4096)",
+    (value: string, previous: string[] = []) => [...previous, value],
+    [],
+  )
   .option("--openAI-key <key>", "OpenAI API key. Defaults to OPENAI_API_KEY in PATH", process.env.OPENAI_API_KEY)
   .action((options) => {
     logger.info("Running Typesense Integration tests");
@@ -989,8 +1172,8 @@ const benchmark = new Command()
         logger.debug("Starting Typesense process");
 
         const typesenseProcessManagers = [
-          new TypesenseProcessManager(spinner, options.binaries[0], options.apiKey, options.workingDirectory),
-          new TypesenseProcessManager(spinner, options.binaries[1], options.apiKey, options.workingDirectory),
+          new TypesenseProcessManager(spinner, options.binaries[0], options.apiKey, options.workingDirectory, undefined, "127.0.0.1", options.port, options.serverArgs),
+          new TypesenseProcessManager(spinner, options.binaries[1], options.apiKey, options.workingDirectory, undefined, "127.0.0.1", options.port, options.serverArgs),
         ] as [TypesenseProcessManager, TypesenseProcessManager];
 
         const benchmark = new Benchmarks({
@@ -998,7 +1181,7 @@ const benchmark = new Command()
           apiKey: options.apiKey,
           batchSize: options.batchSize,
           duration: options.duration,
-          port: 8108,
+          port: options.port,
           spinner,
           commitHashes: options.commitHashes,
           typesenseProcessManagers,

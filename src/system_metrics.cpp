@@ -16,7 +16,7 @@
 
 #include "string_utils.h"
 
-#ifndef ASAN_BUILD
+#ifndef NO_JEMALLOC
 #include "jemalloc.h"
 #if __APPLE__
 #define impl_mallctl je_mallctl
@@ -40,7 +40,7 @@ void SystemMetrics::get(const std::string &data_dir_path, nlohmann::json &result
     sz = sizeof(size_t);
     uint64_t epoch = 1;
 
-#ifndef ASAN_BUILD
+#ifndef NO_JEMALLOC
     // See: http://jemalloc.net/jemalloc.3.html#stats.active
 
     impl_mallctl("thread.tcache.flush", nullptr, nullptr, nullptr, 0);
@@ -166,7 +166,7 @@ mallctl_stats_t SystemMetrics::get_cached_mallctl_stats() {
         size_t sz = sizeof(size_t);
         uint64_t epoch = 1;
 
-#ifndef ASAN_BUILD
+#ifndef NO_JEMALLOC
         impl_mallctl("epoch", &epoch, &sz, &epoch, sz);
         impl_mallctl("stats.mapped", &mallctl_stats.memory_mapped_bytes, &sz, nullptr, 0);
         impl_mallctl("stats.retained", &mallctl_stats.memory_retained_bytes, &sz, nullptr, 0);
@@ -271,7 +271,7 @@ void SystemMetrics::get_proc_meminfo(uint64_t& memory_total_bytes, uint64_t& mem
 
 uint64_t SystemMetrics::get_cached_jemalloc_unused_memory() {
     // Unused Memory = (stats.mapped + stats.retained) - (stats.active + stats.metadata)
-#ifndef ASAN_BUILD
+#ifndef NO_JEMALLOC
     const auto stats = get_cached_mallctl_stats();
     return (stats.memory_mapped_bytes + stats.memory_retained_bytes) -
            (stats.memory_active_bytes + stats.memory_metadata_bytes);

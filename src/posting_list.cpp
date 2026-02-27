@@ -1,4 +1,5 @@
 #include "posting_list.h"
+#include "logger.h"
 #include <bitset>
 #include "for.h"
 #include "array_utils.h"
@@ -239,12 +240,6 @@ void posting_list_t::merge_adjacent_blocks(posting_list_t::block_t* block1, post
     size_t block1_orig_size = block1->size();
     size_t block2_orig_size = block2->size();
 
-    size_t block1_orig_offset_size = block1->offsets.getLength();
-    size_t block2_orig_offset_size = block2->offsets.getLength();
-
-    size_t block1_orig_offset_index_size = block1->offset_index.getLength();
-    size_t block2_orig_offset_index_size = block2->offset_index.getLength();
-
     uint32_t* new_ids = new uint32_t[block1->size() + num_block2_ids_to_move];
     std::memmove(new_ids, ids1, sizeof(uint32_t) * block1->size());
     std::memmove(new_ids + block1->size(), ids2, sizeof(uint32_t) * num_block2_ids_to_move);
@@ -353,7 +348,7 @@ void posting_list_t::merge_adjacent_blocks(posting_list_t::block_t* block1, post
     }
 
     if(block1->offsets.getLength() < block1->offset_index.getLength()) {
-        LOG(ERROR) << "Block offset length is smaller than offset index length after merging.";
+        TS_LOG(ERROR) << "Block offset length is smaller than offset index length after merging.";
     }
 
     delete [] offset_index1;
@@ -366,11 +361,11 @@ void posting_list_t::merge_adjacent_blocks(posting_list_t::block_t* block1, post
 }
 
 /*void print_vec(const std::vector<uint32_t>& vec) {
-    LOG(INFO) << "---";
+    TS_LOG(INFO) << "---";
     for(auto x: vec) {
-        LOG(INFO) << x;
+        TS_LOG(INFO) << x;
     }
-    LOG(INFO) << "---";
+    TS_LOG(INFO) << "---";
 }*/
 
 void posting_list_t::split_block(posting_list_t::block_t* src_block, posting_list_t::block_t* dst_block) {
@@ -437,7 +432,7 @@ void posting_list_t::split_block(posting_list_t::block_t* src_block, posting_lis
 
     if(dst_block->offsets.getLength() < dst_block->offset_index.getLength() ||
        src_block->offsets.getLength() < src_block->offset_index.getLength()) {
-        LOG(ERROR) << "Block offset length is smaller than offset index length after splitting.";
+        TS_LOG(ERROR) << "Block offset length is smaller than offset index length after splitting.";
     }
 
     delete [] raw_ids;
@@ -522,14 +517,14 @@ void posting_list_t::dump() {
         it.next();
     }
 
-    LOG(INFO) << "ids_str:";
-    LOG(INFO) << ids_str;
+    TS_LOG(INFO) << "ids_str:";
+    TS_LOG(INFO) << ids_str;
 
-    LOG(INFO) << "offset_index_str:";
-    LOG(INFO) << offset_index_str;
+    TS_LOG(INFO) << "offset_index_str:";
+    TS_LOG(INFO) << offset_index_str;
 
-    LOG(INFO) << "offsets_str:";
-    LOG(INFO) << offsets_str;
+    TS_LOG(INFO) << "offsets_str:";
+    TS_LOG(INFO) << offsets_str;
 }
 
 void posting_list_t::erase(const uint32_t id) {
@@ -664,7 +659,7 @@ void posting_list_t::merge(const std::vector<posting_list_t*>& posting_lists, st
         case 2:
             while(!at_end2(its)) {
                 if(equals2(its)) {
-                    //LOG(INFO) << its[0].id();
+                    //TS_LOG(INFO) << its[0].id();
                     result_ids.push_back(its[0].id());
                     advance_all2(its);
                 } else {
@@ -734,7 +729,7 @@ void posting_list_t::intersect(const std::vector<posting_list_t*>& posting_lists
         case 2:
             while(!at_end2(its)) {
                 if(equals2(its)) {
-                    //LOG(INFO) << its[0].id();
+                    //TS_LOG(INFO) << its[0].id();
                     result_ids.push_back(its[0].id());
                     advance_all2(its);
                 } else {
@@ -745,7 +740,7 @@ void posting_list_t::intersect(const std::vector<posting_list_t*>& posting_lists
         default:
             while(!at_end(its)) {
                 if(equals(its)) {
-                    //LOG(INFO) << its[0].id();
+                    //TS_LOG(INFO) << its[0].id();
                     result_ids.push_back(its[0].id());
                     advance_all(its);
                 } else {
@@ -842,8 +837,6 @@ bool posting_list_t::get_offsets(const std::vector<iterator_t>& its,
 
     // For each result ID and for each block it is contained in, calculate offsets
 
-    size_t id_block_index = 0;
-
     for(size_t j = 0; j < its.size(); j++) {
         block_t* curr_block = its[j].block();
         uint32_t curr_index = its[j].index();
@@ -863,9 +856,9 @@ bool posting_list_t::get_offsets(const std::vector<iterator_t>& its,
         int prev_pos = -1;
         bool is_last_token = false;
 
-        /*LOG(INFO) << "id: " << its[j].id() << ", start_offset: " << start_offset << ", end_offset: " << end_offset;
+        /*TS_LOG(INFO) << "id: " << its[j].id() << ", start_offset: " << start_offset << ", end_offset: " << end_offset;
         for(size_t x = 0; x < end_offset; x++) {
-            LOG(INFO) << "x: " << x << ", pos: " << offsets[x];
+            TS_LOG(INFO) << "x: " << x << ", pos: " << offsets[x];
         }*/
 
         while(start_offset < end_offset) {
@@ -1146,8 +1139,9 @@ void posting_list_t::get_prefix_matches(std::vector<iterator_t>& its, const bool
                 uint32_t id = ids[i];
                 bool is_match = true;
 
-                for (int j = its.size()-1; j >= 0; j--) {
-                    posting_list_t::iterator_t& it = its[j];
+                for (size_t j = its.size(); j > 0; j--) {
+                    const uint32_t token_position = static_cast<uint32_t>(j);
+                    posting_list_t::iterator_t& it = its[j - 1];
                     it.skip_to(id);
 
                     block_t* curr_block = it.block();
@@ -1170,13 +1164,13 @@ void posting_list_t::get_prefix_matches(std::vector<iterator_t>& its, const bool
                         uint32_t offset = offsets[start_offset_index];
                         start_offset_index++;
 
-                        if (offset == (j + 1)) {
+                        if (offset == token_position) {
                             // we have found a matching index, no need to look further for this token
                             is_match = true;
                             break;
                         }
 
-                        if (offset > (j + 1)) {
+                        if (offset > token_position) {
                             is_match = false;
                             break;
                         }
@@ -1206,8 +1200,9 @@ void posting_list_t::get_prefix_matches(std::vector<iterator_t>& its, const bool
                 std::map<size_t, token_index_meta_t> array_index_to_token_index;
                 bool premature_exit = false;
 
-                for (int j = its.size()-1; j >= 0; j--) {
-                    posting_list_t::iterator_t& it = its[j];
+                for (size_t j = its.size(); j > 0; j--) {
+                    const uint32_t token_position = static_cast<uint32_t>(j);
+                    posting_list_t::iterator_t& it = its[j - 1];
 
                     it.skip_to(id);
 
@@ -1236,8 +1231,8 @@ void posting_list_t::get_prefix_matches(std::vector<iterator_t>& its, const bool
                         if (pos == prev_pos) {  // indicates end of array index
                             size_t array_index = (size_t) offsets[start_offset_index];
 
-                            if (found_matching_index && j+1 < 128) {
-                                array_index_to_token_index[array_index].token_index.set(j+1);
+                            if (found_matching_index && token_position < 128) {
+                                array_index_to_token_index[array_index].token_index.set(token_position);
                             }
 
                             start_offset_index++;  // skip current value which is the array index or flag for last index
@@ -1246,7 +1241,7 @@ void posting_list_t::get_prefix_matches(std::vector<iterator_t>& its, const bool
                             continue;
                         }
 
-                        if (pos == (j + 1)) {
+                        if (pos == static_cast<int>(token_position)) {
                             // we have found a matching index
                             found_matching_index = true;
                             num_matching_index++;
@@ -1299,8 +1294,9 @@ void posting_list_t::get_exact_matches(std::vector<iterator_t>& its, const bool 
                 uint32_t id = ids[i];
                 bool is_exact_match = true;
 
-                for(int j = its.size()-1; j >= 0; j--) {
-                    posting_list_t::iterator_t& it = its[j];
+                for(size_t j = its.size(); j > 0; j--) {
+                    const uint32_t token_position = static_cast<uint32_t>(j);
+                    posting_list_t::iterator_t& it = its[j - 1];
                     it.skip_to(id);
 
                     block_t* curr_block = it.block();
@@ -1318,10 +1314,12 @@ void posting_list_t::get_exact_matches(std::vector<iterator_t>& its, const bool 
                                                 curr_block->offsets.getLength() :
                                                 it.offset_index[curr_index + 1];
 
-                    if(j == its.size()-1) {
+                    if(token_position == its.size()) {
                         // check if the last query token is the last offset
-                        if( offsets[end_offset_index-1] != 0 ||
-                            (end_offset_index-2 >= 0 && offsets[end_offset_index-2] != its.size())) {
+                        const uint32_t query_size = static_cast<uint32_t>(its.size());
+
+                        if(end_offset_index == 0 || offsets[end_offset_index - 1] != 0 ||
+                           (end_offset_index >= 2 && offsets[end_offset_index - 2] != query_size)) {
                             // not the last token for the document, so skip
                             is_exact_match = false;
                             break;
@@ -1333,13 +1331,13 @@ void posting_list_t::get_exact_matches(std::vector<iterator_t>& its, const bool 
                         uint32_t offset = offsets[start_offset_index];
                         start_offset_index++;
 
-                        if(offset == (j + 1)) {
+                        if(offset == token_position) {
                             // we have found a matching index, no need to look further
                             is_exact_match = true;
                             break;
                         }
 
-                        if(offset > (j + 1)) {
+                        if(offset > token_position) {
                             is_exact_match = false;
                             break;
                         }
@@ -1370,8 +1368,9 @@ void posting_list_t::get_exact_matches(std::vector<iterator_t>& its, const bool 
                 std::map<size_t, token_index_meta_t> array_index_to_token_index;
                 bool premature_exit = false;
 
-                for(int j = its.size()-1; j >= 0; j--) {
-                    posting_list_t::iterator_t& it = its[j];
+                for(size_t j = its.size(); j > 0; j--) {
+                    const uint32_t token_position = static_cast<uint32_t>(j);
+                    posting_list_t::iterator_t& it = its[j - 1];
 
                     it.skip_to(id);
 
@@ -1403,7 +1402,7 @@ void posting_list_t::get_exact_matches(std::vector<iterator_t>& its, const bool 
 
                             if(start_offset_index+1 < end_offset_index) {
                                 size_t next_offset = (size_t) offsets[start_offset_index + 1];
-                                if(next_offset == 0 && pos == its.size()) {
+                                if(next_offset == 0 && pos == static_cast<int>(its.size())) {
                                     // indicates that token is the last token on the doc
                                     array_index_to_token_index[array_index].has_last_token = true;
                                     has_atleast_one_last_token = true;
@@ -1411,8 +1410,8 @@ void posting_list_t::get_exact_matches(std::vector<iterator_t>& its, const bool 
                                 }
                             }
 
-                            if(found_matching_index && j+1 < 128) {
-                                array_index_to_token_index[array_index].token_index.set(j+1);
+                            if(found_matching_index && token_position < 128) {
+                                array_index_to_token_index[array_index].token_index.set(token_position);
                             }
 
                             start_offset_index++;  // skip current value which is the array index or flag for last index
@@ -1421,7 +1420,7 @@ void posting_list_t::get_exact_matches(std::vector<iterator_t>& its, const bool 
                             continue;
                         }
 
-                        if(pos == (j + 1)) {
+                        if(pos == static_cast<int>(token_position)) {
                             // we have found a matching index
                             found_matching_index = true;
                             num_matching_index++;
@@ -1431,7 +1430,7 @@ void posting_list_t::get_exact_matches(std::vector<iterator_t>& its, const bool 
                     }
 
                     // check if the last query token is the last offset of ANY array element
-                    if(j == its.size()-1 && !has_atleast_one_last_token) {
+                    if(token_position == its.size() && !has_atleast_one_last_token) {
                         premature_exit = true;
                         break;
                     }
@@ -1583,8 +1582,9 @@ bool posting_list_t::has_exact_match(std::vector<posting_list_t::iterator_t>& po
     } else {
 
         if (!field_is_array) {
-            for (int i = posting_list_iterators.size() - 1; i >= 0; i--) {
-                posting_list_t::iterator_t& it = posting_list_iterators[i];
+            for (size_t i = posting_list_iterators.size(); i > 0; i--) {
+                const uint32_t token_position = static_cast<uint32_t>(i);
+                posting_list_t::iterator_t& it = posting_list_iterators[i - 1];
 
                 block_t* curr_block = it.block();
                 uint32_t curr_index = it.index();
@@ -1600,10 +1600,12 @@ bool posting_list_t::has_exact_match(std::vector<posting_list_t::iterator_t>& po
                                             curr_block->offsets.getLength() :
                                             it.offset_index[curr_index + 1];
 
-                if(i == posting_list_iterators.size() - 1) {
+                if(token_position == posting_list_iterators.size()) {
                     // check if the last query token is the last offset
-                    if( offsets[end_offset_index-1] != 0 ||
-                        (end_offset_index-2 >= 0 && offsets[end_offset_index-2] != posting_list_iterators.size())) {
+                    const uint32_t query_size = static_cast<uint32_t>(posting_list_iterators.size());
+
+                    if(end_offset_index == 0 || offsets[end_offset_index - 1] != 0 ||
+                       (end_offset_index >= 2 && offsets[end_offset_index - 2] != query_size)) {
                         // not the last token for the document, so skip
                         return false;
                     }
@@ -1614,12 +1616,12 @@ bool posting_list_t::has_exact_match(std::vector<posting_list_t::iterator_t>& po
                     uint32_t offset = offsets[start_offset_index];
                     start_offset_index++;
 
-                    if(offset == (i + 1)) {
+                    if(offset == token_position) {
                         // we have found a matching index, no need to look further for this token.
                         break;
                     }
 
-                    if(offset > (i + 1)) {
+                    if(offset > token_position) {
                         return false;
                     }
                 }
@@ -1636,8 +1638,9 @@ bool posting_list_t::has_exact_match(std::vector<posting_list_t::iterator_t>& po
 
             std::map<size_t, token_index_meta_t> array_index_to_token_index;
 
-            for(int i = posting_list_iterators.size() - 1; i >= 0; i--) {
-                posting_list_t::iterator_t& it = posting_list_iterators[i];
+            for(size_t i = posting_list_iterators.size(); i > 0; i--) {
+                const uint32_t token_position = static_cast<uint32_t>(i);
+                posting_list_t::iterator_t& it = posting_list_iterators[i - 1];
 
                 block_t* curr_block = it.block();
                 uint32_t curr_index = it.index();
@@ -1666,7 +1669,7 @@ bool posting_list_t::has_exact_match(std::vector<posting_list_t::iterator_t>& po
 
                         if(start_offset_index+1 < end_offset_index) {
                             size_t next_offset = (size_t) offsets[start_offset_index + 1];
-                            if(next_offset == 0 && pos == posting_list_iterators.size()) {
+                            if(next_offset == 0 && pos == static_cast<int>(posting_list_iterators.size())) {
                                 // indicates that token is the last token on the doc
                                 array_index_to_token_index[array_index].has_last_token = true;
                                 has_atleast_one_last_token = true;
@@ -1674,8 +1677,8 @@ bool posting_list_t::has_exact_match(std::vector<posting_list_t::iterator_t>& po
                             }
                         }
 
-                        if(found_matching_index && i+1 < 128) {
-                            array_index_to_token_index[array_index].token_index.set(i + 1);
+                        if(found_matching_index && token_position < 128) {
+                            array_index_to_token_index[array_index].token_index.set(token_position);
                         }
 
                         start_offset_index++;  // skip current value which is the array index or flag for last index
@@ -1684,7 +1687,7 @@ bool posting_list_t::has_exact_match(std::vector<posting_list_t::iterator_t>& po
                         continue;
                     }
 
-                    if(pos == (i + 1)) {
+                    if(pos == static_cast<int>(token_position)) {
                         // we have found a matching index
                         found_matching_index = true;
                         num_matching_index++;
@@ -1694,7 +1697,7 @@ bool posting_list_t::has_exact_match(std::vector<posting_list_t::iterator_t>& po
                 }
 
                 // check if the last query token is the last offset of ANY array element
-                if(i == posting_list_iterators.size() - 1 && !has_atleast_one_last_token) {
+                if(token_position == posting_list_iterators.size() && !has_atleast_one_last_token) {
                     return false;
                 }
 
@@ -1918,13 +1921,11 @@ size_t posting_list_t::get_last_offset(const posting_list_t::iterator_t& it, boo
             int pos = offsets[start_offset];
             start_offset++;
 
-            if(pos > max_offset) {
-                max_offset = pos;
+            if(pos >= 0 && static_cast<size_t>(pos) > max_offset) {
+                max_offset = static_cast<size_t>(pos);
             }
 
             if(pos == prev_pos) {  // indicates end of array index
-                size_t array_index = (size_t) offsets[start_offset];
-
                 if(start_offset+1 < end_offset) {
                     size_t next_offset = (size_t) offsets[start_offset + 1];
                     if(next_offset == 0) {

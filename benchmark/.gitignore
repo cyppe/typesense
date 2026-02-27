@@ -4,4 +4,5 @@ dist
 node_modules
 binaries
 .env
+influxdb-data
 reproduction-guide.md

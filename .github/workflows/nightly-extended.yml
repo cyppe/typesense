@@ -1,0 +1,139 @@
+name: nightly-extended
+
+on:
+  schedule:
+    - cron: "0 6 * * *"   # 6 AM UTC daily, after sanitizer lane (4 AM)
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpp-stress:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Restore Bazel cache
+        id: bazel-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ github.workflow }}-
+
+      - name: Build CI Bazel image
+        run: scripts/bazel_in_docker.sh --build-image-only
+
+      - name: Setup test model artifacts
+        run: curl https://dl.typesense.org/ci/tyrec/tyrec-1-models.tar.gz > ./test/resources/models.tar.gz
+
+      - name: Prewarm e5-small model cache
+        run: bash test/scripts/prewarm_e5_small_model.sh "${{ github.workspace }}/tmp/ci-models"
+
+      - name: Run full C++ suite stress (5x)
+        run: >
+          scripts/bazel_in_docker.sh test
+          --cache_test_results=no
+          --runs_per_test=5
+          --test_output=errors
+          --test_summary=detailed
+          //:typesense-test
+          --test_timeout=1800
+          --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+
+      - name: Save Bazel cache
+        if: always() && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+
+      - name: Upload stress test logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cpp-stress-logs
+          path: bazel-testlogs/
+          if-no-files-found: warn
+
+      - name: Report Bazel cache size
+        if: always()
+        run: du -sh ${{ github.workspace }}/.cache/bazel-docker/*/ 2>/dev/null || true
+
+  api-multi-node:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Restore Bazel cache
+        id: bazel-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ github.workflow }}-
+
+      - name: Build CI Bazel image
+        run: scripts/bazel_in_docker.sh --build-image-only
+
+      - name: Build Typesense server
+        run: scripts/bazel_in_docker.sh build //:typesense-server
+
+      - name: Set TYPESENSE_BINARY_PATH
+        run: echo "TYPESENSE_BINARY_PATH=$(readlink -f bazel-bin/typesense-server)" >> $GITHUB_ENV
+
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install API test dependencies
+        working-directory: api_tests
+        run: bun install
+
+      - name: Run full API suite (3 iterations)
+        working-directory: api_tests
+        run: |
+          set -o pipefail
+          mkdir -p ../multi-node-logs
+          for i in $(seq 1 3); do
+            echo "[api-multi-node] iteration ${i}/3" | tee -a ../multi-node-logs/summary.log
+            TYPESENSE_DATA_DIR="${{ github.workspace }}/tmp/test-${i}" \
+              bun src/cli.ts --no-secrets --download-migration-binary 2>&1 \
+              | tee "../multi-node-logs/api-run-${i}.log"
+          done
+
+      - name: Save Bazel cache
+        if: always() && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ github.workspace }}/.cache/bazel-docker
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+
+      - name: Upload API multi-node logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: api-multi-node-logs
+          path: |
+            multi-node-logs/
+            api_tests/tmp/
+          if-no-files-found: warn
+
+      - name: Report Bazel cache size
+        if: always()
+        run: du -sh ${{ github.workspace }}/.cache/bazel-docker/*/ 2>/dev/null || true

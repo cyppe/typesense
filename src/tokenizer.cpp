@@ -2,14 +2,15 @@
 #include <algorithm>
 #include <string_utils.h>
 #include "tokenizer.h"
+#include "logger.h"
 #include <unicode/uchar.h>
 
 Tokenizer::Tokenizer(const std::string& input, bool normalize, bool no_op, const std::string& locale,
                      const std::vector<char>& symbols_to_index,
                      const std::vector<char>& separators, std::shared_ptr<Stemmer> stemmer, bool is_placeholder,
                      bool do_transliterate) :
-        i(0), normalize(normalize), no_op(no_op), locale(locale), stemmer(stemmer),
-        is_placeholder(is_placeholder), do_transliterate(do_transliterate) {
+        i(0), normalize(normalize), no_op(no_op), locale(locale),
+        is_placeholder(is_placeholder), stemmer(stemmer), do_transliterate(do_transliterate) {
 
     for(char c: symbols_to_index) {
         index_symbols[uint8_t(c)] = 1;
@@ -46,7 +47,7 @@ void Tokenizer::init(const std::string& input) {
         auto transliterator = TransliteratorPool::get_instance().acquire("Traditional-Simplified");
 
         if(transliterator == nullptr) {
-            //LOG(ERROR) << "Unable to create transliteration instance for `zh` locale.";
+            //TS_LOG(ERROR) << "Unable to create transliteration instance for `zh` locale.";
             text = input;
         } else {
             icu::UnicodeString unicode_input = icu::UnicodeString::fromUTF8(input);
@@ -109,7 +110,7 @@ bool Tokenizer::next(std::string &token, size_t& token_index, size_t& start_inde
 
     if(!locale.empty() && locale != "en" && locale != "de_en") {
         while (end_pos != icu::BreakIterator::DONE) {
-            //LOG(INFO) << "Position: " << start_pos;
+            //TS_LOG(INFO) << "Position: " << start_pos;
             std::string word;
 
             if(locale == "ko") {
@@ -121,7 +122,7 @@ bool Tokenizer::next(std::string &token, size_t& token_index, size_t& start_inde
                 if(!U_FAILURE(errcode)) {
                     dst.toUTF8String(word);
                 } else {
-                    LOG(ERROR) << "Unicode error during parsing: " << errcode;
+                    TS_LOG(ERROR) << "Unicode error during parsing: " << errcode;
                 }
             } else if(normalize && is_cyrillic(locale)) {
                 auto raw_text = unicode_text.tempSubStringBetween(start_pos, end_pos);
@@ -154,7 +155,7 @@ bool Tokenizer::next(std::string &token, size_t& token_index, size_t& start_inde
 
                     transformedString.toUTF8String(word);
                 } else {
-                    LOG(ERROR) << "Unicode error during parsing: " << errcode;
+                    TS_LOG(ERROR) << "Unicode error during parsing: " << errcode;
                 }
             } else if(normalize && locale == "ja") {
                 auto raw_text = unicode_text.tempSubStringBetween(start_pos, end_pos);

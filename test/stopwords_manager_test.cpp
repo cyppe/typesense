@@ -4,6 +4,8 @@
 #include <collection_manager.h>
 #include <core_api.h>
 #include "stopwords_manager.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class StopwordsManagerTest : public ::testing::Test {
 protected:
@@ -11,11 +13,12 @@ protected:
     CollectionManager & collectionManager = CollectionManager::get_instance();
     StopwordsManager& stopwordsManager = StopwordsManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     virtual void SetUp() {
-        std::string state_dir_path = "/tmp/typesense_test/stopwords_manager";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("stopwords_manager");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
         store = new Store(state_dir_path);
 
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -24,7 +27,10 @@ protected:
     }
 
     virtual void TearDown() {
+        collectionManager.dispose();
+        stopwordsManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -51,21 +57,21 @@ TEST_F(StopwordsManagerTest, UpsertGetStopwords) {
     ASSERT_TRUE(upsert_op.ok());
 
     auto stopword_config = stopwordsManager.get_stopwords();
-    ASSERT_EQ(3, stopword_config.size()); //total stopwords set
+    ASSERT_EQ(size_t{3}, stopword_config.size()); //total stopwords set
     ASSERT_TRUE(stopword_config.find("countries") != stopword_config.end());
     ASSERT_TRUE(stopword_config.find("articles") != stopword_config.end());
     ASSERT_TRUE(stopword_config.find("continents") != stopword_config.end());
 
-    ASSERT_EQ(3, stopword_config["articles"].stopwords.size());
+    ASSERT_EQ(size_t{3}, stopword_config["articles"].stopwords.size());
     ASSERT_TRUE(stopword_config["articles"].stopwords.find("a") != stopword_config["articles"].stopwords.end());
     ASSERT_TRUE(stopword_config["articles"].stopwords.find("an") != stopword_config["articles"].stopwords.end());
     ASSERT_TRUE(stopword_config["articles"].stopwords.find("the") != stopword_config["articles"].stopwords.end());
 
-    ASSERT_EQ(2, stopword_config["continents"].stopwords.size());
+    ASSERT_EQ(size_t{2}, stopword_config["continents"].stopwords.size());
     ASSERT_TRUE(stopword_config["continents"].stopwords.find("america") != stopword_config["continents"].stopwords.end());
     ASSERT_TRUE(stopword_config["continents"].stopwords.find("europe") != stopword_config["continents"].stopwords.end());
 
-    ASSERT_EQ(5, stopword_config["countries"].stopwords.size()); //with tokenization United States will be splited into two
+    ASSERT_EQ(size_t{5}, stopword_config["countries"].stopwords.size()); //with tokenization United States will be splited into two
     ASSERT_TRUE(stopword_config["countries"].stopwords.find("india") != stopword_config["countries"].stopwords.end());
     ASSERT_TRUE(stopword_config["countries"].stopwords.find("united") != stopword_config["countries"].stopwords.end());
     ASSERT_TRUE(stopword_config["countries"].stopwords.find("states") != stopword_config["countries"].stopwords.end());
@@ -81,13 +87,13 @@ TEST_F(StopwordsManagerTest, UpsertGetStopwords) {
     ASSERT_TRUE(upsert_op.ok());
 
     stopword_config = stopwordsManager.get_stopwords();
-    ASSERT_EQ(4, stopword_config.size()); //total stopwords set
+    ASSERT_EQ(size_t{4}, stopword_config.size()); //total stopwords set
     ASSERT_TRUE(stopword_config.find("countries") != stopword_config.end());
     ASSERT_TRUE(stopword_config.find("articles") != stopword_config.end());
     ASSERT_TRUE(stopword_config.find("continents") != stopword_config.end());
     ASSERT_TRUE(stopword_config.find("bulgarian-countries") != stopword_config.end());
 
-    ASSERT_EQ(7, stopword_config["bulgarian-countries"].stopwords.size());
+    ASSERT_EQ(size_t{7}, stopword_config["bulgarian-countries"].stopwords.size());
     ASSERT_TRUE(stopword_config["bulgarian-countries"].stopwords.find("българия") != stopword_config["bulgarian-countries"].stopwords.end());
     ASSERT_TRUE(stopword_config["bulgarian-countries"].stopwords.find("германия") != stopword_config["bulgarian-countries"].stopwords.end());
     ASSERT_TRUE(stopword_config["bulgarian-countries"].stopwords.find("франция") != stopword_config["bulgarian-countries"].stopwords.end());
@@ -107,12 +113,12 @@ TEST_F(StopwordsManagerTest, GetStopword) {
 
     auto get_op = stopwordsManager.get_stopword("articles", stopwordStruct);
     ASSERT_TRUE(get_op.ok());
-    ASSERT_EQ(3, stopwordStruct.stopwords.size());
+    ASSERT_EQ(size_t{3}, stopwordStruct.stopwords.size());
 
     //try to fetch non-existing stopword
     get_op = stopwordsManager.get_stopword("country", stopwordStruct);
     ASSERT_FALSE(get_op.ok());
-    ASSERT_EQ(404, get_op.code());
+    ASSERT_EQ(404u, get_op.code());
     ASSERT_EQ("Stopword `country` not found.", get_op.error());
 
     //try fetching stopwords with token
@@ -123,7 +129,7 @@ TEST_F(StopwordsManagerTest, GetStopword) {
 
     get_op = stopwordsManager.get_stopword("country", stopwordStruct);
     ASSERT_TRUE(get_op.ok());
-    ASSERT_EQ(4, stopwordStruct.stopwords.size()); //as United States will be tokenized and counted 2 stopwords
+    ASSERT_EQ(size_t{4}, stopwordStruct.stopwords.size()); //as United States will be tokenized and counted 2 stopwords
 }
 
 TEST_F(StopwordsManagerTest, DeleteStopword) {
@@ -149,13 +155,13 @@ TEST_F(StopwordsManagerTest, DeleteStopword) {
 
     auto get_op = stopwordsManager.get_stopword("articles", stopwordStruct);
     ASSERT_FALSE(get_op.ok());
-    ASSERT_EQ(404, get_op.code());
+    ASSERT_EQ(404u, get_op.code());
     ASSERT_EQ("Stopword `articles` not found.", get_op.error());
 
     //delete non-existing stopword
     del_op = stopwordsManager.delete_stopword("states");
     ASSERT_FALSE(del_op.ok());
-    ASSERT_EQ(404, del_op.code());
+    ASSERT_EQ(404u, del_op.code());
     ASSERT_EQ("Stopword `states` not found.", del_op.error());
 }
 
@@ -169,7 +175,7 @@ TEST_F(StopwordsManagerTest, UpdateStopword) {
 
     auto stopword_config = stopwordsManager.get_stopwords();
 
-    ASSERT_EQ(2, stopword_config["continents"].stopwords.size());
+    ASSERT_EQ(size_t{2}, stopword_config["continents"].stopwords.size());
     ASSERT_TRUE(stopword_config["continents"].stopwords.find("america") != stopword_config["continents"].stopwords.end());
     ASSERT_TRUE(stopword_config["continents"].stopwords.find("europe") != stopword_config["continents"].stopwords.end());
 
@@ -182,7 +188,7 @@ TEST_F(StopwordsManagerTest, UpdateStopword) {
 
     stopword_config = stopwordsManager.get_stopwords();
 
-    ASSERT_EQ(3, stopword_config["continents"].stopwords.size());
+    ASSERT_EQ(size_t{3}, stopword_config["continents"].stopwords.size());
     ASSERT_TRUE(stopword_config["continents"].stopwords.find("china") != stopword_config["continents"].stopwords.end());
     ASSERT_TRUE(stopword_config["continents"].stopwords.find("india") != stopword_config["continents"].stopwords.end());
     ASSERT_TRUE(stopword_config["continents"].stopwords.find("japan") != stopword_config["continents"].stopwords.end());
@@ -235,7 +241,7 @@ TEST_F(StopwordsManagerTest, StopwordsBasics) {
 
     auto result = put_upsert_stopword(req, res);
     if(!result) {
-        LOG(ERROR) << res->body;
+        TS_LOG(ERROR) << res->body;
         FAIL();
     }
 
@@ -251,22 +257,22 @@ TEST_F(StopwordsManagerTest, StopwordsBasics) {
 
     auto search_op = collectionManager.do_search(req->params, embedded_params, json_results, now_ts);
     if(!search_op.error().empty()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
     }
     ASSERT_TRUE(search_op.ok());
     nlohmann::json results = nlohmann::json::parse(json_results);
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     json_results.clear();
     req->params["q"] = "\"village of\"";
 
     search_op = collectionManager.do_search(req->params, embedded_params, json_results, now_ts);
     if(!search_op.error().empty()) {
-        LOG(ERROR) << search_op.error();
+        TS_LOG(ERROR) << search_op.error();
     }
     ASSERT_TRUE(search_op.ok());
     results = nlohmann::json::parse(json_results);
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     req->params.clear();
     json_results.clear();
@@ -282,7 +288,7 @@ TEST_F(StopwordsManagerTest, StopwordsBasics) {
 
     result = put_upsert_stopword(req, res);
     if(!result) {
-        LOG(ERROR) << res->body;
+        TS_LOG(ERROR) << res->body;
         FAIL();
     }
 
@@ -293,7 +299,7 @@ TEST_F(StopwordsManagerTest, StopwordsBasics) {
     search_op = collectionManager.do_search(req->params, embedded_params, json_results, now_ts);
     ASSERT_TRUE(search_op.ok());
     results = nlohmann::json::parse(json_results);
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     req->params.clear();
     json_results.clear();
@@ -306,7 +312,7 @@ TEST_F(StopwordsManagerTest, StopwordsBasics) {
     search_op = collectionManager.do_search(req->params, embedded_params, json_results, now_ts);
     ASSERT_TRUE(search_op.ok());
     results = nlohmann::json::parse(json_results);
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     req->params.clear();
     json_results.clear();
@@ -316,7 +322,7 @@ TEST_F(StopwordsManagerTest, StopwordsBasics) {
     req->params["name"] = "state";
 
     result = del_stopword(req, res);
-    ASSERT_EQ(404, res->status_code);
+    ASSERT_EQ(404u, res->status_code);
     ASSERT_STREQ("{\"message\":\"Stopword `state` not found.\"}", res->body.c_str());
 
     req->params.clear();
@@ -328,7 +334,7 @@ TEST_F(StopwordsManagerTest, StopwordsBasics) {
 
     result = del_stopword(req, res);
     if(!result) {
-        LOG(ERROR) << res->body;
+        TS_LOG(ERROR) << res->body;
         FAIL();
     }
 
@@ -368,7 +374,7 @@ TEST_F(StopwordsManagerTest, StopwordsValidation) {
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
-    Collection *coll1 = op.get();
+    (void)op.get();
 
     std::shared_ptr<http_req> req = std::make_shared<http_req>();
     std::shared_ptr<http_res> res = std::make_shared<http_res>(nullptr);
@@ -382,8 +388,8 @@ TEST_F(StopwordsManagerTest, StopwordsValidation) {
     req->params["name"] = "continents";
     req->body = stopword_value.dump();
 
-    auto result = put_upsert_stopword(req, res);
-    ASSERT_EQ(400, res->status_code);
+    (void)put_upsert_stopword(req, res);
+    ASSERT_EQ(400u, res->status_code);
     ASSERT_STREQ("{\"message\":\"Parameter `stopwords` is required\"}", res->body.c_str());
 
     //check for value types
@@ -395,8 +401,8 @@ TEST_F(StopwordsManagerTest, StopwordsValidation) {
     req->params["name"] = "continents";
     req->body = stopword_value.dump();
 
-    result = put_upsert_stopword(req, res);
-    ASSERT_EQ(400, res->status_code);
+    (void)put_upsert_stopword(req, res);
+    ASSERT_EQ(400u, res->status_code);
     ASSERT_STREQ("{\"message\":\"Parameter `locale` is required as string value\"}", res->body.c_str());
 
     stopword_value = R"(
@@ -407,8 +413,8 @@ TEST_F(StopwordsManagerTest, StopwordsValidation) {
     req->params["name"] = "continents";
     req->body = stopword_value.dump();
 
-    result = put_upsert_stopword(req, res);
-    ASSERT_EQ(400, res->status_code);
+    (void)put_upsert_stopword(req, res);
+    ASSERT_EQ(400u, res->status_code);
     ASSERT_STREQ("{\"message\":\"Parameter `stopwords` is required as string array value\"}", res->body.c_str());
 
     collectionManager.drop_collection("coll1");
@@ -425,7 +431,7 @@ TEST_F(StopwordsManagerTest, ReloadStopwordsOnRestart) {
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
-    Collection *coll1 = op.get();
+    (void)op.get();
 
     auto stopword_value = R"(
         {"stopwords": ["Pop", "Indie", "Rock", "Metal", "Folk"], "locale": "en"}
@@ -439,14 +445,14 @@ TEST_F(StopwordsManagerTest, ReloadStopwordsOnRestart) {
 
     auto result = put_upsert_stopword(req, res);
     if(!result) {
-        LOG(ERROR) << res->body;
+        TS_LOG(ERROR) << res->body;
         FAIL();
     }
 
     auto stopword_config = stopwordsManager.get_stopwords();
     ASSERT_TRUE(stopword_config.find("genre") != stopword_config.end());
 
-    ASSERT_EQ(5, stopword_config["genre"].stopwords.size());
+    ASSERT_EQ(size_t{5}, stopword_config["genre"].stopwords.size());
     ASSERT_TRUE(stopword_config["genre"].stopwords.find("pop") != stopword_config["genre"].stopwords.end());
     ASSERT_TRUE(stopword_config["genre"].stopwords.find("indie") != stopword_config["genre"].stopwords.end());
     ASSERT_TRUE(stopword_config["genre"].stopwords.find("rock") != stopword_config["genre"].stopwords.end());
@@ -459,7 +465,6 @@ TEST_F(StopwordsManagerTest, ReloadStopwordsOnRestart) {
     delete store;
     stopword_config.clear();
 
-    std::string state_dir_path = "/tmp/typesense_test/stopwords_manager";
     store = new Store(state_dir_path);
 
     stopwordsManager.init(store);
@@ -469,7 +474,7 @@ TEST_F(StopwordsManagerTest, ReloadStopwordsOnRestart) {
     stopword_config = stopwordsManager.get_stopwords();
     ASSERT_TRUE(stopword_config.find("genre") != stopword_config.end());
 
-    ASSERT_EQ(5, stopword_config["genre"].stopwords.size());
+    ASSERT_EQ(size_t{5}, stopword_config["genre"].stopwords.size());
     ASSERT_TRUE(stopword_config["genre"].stopwords.find("pop") != stopword_config["genre"].stopwords.end());
     ASSERT_TRUE(stopword_config["genre"].stopwords.find("indie") != stopword_config["genre"].stopwords.end());
     ASSERT_TRUE(stopword_config["genre"].stopwords.find("rock") != stopword_config["genre"].stopwords.end());

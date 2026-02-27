@@ -1,7 +1,10 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
 package(default_visibility = ["//visibility:public"])
 
 cc_library(
     name = "quicly",
+    tags = ["manual"],
     srcs = [
         "lib/cc-cubic.c",
         "lib/cc-pico.c",
@@ -15,12 +18,12 @@ cc_library(
         "lib/rate.c",
         "lib/recvstate.c",
         "lib/remote_cid.c",
-        "lib/retire_cid.c",
+
         "lib/sendstate.c",
         "lib/sentmap.c",
         "lib/streambuf.c",
     ],
-    hdrs = glob(["include/**/*.h"]),
+    hdrs = glob(["include/**/*.h"], allow_empty = True),
     copts = [
         "-std=c99",
     ],

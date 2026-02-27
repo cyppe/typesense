@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <set>
 #include <string>
 #include "json.hpp"
 #include "store.h"
@@ -6,6 +7,7 @@
 #include "natural_language_search_model.h"
 #include "collection_manager.h"
 #include "field.h"
+#include "temp_dir_utils.h"
 
 class NaturalLanguageSearchModelManagerTest : public ::testing::Test {
 protected:
@@ -15,8 +17,8 @@ protected:
     CollectionManager& collectionManager = CollectionManager::get_instance();
 
     void SetUp() override {
-        state_dir_path = "/tmp/typesense_test/nls_model_manager_test";
-        system(("rm -rf " + state_dir_path + " && mkdir -p " + state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("nls_model_manager");
+        typesense_test::reset_test_temp_dir(state_dir_path);
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
         collectionManager.load(8, 1000);
@@ -28,6 +30,7 @@ protected:
         NaturalLanguageSearchModelManager::dispose();
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -293,11 +296,15 @@ TEST_F(NaturalLanguageSearchModelManagerTest, GetAllModelsSuccess) {
     ASSERT_TRUE(result.ok());
     auto models = NaturalLanguageSearchModelManager::get_all_models();
     ASSERT_TRUE(models.ok());
-    ASSERT_EQ(models.get().size(), 2);
-    ASSERT_EQ(models.get()[0]["id"], model_id_2);
-    ASSERT_EQ(models.get()[0]["model_name"], "openai/gpt-3.5-turbo");
-    ASSERT_EQ(models.get()[1]["id"], model_id_1);
-    ASSERT_EQ(models.get()[1]["model_name"], "openai/gpt-3.5-turbo");
+    ASSERT_EQ(models.get().size(), size_t{2});
+
+    std::set<std::string> model_ids;
+    for (const auto& model_entry : models.get()) {
+        ASSERT_EQ(model_entry["model_name"], "openai/gpt-3.5-turbo");
+        model_ids.insert(model_entry["id"].get<std::string>());
+    }
+
+    ASSERT_EQ(model_ids, std::set<std::string>({model_id_1, model_id_2}));
 }
 
 TEST_F(NaturalLanguageSearchModelManagerTest, UpdateModelSuccess) {

@@ -6,7 +6,7 @@
 #include "string_utils.h"
 #include "logger.h"
 #include "store.h"
-#include <sparsepp.h>
+#include "sparsepp_wrapper.h"
 #include <tsl/htrie_map.h>
 #include <filter.h>
 #include "json.hpp"
@@ -43,7 +43,7 @@ namespace field_types {
         return type_def == "string*";
     }
 
-    static bool is_array(const std::string& type_def) {
+    [[maybe_unused]] static bool is_array(const std::string& type_def) {
         return type_def.size() > 2 && type_def[type_def.size() - 2] == '[' &&  type_def[type_def.size() - 1] == ']';
     }
 }
@@ -165,9 +165,10 @@ struct field {
           const bool async_reference = false, const nlohmann::json& token_separators = {}, const nlohmann::json& symbols_to_index = {},
           const bool cascade_delete = true, const uint32_t truncate_len = 100) :
             name(name), type(type), facet(facet), optional(optional), index(index), locale(locale),
-            nested(nested), nested_array(nested_array), num_dim(num_dim), vec_dist(vec_dist), reference(reference),
-            embed(embed), range_index(range_index), store(store), truncate_len(truncate_len), stem(stem), stem_dictionary(stem_dictionary),
-            hnsw_params(hnsw_params), is_async_reference(async_reference), cascade_delete(cascade_delete) {
+            nested(nested), store(store), truncate_len(truncate_len), nested_array(nested_array), num_dim(num_dim),
+            embed(embed), vec_dist(vec_dist), reference(reference), is_async_reference(async_reference),
+            range_index(range_index), cascade_delete(cascade_delete), stem(stem), stem_dictionary(stem_dictionary),
+            hnsw_params(hnsw_params) {
 
         set_computed_defaults(sort, infix);
 
@@ -424,7 +425,7 @@ struct field {
 
     static Option<bool> json_field_to_field(bool enable_nested_fields, nlohmann::json& field_json,
                                             std::vector<field>& the_fields,
-                                            string& fallback_field_type, size_t& num_auto_detect_fields,
+                                            std::string& fallback_field_type, size_t& num_auto_detect_fields,
                                             const std::string& collection_name = "");
 
     static Option<bool> json_fields_to_fields(bool enable_nested_fields,
@@ -519,7 +520,7 @@ namespace ref_include {
 
     enum strategy_enum {merge = 0, nest, nest_array};
 
-    static Option<strategy_enum> string_to_enum(const std::string& strategy) {
+    [[maybe_unused]] static Option<strategy_enum> string_to_enum(const std::string& strategy) {
         if (strategy == merge_string) {
             return Option<strategy_enum>(merge);
         } else if (strategy == nest_string) {
@@ -850,10 +851,10 @@ struct facet {
                    const std::string& sort_by_field="", const std::string& reference_collection_name = "",
                    const std::string& reference_collection_alias_name = "")
                    : field_name(field_name), facet_range_map(facet_range),
-                   is_range_query(is_range_q), is_sort_by_alpha(sort_by_alpha), sort_order(order),
-                   sort_field(sort_by_field), orig_index(orig_index), is_top_k(is_top_k),
-                   reference_collection_name(reference_collection_name),
-                   reference_collection_alias_name(reference_collection_alias_name) {
+                    is_range_query(is_range_q), is_sort_by_alpha(sort_by_alpha), sort_order(order),
+                    sort_field(sort_by_field), orig_index(orig_index),
+                    reference_collection_name(reference_collection_name),
+                    reference_collection_alias_name(reference_collection_alias_name), is_top_k(is_top_k) {
     }
 };
 

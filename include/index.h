@@ -8,7 +8,7 @@
 #include <condition_variable>
 #include <art.h>
 #include <number.h>
-#include <sparsepp.h>
+#include "sparsepp_wrapper.h"
 #include <store.h>
 #include <topster.h>
 #include <json.hpp>
@@ -29,7 +29,25 @@
 #include "synonym_index.h"
 #include "curation.h"
 #include "vector_query_ops.h"
+#include "logger.h"
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreorder-ctor"
+#pragma clang diagnostic ignored "-Wsign-compare"
+#pragma clang diagnostic ignored "-Wunused-function"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wreorder"
+#pragma GCC diagnostic ignored "-Wsign-compare"
+#pragma GCC diagnostic ignored "-Wtype-limits"
+#pragma GCC diagnostic ignored "-Wunused-function"
+#endif
 #include "hnswlib/hnswlib.h"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #include "filter.h"
 #include "facet_index.h"
 #include "numeric_range_trie.h"
@@ -215,7 +233,7 @@ struct search_args {
                 const std::vector<bool>& prefixes, size_t drop_tokens_threshold, size_t typo_tokens_threshold,
                 const std::vector<std::string>& group_by_fields, size_t group_limit,
                 const bool group_missing_values,
-                const string& default_sorting_field, bool prioritize_exact_match,
+                const std::string& default_sorting_field, bool prioritize_exact_match,
                 const bool prioritize_token_position, const bool prioritize_num_matching_fields, bool exhaustive_search,
                 size_t concurrency, size_t search_cutoff_ms,
                 size_t min_len_1typo, size_t min_len_2typo, size_t max_candidates, const std::vector<enable_t>& infixes,
@@ -252,9 +270,9 @@ struct search_args {
             facet_index_types(std::move(facet_index_types)),
             enable_typos_for_numerical_tokens(enable_typos_for_numerical_tokens), enable_synonyms(enable_synonyms),
             demote_synonym_match(demote_synonym_match), synonym_prefix(synonym_prefix), synonym_num_typos(synonym_num_typos),
-            enable_typos_for_alpha_numerical_tokens(enable_typos_for_alpha_numerical_tokens),
+            synonym_sets(synonym_sets), enable_typos_for_alpha_numerical_tokens(enable_typos_for_alpha_numerical_tokens),
             rerank_hybrid_matches(rerank_hybrid_matches), validate_field_names(validate_field_names),
-            collection(collection), synonym_sets(synonym_sets), diversity(diversity), group_max_candidates(group_max_candidates) {
+            collection(collection), diversity(std::move(diversity)), group_max_candidates(group_max_candidates) {
 
     }
 
@@ -481,7 +499,7 @@ private:
     static inline uint32_t next_suggestion2(const std::vector<tok_candidates>& token_candidates_vec,
                                             long long int n,
                                             std::vector<token_t>& query_suggestion,
-                                            uint64& qhash);
+                                            uint64_t& qhash);
 
     static inline uint32_t next_suggestion(const std::vector<token_candidates> &token_candidates_vec,
                                        long long int n,
@@ -489,7 +507,7 @@ private:
                                        std::vector<art_leaf *>& query_suggestion,
                                        int syn_orig_num_tokens,
                                        uint32_t& token_bits,
-                                       uint64& qhash);
+                                       uint64_t& qhash);
 
     void log_leaves(int cost, const std::string &token, const std::vector<art_leaf *> &leaves) const;
 
@@ -517,7 +535,7 @@ private:
                           bool enable_typos_for_numerical_tokens,
                           bool enable_typos_for_alpha_numerical_tokens) const;
 
-    bool check_for_curations(const token_ordering& token_order, const string& field_name, bool slide_window,
+    bool check_for_curations(const token_ordering& token_order, const std::string& field_name, bool slide_window,
                              bool exact_rule_match, std::vector<std::string>& tokens,
                              std::set<std::string>& absorbed_tokens,
                              std::vector<std::string>& field_absorbed_tokens,
@@ -559,7 +577,7 @@ private:
                                        const int* sort_order,
                                        std::array<spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*, 3>& field_values,
                                        const std::vector<size_t>& geopoint_indices,
-                                       std::set<uint64>& query_hashes,
+                                       std::set<uint64_t>& query_hashes,
                                        std::vector<uint32_t>& id_buff,
                                        bool is_group_by_first_pass,
                                        std::set<uint32_t>& group_by_missing_value_ids) const;
@@ -777,7 +795,7 @@ public:
                 const size_t typo_tokens_threshold, const size_t group_limit,
                 const std::vector<std::string>& group_by_fields,
                 const bool group_missing_values,
-                const string& default_sorting_field, bool prioritize_exact_match,
+                const std::string& default_sorting_field, bool prioritize_exact_match,
                 const bool prioritize_token_position, const bool prioritize_num_matching_fields,
                 bool exhaustive_search,
                 size_t concurrency, size_t search_cutoff_ms, size_t min_len_1typo, size_t min_len_2typo,
@@ -910,7 +928,7 @@ public:
                                                  std::array<spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*, 3>& field_values,
                                                  const bool& validate_field_names) const;
 
-    int64_t reference_string_sort_score(const string &field_name,  const std::vector<uint32_t>& seq_ids_vec,
+    int64_t reference_string_sort_score(const std::string &field_name,  const std::vector<uint32_t>& seq_ids_vec,
                                         const bool& is_asc) const;
 
     static void remove_matched_tokens(std::vector<std::string>& tokens, const std::set<std::string>& rule_token_set) ;
@@ -999,7 +1017,7 @@ public:
                                                  std::vector<std::vector<art_leaf*>>& searched_queries,
                                                  uint32_t*& all_result_ids, size_t& all_result_ids_len,
                                                  filter_result_iterator_t* const filter_result_iterator,
-                                                 std::set<uint64>& query_hashes,
+                                                 std::set<uint64_t>& query_hashes,
                                                  const int* sort_order,
                                                  std::array<spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*, 3>& field_values,
                                                  const std::vector<size_t>& geopoint_indices,
@@ -1043,7 +1061,7 @@ public:
                                                    bool prioritize_exact_match,
                                                    const bool prioritize_token_position,
                                                    const bool prioritize_num_matching_fields,
-                                                   std::set<uint64>& query_hashes,
+                                                   std::set<uint64_t>& query_hashes,
                                                    const token_ordering token_order,
                                                    const std::vector<bool>& prefixes,
                                                    const size_t typo_tokens_threshold,
@@ -1134,7 +1152,7 @@ public:
     Option<bool> compute_sort_scores(const std::vector<sort_by>& sort_fields, const int* sort_order,
                                      std::array<spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*, 3> field_values,
                                      const std::vector<size_t>& geopoint_indices, uint32_t seq_id,
-                                     const std::map<basic_string<char>, reference_filter_result_t>& references,
+                                     const std::map<std::string, reference_filter_result_t>& references,
                                      std::vector<uint32_t>& filter_indexes, int64_t max_field_match_score,
                                      int64_t* scores, int64_t& match_score_index,
                                      float vector_distance = 0) const;
@@ -1174,7 +1192,7 @@ public:
                                                const S2LatLng& reference_lat_lng, const bool& round_distance = false) const;
 
     Option<int64_t> get_referenced_geo_distance(const sort_by& sort_field, const bool& is_asc, const uint32_t& seq_id,
-                                                const std::map<basic_string<char>, reference_filter_result_t>& references,
+                                                const std::map<std::string, reference_filter_result_t>& references,
                                                 const S2LatLng& reference_lat_lng, const bool& round_distance = false) const;
 
     Option<std::vector<uint32_t>> get_ref_seq_ids(const sort_by& sort_field, const uint32_t& seq_id,
@@ -1250,7 +1268,7 @@ void Index::iterate_and_index_numerical_field(std::vector<index_record>& iter_ba
         try {
             func(record, seq_id);
         } catch(const std::exception &e) {
-            LOG(INFO) << "Error while indexing numerical field." << e.what();
+            TS_LOG(INFO) << "Error while indexing numerical field." << e.what();
             record.index_failure(400, e.what());
         }
     }

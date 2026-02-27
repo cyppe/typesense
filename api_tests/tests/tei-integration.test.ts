@@ -3,6 +3,11 @@ import { Phases } from "../src/constants";
 import { fetchSingleNode, fetchMultiNode } from "../src/request";
 import { z } from "zod";
 
+const teiUrl = process.env.TYPESENSE_TEST_TEI_URL;
+const teiApiKey = process.env.TYPESENSE_TEST_TEI_API_KEY ?? "sk-1234567890abcdefghijklmnopqrstuvwxyz";
+const teiModelName = process.env.TYPESENSE_TEST_TEI_MODEL_NAME ?? "openai/sentence-transformers/all-MiniLM-L6-v2";
+const teiDescribe = teiUrl ? describe : describe.skip;
+
 const CreateCollectionResponse = z.object({
   created_at: z.number(),
   default_sorting_field: z.string(),
@@ -63,10 +68,8 @@ const MultiSearchResponse = z.object({
   ),
 });
 
-describe(Phases.SINGLE_FRESH, () => {
+teiDescribe(Phases.SINGLE_FRESH, () => {
   it("create collection with tei embedding", async () => {
-    const teiUrl = "http://localhost:8080";
-
     const res = await fetchSingleNode("/collections", {
       method: "POST",
       body: JSON.stringify({
@@ -79,9 +82,9 @@ describe(Phases.SINGLE_FRESH, () => {
             embed: {
               from: ["content"],
               model_config: {
-                model_name: "openai/bge-base-en-v1.5",
-                api_key: "sk-1234567890abcdefghijklmnopqrstuvwxyz",
-                url: teiUrl,
+                model_name: teiModelName,
+                api_key: teiApiKey,
+                url: teiUrl!,
               },
             },
           },
@@ -181,7 +184,7 @@ describe(Phases.SINGLE_FRESH, () => {
   });
 });
 
-describe(Phases.SINGLE_RESTARTED, () => {
+teiDescribe(Phases.SINGLE_RESTARTED, () => {
   it("get collection with tei embedding after restart", async () => {
     const res = await fetchSingleNode("/collections/tei_test_collection", {
       method: "GET",
@@ -231,7 +234,7 @@ describe(Phases.SINGLE_RESTARTED, () => {
   });
 });
 
-describe(Phases.SINGLE_SNAPSHOT, () => {
+teiDescribe(Phases.SINGLE_SNAPSHOT, () => {
   it("get collection with tei embedding after snapshot", async () => {
     const res = await fetchSingleNode("/collections/tei_test_collection", {
       method: "GET",
@@ -243,10 +246,8 @@ describe(Phases.SINGLE_SNAPSHOT, () => {
   });
 });
 
-describe(Phases.MULTI_FRESH, () => {
+teiDescribe(Phases.MULTI_FRESH, () => {
   it("create collection with tei embedding in multi-node", async () => {
-    const teiUrl = "http://localhost:8080";
-
     const res = await fetchMultiNode(1, "/collections", {
       method: "POST",
       body: JSON.stringify({
@@ -259,9 +260,9 @@ describe(Phases.MULTI_FRESH, () => {
             embed: {
               from: ["content"],
               model_config: {
-                model_name: "openai/bge-base-en-v1.5",
-                api_key: "sk-1234567890abcdefghijklmnopqrstuvwxyz",
-                url: teiUrl,
+                model_name: teiModelName,
+                api_key: teiApiKey,
+                url: teiUrl!,
               },
             },
           },
@@ -352,7 +353,7 @@ describe(Phases.MULTI_FRESH, () => {
   });
 });
 
-describe(Phases.MULTI_RESTARTED, () => {
+teiDescribe(Phases.MULTI_RESTARTED, () => {
   it("get collection with tei embedding after multi-node restart", async () => {
     const res = await fetchMultiNode(2, "/collections/tei_multi_collection", {
       method: "GET",

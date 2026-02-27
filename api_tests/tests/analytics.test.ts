@@ -39,6 +39,22 @@ const AnalyticsEventList = z.object({
 const AnalyticsRuleList = z.array(AnalyticsRule);
 const SuccessResponse = z.object({ success: z.boolean() });
 const OkResponse = z.object({ ok: z.boolean() });
+type AnalyticsEventItem = z.infer<typeof AnalyticsEvent>;
+
+function sortedDocIds(docIds: string[] | undefined): string[] {
+  return [...(docIds ?? [])].sort();
+}
+
+function findUserEvent(
+  events: AnalyticsEventItem[] | undefined,
+  name: string,
+  eventType: string,
+  userId: string,
+): AnalyticsEventItem | undefined {
+  return events?.find((event) =>
+    event.name === name && event.event_type === eventType && event.user_id === userId
+  );
+}
 
 describe(Phases.SINGLE_FRESH, () => {
   it("create a document log analytics rule", async () => {
@@ -387,10 +403,9 @@ describe(Phases.SINGLE_FRESH, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(1);
-    expect(data1.data?.events?.[0]?.name).toBe("product_clicks");
-    expect(data1.data?.events?.[0]?.event_type).toBe("click");
-    expect(data1.data?.events?.[0]?.doc_id).toBe("1");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const clickEvent = findUserEvent(data1.data?.events, "product_clicks", "click", "user1");
+    expect(clickEvent).toBeDefined();
+    expect(clickEvent?.doc_id).toBe("1");
   });
 
   it("add a query log analytics event in /events", async () => {
@@ -414,10 +429,9 @@ describe(Phases.SINGLE_FRESH, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(1);
-    expect(data1.data?.events?.[0]?.name).toBe("product_queries_without_capture");
-    expect(data1.data?.events?.[0]?.event_type).toBe("search");
-    expect(data1.data?.events?.[0]?.query).toBe("product");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const queryEvent = findUserEvent(data1.data?.events, "product_queries_without_capture", "search", "user1");
+    expect(queryEvent).toBeDefined();
+    expect(queryEvent?.query).toBe("product");
   });
 
   it("add a query log analytics event using /search", async () => {
@@ -431,10 +445,9 @@ describe(Phases.SINGLE_FRESH, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(1);
-    expect(data1.data?.events?.[0]?.name).toBe("product_queries_with_capture");
-    expect(data1.data?.events?.[0]?.event_type).toBe("search");
-    expect(data1.data?.events?.[0]?.query).toBe("typesense");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const queryEvent = findUserEvent(data1.data?.events, "product_queries_with_capture", "search", "user1");
+    expect(queryEvent).toBeDefined();
+    expect(queryEvent?.query).toBe("typesense");
   });
 
   it("add a document counter analytics event", async () => {
@@ -557,10 +570,11 @@ describe(Phases.SINGLE_RESTARTED, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(2);
-    expect(data1.data?.events?.[0]?.name).toBe("product_clicks");
-    expect(data1.data?.events?.[0]?.event_type).toBe("click");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
-    expect(data1.data?.events?.[0]?.doc_ids).toEqual(["2", "1"]);
+    const clickEvent = data1.data?.events?.find((event) =>
+      event.name === "product_clicks" && event.event_type === "click" && event.user_id === "user1"
+    );
+    expect(clickEvent).toBeDefined();
+    expect(sortedDocIds(clickEvent?.doc_ids)).toEqual(["1", "2"]);
   });
 });
 
@@ -582,10 +596,9 @@ describe(Phases.SINGLE_SNAPSHOT, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(3);
-    expect(data1.data?.events?.[0]?.name).toBe("product_queries_with_capture");
-    expect(data1.data?.events?.[0]?.event_type).toBe("search");
-    expect(data1.data?.events?.[0]?.query).toBe("typesense");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const queryEvent = findUserEvent(data1.data?.events, "product_queries_with_capture", "search", "user1");
+    expect(queryEvent).toBeDefined();
+    expect(queryEvent?.query).toBe("typesense");
   });
 
   it("get the added document log event", async () => {
@@ -594,10 +607,9 @@ describe(Phases.SINGLE_SNAPSHOT, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(1);
-    expect(data1.data?.events?.[0]?.name).toBe("product_clicks");
-    expect(data1.data?.events?.[0]?.event_type).toBe("click");
-    expect(data1.data?.events?.[0]?.doc_id).toEqual("1");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const clickEvent = findUserEvent(data1.data?.events, "product_clicks", "click", "user1");
+    expect(clickEvent).toBeDefined();
+    expect(clickEvent?.doc_id).toEqual("1");
   });
 });
 
@@ -857,10 +869,9 @@ describe(Phases.MULTI_FRESH, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(1);
-    expect(data1.data?.events?.[0]?.name).toBe("product_clicks");
-    expect(data1.data?.events?.[0]?.event_type).toBe("click");
-    expect(data1.data?.events?.[0]?.doc_id).toBe("1");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const clickEvent = findUserEvent(data1.data?.events, "product_clicks", "click", "user1");
+    expect(clickEvent).toBeDefined();
+    expect(clickEvent?.doc_id).toBe("1");
   });
 
   it("add a query log analytics event in /events", async () => {
@@ -885,10 +896,9 @@ describe(Phases.MULTI_FRESH, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(1);
-    expect(data1.data?.events?.[0]?.name).toBe("product_queries_without_capture");
-    expect(data1.data?.events?.[0]?.event_type).toBe("search");
-    expect(data1.data?.events?.[0]?.query).toBe("product");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const queryEvent = findUserEvent(data1.data?.events, "product_queries_without_capture", "search", "user1");
+    expect(queryEvent).toBeDefined();
+    expect(queryEvent?.query).toBe("product");
   });
 
   it("add a query log analytics event using /search", async () => {
@@ -902,10 +912,9 @@ describe(Phases.MULTI_FRESH, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(1);
-    expect(data1.data?.events?.[0]?.name).toBe("product_queries_with_capture");
-    expect(data1.data?.events?.[0]?.event_type).toBe("search");
-    expect(data1.data?.events?.[0]?.query).toBe("typesense");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const queryEvent = findUserEvent(data1.data?.events, "product_queries_with_capture", "search", "user1");
+    expect(queryEvent).toBeDefined();
+    expect(queryEvent?.query).toBe("typesense");
   });
 
   it("add a query counter analytics event", async () => {
@@ -1030,10 +1039,11 @@ describe(Phases.MULTI_RESTARTED, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(2);
-    expect(data1.data?.events?.[0]?.name).toBe("product_clicks");
-    expect(data1.data?.events?.[0]?.event_type).toBe("click");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
-    expect(data1.data?.events?.[0]?.doc_ids).toEqual(["2", "1"]);
+    const clickEvent = data1.data?.events?.find((event) =>
+      event.name === "product_clicks" && event.event_type === "click" && event.user_id === "user1"
+    );
+    expect(clickEvent).toBeDefined();
+    expect(sortedDocIds(clickEvent?.doc_ids)).toEqual(["1", "2"]);
   });
 });
 
@@ -1055,10 +1065,9 @@ describe(Phases.MULTI_SNAPSHOT, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(3);
-    expect(data1.data?.events?.[0]?.name).toBe("product_queries_with_capture");
-    expect(data1.data?.events?.[0]?.event_type).toBe("search");
-    expect(data1.data?.events?.[0]?.query).toBe("typesense");
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const queryEvent = findUserEvent(data1.data?.events, "product_queries_with_capture", "search", "user1");
+    expect(queryEvent).toBeDefined();
+    expect(queryEvent?.query).toBe("typesense");
   });
 
   it("get the added document log event", async () => {
@@ -1067,9 +1076,10 @@ describe(Phases.MULTI_SNAPSHOT, () => {
     let data1 = AnalyticsEventList.safeParse(await res.json());
     expect(data1.success).toBe(true);
     expect(data1.data?.events?.length).toBe(2);
-    expect(data1.data?.events?.[0]?.name).toBe("product_clicks");
-    expect(data1.data?.events?.[0]?.event_type).toBe("click");
-    expect(data1.data?.events?.[0]?.doc_ids).toEqual(["2", "1"]);
-    expect(data1.data?.events?.[0]?.user_id).toBe("user1");
+    const clickEvent = data1.data?.events?.find((event) =>
+      event.name === "product_clicks" && event.event_type === "click" && event.user_id === "user1"
+    );
+    expect(clickEvent).toBeDefined();
+    expect(sortedDocIds(clickEvent?.doc_ids)).toEqual(["1", "2"]);
   });
 });

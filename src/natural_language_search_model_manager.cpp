@@ -142,7 +142,7 @@ Option<int> NaturalLanguageSearchModelManager::init(Store* store) {
     store->scan_fill(std::string(MODEL_KEY_PREFIX) + "_", std::string(MODEL_KEY_PREFIX) + "`", model_strs);
 
     if(!model_strs.empty()) {
-        LOG(INFO) << "Found " << model_strs.size() << " natural language search model(s).";
+        TS_LOG(INFO) << "Found " << model_strs.size() << " natural language search model(s).";
     }
 
     int loaded_models = 0;
@@ -154,7 +154,7 @@ Option<int> NaturalLanguageSearchModelManager::init(Store* store) {
         auto has_migration = migrate_model(model_json);
         auto add_op = add_model(model_json, model_id, has_migration);
         if(!add_op.ok()) {
-            LOG(ERROR) << "Error while loading natural language search model: " << model_id 
+            TS_LOG(ERROR) << "Error while loading natural language search model: " << model_id 
                       << ", error: " << add_op.error();
             continue;
         }
@@ -314,7 +314,7 @@ Option<std::string> NaturalLanguageSearchModelManager::generate_schema_prompt(co
     schema_prompt += "  \"sort_by\": \"typesense sort syntax explained above\"\n";
     schema_prompt += "}\n";
     
-    // LOG(INFO) << "Schema prompt for'" << collection_name << "': " << schema_prompt;
+    // TS_LOG(INFO) << "Schema prompt for'" << collection_name << "': " << schema_prompt;
     
     std::unique_lock lock(schema_prompts_mutex);
     schema_prompts.insert(collection_name, SchemaPromptEntry(schema_prompt));

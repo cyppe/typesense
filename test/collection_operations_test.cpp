@@ -5,20 +5,23 @@
 #include <algorithm>
 #include <collection_manager.h>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionOperationsTest : public ::testing::Test {
 protected:
     Store *store;
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_operations";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_operations");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -32,6 +35,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -61,12 +65,12 @@ TEST_F(CollectionOperationsTest, IncrementInt32Value) {
     ASSERT_TRUE(coll->add(doc.dump(), UPDATE).ok());
 
     auto res = coll->search("*", {"title"}, "points:101", {}, {}, {0}, 3, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, res["hits"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
 
-    ASSERT_EQ(4, res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{4}, res["hits"][0]["document"].size());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("Sherlock Holmes", res["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(101, res["hits"][0]["document"]["points"].get<size_t>());
+    ASSERT_EQ(size_t{101}, res["hits"][0]["document"]["points"].get<size_t>());
 
     // increment by 10
     doc["id"] = "0";
@@ -74,11 +78,11 @@ TEST_F(CollectionOperationsTest, IncrementInt32Value) {
     ASSERT_TRUE(coll->add(doc.dump(), UPDATE).ok());
 
     res = coll->search("*", {"title"}, "points:111", {}, {}, {0}, 3, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, res["hits"].size());
-    ASSERT_EQ(4, res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
+    ASSERT_EQ(size_t{4}, res["hits"][0]["document"].size());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("Sherlock Holmes", res["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(111, res["hits"][0]["document"]["points"].get<size_t>());
+    ASSERT_EQ(size_t{111}, res["hits"][0]["document"]["points"].get<size_t>());
 
     // increment points64 by 5
     doc["id"] = "0";
@@ -86,10 +90,10 @@ TEST_F(CollectionOperationsTest, IncrementInt32Value) {
     ASSERT_TRUE(coll->add(doc.dump(), UPDATE).ok());
 
     res = coll->search("*", {"title"}, "points:111", {}, {}, {0}, 3, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, res["hits"].size());
-    ASSERT_EQ(4, res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
+    ASSERT_EQ(size_t{4}, res["hits"][0]["document"].size());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ(5, res["hits"][0]["document"]["points64"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res["hits"][0]["document"]["points64"].get<size_t>());
 
     // decrement by 10 using negative number
     doc["id"] = "0";
@@ -97,11 +101,11 @@ TEST_F(CollectionOperationsTest, IncrementInt32Value) {
     ASSERT_TRUE(coll->add(doc.dump(), UPDATE).ok());
 
     res = coll->search("*", {"title"}, "points:101", {}, {}, {0}, 3, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, res["hits"].size());
-    ASSERT_EQ(4, res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
+    ASSERT_EQ(size_t{4}, res["hits"][0]["document"].size());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("Sherlock Holmes", res["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(101, res["hits"][0]["document"]["points"].get<size_t>());
+    ASSERT_EQ(size_t{101}, res["hits"][0]["document"]["points"].get<size_t>());
 
     // bad field - should not increment but title field should be updated
     doc["id"] = "0";
@@ -109,11 +113,11 @@ TEST_F(CollectionOperationsTest, IncrementInt32Value) {
     doc["$operations"] = R"({"increment": {"pointsx": -10}})"_json;
     ASSERT_TRUE(coll->add(doc.dump(), UPDATE).ok());
     res = coll->search("*", {"title"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, res["hits"].size());
-    ASSERT_EQ(4, res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
+    ASSERT_EQ(size_t{4}, res["hits"][0]["document"].size());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("The Sherlock Holmes", res["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(101, res["hits"][0]["document"]["points"].get<size_t>());
+    ASSERT_EQ(size_t{101}, res["hits"][0]["document"]["points"].get<size_t>());
 }
 
 TEST_F(CollectionOperationsTest, IncrementInt32ValueCreationViaOptionalField) {
@@ -134,11 +138,11 @@ TEST_F(CollectionOperationsTest, IncrementInt32ValueCreationViaOptionalField) {
     ASSERT_TRUE(coll->add(doc.dump(), EMPLACE).ok());
 
     auto res = coll->search("*", {"title"}, "points:1", {}, {}, {0}, 3, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, res["hits"].size());
-    ASSERT_EQ(3, res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
+    ASSERT_EQ(size_t{3}, res["hits"][0]["document"].size());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("Sherlock Holmes", res["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(1, res["hits"][0]["document"]["points"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["hits"][0]["document"]["points"].get<size_t>());
 
     // try same with CREATE action
     doc.clear();
@@ -148,9 +152,9 @@ TEST_F(CollectionOperationsTest, IncrementInt32ValueCreationViaOptionalField) {
     ASSERT_TRUE(coll->add(doc.dump(), CREATE).ok());
 
     res = coll->search("*", {"title"}, "points:10", {}, {}, {0}, 3, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, res["hits"].size());
-    ASSERT_EQ(3, res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
+    ASSERT_EQ(size_t{3}, res["hits"][0]["document"].size());
     ASSERT_EQ("1", res["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("Harry Potter", res["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(10, res["hits"][0]["document"]["points"].get<size_t>());
+    ASSERT_EQ(size_t{10}, res["hits"][0]["document"]["points"].get<size_t>());
 }

@@ -1,10 +1,25 @@
 #include <chrono>
+#include <cstdlib>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <match_score.h>
 #include "posting_list.h"
+#include "runfiles_utils.h"
 #include <fstream>
+#include "logger.h"
 
-#define token_offsets_file_path (std::string(ROOT_DIR) + std::string("external/token_offsets/file/token_offsets.txt")).c_str()
+#ifndef ROOT_DIR
+#define ROOT_DIR ""
+#endif
+
+namespace {
+const std::string kTokenOffsetsFilePath = resolve_test_path({
+    std::string(ROOT_DIR) + "external/token_offsets/file/token_offsets.txt",
+    std::string(ROOT_DIR) + "token_offsets/file/token_offsets.txt",
+    "+_repo_rules2+token_offsets/file/token_offsets.txt",
+    "token_offsets/file/token_offsets.txt",
+});
+}
 
 TEST(MatchTest, TokenOffsetsExceedWindowSize) {
     std::vector<token_positions_t> token_positions = {
@@ -48,7 +63,7 @@ TEST(MatchTest, MatchScoreV2) {
     match = Match(100, token_offsets, false);
     ASSERT_EQ(4, match.words_present);
     ASSERT_EQ(3, match.distance);
-    ASSERT_EQ(0, match.offsets.size());
+    ASSERT_EQ(size_t{0}, match.offsets.size());
 
     token_offsets.clear();
     token_offsets.push_back(token_positions_t{false, {38, 50, 170, 187, 195, 222}});
@@ -86,7 +101,7 @@ TEST(MatchTest, MatchScoreV2) {
     match = Match(100, token_offsets, false);
     ASSERT_EQ(1, match.words_present);
     ASSERT_EQ(0, match.distance);
-    ASSERT_EQ(0, match.offsets.size());
+    ASSERT_EQ(size_t{0}, match.offsets.size());
     ASSERT_EQ(0, match.exact_match);
 
     // exact match
@@ -132,7 +147,7 @@ TEST(MatchTest, MatchScoreV2) {
 
     expected_offsets = {74, 75, MAX_DISPLACEMENT};
     match = Match(100, token_offsets, true, true);
-    ASSERT_EQ(3, match.offsets.size());
+    ASSERT_EQ(size_t{3}, match.offsets.size());
     for(size_t i = 0; i < match.offsets.size(); i++) {
         ASSERT_EQ(expected_offsets[i], match.offsets[i].offset);
     }
@@ -166,14 +181,15 @@ TEST(MatchTest, MatchScoreV2) {
 
     uint64_t timeNanos = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::high_resolution_clock::now() - begin).count();
-    LOG(INFO) << "Time taken: " << timeNanos;
-    LOG(INFO) << total_distance << ", " << words_present << ", " << offset_sum;*/
+    TS_LOG(INFO) << "Time taken: " << timeNanos;
+    TS_LOG(INFO) << total_distance << ", " << words_present << ", " << offset_sum;*/
 }
 
 TEST(MatchTest, MatchScoreWithOffsetWrapAround) {
     std::vector<token_positions_t> token_offsets;
 
-    std::ifstream infile(token_offsets_file_path);
+    std::ifstream infile(kTokenOffsetsFilePath);
+    ASSERT_TRUE(infile.is_open());
     std::string line;
 
     while (std::getline(infile, line)) {
@@ -181,11 +197,13 @@ TEST(MatchTest, MatchScoreWithOffsetWrapAround) {
             std::vector<uint16_t> positions;
             token_offsets.push_back(token_positions_t{false, positions});
         } else {
+            ASSERT_FALSE(token_offsets.empty());
             token_offsets.back().positions.push_back(std::stoi(line));
         }
     }
 
     infile.close();
+    ASSERT_FALSE(token_offsets.empty());
 
     ASSERT_FALSE(posting_list_t::has_phrase_match(token_offsets));
 
@@ -193,7 +211,7 @@ TEST(MatchTest, MatchScoreWithOffsetWrapAround) {
     ASSERT_EQ(2, match.words_present);
     ASSERT_EQ(2, match.distance);
 
-    ASSERT_EQ(2, match.offsets.size());
+    ASSERT_EQ(size_t{2}, match.offsets.size());
     ASSERT_EQ(4062, match.offsets[0].offset);
     ASSERT_EQ(4060, match.offsets[1].offset);
 }

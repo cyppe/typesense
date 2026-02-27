@@ -35,6 +35,18 @@ public:
         return instance;
     }
 
+    static constexpr const char* to_string(resource_check_t status) {
+        switch (status) {
+            case OK:
+                return "OK";
+            case OUT_OF_DISK:
+                return "OUT_OF_DISK";
+            case OUT_OF_MEMORY:
+                return "OUT_OF_MEMORY";
+        }
+        return "UNKNOWN";
+    }
+
     // On Mac, we will only check for disk usage
     resource_check_t has_enough_resources(const std::string& data_dir_path,
                                           const int disk_used_max_percentage,

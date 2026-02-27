@@ -1,7 +1,9 @@
 import EventEmitter from "events";
 import { constants, writeFile } from "fs/promises";
+import { realpathSync } from "fs";
+import { createServer } from "net";
 import { networkInterfaces } from "os";
-import path from "path";
+import path, { dirname } from "path";
 import type { ErrorWithMessage } from "@/utils/error";
 import type { ChildProcess } from "child_process";
 import type { Options as ExecaOptions } from "execa";
@@ -9,7 +11,7 @@ import type { Result } from "neverthrow";
 import type { Ora } from "ora";
 import type { HealthResponse } from "typesense/lib/Typesense/Health";
 
-import { execa } from "execa";
+import { execa, execaSync } from "execa";
 import { err, errAsync, ok, okAsync, ResultAsync } from "neverthrow";
 import ora from "ora";
 import { Client } from "typesense";
@@ -30,7 +32,7 @@ export interface SetupNodesOptions {
 
 export interface NodeConfig {
   grpc: number;
-  http: (typeof TypesenseProcessManager.nodeToPortMap)[number]["http"];
+  http: (typeof TypesenseProcessManager.defaultNodeToPortMap)[number]["http"];
   dataDir: string;
 }
 
@@ -163,19 +165,103 @@ export class TypesenseProcessManager {
     private readonly workingDirectory: string,
     snapshotPath?: string,
     ipAddress?: string,
+    baseHttpPort?: number,
+    private readonly extraServerArgs?: string[],
   ) {
     this.ipAddress = ipAddress;
     this.snapshotPath = snapshotPath ?? path.join(this.workingDirectory, "snapshots");
+    this.nodeToPortMap = baseHttpPort
+      ? TypesenseProcessManager.buildPortMap(baseHttpPort)
+      : [...TypesenseProcessManager.defaultNodeToPortMap];
     this.setupGlobalExitHandler();
   }
 
-  public static readonly nodeToPortMap = [
+  public static readonly defaultNodeToPortMap = [
     { grpc: 8107, http: 8108 },
     { grpc: 7107, http: 7108 },
     { grpc: 9107, http: 9108 },
   ] as const;
 
-  restartProcess(port: (typeof TypesenseProcessManager.nodeToPortMap)[number]["http"]) {
+  public readonly nodeToPortMap: { grpc: number; http: number }[];
+
+  public static buildPortMap(baseHttpPort: number): { grpc: number; http: number }[] {
+    const offset = baseHttpPort - 8108;
+    return TypesenseProcessManager.defaultNodeToPortMap.map(({ grpc, http }) => ({
+      grpc: grpc + offset,
+      http: http + offset,
+    }));
+  }
+
+  /**
+   * Check if a port is available by attempting to bind to it.
+   * Returns an error with details about what's using the port if it's occupied.
+   */
+  private static checkPortAvailable(port: number): ResultAsync<void, ErrorWithMessage> {
+    return ResultAsync.fromPromise(
+      new Promise<void>((resolve, reject) => {
+        const server = createServer();
+        server.once("error", (err: NodeJS.ErrnoException) => {
+          if (err.code === "EADDRINUSE") {
+            // Try to identify what's using the port
+            let detail = `Port ${port} is already in use.`;
+            try {
+              const containers = execaSync("docker", [
+                "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Ports}}",
+                "--filter", `publish=${port}`,
+              ]).stdout.trim();
+              if (containers) {
+                detail += ` Docker container(s) on this port:\n${containers}`;
+              }
+            } catch { /* docker check failed, give generic message */ }
+            reject(new Error(detail));
+          } else {
+            reject(err);
+          }
+        });
+        server.listen(port, "0.0.0.0", () => {
+          server.close(() => resolve());
+        });
+      }),
+      toErrorWithMessage,
+    );
+  }
+
+  /**
+   * Verify all ports in the port map are available before starting processes.
+   */
+  public ensurePortsAvailable(): ResultAsync<void, ErrorWithMessage> {
+    const ports = this.nodeToPortMap.flatMap(({ grpc, http }) => [grpc, http]);
+    return ResultAsync.combine(
+      ports.map((port) => TypesenseProcessManager.checkPortAvailable(port)),
+    ).map(() => undefined);
+  }
+
+  /**
+   * Clean up any orphaned typesense-bench containers from previous runs.
+   * This prevents port conflicts and resource leaks.
+   */
+  public cleanupStaleContainers(): ResultAsync<void, ErrorWithMessage> {
+    return ResultAsync.fromPromise(
+      (async () => {
+        try {
+          const result = execaSync("docker", [
+            "ps", "-aq", "--filter", "name=typesense-bench-",
+          ]).stdout.trim();
+          if (result) {
+            const ids = result.split("\n").filter(Boolean);
+            logger.info(`Cleaning up ${ids.length} stale benchmark container(s)...`);
+            execaSync("docker", ["rm", "-f", ...ids]);
+            logger.info("Stale containers removed.");
+          }
+        } catch {
+          // No containers to clean or docker not available
+        }
+      })(),
+      toErrorWithMessage,
+    );
+  }
+
+  restartProcess(port: (typeof TypesenseProcessManager.defaultNodeToPortMap)[number]["http"]) {
     const process = this.getProcessByHttpPort(port);
 
     if (process.isErr()) {
@@ -194,7 +280,7 @@ export class TypesenseProcessManager {
   }
 
   stopProcess(
-    port: (typeof TypesenseProcessManager.nodeToPortMap)[number]["http"],
+    port: (typeof TypesenseProcessManager.defaultNodeToPortMap)[number]["http"],
   ): ResultAsync<void, ErrorWithMessage> {
     const process = this.getProcessByHttpPort(port);
 
@@ -217,7 +303,7 @@ export class TypesenseProcessManager {
   }
 
   getHealth(
-    port: (typeof TypesenseProcessManager.nodeToPortMap)[number]["http"],
+    port: (typeof TypesenseProcessManager.defaultNodeToPortMap)[number]["http"],
   ): ResultAsync<HealthResponse, ErrorWithMessage> {
     const process = this.getProcessByHttpPort(port);
 
@@ -239,7 +325,7 @@ export class TypesenseProcessManager {
     });
   }
 
-  snapshot(port: (typeof TypesenseProcessManager.nodeToPortMap)[number]["http"]) {
+  snapshot(port: (typeof TypesenseProcessManager.defaultNodeToPortMap)[number]["http"]) {
     const process = this.getProcessByHttpPort(port);
 
     if (process.isErr()) {
@@ -261,14 +347,14 @@ export class TypesenseProcessManager {
 
   initNode(
     dataDir: string,
-    port: (typeof TypesenseProcessManager.nodeToPortMap)[number]["http"],
+    port: (typeof TypesenseProcessManager.defaultNodeToPortMap)[number]["http"],
   ): ResultAsync<NodeConfig, ErrorWithMessage> {
     return exists(dataDir).andThen((exists) => {
       if (!exists) {
         return errAsync({ message: `${dataDir} does not exist` });
       }
 
-      const portObj = TypesenseProcessManager.nodeToPortMap.find((ports) => ports.http === port);
+      const portObj = this.nodeToPortMap.find((ports) => ports.http === port);
 
       if (!portObj) {
         return errAsync({ message: `${port} is not a valid port` });
@@ -317,16 +403,31 @@ export class TypesenseProcessManager {
             windowsHide: true,
             cleanup: true,
             extendEnv: true,
-            env: {
-              HTTP_PROXY: "http://localhost:8443",
-              HTTPS_PROXY: "http://localhost:8443",
-            },
           };
 
-          logger.info(`[Node on port ${http}] Starting process with ports HTTP=${http} gRPC=${grpc}\n`);
-          logger.info(`[Node on port ${http}] Command: ${this.binaryPath} ${args.value.join(" ")}`);
+          const containerName = `typesense-bench-${http}`;
+          const realBinaryPath = realpathSync(this.binaryPath);
+          const binDir = dirname(realBinaryPath);
 
-          const typesenseProcess = execa(this.binaryPath, args.value, execaOptions);
+          const dockerArgs = [
+            "run", "--rm", "--init",
+            "--name", containerName,
+            "--user", `${process.getuid!()}:${process.getgid!()}`,
+            "--network", "benchmark_k6",
+            "--hostname", containerName,
+            "-p", `${http}:${http}`,
+            "-p", `${grpc}:${grpc}`,
+            "-e", `LD_LIBRARY_PATH=${binDir}`,
+            "-v", `${binDir}:${binDir}:ro`,
+            "-v", `${node.dataDir}:${node.dataDir}`,
+            "ubuntu:24.04",
+            realBinaryPath, ...args.value,
+          ];
+
+          logger.info(`[Node on port ${http}] Starting process with ports HTTP=${http} gRPC=${grpc}\n`);
+          logger.info(`[Node on port ${http}] Command: docker ${dockerArgs.join(" ")}`);
+
+          const typesenseProcess = execa("docker", dockerArgs, execaOptions);
 
           typesenseProcess.stdout?.on("data", (data) => {
             const message = isStringifiable(data) ? data.toString().trim() : "Not a stringifiable object";
@@ -375,7 +476,7 @@ export class TypesenseProcessManager {
       )
       .andThen((directories) =>
         ResultAsync.combine(
-          TypesenseProcessManager.nodeToPortMap.map(({ http }, index) => this.initNode(directories[index]!, http)),
+          this.nodeToPortMap.map(({ http }, index) => this.initNode(directories[index]!, http)),
         ),
       );
   }
@@ -407,6 +508,9 @@ export class TypesenseProcessManager {
     }
     args.push(...ipArgs);
     args.push(...baseArgs);
+    if (this.extraServerArgs?.length) {
+      args.push(...this.extraServerArgs);
+    }
     return ok(args);
   }
 
@@ -488,6 +592,13 @@ export class TypesenseProcessManager {
       for (const process of this.processes.values()) {
         process.dispose();
       }
+      // Clean up any orphaned benchmark containers
+      try {
+        const ids = execaSync("docker", ["ps", "-q", "--filter", "name=typesense-bench-"]).stdout.trim();
+        if (ids) {
+          execaSync("docker", ["rm", "-f", ...ids.split("\n")]);
+        }
+      } catch { /* ignore */ }
     };
 
     const currentCount = global.process.listenerCount("exit");
@@ -522,12 +633,12 @@ export class TypesenseProcessManager {
 
   private verifyDataDirectories(
     directories: readonly string[],
-  ): directories is StringTupleOfLength<typeof TypesenseProcessManager.nodeToPortMap> {
-    return directories.length == TypesenseProcessManager.nodeToPortMap.length;
+  ): directories is StringTupleOfLength<typeof TypesenseProcessManager.defaultNodeToPortMap> {
+    return directories.length == this.nodeToPortMap.length;
   }
 
   private verifyDirectoriesExist(
-    directories: StringTupleOfLength<typeof TypesenseProcessManager.nodeToPortMap>,
+    directories: StringTupleOfLength<typeof TypesenseProcessManager.defaultNodeToPortMap>,
   ): ResultAsync<boolean, ErrorWithMessage> {
     return ResultAsync.combine(directories.map((dir) => exists(dir))).map(() => true);
   }
@@ -541,7 +652,7 @@ export class TypesenseProcessManager {
       return errAsync(ipAddress.error);
     }
 
-    const contents = TypesenseProcessManager.nodeToPortMap
+    const contents = this.nodeToPortMap
       .map(({ grpc, http }) => `${ipAddress.value}:${grpc}:${http}`)
       .join(",");
 

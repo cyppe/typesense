@@ -1,4 +1,5 @@
 #include "id_list.h"
+#include "logger.h"
 #include <algorithm>
 #include "for.h"
 
@@ -438,7 +439,7 @@ void id_list_t::merge(const std::vector<id_list_t*>& id_lists, std::vector<uint3
         case 2:
             while(!at_end2(its)) {
                 if(equals2(its)) {
-                    //LOG(INFO) << its[0].id();
+                    //TS_LOG(INFO) << its[0].id();
                     result_ids.push_back(its[0].id());
                     advance_all2(its);
                 } else {
@@ -508,7 +509,7 @@ void id_list_t::intersect(const std::vector<id_list_t*>& id_lists, std::vector<u
         case 2:
             while(!at_end2(its)) {
                 if(equals2(its)) {
-                    //LOG(INFO) << its[0].id();
+                    //TS_LOG(INFO) << its[0].id();
                     result_ids.push_back(its[0].id());
                     advance_all2(its);
                 } else {
@@ -519,7 +520,7 @@ void id_list_t::intersect(const std::vector<id_list_t*>& id_lists, std::vector<u
         default:
             while(!at_end(its)) {
                 if(equals(its)) {
-                    //LOG(INFO) << its[0].id();
+                    //TS_LOG(INFO) << its[0].id();
                     result_ids.push_back(its[0].id());
                     advance_all(its);
                 } else {
@@ -755,7 +756,7 @@ size_t id_list_t::intersect_count(const uint32_t *res_ids, size_t res_ids_len,
         }
     }
 
-    //LOG(INFO) << "estimate_facets: " << estimate_facets << ", res_ids_len: " << res_ids_len
+    //TS_LOG(INFO) << "estimate_facets: " << estimate_facets << ", res_ids_len: " << res_ids_len
     //          << ", skip_interval: " << facet_sample_interval << ", count: " << count;
 
     if(estimate_facets) {

@@ -16,7 +16,7 @@ TEST(TokenizerTest, ShouldTokenizeNormalizeDifferentStrings) {
     const std::string withnewline = "Michael Jordan:\nWelcome, everybody. Welcome! ";
     tokens.clear();
     Tokenizer(withnewline, true, false).tokenize(tokens);
-    ASSERT_EQ(5, tokens.size());
+    ASSERT_EQ(size_t{5}, tokens.size());
     ASSERT_STREQ("michael", tokens[0].c_str());
     ASSERT_STREQ("jordan", tokens[1].c_str());
     ASSERT_STREQ("welcome", tokens[2].c_str());
@@ -26,7 +26,7 @@ TEST(TokenizerTest, ShouldTokenizeNormalizeDifferentStrings) {
     const std::string withspaces = " Michael  Jordan  ";
     tokens.clear();
     Tokenizer(withspaces, true, false).tokenize(tokens);
-    ASSERT_EQ(2, tokens.size());
+    ASSERT_EQ(size_t{2}, tokens.size());
     ASSERT_STREQ("michael", tokens[0].c_str());
     ASSERT_STREQ("jordan", tokens[1].c_str());
 
@@ -34,26 +34,26 @@ TEST(TokenizerTest, ShouldTokenizeNormalizeDifferentStrings) {
     const std::string single_token = "foobar";
     tokens.clear();
     Tokenizer(single_token, false, false).tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_STREQ("foobar", tokens[0].c_str());
 
     // split tokens
     const std::string split_tokens = "foo-bar-baz";
     tokens.clear();
     Tokenizer(split_tokens, false, false).tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_STREQ("foobarbaz", tokens[0].c_str());
 
     tokens.clear();
     Tokenizer(split_tokens, true, false).tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_STREQ("foobarbaz", tokens[0].c_str());
 
     // multiple spaces
     const std::string multispace_tokens = "foo     bar";
     tokens.clear();
     Tokenizer(multispace_tokens, false, false).tokenize(tokens);
-    ASSERT_EQ(2, tokens.size());
+    ASSERT_EQ(size_t{2}, tokens.size());
     ASSERT_STREQ("foo", tokens[0].c_str());
     ASSERT_STREQ("bar", tokens[1].c_str());
 
@@ -61,7 +61,7 @@ TEST(TokenizerTest, ShouldTokenizeNormalizeDifferentStrings) {
     const std::string specialchar_tokens = "https://www.amazon.com/s?k=phone&ref=nb_sb_noss_2";
     tokens.clear();
     Tokenizer(specialchar_tokens, false, false).tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_STREQ("httpswwwamazoncomskphonerefnbsbnoss2", tokens[0].c_str());
 
     // noop
@@ -69,7 +69,7 @@ TEST(TokenizerTest, ShouldTokenizeNormalizeDifferentStrings) {
     tokens.clear();
     const std::string withspecialchars = "Special ½¥ and தமிழ் 你好吗 abcÅà123ß12 here.";
     Tokenizer(withspecialchars, true, true).tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_STREQ(withspecialchars.c_str(), tokens[0].c_str());
 }
 
@@ -79,7 +79,7 @@ TEST(TokenizerTest, ShouldTokenizeNormalizeUnicodeStrings) {
     const std::string withspecialchars = "Special ½¥ and -thenதமிழ், 你2好吗 abcÅà123ß12 verläßlich here.";
     tokens.clear();
     Tokenizer(withspecialchars, true, false).tokenize(tokens);
-    ASSERT_EQ(8, tokens.size());
+    ASSERT_EQ(size_t{8}, tokens.size());
     ASSERT_STREQ("special", tokens[0].c_str());
     ASSERT_STREQ("12yen", tokens[1].c_str());
     ASSERT_STREQ("and", tokens[2].c_str());
@@ -93,7 +93,7 @@ TEST(TokenizerTest, ShouldTokenizeNormalizeUnicodeStrings) {
     const std::string withoutnormalize = "Mise  à,  jour.";
     tokens.clear();
     Tokenizer(withoutnormalize, false, false).tokenize(tokens);
-    ASSERT_EQ(3, tokens.size());
+    ASSERT_EQ(size_t{3}, tokens.size());
     ASSERT_STREQ("Mise", tokens[0].c_str());
     ASSERT_STREQ("à", tokens[1].c_str());
     ASSERT_STREQ("jour", tokens[2].c_str());
@@ -102,7 +102,7 @@ TEST(TokenizerTest, ShouldTokenizeNormalizeUnicodeStrings) {
     std::string singleword = "à";
     tokens.clear();
     Tokenizer(singleword, true, false).tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_STREQ("a", tokens[0].c_str());
 }
 
@@ -118,7 +118,7 @@ TEST(TokenizerTest, ShouldTokenizeIteratively) {
         tokens.push_back(token);
     }
 
-    ASSERT_EQ(5, tokens.size());
+    ASSERT_EQ(size_t{5}, tokens.size());
     ASSERT_STREQ("michael", tokens[0].c_str());
     ASSERT_STREQ("jordan", tokens[1].c_str());
     ASSERT_STREQ("welcome", tokens[2].c_str());
@@ -144,14 +144,14 @@ TEST(TokenizerTest, ShouldTokenizeIteratively) {
         tokens.push_back(token);
     }
 
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_STREQ("Michael Jordan:\n\nWelcome, everybody. Welcome!", tokens[0].c_str());
 }
 
 TEST(TokenizerTest, ShouldTokenizeTextWithCustomSpecialChars) {
     std::vector<std::string> tokens;
     Tokenizer("and -some -more", true, false, "en", {'-'}).tokenize(tokens);
-    ASSERT_EQ(3, tokens.size());
+    ASSERT_EQ(size_t{3}, tokens.size());
     ASSERT_EQ("and", tokens[0]);
     ASSERT_EQ("-some", tokens[1]);
     ASSERT_EQ("-more", tokens[2]);
@@ -162,18 +162,18 @@ TEST(TokenizerTest, ShouldTokenizeChineseText) {
 
     // traditional -> simplified
     Tokenizer("語", false, false, "zh").tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_EQ("语", tokens[0]);
 
     tokens.clear();
     Tokenizer("說", false, false, "zh").tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_EQ("说", tokens[0]);
 
     // tokenize traditional
     tokens.clear();
     Tokenizer("愛並不會因時間而", false, false, "zh").tokenize(tokens);
-    ASSERT_EQ(6, tokens.size());
+    ASSERT_EQ(size_t{6}, tokens.size());
     ASSERT_EQ("爱", tokens[0]);
     ASSERT_EQ("并不", tokens[1]);
     ASSERT_EQ("会", tokens[2]);
@@ -184,7 +184,7 @@ TEST(TokenizerTest, ShouldTokenizeChineseText) {
     // tokenize simplified
     tokens.clear();
     Tokenizer("爱并不会因时间而", false, false, "zh").tokenize(tokens);
-    ASSERT_EQ(6, tokens.size());
+    ASSERT_EQ(size_t{6}, tokens.size());
     ASSERT_EQ("爱", tokens[0]);
     ASSERT_EQ("并不", tokens[1]);
     ASSERT_EQ("会", tokens[2]);
@@ -195,7 +195,7 @@ TEST(TokenizerTest, ShouldTokenizeChineseText) {
     // with token_separators
     tokens.clear();
     Tokenizer("很久以前，傳說在臺中北屯的一個地方", false, false, "zh").tokenize(tokens);
-    ASSERT_EQ(10, tokens.size());
+    ASSERT_EQ(size_t{10}, tokens.size());
     ASSERT_EQ("很久", tokens[0]);
     ASSERT_EQ("以前", tokens[1]);
     ASSERT_EQ("传说", tokens[2]);
@@ -209,14 +209,14 @@ TEST(TokenizerTest, ShouldTokenizeChineseText) {
 
     tokens.clear();
     Tokenizer("朵雲──海", false, false, "zh").tokenize(tokens);
-    ASSERT_EQ(3, tokens.size());
+    ASSERT_EQ(size_t{3}, tokens.size());
     ASSERT_EQ("朵", tokens[0]);
     ASSERT_EQ("云", tokens[1]);
     ASSERT_EQ("海", tokens[2]);
 
     tokens.clear();
     Tokenizer("山丘上。媽媽", false, false, "zh").tokenize(tokens);
-    ASSERT_EQ(3, tokens.size());
+    ASSERT_EQ(size_t{3}, tokens.size());
     ASSERT_EQ("山丘", tokens[0]);
     ASSERT_EQ("上", tokens[1]);
     ASSERT_EQ("妈妈", tokens[2]);
@@ -228,17 +228,17 @@ TEST(TokenizerTest, ShouldTokenizeLocaleText) {
     tokens.clear();
     std::string str = "ความเหลื่อมล้ำ";
     Tokenizer(str, true, false, "th").tokenize(tokens);
-    //ASSERT_EQ(2, tokens.size());
+    //ASSERT_EQ(size_t{2}, tokens.size());
 
     tokens.clear();
     str = "เหลื่";
     Tokenizer(str, false, false, "th").tokenize(tokens);
-    //ASSERT_EQ(1, tokens.size());
+    //ASSERT_EQ(size_t{1}, tokens.size());
 
     tokens.clear();
     str = "จิ้งจอกสีน้ำตาลด่วน";
     Tokenizer(str, true, false, "th").tokenize(tokens);
-    ASSERT_EQ(4, tokens.size());
+    ASSERT_EQ(size_t{4}, tokens.size());
     ASSERT_EQ("จิ้งจอก", tokens[0]);
     ASSERT_EQ("สี", tokens[1]);
     ASSERT_EQ("น้ําตาล", tokens[2]);
@@ -247,7 +247,7 @@ TEST(TokenizerTest, ShouldTokenizeLocaleText) {
     tokens.clear();
     str = "น. วันที่ 31 มี.ค.";
     Tokenizer(str, false, false, "th").tokenize(tokens);
-    ASSERT_EQ(5, tokens.size());
+    ASSERT_EQ(size_t{5}, tokens.size());
     ASSERT_EQ("น", tokens[0]);
     ASSERT_EQ("วัน", tokens[1]);
     ASSERT_EQ("ที่", tokens[2]);
@@ -257,12 +257,12 @@ TEST(TokenizerTest, ShouldTokenizeLocaleText) {
     tokens.clear();
     str = "12345_678";
     Tokenizer(str, false, false, "th").tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_EQ("12345678", tokens[0]);
 
     tokens.clear();
     Tokenizer("Odd Thomas", false, false, "en").tokenize(tokens);
-    ASSERT_EQ(2, tokens.size());
+    ASSERT_EQ(size_t{2}, tokens.size());
     ASSERT_EQ("Odd", tokens[0]);
     ASSERT_EQ("Thomas", tokens[1]);
 
@@ -270,14 +270,14 @@ TEST(TokenizerTest, ShouldTokenizeLocaleText) {
 
     tokens.clear();
     Tokenizer("경승지·산악·협곡", false, false, "ko").tokenize(tokens);
-    ASSERT_EQ(3, tokens.size());
+    ASSERT_EQ(size_t{3}, tokens.size());
     ASSERT_EQ("경승지", tokens[0]);
     ASSERT_EQ("산악", tokens[1]);
     ASSERT_EQ("협곡", tokens[2]);
 
     tokens.clear();
     Tokenizer("안녕은하철도999극장판", false, false, "ko").tokenize(tokens);
-    ASSERT_EQ(3, tokens.size());
+    ASSERT_EQ(size_t{3}, tokens.size());
     ASSERT_EQ("안녕은하철도", tokens[0]);
     ASSERT_EQ("999", tokens[1]);
     ASSERT_EQ("극장판", tokens[2]);
@@ -285,21 +285,21 @@ TEST(TokenizerTest, ShouldTokenizeLocaleText) {
     // japanese
     tokens.clear();
     Tokenizer("退屈", true, false, "ja").tokenize(tokens);
-    ASSERT_EQ(2, tokens.size());
+    ASSERT_EQ(size_t{2}, tokens.size());
     ASSERT_EQ("た", tokens[0]);
     ASSERT_EQ("いくつ", tokens[1]);
 
     tokens.clear();
     Tokenizer("魈", true, false, "ja").tokenize(tokens);
-    ASSERT_EQ(0, tokens.size());
+    ASSERT_EQ(size_t{0}, tokens.size());
 
     tokens.clear();
     Tokenizer("「業果材", true, false, "ja").tokenize(tokens);
-    ASSERT_EQ(6, tokens.size());
+    ASSERT_EQ(size_t{6}, tokens.size());
 
     tokens.clear();
     Tokenizer("ア退屈であ", true, false, "ja").tokenize(tokens);
-    ASSERT_EQ(5, tokens.size());
+    ASSERT_EQ(size_t{5}, tokens.size());
     ASSERT_EQ("あ", tokens[0]);
     ASSERT_EQ("た", tokens[1]);
     ASSERT_EQ("いくつ", tokens[2]);
@@ -308,7 +308,7 @@ TEST(TokenizerTest, ShouldTokenizeLocaleText) {
 
     tokens.clear();
     Tokenizer("怠惰な犬", true, false, "ja").tokenize(tokens);
-    ASSERT_EQ(4, tokens.size());
+    ASSERT_EQ(size_t{4}, tokens.size());
     ASSERT_EQ("たい", tokens[0]);
     ASSERT_EQ("だ", tokens[1]);
     ASSERT_EQ("な", tokens[2]);
@@ -316,7 +316,7 @@ TEST(TokenizerTest, ShouldTokenizeLocaleText) {
 
     tokens.clear();
     Tokenizer("今ぶり拍治ルツ", true, false, "ja").tokenize(tokens);
-    ASSERT_EQ(9, tokens.size());
+    ASSERT_EQ(size_t{9}, tokens.size());
     ASSERT_EQ("いま", tokens[0]);
     ASSERT_EQ("ぶり", tokens[1]);
     ASSERT_EQ("は", tokens[2]);
@@ -333,14 +333,14 @@ TEST(TokenizerTest, ShouldTokenizeLocaleText) {
     // persian containing zwnj
     tokens.clear();
     Tokenizer("روان\u200Cشناسی", false, false, "fa").tokenize(tokens);
-    ASSERT_EQ(2, tokens.size());
+    ASSERT_EQ(size_t{2}, tokens.size());
 }
 
 TEST(TokenizerTest, ShouldTokenizeLocaleTextWithEnglishText) {
     std::string tstr = "ผู้เขียนมีความสนใจเกี่ยวกับ Discrete Math และการคำนวณโดยทั่วไป";
     std::vector<std::string> ttokens;
     Tokenizer(tstr, true, false, "th").tokenize(ttokens);
-    ASSERT_EQ(14, ttokens.size());
+    ASSERT_EQ(size_t{14}, ttokens.size());
     ASSERT_EQ("discrete", ttokens[7]);
     ASSERT_EQ("math", ttokens[8]);
 }
@@ -349,14 +349,14 @@ TEST(TokenizerTest, ShouldRemoveGenericPunctuationFromThaiText) {
     std::string tstr = "f’’b";
     std::vector<std::string> ttokens;
     Tokenizer(tstr, true, false, "th").tokenize(ttokens);
-    ASSERT_EQ(2, ttokens.size());
+    ASSERT_EQ(size_t{2}, ttokens.size());
     ASSERT_EQ("f", ttokens[0]);
     ASSERT_EQ("b", ttokens[1]);
 
     ttokens.clear();
     tstr = "Lay’s";
     Tokenizer(tstr, true, false, "th").tokenize(ttokens);
-    ASSERT_EQ(1, ttokens.size());
+    ASSERT_EQ(size_t{1}, ttokens.size());
     ASSERT_EQ("lays", ttokens[0]);
 }
 
@@ -364,19 +364,19 @@ TEST(TokenizerTest, ShouldTokenizeLocaleTextWithSwedishText) {
     std::string tstr = "södra";
     std::vector<std::string> ttokens;
     Tokenizer(tstr, true, false, "sv").tokenize(ttokens);
-    ASSERT_EQ(1, ttokens.size());
+    ASSERT_EQ(size_t{1}, ttokens.size());
     ASSERT_EQ("södra", ttokens[0]);
 
     tstr = "Ängelholm";
     ttokens.clear();
     Tokenizer(tstr, true, false, "sv").tokenize(ttokens);
-    ASSERT_EQ(1, ttokens.size());
+    ASSERT_EQ(size_t{1}, ttokens.size());
     ASSERT_EQ("ängelholm", ttokens[0]);
 
     tstr = "Ängelholm";
     ttokens.clear();
     Tokenizer(tstr, true, false, "").tokenize(ttokens);
-    ASSERT_EQ(1, ttokens.size());
+    ASSERT_EQ(size_t{1}, ttokens.size());
     ASSERT_EQ("angelholm", ttokens[0]);
 }
 
@@ -389,7 +389,7 @@ TEST(TokenizerTest, ShouldTokenizeWithDifferentSymbolConfigs) {
 
     std::vector<std::string> tokens;
     Tokenizer(str1, true, false, "th", {'-'}, {}).tokenize(tokens);
-    ASSERT_EQ(4, tokens.size());
+    ASSERT_EQ(size_t{4}, tokens.size());
     ASSERT_EQ("ความ", tokens[0]);
     ASSERT_EQ("-", tokens[1]);
     ASSERT_EQ("เหลื่อม", tokens[2]);
@@ -397,20 +397,20 @@ TEST(TokenizerTest, ShouldTokenizeWithDifferentSymbolConfigs) {
 
     tokens.clear();
     Tokenizer(str1, true, false, "th", {}, {'-'}).tokenize(tokens);
-    ASSERT_EQ(3, tokens.size());
+    ASSERT_EQ(size_t{3}, tokens.size());
     ASSERT_EQ("ความ", tokens[0]);
     ASSERT_EQ("เหลื่อม", tokens[1]);
     ASSERT_EQ("ล้ํา", tokens[2]);
 
     tokens.clear();
     Tokenizer(str1, true, false, "th", {}, {}).tokenize(tokens);
-    ASSERT_EQ(3, tokens.size());
+    ASSERT_EQ(size_t{3}, tokens.size());
     ASSERT_EQ("ความ", tokens[0]);
     ASSERT_EQ("เหลื่อม", tokens[1]);
     ASSERT_EQ("ล้ํา", tokens[2]);
 
     tokens.clear();
     Tokenizer("ความ_เห", true, false, "th", {}, {}).tokenize(tokens);
-    ASSERT_EQ(1, tokens.size());
+    ASSERT_EQ(size_t{1}, tokens.size());
     ASSERT_EQ("ความเห", tokens[0]);
 }

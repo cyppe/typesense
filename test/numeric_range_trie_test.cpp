@@ -2,20 +2,23 @@
 #include <collection_manager.h>
 #include "collection.h"
 #include "numeric_range_trie.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class NumericRangeTrieTest : public ::testing::Test {
 protected:
     Store *store;
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
+    std::string state_dir_path;
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_filtering";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("numeric_range_trie");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -29,6 +32,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -65,7 +69,7 @@ TEST_F(NumericRangeTrieTest, SearchRange) {
 
     trie->search_range(32768, true, -32768, true, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_range(-32768, true, 32768, true, ids, ids_length);
@@ -177,11 +181,11 @@ TEST_F(NumericRangeTrieTest, SearchRange) {
 
     reset(ids, ids_length);
     trie->search_range(-1, true, 0, true, ids, ids_length);
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_range(-1, false, 0, false, ids, ids_length);
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_range(8192, true, 32768, true, ids, ids_length);
@@ -204,28 +208,28 @@ TEST_F(NumericRangeTrieTest, SearchRange) {
     reset(ids, ids_length);
     trie->search_range(16384, true, 16384, true, ids, ids_length);
 
-    ASSERT_EQ(1, ids_length);
-    ASSERT_EQ(56, ids[0]);
+    ASSERT_EQ(uint32_t{1}, ids_length);
+    ASSERT_EQ(uint32_t{56}, ids[0]);
 
     reset(ids, ids_length);
     trie->search_range(16384, true, 16384, false, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_range(16384, false, 16384, true, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_range(16383, true, 16383, true, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_range(8193, true, 16383, true, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_range(-32768, true, -8192, true, ids, ids_length);
@@ -343,7 +347,7 @@ TEST_F(NumericRangeTrieTest, SearchGreaterThan) {
     reset(ids, ids_length);
     trie->search_greater_than(1000000, false, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_greater_than(-0x01000000, false, ids, ids_length);
@@ -377,7 +381,7 @@ TEST_F(NumericRangeTrieTest, SearchGreaterThan) {
 
     trie->search_greater_than(0x0101010101, true, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 }
 
 TEST_F(NumericRangeTrieTest, SearchLessThan) {
@@ -466,7 +470,7 @@ TEST_F(NumericRangeTrieTest, SearchLessThan) {
     reset(ids, ids_length);
     trie->search_less_than(-0x01000000, false, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_less_than(0x01000000, true, ids, ids_length);
@@ -519,7 +523,7 @@ TEST_F(NumericRangeTrieTest, SearchLessThan) {
 
     trie->search_less_than(-0x0101010101, true, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 }
 
 TEST_F(NumericRangeTrieTest, SearchEqualTo) {
@@ -549,29 +553,29 @@ TEST_F(NumericRangeTrieTest, SearchEqualTo) {
 
     trie->search_equal_to(0, ids, ids_length);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     reset(ids, ids_length);
     trie->search_equal_to(-32768, ids, ids_length);
 
-    ASSERT_EQ(1, ids_length);
-    ASSERT_EQ(43, ids[0]);
+    ASSERT_EQ(uint32_t{1}, ids_length);
+    ASSERT_EQ(uint32_t{43}, ids[0]);
 
     reset(ids, ids_length);
     trie->search_equal_to(24576, ids, ids_length);
 
-    ASSERT_EQ(1, ids_length);
-    ASSERT_EQ(58, ids[0]);
+    ASSERT_EQ(uint32_t{1}, ids_length);
+    ASSERT_EQ(uint32_t{58}, ids[0]);
 
     reset(ids, ids_length);
     trie->search_equal_to(0x01010101, ids, ids_length);
 
-    ASSERT_EQ(1, ids_length);
-    ASSERT_EQ(68, ids[0]);
+    ASSERT_EQ(uint32_t{1}, ids_length);
+    ASSERT_EQ(uint32_t{68}, ids[0]);
 
     reset(ids, ids_length);
     trie->search_equal_to(0x0101010101, ids, ids_length);
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 }
 
 TEST_F(NumericRangeTrieTest, IterateSearchEqualTo) {
@@ -595,9 +599,6 @@ TEST_F(NumericRangeTrieTest, IterateSearchEqualTo) {
         trie->insert(pair.first, pair.second);
     }
 
-    uint32_t* ids = nullptr;
-    uint32_t ids_length = 0;
-
     auto iterator = trie->search_equal_to(0);
     ASSERT_EQ(false, iterator.is_valid);
 
@@ -606,18 +607,18 @@ TEST_F(NumericRangeTrieTest, IterateSearchEqualTo) {
 
     iterator = trie->search_equal_to(-32768);
     ASSERT_EQ(true, iterator.is_valid);
-    ASSERT_EQ(43, iterator.seq_id);
+    ASSERT_EQ(uint32_t{43}, iterator.seq_id);
 
     iterator.next();
     ASSERT_EQ(false, iterator.is_valid);
 
     iterator = trie->search_equal_to(24576);
     ASSERT_EQ(true, iterator.is_valid);
-    ASSERT_EQ(58, iterator.seq_id);
+    ASSERT_EQ(uint32_t{58}, iterator.seq_id);
 
     iterator.next();
     ASSERT_EQ(true, iterator.is_valid);
-    ASSERT_EQ(60, iterator.seq_id);
+    ASSERT_EQ(uint32_t{60}, iterator.seq_id);
 
     iterator.next();
     ASSERT_EQ(false, iterator.is_valid);
@@ -625,15 +626,15 @@ TEST_F(NumericRangeTrieTest, IterateSearchEqualTo) {
 
     iterator.reset();
     ASSERT_EQ(true, iterator.is_valid);
-    ASSERT_EQ(58, iterator.seq_id);
+    ASSERT_EQ(uint32_t{58}, iterator.seq_id);
 
     iterator.skip_to(4);
     ASSERT_EQ(true, iterator.is_valid);
-    ASSERT_EQ(58, iterator.seq_id);
+    ASSERT_EQ(uint32_t{58}, iterator.seq_id);
 
     iterator.skip_to(59);
     ASSERT_EQ(true, iterator.is_valid);
-    ASSERT_EQ(60, iterator.seq_id);
+    ASSERT_EQ(uint32_t{60}, iterator.seq_id);
 
     iterator.skip_to(66);
     ASSERT_EQ(false, iterator.is_valid);
@@ -671,7 +672,7 @@ TEST_F(NumericRangeTrieTest, MultivalueData) {
 
     std::vector<uint32_t> expected = {5, 8, 32, 35, 43};
 
-    ASSERT_EQ(5, ids_length);
+    ASSERT_EQ(uint32_t{5}, ids_length);
     for (uint32_t i = 0; i < ids_length; i++) {
         ASSERT_EQ(expected[i], ids[i]);
     }
@@ -679,7 +680,7 @@ TEST_F(NumericRangeTrieTest, MultivalueData) {
     reset(ids, ids_length);
     trie->search_less_than(-16380, false, ids, ids_length);
 
-    ASSERT_EQ(4, ids_length);
+    ASSERT_EQ(uint32_t{4}, ids_length);
 
     expected = {5, 8, 32, 35};
     for (uint32_t i = 0; i < ids_length; i++) {
@@ -689,7 +690,7 @@ TEST_F(NumericRangeTrieTest, MultivalueData) {
     reset(ids, ids_length);
     trie->search_less_than(16384, false, ids, ids_length);
 
-    ASSERT_EQ(7, ids_length);
+    ASSERT_EQ(uint32_t{7}, ids_length);
 
     expected = {5, 8, 32, 35, 43, 49, 91};
     for (uint32_t i = 0; i < ids_length; i++) {
@@ -699,7 +700,7 @@ TEST_F(NumericRangeTrieTest, MultivalueData) {
     reset(ids, ids_length);
     trie->search_greater_than(0, true, ids, ids_length);
 
-    ASSERT_EQ(7, ids_length);
+    ASSERT_EQ(uint32_t{7}, ids_length);
 
     expected = {8, 35, 43, 49, 56, 58, 91};
     for (uint32_t i = 0; i < ids_length; i++) {
@@ -709,7 +710,7 @@ TEST_F(NumericRangeTrieTest, MultivalueData) {
     reset(ids, ids_length);
     trie->search_greater_than(256, true, ids, ids_length);
 
-    ASSERT_EQ(5, ids_length);
+    ASSERT_EQ(uint32_t{5}, ids_length);
 
     expected = {35, 49, 56, 58, 91};
     for (uint32_t i = 0; i < ids_length; i++) {
@@ -719,7 +720,7 @@ TEST_F(NumericRangeTrieTest, MultivalueData) {
     reset(ids, ids_length);
     trie->search_greater_than(-32768, true, ids, ids_length);
 
-    ASSERT_EQ(9, ids_length);
+    ASSERT_EQ(uint32_t{9}, ids_length);
 
     expected = {5, 8, 32, 35, 43, 49, 56, 58, 91};
     for (uint32_t i = 0; i < ids_length; i++) {
@@ -729,7 +730,7 @@ TEST_F(NumericRangeTrieTest, MultivalueData) {
     reset(ids, ids_length);
     trie->search_range(-32768, true, 0, true, ids, ids_length);
 
-    ASSERT_EQ(6, ids_length);
+    ASSERT_EQ(uint32_t{6}, ids_length);
 
     expected = {5, 8, 32, 35, 43, 49};
     for (uint32_t i = 0; i < ids_length; i++) {
@@ -772,7 +773,7 @@ TEST_F(NumericRangeTrieTest, Remove) {
 
     std::vector<uint32_t> expected = {5, 8, 32, 35, 43};
 
-    ASSERT_EQ(5, ids_length);
+    ASSERT_EQ(uint32_t{5}, ids_length);
     for (uint32_t i = 0; i < ids_length; i++) {
         ASSERT_EQ(expected[i], ids[i]);
     }
@@ -784,7 +785,7 @@ TEST_F(NumericRangeTrieTest, Remove) {
     trie->search_less_than(0, false, ids, ids_length);
 
     expected = {5, 8, 35, 43};
-    ASSERT_EQ(4, ids_length);
+    ASSERT_EQ(uint32_t{4}, ids_length);
     for (uint32_t i = 0; i < ids_length; i++) {
         ASSERT_EQ(expected[i], ids[i]);
     }
@@ -793,7 +794,7 @@ TEST_F(NumericRangeTrieTest, Remove) {
     trie->search_equal_to(0, ids, ids_length);
 
     expected = {2, 49};
-    ASSERT_EQ(2, ids_length);
+    ASSERT_EQ(uint32_t{2}, ids_length);
     for (uint32_t i = 0; i < ids_length; i++) {
         ASSERT_EQ(expected[i], ids[i]);
     }
@@ -803,8 +804,8 @@ TEST_F(NumericRangeTrieTest, Remove) {
     reset(ids, ids_length);
     trie->search_equal_to(0, ids, ids_length);
 
-    ASSERT_EQ(1, ids_length);
-    ASSERT_EQ(49, ids[0]);
+    ASSERT_EQ(uint32_t{1}, ids_length);
+    ASSERT_EQ(uint32_t{49}, ids[0]);
 
     reset(ids, ids_length);
 
@@ -812,8 +813,8 @@ TEST_F(NumericRangeTrieTest, Remove) {
 
     trie->search_equal_to(16843009, ids, ids_length);
 
-    ASSERT_EQ(1, ids_length);
-    ASSERT_EQ(68, ids[0]);
+    ASSERT_EQ(uint32_t{1}, ids_length);
+    ASSERT_EQ(uint32_t{68}, ids[0]);
 
     reset(ids, ids_length);
 }
@@ -828,52 +829,52 @@ TEST_F(NumericRangeTrieTest, EmptyTrieOperations) {
     trie->search_range(-32768, true, 32768, true, ids, ids_length);
     std::unique_ptr<uint32_t[]> ids_guard(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->search_range(-32768, true, -1, true, ids, ids_length);
     ids_guard.reset(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->search_range(1, true, 32768, true, ids, ids_length);
     ids_guard.reset(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->search_greater_than(0, true, ids, ids_length);
     ids_guard.reset(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->search_greater_than(15, true, ids, ids_length);
     ids_guard.reset(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->search_greater_than(-15, true, ids, ids_length);
     ids_guard.reset(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->search_less_than(0, false, ids, ids_length);
     ids_guard.reset(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->search_less_than(-15, true, ids, ids_length);
     ids_guard.reset(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->search_less_than(15, true, ids, ids_length);
     ids_guard.reset(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->search_equal_to(15, ids, ids_length);
     ids_guard.reset(ids);
 
-    ASSERT_EQ(0, ids_length);
+    ASSERT_EQ(uint32_t{0}, ids_length);
 
     trie->remove(15, 0);
     trie->remove(-15, 0);
@@ -921,7 +922,7 @@ TEST_F(NumericRangeTrieTest, Integration) {
     std::vector<std::string> facets;
     // Searching on an int32 field
     nlohmann::json results = coll_array_fields->search("Jeremy", query_fields, "age:>24", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     std::vector<std::string> ids = {"3", "1", "4"};
 
@@ -934,7 +935,7 @@ TEST_F(NumericRangeTrieTest, Integration) {
 
     // searching on an int64 array field - also ensure that padded space causes no issues
     results = coll_array_fields->search("Jeremy", query_fields, "timestamps : > 475205222", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"1", "4", "0", "2"};
 
@@ -946,7 +947,7 @@ TEST_F(NumericRangeTrieTest, Integration) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "rating: [7.812 .. 9.999, 1.05 .. 1.09]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     auto coll_json = coll_array_fields->get_summary_json();
     ASSERT_TRUE(coll_json["fields"][2]["range_index"]);

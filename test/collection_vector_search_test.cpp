@@ -12,6 +12,8 @@
 #include "vq_model_manager.h"
 #include "conversation_model.h"
 #include "text_embedder_remote.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionVectorTest : public ::testing::Test {
 protected:
@@ -21,10 +23,12 @@ protected:
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
+    std::string state_dir_path;
+
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_vector_search";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_vector_search");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -70,6 +74,7 @@ protected:
         collectionManager.dispose();
         EmbedderManager::get_instance().delete_all_text_embedders();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -111,8 +116,8 @@ TEST_F(CollectionVectorTest, BasicVectorQuerying) {
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488])").get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -131,8 +136,8 @@ TEST_F(CollectionVectorTest, BasicVectorQuerying) {
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 0)").get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -146,8 +151,8 @@ TEST_F(CollectionVectorTest, BasicVectorQuerying) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 1000)").get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -161,7 +166,7 @@ TEST_F(CollectionVectorTest, BasicVectorQuerying) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec :([0.96826, 0.94, 0.39557, 0.306488])").get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
 
     // validate wrong dimensions in query
     auto res_op = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
@@ -196,8 +201,8 @@ TEST_F(CollectionVectorTest, BasicVectorQuerying) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([], id: 1)").get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("2", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -211,8 +216,8 @@ TEST_F(CollectionVectorTest, BasicVectorQuerying) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([], id: 1, k:1)").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // `k` value should curations per_page
     results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
@@ -223,7 +228,7 @@ TEST_F(CollectionVectorTest, BasicVectorQuerying) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], k: 1)").get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("*", {}, "", {"points"}, {}, {0}, 10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
                             spp::sparse_hash_set<std::string>(),
@@ -235,9 +240,9 @@ TEST_F(CollectionVectorTest, BasicVectorQuerying) {
                             true, 0, max_score, 100,
                             0, 0, 0, "top_values").get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("1", results["facet_counts"][0]["counts"][0]["value"]);
 
     // when k is not set, should use per_page
@@ -249,7 +254,7 @@ TEST_F(CollectionVectorTest, BasicVectorQuerying) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488])").get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // when `id` does not exist, return appropriate error
     res_op = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
@@ -375,7 +380,7 @@ TEST_F(CollectionVectorTest, VectorUnchangedUpsert) {
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "vec:([0.12, 0.44, 0.55])").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
 
     // upsert unchanged doc
@@ -390,7 +395,7 @@ TEST_F(CollectionVectorTest, VectorUnchangedUpsert) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.12, 0.44, 0.55])").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // emplace unchanged doc
     add_op = coll1->add(doc.dump(), index_operation_t::EMPLACE);
@@ -404,7 +409,7 @@ TEST_F(CollectionVectorTest, VectorUnchangedUpsert) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.12, 0.44, 0.55])").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionVectorTest, VectorChangedUpsert) {
@@ -516,7 +521,7 @@ TEST_F(CollectionVectorTest, VectorUpsertOnEmptyValues) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     Collection* coll1 = collectionManager.create_collection(schema).get();
 
     nlohmann::json doc = R"(
@@ -548,7 +553,7 @@ TEST_F(CollectionVectorTest, VectorUpsertOnEmptyValues) {
                                 4, {off}, 32767, 32767, 2);
 
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 }
 
 TEST_F(CollectionVectorTest, VectorManyUpserts) {
@@ -591,7 +596,7 @@ TEST_F(CollectionVectorTest, VectorManyUpserts) {
     nlohmann::json import_response = coll1->add_many(import_records, document);
 
     ASSERT_TRUE(import_response["success"].get<bool>());
-    ASSERT_EQ(n, import_response["num_imported"].get<int>());
+    ASSERT_EQ(static_cast<int>(n), import_response["num_imported"].get<int>());
     import_records.clear();
 
     size_t num_new_records = 0;
@@ -619,7 +624,7 @@ TEST_F(CollectionVectorTest, VectorManyUpserts) {
 
     import_response = coll1->add_many(import_records, document, UPSERT);
     ASSERT_TRUE(import_response["success"].get<bool>());
-    ASSERT_EQ(n, import_response["num_imported"].get<int>());
+    ASSERT_EQ(static_cast<int>(n), import_response["num_imported"].get<int>());
     import_records.clear();
 
     /*for(size_t i = 0; i < 100; i++) {
@@ -632,11 +637,11 @@ TEST_F(CollectionVectorTest, VectorManyUpserts) {
                                      false, true, "vec:([0.12, 0.44, 0.55])").get();
 
         if(results["found"].get<size_t>() != n+num_new_records) {
-            LOG(INFO) << results["found"].get<size_t>();
+            TS_LOG(INFO) << results["found"].get<size_t>();
         }
     }*/
 
-    //LOG(INFO) << "Expected: " << n + num_new_records;
+    //TS_LOG(INFO) << "Expected: " << n + num_new_records;
     //ASSERT_EQ(n + num_new_records, results["found"].get<size_t>());
     //ASSERT_EQ(n + num_new_records, results["hits"].size());
 }
@@ -673,7 +678,7 @@ TEST_F(CollectionVectorTest, VectorPartialUpdate) {
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "vec:([0.12, 0.44, 0.55])").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
 
     // emplace partial doc
@@ -690,7 +695,7 @@ TEST_F(CollectionVectorTest, VectorPartialUpdate) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.12, 0.44, 0.55])").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // update portial doc
 
@@ -707,7 +712,7 @@ TEST_F(CollectionVectorTest, VectorPartialUpdate) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.12, 0.44, 0.55])").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionVectorTest, NumVectorGreaterThanNumDim) {
@@ -785,7 +790,7 @@ TEST_F(CollectionVectorTest, IndexGreaterThan1KVectors) {
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "").get();
 
-    ASSERT_EQ(1500, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1500}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionVectorTest, InsertDocWithEmptyVectorAndDelete) {
@@ -860,8 +865,8 @@ TEST_F(CollectionVectorTest, VecSearchWithFiltering) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 0)").get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
-    ASSERT_EQ(10, results["hits"].size());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{10}, results["hits"].size());
 
     // with points:<10, flat-search
     results = coll1->search("*", {}, "points:<10", {}, {}, {0}, 3, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
@@ -873,8 +878,8 @@ TEST_F(CollectionVectorTest, VecSearchWithFiltering) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 1000)").get();
 
-    ASSERT_EQ(10, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{10}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_FLOAT_EQ(3.409385e-05, results["hits"][0]["vector_distance"].get<float>());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
@@ -890,10 +895,10 @@ TEST_F(CollectionVectorTest, VecSearchWithFiltering) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([], id: 3, flat_search_cutoff: 1000)").get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
-    LOG(INFO) << results["hits"][0];
-    LOG(INFO) << results["hits"][1];
+    TS_LOG(INFO) << results["hits"][0];
+    TS_LOG(INFO) << results["hits"][1];
 
     ASSERT_EQ("9", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_FLOAT_EQ(0.050603985, results["hits"][0]["vector_distance"].get<float>());
@@ -912,8 +917,8 @@ TEST_F(CollectionVectorTest, VecSearchWithFiltering) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 0)").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("*", {}, "points:1", {}, {}, {0}, 20, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
                             spp::sparse_hash_set<std::string>(),
@@ -924,8 +929,8 @@ TEST_F(CollectionVectorTest, VecSearchWithFiltering) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 1000)").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 }
 
 TEST_F(CollectionVectorTest, VecSearchWithFilteringWithMissingVectorValues) {
@@ -978,8 +983,8 @@ TEST_F(CollectionVectorTest, VecSearchWithFilteringWithMissingVectorValues) {
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488])").get();
 
-    ASSERT_EQ(18, results["found"].get<size_t>());
-    ASSERT_EQ(18, results["hits"].size());
+    ASSERT_EQ(size_t{18}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{18}, results["hits"].size());
 
     // with points:<10, non-flat-search
 
@@ -992,8 +997,8 @@ TEST_F(CollectionVectorTest, VecSearchWithFilteringWithMissingVectorValues) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 0)").get();
 
-    ASSERT_EQ(9, results["found"].get<size_t>());
-    ASSERT_EQ(9, results["hits"].size());
+    ASSERT_EQ(size_t{9}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{9}, results["hits"].size());
 
     // with points:<10, flat-search
     results = coll1->search("*", {}, "points:<10", {}, {}, {0}, 20, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
@@ -1005,8 +1010,8 @@ TEST_F(CollectionVectorTest, VecSearchWithFilteringWithMissingVectorValues) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 1000)").get();
 
-    ASSERT_EQ(9, results["found"].get<size_t>());
-    ASSERT_EQ(9, results["hits"].size());
+    ASSERT_EQ(size_t{9}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{9}, results["hits"].size());
 
     // single point
 
@@ -1019,8 +1024,8 @@ TEST_F(CollectionVectorTest, VecSearchWithFilteringWithMissingVectorValues) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 0)").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("*", {}, "points:1", {}, {}, {0}, 20, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
                             spp::sparse_hash_set<std::string>(),
@@ -1031,11 +1036,11 @@ TEST_F(CollectionVectorTest, VecSearchWithFilteringWithMissingVectorValues) {
                             4, {off}, 32767, 32767, 2,
                             false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488], flat_search_cutoff: 1000)").get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
-    ASSERT_EQ(1, coll1->_get_index()->_get_numerical_index().size());
-    ASSERT_EQ(1, coll1->_get_index()->_get_numerical_index().count("points"));
+    ASSERT_EQ(size_t{1}, coll1->_get_index()->_get_numerical_index().size());
+    ASSERT_EQ(size_t{1}, coll1->_get_index()->_get_numerical_index().count("points"));
 
     // should not be able to filter / sort / facet on vector fields
     auto res_op = coll1->search("*", {}, "vec:1", {}, {}, {0}, 20, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
@@ -1103,9 +1108,9 @@ TEST_F(CollectionVectorTest, VectorSearchTestDeletion) {
         ASSERT_TRUE(coll1->add(doc.dump()).ok());
     }
 
-    ASSERT_EQ(16, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(10, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(0, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    ASSERT_EQ(size_t{16}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
+    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
 
     // now delete these docs
 
@@ -1113,9 +1118,9 @@ TEST_F(CollectionVectorTest, VectorSearchTestDeletion) {
         ASSERT_TRUE(coll1->remove(std::to_string(i)).ok());
     }
 
-    ASSERT_EQ(16, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(10, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(10, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    ASSERT_EQ(size_t{16}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
+    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
+    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
 
     for (size_t i = 0; i < num_docs; i++) {
         nlohmann::json doc;
@@ -1132,18 +1137,18 @@ TEST_F(CollectionVectorTest, VectorSearchTestDeletion) {
         ASSERT_TRUE(coll1->add(doc.dump()).ok());
     }
 
-    ASSERT_EQ(16, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(10, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(0, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    ASSERT_EQ(size_t{16}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
+    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
 
     // delete those docs again and ensure that while reindexing till 1024 live docs, max count is not changed
     for (size_t i = 0; i < num_docs; i++) {
         ASSERT_TRUE(coll1->remove(std::to_string(i + num_docs)).ok());
     }
 
-    ASSERT_EQ(16, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(10, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(10, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    ASSERT_EQ(size_t{16}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
+    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
+    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
 
     for (size_t i = 0; i < 1014; i++) {
         nlohmann::json doc;
@@ -1159,14 +1164,14 @@ TEST_F(CollectionVectorTest, VectorSearchTestDeletion) {
         doc["vec"] = values;
         const Option<nlohmann::json>& add_op = coll1->add(doc.dump());
         if(!add_op.ok()) {
-            LOG(ERROR) << add_op.error();
+            TS_LOG(ERROR) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
 
-    ASSERT_EQ(1271, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(1014, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(0, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    ASSERT_EQ(size_t{1271}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
+    ASSERT_EQ(size_t{1014}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
 }
 
 TEST_F(CollectionVectorTest, VectorWithNullValue) {
@@ -1195,7 +1200,7 @@ TEST_F(CollectionVectorTest, VectorWithNullValue) {
     auto res = coll1->add_many(json_lines, doc);
 
     ASSERT_FALSE(res["success"].get<bool>());
-    ASSERT_EQ(1, res["num_imported"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["num_imported"].get<size_t>());
 
     ASSERT_TRUE(nlohmann::json::parse(json_lines[0])["success"].get<bool>());
     ASSERT_FALSE(nlohmann::json::parse(json_lines[1])["success"].get<bool>());
@@ -1214,7 +1219,7 @@ TEST_F(CollectionVectorTest, EmbeddedVectorUnchangedUpsert) {
                 ]
             })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     Collection* coll1 = collectionManager.create_collection(schema).get();
 
@@ -1230,9 +1235,9 @@ TEST_F(CollectionVectorTest, EmbeddedVectorUnchangedUpsert) {
                                  spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>()).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     auto embedding = results["hits"][0]["document"]["embedding"].get<std::vector<float>>();
-    ASSERT_EQ(384, embedding.size());
+    ASSERT_EQ(size_t{384}, embedding.size());
 
     // upsert unchanged doc
     doc.clear();
@@ -1246,9 +1251,9 @@ TEST_F(CollectionVectorTest, EmbeddedVectorUnchangedUpsert) {
     results = coll1->search("title", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>()).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     embedding = results["hits"][0]["document"]["embedding"].get<std::vector<float>>();
-    ASSERT_EQ(384, embedding.size());
+    ASSERT_EQ(size_t{384}, embedding.size());
 
     // update
 
@@ -1263,9 +1268,9 @@ TEST_F(CollectionVectorTest, EmbeddedVectorUnchangedUpsert) {
     results = coll1->search("title", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>()).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     embedding = results["hits"][0]["document"]["embedding"].get<std::vector<float>>();
-    ASSERT_EQ(384, embedding.size());
+    ASSERT_EQ(size_t{384}, embedding.size());
 
     // emplace
 
@@ -1280,9 +1285,9 @@ TEST_F(CollectionVectorTest, EmbeddedVectorUnchangedUpsert) {
     results = coll1->search("title", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
                             spp::sparse_hash_set<std::string>(),
                             spp::sparse_hash_set<std::string>()).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     embedding = results["hits"][0]["document"]["embedding"].get<std::vector<float>>();
-    ASSERT_EQ(384, embedding.size());
+    ASSERT_EQ(size_t{384}, embedding.size());
 }
 
 TEST_F(CollectionVectorTest, EmbeddOptionalFieldNullValueUpsert) {
@@ -1297,7 +1302,7 @@ TEST_F(CollectionVectorTest, EmbeddOptionalFieldNullValueUpsert) {
                 ]
             })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     Collection* coll1 = collectionManager.create_collection(schema).get();
 
@@ -1314,9 +1319,9 @@ TEST_F(CollectionVectorTest, EmbeddOptionalFieldNullValueUpsert) {
                                  spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>()).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     auto embedding = results["hits"][0]["document"]["embedding"].get<std::vector<float>>();
-    ASSERT_EQ(384, embedding.size());
+    ASSERT_EQ(size_t{384}, embedding.size());
 
     // upsert doc
     add_op = coll1->add(doc.dump(), index_operation_t::UPSERT);
@@ -1340,7 +1345,7 @@ TEST_F(CollectionVectorTest, SortKeywordSearchWithAutoEmbedVector) {
                 ]
             })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     Collection* coll1 = collectionManager.create_collection(schema).get();
 
@@ -1359,7 +1364,7 @@ TEST_F(CollectionVectorTest, SortKeywordSearchWithAutoEmbedVector) {
                                  spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>()).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     auto actual_dist = results["hits"][0]["vector_distance"].get<float>();
     ASSERT_LE(0.173, actual_dist);
     ASSERT_GE(0.175, actual_dist);
@@ -1374,7 +1379,7 @@ TEST_F(CollectionVectorTest, HybridSearchWithExplicitVector) {
                             ]
                         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
@@ -1417,8 +1422,8 @@ TEST_F(CollectionVectorTest, HybridSearchWithExplicitVector) {
     
     ASSERT_TRUE(search_res_op.ok());
     auto search_res = search_res_op.get();
-    ASSERT_EQ(3, search_res["found"].get<size_t>());
-    ASSERT_EQ(3, search_res["hits"].size());
+    ASSERT_EQ(size_t{3}, search_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, search_res["hits"].size());
     // Hybrid search with rank fusion order:
     // 1. butter (1/1 * 0.7) + (1/1 * 0.3) = 1
     // 2. butterfly (1/2 * 0.7) + (1/3 * 0.3) = 0.45
@@ -1445,8 +1450,8 @@ TEST_F(CollectionVectorTest, HybridSearchWithExplicitVector) {
     ASSERT_TRUE(search_res_op.ok());
     search_res = search_res_op.get();
 
-    ASSERT_EQ(2, search_res["found"].get<size_t>());
-    ASSERT_EQ(2, search_res["hits"].size());
+    ASSERT_EQ(size_t{2}, search_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, search_res["hits"].size());
 
     ASSERT_NEAR(0.04620, search_res["hits"][0]["vector_distance"].get<float>(), 0.0001);
     ASSERT_NEAR(0.12133, search_res["hits"][1]["vector_distance"].get<float>(), 0.0001);
@@ -1463,8 +1468,8 @@ TEST_F(CollectionVectorTest, HybridSearchWithExplicitVector) {
                                  false, true, vec_query);
     ASSERT_TRUE(search_res_op.ok());
     search_res = search_res_op.get();
-    ASSERT_EQ(1, search_res["found"].get<size_t>());
-    ASSERT_EQ(1, search_res["hits"].size());
+    ASSERT_EQ(size_t{1}, search_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, search_res["hits"].size());
 
     // allow wildcard with empty vector (for convenience)
     search_res_op = coll->search("*", {"embedding"}, "", {}, {}, {0}, 20, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
@@ -1477,8 +1482,8 @@ TEST_F(CollectionVectorTest, HybridSearchWithExplicitVector) {
                                  false, true, vec_query);
     ASSERT_TRUE(search_res_op.ok());
     search_res = search_res_op.get();
-    ASSERT_EQ(3, search_res["found"].get<size_t>());
-    ASSERT_EQ(1, search_res["hits"].size());
+    ASSERT_EQ(size_t{3}, search_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, search_res["hits"].size());
 
     // when no embedding field is passed, it should not be allowed
     search_res_op = coll->search("butter", {"name"}, "", {}, {}, {0}, 20, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
@@ -1506,8 +1511,8 @@ TEST_F(CollectionVectorTest, HybridSearchWithExplicitVector) {
     ASSERT_TRUE(search_res_op.ok());
     search_res = search_res_op.get();
 
-    ASSERT_EQ(3, search_res["found"].get<size_t>());
-    ASSERT_EQ(3, search_res["hits"].size());
+    ASSERT_EQ(size_t{3}, search_res["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, search_res["hits"].size());
 
     ASSERT_TRUE(search_res["hits"][0].count("vector_distance") == 0);
     ASSERT_TRUE(search_res["hits"][1].count("vector_distance") == 0);
@@ -1523,7 +1528,7 @@ TEST_F(CollectionVectorTest, HybridSearchOnlyVectorMatches) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     Collection* coll1 = collectionManager.create_collection(schema).get();
 
     nlohmann::json doc;
@@ -1539,10 +1544,10 @@ TEST_F(CollectionVectorTest, HybridSearchOnlyVectorMatches) {
                                     fallback,
                                     4, {off}, 32767, 32767, 2);
     ASSERT_EQ(true, results_op.ok());
-    ASSERT_EQ(1, results_op.get()["found"].get<size_t>());
-    ASSERT_EQ(1, results_op.get()["hits"].size());
-    ASSERT_EQ(1, results_op.get()["facet_counts"].size());
-    ASSERT_EQ(4, results_op.get()["facet_counts"][0].size());
+    ASSERT_EQ(size_t{1}, results_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results_op.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, results_op.get()["facet_counts"].size());
+    ASSERT_EQ(size_t{4}, results_op.get()["facet_counts"][0].size());
     ASSERT_EQ("name", results_op.get()["facet_counts"][0]["field_name"]);
 }
 
@@ -1575,8 +1580,8 @@ TEST_F(CollectionVectorTest, DistanceThresholdTest) {
                                 false, true, "vec:([0.3,0.4,0.5])");
 
     ASSERT_EQ(true, results_op.ok());
-    ASSERT_EQ(2, results_op.get()["found"].get<size_t>());
-    ASSERT_EQ(2, results_op.get()["hits"].size());
+    ASSERT_EQ(size_t{2}, results_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results_op.get()["hits"].size());
 
     ASSERT_FLOAT_EQ(0.6, results_op.get()["hits"][0]["document"]["vec"].get<std::vector<float>>()[0]);
     ASSERT_FLOAT_EQ(0.7, results_op.get()["hits"][0]["document"]["vec"].get<std::vector<float>>()[1]);
@@ -1596,8 +1601,8 @@ TEST_F(CollectionVectorTest, DistanceThresholdTest) {
                                 false, true, "vec:([0.3,0.4,0.5], distance_threshold:0.01)");
     
     ASSERT_EQ(true, results_op.ok());
-    ASSERT_EQ(1, results_op.get()["found"].get<size_t>());
-    ASSERT_EQ(1, results_op.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, results_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results_op.get()["hits"].size());
 
     ASSERT_FLOAT_EQ(0.6, results_op.get()["hits"][0]["document"]["vec"].get<std::vector<float>>()[0]);
     ASSERT_FLOAT_EQ(0.7, results_op.get()["hits"][0]["document"]["vec"].get<std::vector<float>>()[1]);
@@ -1681,7 +1686,7 @@ TEST_F(CollectionVectorTest, HybridSearchWithEvalSort) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     Collection* coll1 = collectionManager.create_collection(schema).get();
 
     nlohmann::json doc;
@@ -1712,8 +1717,8 @@ TEST_F(CollectionVectorTest, HybridSearchWithEvalSort) {
                                     fallback,
                                     4, {off}, 32767, 32767, 2);
     ASSERT_EQ(true, results_op.ok());
-    ASSERT_EQ(3, results_op.get()["found"].get<size_t>());
-    ASSERT_EQ(3, results_op.get()["hits"].size());
+    ASSERT_EQ(size_t{3}, results_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results_op.get()["hits"].size());
 
     ASSERT_EQ("0", results_op.get()["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results_op.get()["hits"][1]["document"]["id"].get<std::string>());
@@ -1730,7 +1735,7 @@ TEST_F(CollectionVectorTest, VectorSearchWithEvalSort) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     Collection* coll1 = collectionManager.create_collection(schema).get();
 
     nlohmann::json doc;
@@ -1765,8 +1770,8 @@ TEST_F(CollectionVectorTest, VectorSearchWithEvalSort) {
                                     4, {off}, 32767, 32767, 2,
                                     false, true, "vec:([0.1, 0.4, 0.2, 0.3])");
     ASSERT_EQ(true, results_op.ok());
-    ASSERT_EQ(3, results_op.get()["found"].get<size_t>());
-    ASSERT_EQ(3, results_op.get()["hits"].size());
+    ASSERT_EQ(size_t{3}, results_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results_op.get()["hits"].size());
 
     ASSERT_EQ("0", results_op.get()["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results_op.get()["hits"][1]["document"]["id"].get<std::string>());
@@ -1782,7 +1787,7 @@ TEST_F(CollectionVectorTest, EmbedFromOptionalNullField) {
                 ]
             })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
 
@@ -1839,7 +1844,7 @@ TEST_F(CollectionVectorTest, HideCredential) {
             ]
         })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -1896,7 +1901,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldReferencedByEmbedding) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
@@ -1910,7 +1915,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldReferencedByEmbedding) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll->search("butter", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     auto original_embedding = results["hits"][0]["document"]["embedding"].get<std::vector<float>>();
 
     nlohmann::json update_object;
@@ -1920,7 +1925,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldReferencedByEmbedding) {
     ASSERT_TRUE(update_op.ok());
 
     results = coll->search("ghee", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     auto updated_embedding = results["hits"][0]["document"]["embedding"].get<std::vector<float>>();
     ASSERT_NE(original_embedding, updated_embedding);
 
@@ -1930,7 +1935,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldReferencedByEmbedding) {
     ASSERT_TRUE(update_op.ok());
 
     results = coll->search("milk", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     updated_embedding = results["hits"][0]["document"]["embedding"].get<std::vector<float>>();
     ASSERT_NE(original_embedding, updated_embedding);
 
@@ -1940,7 +1945,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldReferencedByEmbedding) {
     ASSERT_TRUE(update_op.ok());
 
     results = coll->search("cheese", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     updated_embedding = results["hits"][0]["document"]["embedding"].get<std::vector<float>>();
     ASSERT_NE(original_embedding, updated_embedding);
 }
@@ -1956,7 +1961,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldNotReferencedByEmbedding) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
@@ -1971,7 +1976,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldNotReferencedByEmbedding) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll->search("butter", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     nlohmann::json update_object;
     update_object["id"] = "0";
@@ -1980,7 +1985,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldNotReferencedByEmbedding) {
     ASSERT_TRUE(update_op.ok());
 
     results = coll->search("butter", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // action = update
     update_object["about"] = "something about butter 2";
@@ -1988,7 +1993,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldNotReferencedByEmbedding) {
     ASSERT_TRUE(update_op.ok());
 
     results = coll->search("butter", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // action = upsert
     update_object["name"] = "butter";
@@ -1997,7 +2002,7 @@ TEST_F(CollectionVectorTest, UpdateOfFieldNotReferencedByEmbedding) {
     ASSERT_TRUE(update_op.ok());
 
     results = coll->search("butter", {"embedding"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionVectorTest, FreshEmplaceWithOptionalEmbeddingReferencedField) {
@@ -2010,7 +2015,7 @@ TEST_F(CollectionVectorTest, FreshEmplaceWithOptionalEmbeddingReferencedField) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
@@ -2036,15 +2041,15 @@ TEST_F(CollectionVectorTest, EmbeddingFieldWithIdFieldPrecedingInSchema) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
     Collection* coll = op.get();
 
     auto fs = coll->get_fields();
-    ASSERT_EQ(2, fs.size());
-    ASSERT_EQ(384, fs[1].num_dim);
+    ASSERT_EQ(size_t{2}, fs.size());
+    ASSERT_EQ(uint32_t{384}, fs[1].num_dim);
 }
 
 TEST_F(CollectionVectorTest, SkipEmbeddingOpWhenValueExists) {
@@ -2056,7 +2061,7 @@ TEST_F(CollectionVectorTest, SkipEmbeddingOpWhenValueExists) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     nlohmann::json model_config = R"({
         "model_name": "ts/e5-small"
@@ -2129,7 +2134,7 @@ TEST_F(CollectionVectorTest, SemanticSearchReturnOnlyVectorDistance) {
         })"_json;
 
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -2147,12 +2152,12 @@ TEST_F(CollectionVectorTest, SemanticSearchReturnOnlyVectorDistance) {
                                  1, FREQUENCY, {true},
                                  0, spp::sparse_hash_set<std::string>()).get();
     
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // Return only vector distance
-    ASSERT_EQ(0, results["hits"][0].count("text_match_info"));
-    ASSERT_EQ(0, results["hits"][0].count("hybrid_search_info"));
-    ASSERT_EQ(1, results["hits"][0].count("vector_distance"));
+    ASSERT_EQ(size_t{0}, results["hits"][0].count("text_match_info"));
+    ASSERT_EQ(size_t{0}, results["hits"][0].count("hybrid_search_info"));
+    ASSERT_EQ(size_t{1}, results["hits"][0].count("vector_distance"));
 }
 
 TEST_F(CollectionVectorTest, KeywordSearchReturnOnlyTextMatchInfo) {
@@ -2167,7 +2172,7 @@ TEST_F(CollectionVectorTest, KeywordSearchReturnOnlyTextMatchInfo) {
         })"_json;
 
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -2184,12 +2189,12 @@ TEST_F(CollectionVectorTest, KeywordSearchReturnOnlyTextMatchInfo) {
                                  0, spp::sparse_hash_set<std::string>()).get();
 
     
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // Return only text match info
-    ASSERT_EQ(0, results["hits"][0].count("vector_distance"));
-    ASSERT_EQ(0, results["hits"][0].count("hybrid_search_info"));
-    ASSERT_EQ(1, results["hits"][0].count("text_match_info"));
+    ASSERT_EQ(size_t{0}, results["hits"][0].count("vector_distance"));
+    ASSERT_EQ(size_t{0}, results["hits"][0].count("hybrid_search_info"));
+    ASSERT_EQ(size_t{1}, results["hits"][0].count("text_match_info"));
 }
 
 TEST_F(CollectionVectorTest, GroupByWithVectorSearch) {
@@ -2227,9 +2232,9 @@ TEST_F(CollectionVectorTest, GroupByWithVectorSearch) {
                      4, {off}, 32767, 32767, 2,
                      false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488])").get();
 
-    ASSERT_EQ(1, res["grouped_hits"].size());
-    ASSERT_EQ(3, res["grouped_hits"][0]["hits"].size());
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"][0].count("vector_distance"));
+    ASSERT_EQ(size_t{1}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{3}, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"][0].count("vector_distance"));
 
     res = coll1->search("*", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, Index::DROP_TOKENS_THRESHOLD,
                         spp::sparse_hash_set<std::string>(),
@@ -2239,9 +2244,9 @@ TEST_F(CollectionVectorTest, GroupByWithVectorSearch) {
                         4, {off}, 32767, 32767, 2,
                         false, true, "vec:([0.96826, 0.94, 0.39557, 0.306488])").get();
     
-    ASSERT_EQ(1, res["grouped_hits"].size());
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"].size());
-    ASSERT_EQ(1, res["grouped_hits"][0]["hits"][0].count("vector_distance"));
+    ASSERT_EQ(size_t{1}, res["grouped_hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"].size());
+    ASSERT_EQ(size_t{1}, res["grouped_hits"][0]["hits"][0].count("vector_distance"));
 }
 
 TEST_F(CollectionVectorTest, HybridSearchReturnAllInfo) {
@@ -2255,7 +2260,7 @@ TEST_F(CollectionVectorTest, HybridSearchReturnAllInfo) {
             ]
         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -2273,12 +2278,12 @@ TEST_F(CollectionVectorTest, HybridSearchReturnAllInfo) {
                                  1, FREQUENCY, {true},
                                  0, spp::sparse_hash_set<std::string>()).get();
     
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // Return all info
-    ASSERT_EQ(1, results["hits"][0].count("vector_distance"));
-    ASSERT_EQ(1, results["hits"][0].count("text_match_info"));
-    ASSERT_EQ(1, results["hits"][0].count("hybrid_search_info"));
+    ASSERT_EQ(size_t{1}, results["hits"][0].count("vector_distance"));
+    ASSERT_EQ(size_t{1}, results["hits"][0].count("text_match_info"));
+    ASSERT_EQ(size_t{1}, results["hits"][0].count("hybrid_search_info"));
 }
 
 TEST_F(CollectionVectorTest, DISABLED_HybridSortingTest) {
@@ -2291,7 +2296,7 @@ TEST_F(CollectionVectorTest, DISABLED_HybridSortingTest) {
             ]
     })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
     auto coll1 = collection_create_op.get();
@@ -2322,7 +2327,7 @@ TEST_F(CollectionVectorTest, DISABLED_HybridSortingTest) {
                                  1, FREQUENCY, {true},
                                  0, spp::sparse_hash_set<std::string>()).get();
     
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
 
     // now do hybrid search with sort_by: _text_match:desc,_vector_distance:asc
@@ -2342,7 +2347,7 @@ TEST_F(CollectionVectorTest, DISABLED_HybridSortingTest) {
 
 TEST_F(CollectionVectorTest, TestDifferentOpenAIApiKeys) {
     if (std::getenv("api_key_1") == nullptr || std::getenv("api_key_2") == nullptr) {
-        LOG(INFO) << "Skipping test as api_key_1 or api_key_2 is not set";
+        TS_LOG(INFO) << "Skipping test as api_key_1 or api_key_2 is not set";
         return;
     }
 
@@ -2379,7 +2384,7 @@ TEST_F(CollectionVectorTest, TestGCPServiceAccountValidationSkippable) {
     if (std::getenv("GCP_PROJECT_ID") == nullptr ||
         std::getenv("GCP_SA_CLIENT_EMAIL") == nullptr ||
         std::getenv("GCP_SA_PRIVATE_KEY") == nullptr) {
-        LOG(INFO) << "Skipping test as GCP service account env vars are not set";
+        TS_LOG(INFO) << "Skipping test as GCP service account env vars are not set";
         return;
     }
 
@@ -2415,7 +2420,7 @@ TEST_F(CollectionVectorTest, TestGCPOAuthValidationSkippable) {
         std::getenv("GCP_REFRESH_TOKEN") == nullptr ||
         std::getenv("GCP_CLIENT_ID") == nullptr ||
         std::getenv("GCP_CLIENT_SECRET") == nullptr) {
-        LOG(INFO) << "Skipping test as required GCP OAuth env vars are not set";
+        TS_LOG(INFO) << "Skipping test as required GCP OAuth env vars are not set";
         return;
     }
 
@@ -2458,7 +2463,7 @@ TEST_F(CollectionVectorTest, TestMultilingualE5) {
             ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
 
@@ -2519,7 +2524,7 @@ TEST_F(CollectionVectorTest, TestTwoEmbeddingFieldsSamePrefix) {
                             ]
                             })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
 
@@ -2564,7 +2569,7 @@ TEST_F(CollectionVectorTest, TestOneEmbeddingOneKeywordFieldsHaveSamePrefix) {
                         ]
                         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
 
@@ -2609,7 +2614,7 @@ TEST_F(CollectionVectorTest, HybridSearchOnlyKeyworMatchDoNotHaveVectorDistance)
                         ]
                         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
 
@@ -2637,8 +2642,8 @@ TEST_F(CollectionVectorTest, HybridSearchOnlyKeyworMatchDoNotHaveVectorDistance)
 
     ASSERT_TRUE(hybrid_results.ok());
 
-    ASSERT_EQ(1, hybrid_results.get()["hits"].size());
-    ASSERT_EQ(0, hybrid_results.get()["hits"][0].count("vector_distance"));
+    ASSERT_EQ(size_t{1}, hybrid_results.get()["hits"].size());
+    ASSERT_EQ(size_t{0}, hybrid_results.get()["hits"][0].count("vector_distance"));
 }
 
 TEST_F(CollectionVectorTest, QueryByNotAutoEmbeddingVectorField) {
@@ -2657,7 +2662,7 @@ TEST_F(CollectionVectorTest, QueryByNotAutoEmbeddingVectorField) {
                     ]
                     })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -2701,33 +2706,33 @@ TEST_F(CollectionVectorTest, TestUnloadingModelsOnCollectionDelete) {
                         ]
                         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto schema = actual_schema;
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
 
-    auto coll = collection_create_op.get();
- 
+    (void)collection_create_op.get();
+
     auto text_embedders = EmbedderManager::get_instance()._get_text_embedders();
 
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     auto delete_op = collectionManager.drop_collection("test", true);
 
     ASSERT_TRUE(delete_op.ok());
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(0, text_embedders.size());
+    ASSERT_EQ(size_t{0}, text_embedders.size());
 
     // create another collection
     schema = actual_schema;
     collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
 
-    coll = collection_create_op.get();
+    (void)collection_create_op.get();
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     // create second collection
     schema = actual_schema;
@@ -2735,23 +2740,23 @@ TEST_F(CollectionVectorTest, TestUnloadingModelsOnCollectionDelete) {
     collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
 
-    auto coll2 = collection_create_op.get();
+    (void)collection_create_op.get();
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
 
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     delete_op = collectionManager.drop_collection("test", true);
     ASSERT_TRUE(delete_op.ok());
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     delete_op = collectionManager.drop_collection("test2", true);
     ASSERT_TRUE(delete_op.ok());
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(0, text_embedders.size());
+    ASSERT_EQ(size_t{0}, text_embedders.size());
 }  
 
 TEST_F(CollectionVectorTest, TestUnloadingModelsOnDrop) {
@@ -2777,7 +2782,7 @@ TEST_F(CollectionVectorTest, TestUnloadingModelsOnDrop) {
                         ]
                         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto schema = actual_schema;
     auto collection_create_op = collectionManager.create_collection(schema);
@@ -2787,7 +2792,7 @@ TEST_F(CollectionVectorTest, TestUnloadingModelsOnDrop) {
 
     auto text_embedders = EmbedderManager::get_instance()._get_text_embedders();
 
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     nlohmann::json drop_schema = R"({
                         "fields": [
@@ -2801,10 +2806,10 @@ TEST_F(CollectionVectorTest, TestUnloadingModelsOnDrop) {
     auto drop_op = coll->alter(drop_schema);
     ASSERT_TRUE(drop_op.ok());
 
-    LOG(INFO) << "After alter";
+    TS_LOG(INFO) << "After alter";
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(0, text_embedders.size());
+    ASSERT_EQ(size_t{0}, text_embedders.size());
 
     // create another collection
     schema = actual_schema;
@@ -2834,22 +2839,22 @@ TEST_F(CollectionVectorTest, TestUnloadingModelsOnDrop) {
     auto alter_op = coll->alter(alter_schema);
     ASSERT_TRUE(alter_op.ok());
 
-    LOG(INFO) << "After alter";
+    TS_LOG(INFO) << "After alter";
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     drop_op = coll2->alter(drop_schema);
     ASSERT_TRUE(drop_op.ok());
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     drop_op = coll->alter(drop_schema);
     ASSERT_TRUE(drop_op.ok());
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(0, text_embedders.size());
+    ASSERT_EQ(size_t{0}, text_embedders.size());
 }
 
 TEST_F(CollectionVectorTest, TestUnloadModelsCollectionHaveTwoEmbeddingField) {
@@ -2887,7 +2892,7 @@ TEST_F(CollectionVectorTest, TestUnloadModelsCollectionHaveTwoEmbeddingField) {
                         ]
                         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto schema = actual_schema;
     auto collection_create_op = collectionManager.create_collection(schema);
@@ -2895,7 +2900,7 @@ TEST_F(CollectionVectorTest, TestUnloadModelsCollectionHaveTwoEmbeddingField) {
 
     auto coll = collection_create_op.get();
     auto text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     nlohmann::json drop_schema = R"({
                         "fields": [
@@ -2910,7 +2915,7 @@ TEST_F(CollectionVectorTest, TestUnloadModelsCollectionHaveTwoEmbeddingField) {
     ASSERT_TRUE(alter_op.ok());
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     drop_schema = R"({
                         "fields": [
@@ -2925,7 +2930,7 @@ TEST_F(CollectionVectorTest, TestUnloadModelsCollectionHaveTwoEmbeddingField) {
     ASSERT_TRUE(alter_op.ok());
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(0, text_embedders.size());
+    ASSERT_EQ(size_t{0}, text_embedders.size());
 
     // create another collection
     schema = actual_schema;
@@ -2934,10 +2939,10 @@ TEST_F(CollectionVectorTest, TestUnloadModelsCollectionHaveTwoEmbeddingField) {
     collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
 
-    auto coll2 = collection_create_op.get();
+    (void)collection_create_op.get();
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(1, text_embedders.size());
+    ASSERT_EQ(size_t{1}, text_embedders.size());
 
     // drop collection
     auto drop_op = collectionManager.drop_collection("test2", true);
@@ -2945,7 +2950,7 @@ TEST_F(CollectionVectorTest, TestUnloadModelsCollectionHaveTwoEmbeddingField) {
     ASSERT_TRUE(drop_op.ok());
 
     text_embedders = EmbedderManager::get_instance()._get_text_embedders();
-    ASSERT_EQ(0, text_embedders.size());
+    ASSERT_EQ(size_t{0}, text_embedders.size());
 }
 
 TEST_F(CollectionVectorTest, TestHybridSearchAlphaParam) {
@@ -2971,7 +2976,7 @@ TEST_F(CollectionVectorTest, TestHybridSearchAlphaParam) {
                         ]
                         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3000,7 +3005,7 @@ TEST_F(CollectionVectorTest, TestHybridSearchAlphaParam) {
                                  1, FREQUENCY, {true},
                                  0, spp::sparse_hash_set<std::string>()).get();
                                 
-    ASSERT_EQ(3, hybrid_results["hits"].size());
+    ASSERT_EQ(size_t{3}, hybrid_results["hits"].size());
 
     // check scores
     ASSERT_FLOAT_EQ(0.3, hybrid_results["hits"][0]["hybrid_search_info"]["rank_fusion_score"].get<float>());
@@ -3016,7 +3021,7 @@ TEST_F(CollectionVectorTest, TestHybridSearchAlphaParam) {
                                  fallback,
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "embedding:([], alpha:0.5)").get();
-    ASSERT_EQ(3, hybrid_results["hits"].size());
+    ASSERT_EQ(size_t{3}, hybrid_results["hits"].size());
 
     // check scores
     ASSERT_FLOAT_EQ(0.5, hybrid_results["hits"][0]["hybrid_search_info"]["rank_fusion_score"].get<float>());
@@ -3047,7 +3052,7 @@ TEST_F(CollectionVectorTest, TestHybridSearchInvalidAlpha) {
                         ]
                         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3124,7 +3129,7 @@ TEST_F(CollectionVectorTest, TestSearchNonIndexedEmbeddingField) {
                     ]
                     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3203,7 +3208,7 @@ TEST_F(CollectionVectorTest, TestSemanticSearchAfterUpdate) {
                 ]
                 })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3248,7 +3253,7 @@ TEST_F(CollectionVectorTest, TestSemanticSearchAfterUpdate) {
                                  false, true, "embedding:([], id:0, k:1)");
     
     ASSERT_TRUE(result.ok());
-    ASSERT_EQ(1, result.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, result.get()["hits"].size());
     ASSERT_EQ("basketball", result.get()["hits"][0]["document"]["name"]);
 
     auto update_op = coll->add(R"({
@@ -3268,7 +3273,7 @@ TEST_F(CollectionVectorTest, TestSemanticSearchAfterUpdate) {
                                  false, true, "embedding:([], id:0, k:1)");
 
     ASSERT_TRUE(result.ok());
-    ASSERT_EQ(1, result.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, result.get()["hits"].size());
     ASSERT_EQ("potato", result.get()["hits"][0]["document"]["name"]);   
 }
 
@@ -3283,10 +3288,10 @@ TEST_F(CollectionVectorTest, TestQAConversation) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     if (std::getenv("api_key") == nullptr) {
-        LOG(INFO) << "Skipping test as api_key is not set.";
+        TS_LOG(INFO) << "Skipping test as api_key is not set.";
         return;
     }
 
@@ -3349,7 +3354,7 @@ TEST_F(CollectionVectorTest, TestQAConversation) {
 
     auto results = results_op.get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_TRUE(results.contains("conversation"));
     ASSERT_TRUE(results["conversation"].is_object());
     ASSERT_EQ("how many products are there for clothing category?", results["conversation"]["query"]);
@@ -3385,7 +3390,7 @@ TEST_F(CollectionVectorTest, TestQAConversation) {
     ASSERT_TRUE(results["conversation"].is_object());
     ASSERT_TRUE(results["conversation"].contains("conversation_history"));
     ASSERT_TRUE(results["conversation"]["conversation_history"].is_object());
-    ASSERT_EQ(4, results["conversation"]["conversation_history"]["conversation"].size());
+    ASSERT_EQ(size_t{4}, results["conversation"]["conversation_history"]["conversation"].size());
 }
 
 TEST_F(CollectionVectorTest, TestImageEmbeddingWithWrongModel) {
@@ -3398,7 +3403,7 @@ TEST_F(CollectionVectorTest, TestImageEmbeddingWithWrongModel) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3424,7 +3429,7 @@ TEST_F(CollectionVectorTest, TestImageEmbedding) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3439,7 +3444,7 @@ TEST_F(CollectionVectorTest, TestImageEmbedding) {
 
     ASSERT_TRUE(add_op.ok());
 
-    LOG(INFO) << "Searching for image";
+    TS_LOG(INFO) << "Searching for image";
 
     add_op = coll->add(R"({
         "name": "teddy bear",
@@ -3448,14 +3453,14 @@ TEST_F(CollectionVectorTest, TestImageEmbedding) {
 
     ASSERT_TRUE(add_op.ok());
 
-    LOG(INFO) << "Waiting for indexing to complete";
+    TS_LOG(INFO) << "Waiting for indexing to complete";
 
     auto results = coll->search("dog", {"embedding"},
                                     "", {}, {}, {2}, 10,
                                     1, FREQUENCY, {true},
                                     0, spp::sparse_hash_set<std::string>()).get();
     
-    ASSERT_EQ(results["hits"].size(), 2);
+    ASSERT_EQ(results["hits"].size(), size_t{2});
     ASSERT_EQ(results["hits"][0]["document"]["id"], "0");
     ASSERT_EQ(results["hits"][1]["document"]["id"], "1");
 
@@ -3465,7 +3470,7 @@ TEST_F(CollectionVectorTest, TestImageEmbedding) {
                                     1, FREQUENCY, {false},
                                     0, spp::sparse_hash_set<std::string>()).get();
     
-    ASSERT_EQ(results2["hits"].size(), 2);
+    ASSERT_EQ(results2["hits"].size(), size_t{2});
     ASSERT_EQ(results2["hits"][0]["document"]["id"], "1");
     ASSERT_EQ(results2["hits"][1]["document"]["id"], "0");
 }
@@ -3493,7 +3498,7 @@ TEST_F(CollectionVectorTest, TestHybridSearchHiddenHits) {
                 ]
                 })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3533,7 +3538,7 @@ TEST_F(CollectionVectorTest, TestHybridSearchHiddenHits) {
                                 1, FREQUENCY, {true},
                                 0, spp::sparse_hash_set<std::string>()).get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
 
@@ -3543,7 +3548,7 @@ TEST_F(CollectionVectorTest, TestHybridSearchHiddenHits) {
                                        1, FREQUENCY, {true},
                                        0, spp::sparse_hash_set<std::string>(), spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "", 1, "", "0").get();
 
-    ASSERT_EQ(3, hybrid_results["hits"].size());
+    ASSERT_EQ(size_t{3}, hybrid_results["hits"].size());
     ASSERT_FALSE(hybrid_results["hits"][0]["document"]["id"] == 0);
 }
 
@@ -3559,7 +3564,7 @@ TEST_F(CollectionVectorTest, TryAddingMultipleImageFieldToEmbedFrom) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3588,7 +3593,7 @@ TEST_F(CollectionVectorTest, TestLongTextForImageEmbedding) {
             ]
         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3633,7 +3638,7 @@ TEST_F(CollectionVectorTest, TestMultipleFieldsForImageEmbedding) {
             ]
             })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3659,7 +3664,7 @@ TEST_F(CollectionVectorTest, TestMultipleFieldsForImageEmbedding) {
                                        "", {}, {}, {2}, 10,
                                        1, FREQUENCY, {true},
                                        0, spp::sparse_hash_set<std::string>(), spp::sparse_hash_set<std::string>(), 10).get();
-    ASSERT_EQ(results["hits"].size(), 3);
+    ASSERT_EQ(results["hits"].size(), size_t{3});
     ASSERT_EQ(results["hits"][0]["document"]["name"], "istanbul cat");
 }
 
@@ -3674,7 +3679,7 @@ TEST_F(CollectionVectorTest, TestInvalidImage) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3705,7 +3710,7 @@ TEST_F(CollectionVectorTest, TestCLIPTokenizerUnicode) {
     })"_json;
 
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -3789,8 +3794,8 @@ TEST_F(CollectionVectorTest, Test0VectorDistance) {
                                  4, {off}, 32767, 32767, 2,
                                  false, true, "rgb:([0.5, 0.5, 0.5])").get();
     
-    ASSERT_EQ(results["hits"].size(), 1);
-    ASSERT_EQ(results["hits"][0].count("vector_distance"), 1);
+    ASSERT_EQ(results["hits"].size(), size_t{1});
+    ASSERT_EQ(results["hits"][0].count("vector_distance"), size_t{1});
     ASSERT_EQ(results["hits"][0]["vector_distance"], 0);
 }
 
@@ -3805,7 +3810,7 @@ TEST_F(CollectionVectorTest, TestEmbeddingValues) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
 
@@ -3825,7 +3830,7 @@ TEST_F(CollectionVectorTest, TestEmbeddingValues) {
 
     hnsw_index_t::normalize_vector(embeddings, normalized_embeddings);
 
-    ASSERT_EQ(embeddings.size(), 384);
+    ASSERT_EQ(embeddings.size(), size_t{384});
 
     std::vector<float> actual_values{-0.07409533113241196, -0.02963513322174549, -0.018120333552360535, 0.012058400548994541, -0.07219868153333664, -0.09295058250427246, 0.018390782177448273, 0.007814675569534302, 0.026419874280691147, 0.037965331226587296, 0.020393727347254753, -0.04090584069490433, 0.03194206580519676, 0.025205004960298538, 0.02059922367334366, 0.026202859356999397, 0.009739107452332973, 0.07967381179332733, -0.006712059490382671, -0.045936256647109985, -0.0280868299305439, -0.028282660990953445, 0.00617704214528203, -0.0756121575832367, -0.009177971631288528, -0.0016412553377449512, -0.040854115039110184, -0.007597113959491253, -0.03225032240152359, -0.015282290056347847, -0.013507066294550896, -0.11270778626203537, 0.12383124977350235, 0.09607065469026566, -0.106889508664608, 0.02146402932703495, 0.061281926929950714, -0.04245373234152794, -0.05668728053569794, 0.02623145468533039, 0.016187654808163643, 0.05603780969977379, 0.0119243822991848, -0.004412775859236717, 0.040246933698654175, 0.07487507909536362, -0.05067175254225731, 0.030055716633796692, 0.014153759926557541, -0.04411328583955765, -0.010018891654908657, -0.08593358099460602, 0.037568483501672745, -0.10012772679328918, 0.029019853100180626, 0.019645709544420242, -0.0639389306306839, 0.02652929536998272, 0.015299974009394646, 0.07286490499973297, 0.029529787600040436, -0.044351380318403244, -0.041604846715927124, 0.06385225802659988, -0.007908550091087818, -0.003856210969388485, -0.03855051472783089, -0.0023078585509210825, -0.04141264036297798, -0.05051504448056221, -0.018076501786708832, -0.017384130507707596, 0.024294942617416382, 0.12094006687402725, 0.01351782027631998, 0.08950492739677429, 0.027889391407370567, -0.03165547922253609, -0.017131352797150612, -0.022714827209711075, 0.048935145139694214, -0.012115311808884144, -0.0575471930205822, -0.019780246540904045, 0.052039679139852524, 0.00199871021322906, -0.010556189343333244, -0.0176922008395195, -0.01899656467139721, -0.005256693810224533, -0.06929342448711395, -0.01906348578631878, 0.10669232159852982, -0.0058551388792693615, 0.011760520748794079, 0.0066625443287193775, 0.0019288291223347187, -0.08495593070983887, 0.03902851417660713, 0.1967391073703766, 0.007772537413984537, -0.04112537205219269, 0.08704622834920883, 0.007129311095923185, -0.07165598124265671, -0.06986088305711746, -0.028463803231716156, -0.02357759326696396, 0.015329649671912193, -0.01065903902053833, -0.09958454966545105, 0.020069725811481476, -0.04014518857002258, -0.0660862997174263, -0.055922750383615494, -0.032036129385232925, 0.01381504163146019, -0.0673903375864029, -0.025027597323060036, 0.021608922630548477, -0.0620601624250412, 0.03505481034517288, -0.054973628371953964, -0.0021920157596468925, -0.01736101694405079, -0.1220683753490448, -0.07779566198587418, 0.0008724227664060891, -0.046745795756578445, 0.06985874474048615, -0.06745105981826782, 0.052744727581739426, 0.03683020919561386, -0.03435657545924187, -0.06987597048282623, 0.00887364149093628, -0.04392600059509277, -0.03942466899752617, -0.057737983763217926, -0.00721937557682395, 0.010713488794863224, 0.03875933587551117, 0.15718387067317963, 0.008935746736824512, -0.06421459466218948, 0.02290276437997818, 0.034633539617061615, -0.06684417277574539, 0.0005746493698097765, -0.028561286628246307, 0.07741032540798187, -0.016047099605202675, 0.07573956996202469, -0.07167335599660873, -0.0015375938965007663, -0.019324950873851776, -0.033263999968767166, 0.014723926782608032, -0.0691518783569336, -0.06772343814373016, 0.0042124162428081036, 0.07307381927967072, 0.03486260399222374, 0.04603007435798645, 0.07130003720521927, -0.02456359565258026, -0.006673890631645918, -0.02338244579732418, 0.011230859905481339, 0.019877653568983078, -0.03518665209412575, 0.0206899493932724, 0.05910487845540047, 0.019732976332306862, 0.04096956551074982, 0.07400382310152054, -0.03024907223880291, -0.015541939064860344, -0.008652037009596825, 0.0935826525092125, -0.049539074301719666, -0.04189642146229744, -0.07915540784597397, 0.030161747708916664, 0.05217037349939346, 0.008498051203787327, -0.02225595712661743, 0.041023027151823044, -0.008676717057824135, 0.03920895606279373, 0.042901333421468735, -0.0509256087243557, 0.03418148308992386, 0.10294827818870544, -0.007491919212043285, -0.04547177255153656, -0.0013863483909517527, -0.016816288232803345, 0.0057535297237336636, 0.04133246839046478, -0.014831697568297386, 0.1096695065498352, -0.02640458010137081, 0.05342832952737808, -0.10505645722150803, -0.069507896900177, -0.04607844352722168, 0.030713962391018867, -0.047581497579813004, 0.07578378170728683, 0.02707124687731266, 0.05470479652285576, 0.01324087381362915, 0.005669544450938702, 0.07757364213466644, -0.027681969106197357, 0.015634633600711823, 0.011706131510436535, -0.11028207093477249, -0.03370887413620949, 0.0342826321721077, 0.052396781742572784, -0.03439828380942345, -9.332131367059089e-33, -0.003496044548228383, -0.0012644683010876179, 0.007245716638863087, 0.08308663219213486, -0.12923602759838104, 0.01113795768469572, -0.015030942857265472, 0.01813196949660778, -0.08993704617023468, 0.056248947978019714, 0.10432837903499603, 0.008380789309740067, 0.08054981380701065, -0.0016472548013553023, 0.0940462201833725, -0.002078677760437131, -0.040112320333719254, -0.022219669073820114, -0.08358576893806458, -0.022520577535033226, 0.026831910014152527, 0.020184528082609177, -0.019914891570806503, 0.11616221070289612, -0.08901996910572052, -0.016575688496232033, 0.027953164651989937, 0.07949092239141464, -0.03504502400755882, -0.04410504922270775, -0.012492713518440723, -0.06611645221710205, -0.020088162273168564, -0.019216760993003845, 0.08393155038356781, 0.11951949447393417, 0.06375068426132202, -0.061182133853435516, -0.09066124260425568, -0.046286359429359436, 0.02162717469036579, -0.02759421616792679, -0.09041713923215866, 0.008177299052476883, -0.006156154442578554, -0.0033287708647549152, -0.004311972297728062, -0.01960325799882412, -0.08414454013109207, -0.0034149065613746643, 0.015856321901082993, -0.0005123159498907626, -0.027074772864580154, 0.03869790956377983, 0.050786130130290985, -0.028933823108673096, -0.07446572184562683, 0.022279445081949234, 0.012226884253323078, -0.01748575083911419, -0.055989284068346024, -0.011646092869341373, -0.0002180236770072952, 0.10100196301937103, 0.02999500371515751, -0.021314362064003944, -0.04096762463450432, 0.05568964406847954, -0.004973178263753653, 0.013144302181899548, 0.022288570180535316, 0.09443598240613937, 0.0018029726343229413, -0.09654559940099716, -0.01457826979458332, 0.04508035257458687, 0.06526371091604233, -0.03033633343875408, 0.009471519850194454, -0.11114948242902756, -0.046912480145692825, -0.10612039268016815, 0.11780810356140137, -0.026177652180194855, 0.0320870615541935, -0.015745604410767555, 0.06458097696304321, 0.048562128096818924, -0.034073326736688614, -0.03065350651741028, 0.06918460875749588, 0.06126512959599495, 0.0058005815371870995, -0.03808598220348358, 0.03678971901535988, 4.168464892362657e-32, -0.0452132411301136, 0.051136620342731476, -0.09363184124231339, -0.032540980726480484, 0.08147275447845459, 0.03507697954773903, 0.04584404081106186, -0.00924444105476141, -0.012075415812432766, 0.0541100800037384, -0.015797585248947144, 0.05510234460234642, -0.04699498042464256, -0.018956895917654037, -0.04772498831152916, 0.05756324902176857, -0.0827300101518631, 0.004980154801160097, 0.024522915482521057, -0.019712436944246292, 0.009034484624862671, -0.012837578542530537, 0.026660654693841934, 0.06716003268957138, -0.05956435948610306, 0.0010818272130563855, -0.018492311239242554, 0.034606318920850754, 0.04679758474230766, -0.020694732666015625, 0.06055215373635292, -0.04266247898340225, 0.008420216850936413, -0.02698715589940548, -0.028203830122947693, 0.029279250651597977, -0.010966592468321323, -0.03348863869905472, -0.07982659339904785, -0.03935334458947182, -0.02174490876495838, -0.04081539437174797, 0.049022793769836426, -0.01604332961142063, -0.0032012134324759245, 0.0893029123544693, -0.0230527613312006, 0.01536057610064745, 0.027288464829325676, -0.01401998195797205, -0.057258568704128265, -0.07299835979938507, 0.032278336584568024, 0.040280167013406754, 0.060383908450603485, -0.0012196602765470743, 0.02501964196562767, -0.03808143362402916, -0.08765897154808044, 0.047424230724573135, -0.04527046158909798, -0.015525433234870434, -0.02020418457686901, -0.06228169426321983};
 
@@ -3844,10 +3849,10 @@ TEST_F(CollectionVectorTest, InvalidMultiSearchConversation) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     if (std::getenv("api_key") == nullptr) {
-        LOG(INFO) << "Skipping test as api_key is not set.";
+        TS_LOG(INFO) << "Skipping test as api_key is not set.";
         return;
     }
 
@@ -3893,7 +3898,7 @@ TEST_F(CollectionVectorTest, InvalidMultiSearchConversation) {
 
     post_multi_search(req, res);
     auto res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(res->status_code, 400);
+    ASSERT_EQ(res->status_code, 400u);
     ASSERT_EQ(res_json["message"], "`q` parameter cannot be used in POST body if `conversation` is enabled. Please set `q` as a query parameter in the request, instead of inside the POST body");
 
     search_body["searches"][0].erase("q");
@@ -3904,7 +3909,7 @@ TEST_F(CollectionVectorTest, InvalidMultiSearchConversation) {
     post_multi_search(req, res);
 
     res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(res->status_code, 400);
+    ASSERT_EQ(res->status_code, 400u);
     ASSERT_EQ(res_json["message"], "`conversation_model_id` cannot be used in POST body. Please set `conversation_model_id` as a query parameter in the request, instead of inside the POST body");
 
     search_body["searches"][0].erase("conversation_model_id");
@@ -3915,7 +3920,7 @@ TEST_F(CollectionVectorTest, InvalidMultiSearchConversation) {
     post_multi_search(req, res);
 
     res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(res->status_code, 400);
+    ASSERT_EQ(res->status_code, 400u);
 
     ASSERT_EQ(res_json["message"], "`conversation_id` cannot be used in POST body. Please set `conversation_id` as a query parameter in the request, instead of inside the POST body");
 
@@ -3927,7 +3932,7 @@ TEST_F(CollectionVectorTest, InvalidMultiSearchConversation) {
     post_multi_search(req, res);
 
     res_json = nlohmann::json::parse(res->body);
-    ASSERT_EQ(res->status_code, 400);
+    ASSERT_EQ(res->status_code, 400u);
 
     ASSERT_EQ(res_json["message"], "`conversation` cannot be used in POST body. Please set `conversation` as a query parameter in the request, instead of inside the POST body");
 }
@@ -3940,7 +3945,7 @@ TEST_F(CollectionVectorTest, TestMigratingConversationModel) {
     })"_json;
 
     if (std::getenv("api_key") == nullptr) {
-        LOG(INFO) << "Skipping test as api_key is not set.";
+        TS_LOG(INFO) << "Skipping test as api_key is not set.";
         return;
     }
 
@@ -3966,10 +3971,10 @@ TEST_F(CollectionVectorTest, TestPartiallyUpdateConversationModel) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     if (std::getenv("api_key") == nullptr) {
-        LOG(INFO) << "Skipping test as api_key is not set.";
+        TS_LOG(INFO) << "Skipping test as api_key is not set.";
         return;
     }
 
@@ -3987,7 +3992,7 @@ TEST_F(CollectionVectorTest, TestPartiallyUpdateConversationModel) {
 
     ASSERT_TRUE(collection_create_op.ok());
 
-    auto coll = collection_create_op.get();
+    (void)collection_create_op.get();
 
     auto model_add_op = ConversationModelManager::add_model(conversation_model_config, "", true);
     ASSERT_TRUE(model_add_op.ok());
@@ -4014,7 +4019,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQs) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
 
@@ -4038,7 +4043,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQs) {
                                 false, true, "embedding:([], queries:[superhero, company])");
     
     ASSERT_TRUE(results.ok());
-    ASSERT_EQ(results.get()["hits"].size(), 1);
+    ASSERT_EQ(results.get()["hits"].size(), size_t{1});
 }
 
 
@@ -4052,7 +4057,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryInvalidQs) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
 
@@ -4128,7 +4133,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQsWithHybridSearch) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
 
@@ -4152,7 +4157,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQsWithHybridSearch) {
                                 false, true, "embedding:([], queries:[superhero, company])");
     
     ASSERT_TRUE(results.ok());
-    ASSERT_EQ(results.get()["hits"].size(), 1);
+    ASSERT_EQ(results.get()["hits"].size(), size_t{1});
 }
 
 TEST_F(CollectionVectorTest, TestVectorQueryQsHybridSearchAlpha) {
@@ -4165,7 +4170,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQsHybridSearchAlpha) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
 
@@ -4192,7 +4197,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQsHybridSearchAlpha) {
                                 false, true, "embedding:([], queries:[samsung, phone])");
     
     ASSERT_TRUE(results.ok());
-    ASSERT_EQ(results.get()["hits"].size(), 2);
+    ASSERT_EQ(results.get()["hits"].size(), size_t{2});
     ASSERT_EQ(results.get()["hits"][0]["document"]["name"], "Apple iPhone");
 
 
@@ -4206,7 +4211,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQsHybridSearchAlpha) {
                                 false, true, "embedding:([], queries:[samsung, phone], alpha:0.9)");
 
     ASSERT_TRUE(results.ok());
-    ASSERT_EQ(results.get()["hits"].size(), 2);
+    ASSERT_EQ(results.get()["hits"].size(), size_t{2});
     ASSERT_EQ(results.get()["hits"][0]["document"]["name"], "Samsung Galaxy");
 }
 
@@ -4220,7 +4225,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQsWeight) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
 
@@ -4247,7 +4252,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQsWeight) {
                                 false, true, "embedding:([], queries:[samsung, apple], query_weights:[0.1, 0.9])");
     
     ASSERT_TRUE(results.ok());
-    ASSERT_EQ(results.get()["hits"].size(), 2);
+    ASSERT_EQ(results.get()["hits"].size(), size_t{2});
     ASSERT_EQ(results.get()["hits"][0]["document"]["name"], "Apple iPhone");
 
 
@@ -4261,7 +4266,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQsWeight) {
                                 false, true, "embedding:([], queries:[samsung, apple], query_weights:[0.9, 0.1])");
 
     ASSERT_TRUE(results.ok());
-    ASSERT_EQ(results.get()["hits"].size(), 2);
+    ASSERT_EQ(results.get()["hits"].size(), size_t{2});
     ASSERT_EQ(results.get()["hits"][0]["document"]["name"], "Samsung Galaxy");
 }
 
@@ -4275,7 +4280,7 @@ TEST_F(CollectionVectorTest, TestVectorQueryQsWeightInvalid) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
 
@@ -4400,7 +4405,7 @@ TEST_F(CollectionVectorTest, TestVoiceQuery) {
         }
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -4429,7 +4434,7 @@ TEST_F(CollectionVectorTest, TestVoiceQuery) {
     ASSERT_TRUE(results.ok());
     auto results_json = results.get();
     ASSERT_EQ("Smartphone", results_json["request_params"]["voice_query"]["transcribed_query"].get<std::string>());
-    ASSERT_EQ(1, results_json["hits"].size());
+    ASSERT_EQ(size_t{1}, results_json["hits"].size());
     ASSERT_EQ("1", results_json["hits"][0]["document"]["id"].get<std::string>());
 }
 
@@ -4673,9 +4678,9 @@ TEST_F(CollectionVectorTest, TestHNSWParamsSummaryJSON) {
     auto summary = collection->get_summary_json();
 
     ASSERT_TRUE(summary["fields"][1]["hnsw_params"].is_object());
-    ASSERT_EQ(100, summary["fields"][1]["hnsw_params"]["ef_construction"].get<uint32_t>());
-    ASSERT_EQ(16, summary["fields"][1]["hnsw_params"]["M"].get<uint32_t>());
-    ASSERT_EQ(0, summary["fields"][0].count("hnsw_params"));
+    ASSERT_EQ(uint32_t{100}, summary["fields"][1]["hnsw_params"]["ef_construction"].get<uint32_t>());
+    ASSERT_EQ(uint32_t{16}, summary["fields"][1]["hnsw_params"]["M"].get<uint32_t>());
+    ASSERT_EQ(size_t{0}, summary["fields"][0].count("hnsw_params"));
 }
 
 TEST_F(CollectionVectorTest, TestUpdatingSameDocument){
@@ -5077,12 +5082,12 @@ TEST_F(CollectionVectorTest, TestRestoringImages) {
     collectionManager.dispose();
     delete store;
 
-    store = new Store("/tmp/typesense_test/collection_vector_search");
+    store = new Store(state_dir_path);
     collectionManager.init(store, 1.0, "auth_key", quit);
     auto load_op = collectionManager.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
 
     ASSERT_TRUE(load_op.ok());
@@ -5142,16 +5147,16 @@ TEST_F(CollectionVectorTest, TestDistanceThresholdWithIP) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     auto res = nlohmann::json::parse(json_res);
 
-    ASSERT_EQ(5, res["found"].get<size_t>());
-    ASSERT_EQ(93, res["hits"][0]["document"]["rank_score"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{93}, res["hits"][0]["document"]["rank_score"].get<size_t>());
     ASSERT_EQ(0.2189185470342636, res["hits"][0]["vector_distance"].get<float>());
-    ASSERT_EQ(51, res["hits"][1]["document"]["rank_score"].get<size_t>());
+    ASSERT_EQ(size_t{51}, res["hits"][1]["document"]["rank_score"].get<size_t>());
     ASSERT_EQ(0.7371898889541626, res["hits"][1]["vector_distance"].get<float>());
-    ASSERT_EQ(94, res["hits"][2]["document"]["rank_score"].get<size_t>());
+    ASSERT_EQ(size_t{94}, res["hits"][2]["document"]["rank_score"].get<size_t>());
     ASSERT_EQ(3.4028232635611926e+38, res["hits"][2]["vector_distance"].get<float>());
-    ASSERT_EQ(80, res["hits"][3]["document"]["rank_score"].get<size_t>());
+    ASSERT_EQ(size_t{80}, res["hits"][3]["document"]["rank_score"].get<size_t>());
     ASSERT_EQ(3.4028232635611926e+38, res["hits"][3]["vector_distance"].get<float>());
-    ASSERT_EQ(18, res["hits"][4]["document"]["rank_score"].get<size_t>());
+    ASSERT_EQ(size_t{18}, res["hits"][4]["document"]["rank_score"].get<size_t>());
     ASSERT_EQ(3.4028232635611926e+38, res["hits"][4]["vector_distance"].get<float>());
 
     // with missing field name
@@ -5183,7 +5188,7 @@ TEST_F(CollectionVectorTest, TestDistanceThresholdWithIP) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     res = nlohmann::json::parse(json_res);
 
-    ASSERT_EQ(5, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res["found"].get<size_t>());
 
     ASSERT_EQ("document_1", res["hits"][0]["document"]["name"]);
     ASSERT_EQ(-45.23314666748047, res["hits"][0]["vector_distance"].get<float>());
@@ -5224,7 +5229,7 @@ TEST_F(CollectionVectorTest, HybridSearchWithFilteringAndFlatSearchCutoff) {
                 ]
                 })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -5275,7 +5280,7 @@ TEST_F(CollectionVectorTest, HybridSearchWithFilteringAndFlatSearchCutoff) {
                             {off}, INT16_MAX, INT16_MAX,2,
                             2, false, "embedding:([], flat_search_cutoff: 100)").get();
 
-    ASSERT_EQ(4, res["hits"].size());
+    ASSERT_EQ(size_t{4}, res["hits"].size());
 }
 
 TEST_F(CollectionVectorTest, ThreeSortFieldsWithVectorSearch) {
@@ -5309,7 +5314,7 @@ TEST_F(CollectionVectorTest, ThreeSortFieldsWithVectorSearch) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -5373,7 +5378,7 @@ TEST_F(CollectionVectorTest, ThreeSortFieldsWithVectorSearch) {
                             true, false, "", "", "",
                             "", true, true, false, 0, true,
                             true, DEFAULT_FILTER_BY_CANDIDATES, use_aux_score).get();
-    ASSERT_EQ(4, res["hits"].size());
+    ASSERT_EQ(size_t{4}, res["hits"].size());
 }
 
 TEST_F(CollectionVectorTest, HybridSearchAuxScoreTest) {
@@ -5399,7 +5404,7 @@ TEST_F(CollectionVectorTest, HybridSearchAuxScoreTest) {
                 ]
                 })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -5454,16 +5459,16 @@ TEST_F(CollectionVectorTest, HybridSearchAuxScoreTest) {
                              "", true, true, false, 0, true,
                              true, DEFAULT_FILTER_BY_CANDIDATES, use_aux_score).get();
 
-    ASSERT_EQ(4, res["hits"].size());
+    ASSERT_EQ(size_t{4}, res["hits"].size());
     ASSERT_FLOAT_EQ(0.09585630893707275, res["hits"][0]["vector_distance"].get<float>());
     ASSERT_FLOAT_EQ(0.07914221286773682, res["hits"][1]["vector_distance"].get<float>());
     ASSERT_FLOAT_EQ(0.15472877025604248, res["hits"][2]["vector_distance"].get<float>());
     ASSERT_FLOAT_EQ(0.2496563196182251, res["hits"][3]["vector_distance"].get<float>());
 
-    ASSERT_EQ(1736172819517016185, res["hits"][0]["text_match"].get<std::size_t>());
-    ASSERT_EQ(0, res["hits"][1]["text_match"].get<std::size_t>());
-    ASSERT_EQ(0, res["hits"][2]["text_match"].get<std::size_t>());
-    ASSERT_EQ(0, res["hits"][3]["text_match"].get<std::size_t>());
+    ASSERT_EQ(size_t{1736172819517016185}, res["hits"][0]["text_match"].get<std::size_t>());
+    ASSERT_EQ(size_t{0}, res["hits"][1]["text_match"].get<std::size_t>());
+    ASSERT_EQ(size_t{0}, res["hits"][2]["text_match"].get<std::size_t>());
+    ASSERT_EQ(size_t{0}, res["hits"][3]["text_match"].get<std::size_t>());
 
     use_aux_score = true;
 
@@ -5486,16 +5491,16 @@ TEST_F(CollectionVectorTest, HybridSearchAuxScoreTest) {
                             true, DEFAULT_FILTER_BY_CANDIDATES, use_aux_score).get();
 
 
-    ASSERT_EQ(4, res["hits"].size());
+    ASSERT_EQ(size_t{4}, res["hits"].size());
     ASSERT_FLOAT_EQ(0.09585630893707275, res["hits"][0]["vector_distance"].get<float>());
     ASSERT_FLOAT_EQ(0.07914221286773682, res["hits"][1]["vector_distance"].get<float>());
     ASSERT_FLOAT_EQ(0.15472877025604248, res["hits"][2]["vector_distance"].get<float>());
     ASSERT_FLOAT_EQ(0.2496563196182251, res["hits"][3]["vector_distance"].get<float>());
 
-    ASSERT_EQ(1736172819517016185, res["hits"][0]["text_match"].get<std::size_t>());
-    ASSERT_EQ(1157451471441102969, res["hits"][1]["text_match"].get<std::size_t>());
-    ASSERT_EQ(578730123365189753, res["hits"][2]["text_match"].get<std::size_t>());
-    ASSERT_EQ(0, res["hits"][3]["text_match"].get<std::size_t>()); //document with id:3 won't have any text_match
+    ASSERT_EQ(size_t{1736172819517016185}, res["hits"][0]["text_match"].get<std::size_t>());
+    ASSERT_EQ(size_t{1157451471441102969}, res["hits"][1]["text_match"].get<std::size_t>());
+    ASSERT_EQ(size_t{578730123365189753}, res["hits"][2]["text_match"].get<std::size_t>());
+    ASSERT_EQ(size_t{0}, res["hits"][3]["text_match"].get<std::size_t>()); //document with id:3 won't have any text_match
 }
 
 TEST_F(CollectionVectorTest, HybridSearchAuxScoreWithTwoFieldsTest) {
@@ -5525,7 +5530,7 @@ TEST_F(CollectionVectorTest, HybridSearchAuxScoreWithTwoFieldsTest) {
                 ]
                 })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -5569,17 +5574,15 @@ TEST_F(CollectionVectorTest, HybridSearchAuxScoreWithTwoFieldsTest) {
                             "", true, true, false, false, 0, true,
                             true, DEFAULT_FILTER_BY_CANDIDATES, use_aux_score).get();
 
-    ASSERT_EQ(2, res["hits"].size());
-    ASSERT_EQ(3, res["hits"][0]["text_match_info"]["tokens_matched"].get<std::size_t>());
-    ASSERT_EQ(2, res["hits"][0]["text_match_info"]["fields_matched"].get<std::size_t>());
+    ASSERT_EQ(size_t{2}, res["hits"].size());
+    ASSERT_EQ(size_t{3}, res["hits"][0]["text_match_info"]["tokens_matched"].get<std::size_t>());
+    ASSERT_EQ(size_t{2}, res["hits"][0]["text_match_info"]["fields_matched"].get<std::size_t>());
 
-    ASSERT_EQ(2, res["hits"][1]["text_match_info"]["tokens_matched"].get<std::size_t>());
-    ASSERT_EQ(2, res["hits"][1]["text_match_info"]["fields_matched"].get<std::size_t>());
+    ASSERT_EQ(size_t{2}, res["hits"][1]["text_match_info"]["tokens_matched"].get<std::size_t>());
+    ASSERT_EQ(size_t{2}, res["hits"][1]["text_match_info"]["fields_matched"].get<std::size_t>());
 }
 
 TEST_F(CollectionVectorTest, EmbedFieldMustBeFloatArray) {
-    Collection *coll1;
-
     std::vector<field> fields = {
         field("title", field_types::STRING, false),
         field("embedding", field_types::STRING, false)  // intentionally wrong type
@@ -5638,7 +5641,7 @@ TEST_F(CollectionVectorTest, UpdateEmbeddings) {
                 ]
                 })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -5695,7 +5698,7 @@ TEST_F(CollectionVectorTest, TestRankFusionOrdering) {
                 ]
                 })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(collection_create_op.ok());
@@ -5726,7 +5729,7 @@ TEST_F(CollectionVectorTest, TestRankFusionOrdering) {
                                 {"embedding"});
     auto res = results.get();
 
-    ASSERT_EQ(3, res["hits"].size());
+    ASSERT_EQ(size_t{3}, res["hits"].size());
     ASSERT_EQ("apple pie", res["hits"][0]["document"]["text"]);
     ASSERT_EQ("green apple", res["hits"][1]["document"]["text"]);
     ASSERT_EQ("red apple", res["hits"][2]["document"]["text"]);
@@ -5739,7 +5742,7 @@ TEST_F(CollectionVectorTest, TestRankFusionOrdering) {
                            {"embedding"});
     res = results.get();
 
-    ASSERT_EQ(3, res["hits"].size());
+    ASSERT_EQ(size_t{3}, res["hits"].size());
 
     ASSERT_EQ("green apple", res["hits"][0]["document"]["text"]);
     ASSERT_EQ("apple pie", res["hits"][1]["document"]["text"]);
@@ -5772,13 +5775,13 @@ TEST_F(CollectionVectorTest, TestVectorQueryParsingWithEscape) {
 
     auto parse_op = VectorQueryOps::parse_vector_query_str(vector_query_without_escape, q, true, coll1, false);
     ASSERT_TRUE(parse_op.ok());
-    ASSERT_EQ(3, q.queries.size());
+    ASSERT_EQ(size_t{3}, q.queries.size());
 
     q = vector_query_t();
 
     parse_op = VectorQueryOps::parse_vector_query_str(vector_query_with_escape, q, true, coll1, false);
     ASSERT_TRUE(parse_op.ok());
-    ASSERT_EQ(2, q.queries.size());
+    ASSERT_EQ(size_t{2}, q.queries.size());
 }
 
 TEST_F(CollectionVectorTest, TestImageInQuery) {
@@ -5914,7 +5917,7 @@ TEST_F(CollectionVectorTest, DISABLED_TestImageEmbeddingMultilingual) {
         ]
     })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
@@ -5942,7 +5945,7 @@ TEST_F(CollectionVectorTest, DISABLED_TestImageEmbeddingMultilingual) {
                                     1, FREQUENCY, {true},
                                     0, spp::sparse_hash_set<std::string>()).get();
     
-    ASSERT_EQ(results["hits"].size(), 2);
+    ASSERT_EQ(results["hits"].size(), size_t{2});
     ASSERT_EQ(results["hits"][0]["document"]["id"], "0");
     ASSERT_EQ(results["hits"][1]["document"]["id"], "1");
 
@@ -5952,7 +5955,7 @@ TEST_F(CollectionVectorTest, DISABLED_TestImageEmbeddingMultilingual) {
                                     1, FREQUENCY, {false},
                                     0, spp::sparse_hash_set<std::string>()).get();
     
-    ASSERT_EQ(results2["hits"].size(), 2);
+    ASSERT_EQ(results2["hits"].size(), size_t{2});
     ASSERT_EQ(results2["hits"][0]["document"]["id"], "1");
     ASSERT_EQ(results2["hits"][1]["document"]["id"], "0");
 
@@ -5961,14 +5964,14 @@ TEST_F(CollectionVectorTest, DISABLED_TestImageEmbeddingMultilingual) {
                                     "", {}, {}, {2}, 10,
                                     1, FREQUENCY, {true},
                                     0, spp::sparse_hash_set<std::string>()).get();
-    ASSERT_EQ(results3["hits"].size(), 2);
+    ASSERT_EQ(results3["hits"].size(), size_t{2});
     ASSERT_EQ(results3["hits"][0]["document"]["id"], "0");
 
     auto results4 = coll->search("ours en peluche", {"embedding"},
                                     "", {}, {}, {2}, 10,
                                     1, FREQUENCY, {false},
                                     0, spp::sparse_hash_set<std::string>()).get();
-    ASSERT_EQ(results4["hits"].size(), 2);
+    ASSERT_EQ(results4["hits"].size(), size_t{2});
     ASSERT_EQ(results4["hits"][0]["document"]["id"], "1");
 }
 
@@ -5984,10 +5987,10 @@ TEST_F(CollectionVectorTest, ConversationWithUnion) {
                             ]
                             })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     if (std::getenv("api_key") == nullptr) {
-        LOG(INFO) << "Skipping test as api_key is not set.";
+        TS_LOG(INFO) << "Skipping test as api_key is not set.";
         return;
     }
 
@@ -6006,7 +6009,7 @@ TEST_F(CollectionVectorTest, ConversationWithUnion) {
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
 
-    auto coll = collection_create_op.get();
+    (void)collection_create_op.get();
 
     auto model_add_op = ConversationModelManager::add_model(conversation_model_config, "conv-model", true);
     ASSERT_TRUE(model_add_op.ok());

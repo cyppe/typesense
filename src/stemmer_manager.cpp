@@ -82,7 +82,7 @@ void StemmerManager::delete_all_stemmers() {
     stemmers.clear();
 }
 
-const bool StemmerManager::validate_language(const std::string& language) {
+bool StemmerManager::validate_language(const std::string& language) {
     std::string language_ = language.empty() ? "english" : language;
 
     // Treat de_en the same as en

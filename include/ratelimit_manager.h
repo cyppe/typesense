@@ -8,7 +8,23 @@
 #include <shared_mutex>
 #include <json.hpp>
 #include <magic_enum.hpp>
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#pragma clang diagnostic ignored "-Wreorder-ctor"
+#pragma clang diagnostic ignored "-Woverloaded-virtual"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#pragma GCC diagnostic ignored "-Wreorder"
+#pragma GCC diagnostic ignored "-Woverloaded-virtual"
+#endif
 #include "lru/lru.hpp"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 #include "option.h"
 #include "store.h"
 
@@ -58,7 +74,7 @@ struct rate_limit_entity_t {
 
 // Struct for rate limit rules
 struct rate_limit_rule_t {
-    uint32_t id;
+    uint32_t id = 0;
     RateLimitAction action;
     std::vector<rate_limit_entity_t> entities;
     rate_limit_max_requests_t max_requests;
@@ -300,4 +316,3 @@ class RateLimitManager
         inline static RateLimitManager *instance;
 
 };
-

@@ -12,6 +12,7 @@
 #include "collection.h"
 #include "collection_manager.h"
 #include "system_metrics.h"
+#include <rocksdb/db.h>
 #include "logger.h"
 #include "core_api_utils.h"
 #include "lru/lru.hpp"
@@ -100,7 +101,7 @@ bool handle_authentication(std::map<std::string, std::string>& req_params,
     get_collections_for_auth(req_params, body, rpath, req_auth_key, collections, embedded_params_vec);
 
     if(collections.size() != embedded_params_vec.size()) {
-        LOG(ERROR) << "Impossible error: size of collections and embedded_params_vec don't match, "
+        TS_LOG(ERROR) << "Impossible error: size of collections and embedded_params_vec don't match, "
                    << "collections.size: " << collections.size()
                    << ", embedded_params_vec.size: " << embedded_params_vec.size();
         return false;
@@ -124,15 +125,15 @@ void stream_response(const std::shared_ptr<http_req>& req, const std::shared_ptr
 
 void defer_processing(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res, size_t timeout_ms) {
     defer_processing_t* defer = new defer_processing_t(req, res, timeout_ms, server);
-    //LOG(INFO) << "core_api req " << req.get() << ", use count: " << req.use_count();
+    //TS_LOG(INFO) << "core_api req " << req.get() << ", use count: " << req.use_count();
     server->get_message_dispatcher()->send_message(HttpServer::DEFER_PROCESSING_MESSAGE, defer);
 }
 
 // we cannot return errors here because that will end up as auth failure and won't convey
 // bad schema errors
 void get_collections_for_auth(std::map<std::string, std::string>& req_params,
-                                      const string& body,
-                                      const route_path& rpath, const string& req_auth_key,
+                                      const std::string& body,
+                                      const route_path& rpath, const std::string& req_auth_key,
                                       std::vector<collection_key_t>& collections,
                                       std::vector<nlohmann::json>& embedded_params_vec) {
 
@@ -182,14 +183,14 @@ void get_collections_for_auth(std::map<std::string, std::string>& req_params,
                 }
             }
         } else {
-            //LOG(ERROR) << "Multi search request body is malformed, body: " << body;
+            //TS_LOG(ERROR) << "Multi search request body is malformed, body: " << body;
         }
     } else {
         if(rpath.handler == post_create_collection) {
             nlohmann::json obj = nlohmann::json::parse(body, nullptr, false);
 
             if(obj.is_discarded()) {
-                LOG(ERROR) << "Create collection request body is malformed.";
+                TS_LOG(ERROR) << "Create collection request body is malformed.";
             }
 
             else if(obj.count("name") != 0 && obj["name"].is_string()) {
@@ -272,7 +273,7 @@ bool post_create_collection(const std::shared_ptr<http_req>& req, const std::sha
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        //LOG(ERROR) << "JSON error: " << e.what();
+        //TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -314,7 +315,7 @@ bool patch_update_collection(const std::shared_ptr<http_req>& req, const std::sh
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        //LOG(ERROR) << "JSON error: " << e.what();
+        //TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -408,7 +409,7 @@ bool del_drop_collection(const std::shared_ptr<http_req>& req, const std::shared
 
     // Clear schema prompt cache for this collection before dropping it
     NaturalLanguageSearchModelManager::clear_schema_prompt(req->params["collection"]);
-    LOG(INFO) << "Invalidated schema prompt cache for collection: " << req->params["collection"];
+    TS_LOG(INFO) << "Invalidated schema prompt cache for collection: " << req->params["collection"];
 
     CollectionManager & collectionManager = CollectionManager::get_instance();
     Option<nlohmann::json> drop_op = collectionManager.drop_collection(req->params["collection"], true, compact_store);
@@ -439,6 +440,51 @@ bool get_debug(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_
     uint64_t state = server->node_state();
     result["state"] = state;
 
+    // RocksDB statistics (opt-in via ?rocksdb_stats=true)
+    if(req->params.count("rocksdb_stats") != 0 && req->params["rocksdb_stats"] == "true") {
+        CollectionManager& collectionManager = CollectionManager::get_instance();
+        auto store = collectionManager.get_store();
+        if(store) {
+            std::string stats = store->get_statistics();
+            if(!stats.empty()) {
+                result["rocksdb_statistics"] = stats;
+            }
+
+            // Key RocksDB properties as structured JSON
+            nlohmann::json db_props;
+            auto db = store->_get_db_unsafe();
+            if(db) {
+                std::string val;
+                auto get_prop = [&](const std::string& prop) -> std::string {
+                    val.clear();
+                    db->GetProperty(prop, &val);
+                    return val;
+                };
+                db_props["estimate_table_readers_mem"] = get_prop("rocksdb.estimate-table-readers-mem");
+                db_props["cur_size_all_mem_tables"] = get_prop("rocksdb.cur-size-all-mem-tables");
+                db_props["block_cache_usage"] = get_prop("rocksdb.block-cache-usage");
+                db_props["block_cache_capacity"] = get_prop("rocksdb.block-cache-capacity");
+                db_props["estimate_live_data_size"] = get_prop("rocksdb.estimate-live-data-size");
+                db_props["num_running_compactions"] = get_prop("rocksdb.num-running-compactions");
+                db_props["is_write_stopped"] = get_prop("rocksdb.is-write-stopped");
+                db_props["actual_delayed_write_rate"] = get_prop("rocksdb.actual-delayed-write-rate");
+                db_props["num_entries_active_mem_table"] = get_prop("rocksdb.num-entries-active-mem-table");
+                db_props["num_entries_imm_mem_tables"] = get_prop("rocksdb.num-entries-imm-mem-tables");
+                db_props["estimate_num_keys"] = get_prop("rocksdb.estimate-num-keys");
+                db_props["num_live_versions"] = get_prop("rocksdb.num-live-versions");
+                db_props["num_running_flushes"] = get_prop("rocksdb.num-running-flushes");
+                db_props["compaction_pending"] = get_prop("rocksdb.compaction-pending");
+                db_props["num_files_at_level0"] = get_prop("rocksdb.num-files-at-level0");
+                db_props["num_files_at_level1"] = get_prop("rocksdb.num-files-at-level1");
+                db_props["num_files_at_level2"] = get_prop("rocksdb.num-files-at-level2");
+                db_props["block_cache_pinned_usage"] = get_prop("rocksdb.block-cache-pinned-usage");
+                db_props["mem_table_flush_pending"] = get_prop("rocksdb.mem-table-flush-pending");
+                db_props["block_cache_entry_stats"] = get_prop(rocksdb::DB::Properties::kBlockCacheEntryStats);
+                result["rocksdb_properties"] = db_props;
+            }
+        }
+    }
+
     res->set_200(result.dump());
     return true;
 }
@@ -454,7 +500,7 @@ bool get_health_with_resource_usage(const std::shared_ptr<http_req>& req, const 
     );
 
     if (resource_check != cached_resource_stat_t::resource_check_t::OK) {
-        result["resource_error"] = std::string(magic_enum::enum_name(resource_check));
+        result["resource_error"] = cached_resource_stat_t::to_string(resource_check);
     }
 
     if(req->params.count("cpu_threshold") != 0 && StringUtils::is_float(req->params["cpu_threshold"])) {
@@ -496,7 +542,7 @@ bool get_health(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
     );
 
     if (resource_check != cached_resource_stat_t::resource_check_t::OK) {
-        result["resource_error"] = std::string(magic_enum::enum_name(resource_check));
+        result["resource_error"] = cached_resource_stat_t::to_string(resource_check);
     }
 
     if(alive) {
@@ -575,12 +621,12 @@ bool get_search(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
         // cache enabled, let's check if request is already in the cache
         req_hash = hash_request(req);
 
-        //LOG(INFO) << "req_hash = " << req_hash;
+        //TS_LOG(INFO) << "req_hash = " << req_hash;
 
         std::unique_lock lock(mutex);
         auto hit_it = res_cache.find(req_hash);
         if(hit_it != res_cache.end()) {
-            //LOG(INFO) << "Result found in cache.";
+            //TS_LOG(INFO) << "Result found in cache.";
             const auto& cached_value = hit_it.value();
 
             // we still need to check that TTL has not expired
@@ -833,7 +879,7 @@ bool get_search(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
 
     // we will cache only successful requests
     if(use_cache && !conversation_stream) {
-        //LOG(INFO) << "Adding to cache, key = " << req_hash;
+        //TS_LOG(INFO) << "Adding to cache, key = " << req_hash;
         auto now = std::chrono::high_resolution_clock::now();
         const auto cache_ttl_it = req->params.find("cache_ttl");
         uint32_t cache_ttl = 60;
@@ -863,12 +909,12 @@ bool post_multi_search(const std::shared_ptr<http_req>& req, const std::shared_p
         // cache enabled, let's check if request is already in the cache
         req_hash = hash_request(req);
 
-        //LOG(INFO) << "req_hash = " << req_hash;
+        //TS_LOG(INFO) << "req_hash = " << req_hash;
 
         std::unique_lock lock(mutex);
         auto hit_it = res_cache.find(req_hash);
         if(hit_it != res_cache.end()) {
-            //LOG(INFO) << "Result found in cache.";
+            //TS_LOG(INFO) << "Result found in cache.";
             const auto& cached_value = hit_it.value();
 
             // we still need to check that TTL has not expired
@@ -898,7 +944,7 @@ bool post_multi_search(const std::shared_ptr<http_req>& req, const std::shared_p
         try {
             req_json = nlohmann::json::parse(req->body);
         } catch(const std::exception& e) {
-            LOG(ERROR) << "JSON error: " << e.what();
+            TS_LOG(ERROR) << "JSON error: " << e.what();
             res->set_400("Bad JSON.");
             res->final = true;
             stream_response(req, res);
@@ -953,7 +999,7 @@ bool post_multi_search(const std::shared_ptr<http_req>& req, const std::shared_p
     nlohmann::json& searches = req_json["searches"];
 
     if(searches.size() != req->embedded_params_vec.size()) {
-        LOG(ERROR) << "Embedded params parsing error: length does not match multi search array, searches.size(): "
+        TS_LOG(ERROR) << "Embedded params parsing error: length does not match multi search array, searches.size(): "
                    << searches.size() << ", embedded_params_vec.size: " << req->embedded_params_vec.size()
                    << ", req_body: " << req->body;
         res->set_500("Embedded params parsing error.");
@@ -1083,10 +1129,10 @@ bool post_multi_search(const std::shared_ptr<http_req>& req, const std::shared_p
 
             auto validate_op = multi_search_validate_and_add_params(req->params, search_params, conversation);
             if (!validate_op.ok()) {
-                LOG(ERROR) << "multi_search parameter validation failed: " << validate_op.error()
+                TS_LOG(ERROR) << "multi_search parameter validation failed: " << validate_op.error()
                           << " with code: " << validate_op.code();
                 // Log the problematic search parameters
-                LOG(ERROR) << "Problematic search parameters: " << search_params.dump();
+                TS_LOG(ERROR) << "Problematic search parameters: " << search_params.dump();
                 res->set_400(validate_op.error());
                 res->final = true;
                 stream_response(req, res);
@@ -1295,7 +1341,7 @@ bool post_multi_search(const std::shared_ptr<http_req>& req, const std::shared_p
 
     // we will cache only successful requests
     if(use_cache && !conversation_stream) {
-        //LOG(INFO) << "Adding to cache, key = " << req_hash;
+        //TS_LOG(INFO) << "Adding to cache, key = " << req_hash;
         auto now = std::chrono::high_resolution_clock::now();
         const auto cache_ttl_it = req->params.find("cache_ttl");
         uint32_t cache_ttl = 60;
@@ -1470,7 +1516,7 @@ bool get_export_documents(const std::shared_ptr<http_req>& req, const std::share
                 if (!seq_id_op.ok()) {
                     std::string message = "Error while getting seq_id of `" + doc.at("id").get<std::string>() + "`: " +
                                             seq_id_op.error();
-                    LOG(ERROR) << message;
+                    TS_LOG(ERROR) << message;
                     res->body += message;
                 } else {
                     std::map<std::string, reference_filter_result_t> references = {};
@@ -1519,8 +1565,8 @@ bool get_export_documents(const std::shared_ptr<http_req>& req, const std::share
 }
 
 bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
-    //LOG(INFO) << "Import, req->body_index=" << req->body_index << ", body size: " << req->body.size();
-    //LOG(INFO) << "req->first_chunk=" << req->first_chunk_aggregate << ", last_chunk=" << req->last_chunk_aggregate;
+    //TS_LOG(INFO) << "Import, req->body_index=" << req->body_index << ", body size: " << req->body.size();
+    //TS_LOG(INFO) << "req->first_chunk=" << req->first_chunk_aggregate << ", last_chunk=" << req->last_chunk_aggregate;
 
     const char *BATCH_SIZE = "batch_size";
     const char *ACTION = "action";
@@ -1627,32 +1673,32 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
 
     if(req->body_index == 0) {
         // will log for every major chunk of request body
-        //LOG(INFO) << "Import, req->body.size=" << req->body.size() << ", batch_size=" << IMPORT_BATCH_SIZE;
+        //TS_LOG(INFO) << "Import, req->body.size=" << req->body.size() << ", batch_size=" << IMPORT_BATCH_SIZE;
         //int nminusten_pos = std::max(0, int(req->body.size())-10);
-        //LOG(INFO) << "Last 10 chars: " << req->body.substr(nminusten_pos);
+        //TS_LOG(INFO) << "Last 10 chars: " << req->body.substr(nminusten_pos);
     }
 
     CollectionManager & collectionManager = CollectionManager::get_instance();
     auto collection = collectionManager.get_collection(req->params["collection"]);
 
     if(collection == nullptr) {
-        //LOG(INFO) << "collection == nullptr, for collection: " << req->params["collection"];
+        //TS_LOG(INFO) << "collection == nullptr, for collection: " << req->params["collection"];
         res->final = true;
         res->set_404("Collection not found");
         stream_response(req, res);
         return false;
     }
 
-    //LOG(INFO) << "Import, " << "req->body_index=" << req->body_index << ", req->body.size: " << req->body.size();
-    //LOG(INFO) << "req body %: " << (float(req->body_index)/req->body.size())*100;
+    //TS_LOG(INFO) << "Import, " << "req->body_index=" << req->body_index << ", req->body.size: " << req->body.size();
+    //TS_LOG(INFO) << "req body %: " << (float(req->body_index)/req->body.size())*100;
 
     std::vector<std::string> json_lines;
     StringUtils::split(req->body, json_lines, "\n", false, false);
 
-    //LOG(INFO) << "json_lines.size before: " << json_lines.size() << ", req->body_index: " << req->body_index;
+    //TS_LOG(INFO) << "json_lines.size before: " << json_lines.size() << ", req->body_index: " << req->body_index;
 
     if(req->last_chunk_aggregate) {
-        //LOG(INFO) << "req->last_chunk_aggregate is true";
+        //TS_LOG(INFO) << "req->last_chunk_aggregate is true";
         req->body = "";
     } else {
         if(!json_lines.empty()) {
@@ -1676,14 +1722,14 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
         }
     }
 
-    //LOG(INFO) << "json_lines.size after: " << json_lines.size() << ", stream_proceed: " << stream_proceed;
-    //LOG(INFO) << "json_lines.size: " << json_lines.size() << ", req->res_state: " << req->res_state;
+    //TS_LOG(INFO) << "json_lines.size after: " << json_lines.size() << ", stream_proceed: " << stream_proceed;
+    //TS_LOG(INFO) << "json_lines.size: " << json_lines.size() << ", req->res_state: " << req->res_state;
 
     // When only one partial record arrives as a chunk, an empty body is pushed to response stream
     bool single_partial_record_body = (json_lines.empty() && !req->body.empty());
     std::stringstream response_stream;
 
-    //LOG(INFO) << "single_partial_record_body: " << single_partial_record_body;
+    //TS_LOG(INFO) << "single_partial_record_body: " << single_partial_record_body;
 
     const index_operation_t operation = get_index_operation(req->params[ACTION]);
 
@@ -1694,7 +1740,9 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
         const bool& return_doc = req->params[RETURN_DOC] == "true";
         const bool& return_id = req->params[RETURN_ID] == "true";
         nlohmann::json json_res = collection->add_many(json_lines, document, operation, "",
-                                                       dirty_values, return_doc, return_id, REMOTE_EMBEDDING_BATCH_SIZE_VAL, REMOTE_EMBEDDING_TIMEOUT_MS_VAL, REMOTE_EMBEDDING_NUM_TRIES_VAL);
+                                                       dirty_values, return_doc, return_id,
+                                                       REMOTE_EMBEDDING_BATCH_SIZE_VAL, REMOTE_EMBEDDING_TIMEOUT_MS_VAL,
+                                                       REMOTE_EMBEDDING_NUM_TRIES_VAL, IMPORT_BATCH_SIZE);
         //const std::string& import_summary_json = json_res->dump();
         //response_stream << import_summary_json << "\n";
 
@@ -1777,7 +1825,7 @@ bool post_add_document(const std::shared_ptr<http_req>& req, const std::shared_p
         try {
             res_doc = nlohmann::json::parse(json_lines[0]);
         } catch(const std::exception& e) {
-            LOG(ERROR) << "JSON error: " << e.what();
+            TS_LOG(ERROR) << "JSON error: " << e.what();
             res->set_400("Bad JSON.");
             return false;
         }
@@ -2199,7 +2247,7 @@ bool put_upsert_alias(const std::shared_ptr<http_req>& req, const std::shared_pt
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -2275,7 +2323,7 @@ bool get_keys(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_r
 }
 
 bool post_create_key(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
-    //LOG(INFO) << "post_create_key";
+    //TS_LOG(INFO) << "post_create_key";
 
     CollectionManager & collectionManager = CollectionManager::get_instance();
     AuthManager &auth_manager = collectionManager.getAuthManager();
@@ -2285,7 +2333,7 @@ bool post_create_key(const std::shared_ptr<http_req>& req, const std::shared_ptr
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -2402,7 +2450,7 @@ bool post_config(const std::shared_ptr<http_req>& req, const std::shared_ptr<htt
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -2552,7 +2600,7 @@ bool put_upsert_preset(const std::shared_ptr<http_req>& req, const std::shared_p
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -2645,7 +2693,7 @@ bool put_upsert_stopword(const std::shared_ptr<http_req>& req, const std::shared
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -2903,7 +2951,7 @@ bool post_import_stemming_dictionary(const std::shared_ptr<http_req>& req, const
     StringUtils::split(req->body, json_lines, "\n", false, false);
 
     if(req->last_chunk_aggregate) {
-        //LOG(INFO) << "req->last_chunk_aggregate is true";
+        //TS_LOG(INFO) << "req->last_chunk_aggregate is true";
         req->body = "";
     } else if(!json_lines.empty()) {
         // check if req->body had complete last record
@@ -3008,7 +3056,7 @@ bool post_proxy(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3044,7 +3092,7 @@ bool post_proxy(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
             headers = req_json["headers"].get<std::unordered_map<std::string, std::string>>();
         }
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3077,7 +3125,7 @@ bool post_conversation_model(const std::shared_ptr<http_req>& req, const std::sh
     try {
         model_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3163,7 +3211,7 @@ bool put_conversation_model(const std::shared_ptr<http_req>& req, const std::sha
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3317,7 +3365,7 @@ bool post_proxy_sse(const std::shared_ptr<http_req>& req, const std::shared_ptr<
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         res->final = true;
         stream_response(req, res);
@@ -3363,7 +3411,7 @@ bool post_proxy_sse(const std::shared_ptr<http_req>& req, const std::shared_ptr<
             headers = req_json["headers"].get<std::unordered_map<std::string, std::string>>();
         }
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         res->final = true;
         stream_response(req, res);
@@ -3445,7 +3493,7 @@ bool post_nl_search_model(const std::shared_ptr<http_req>& req, const std::share
     try {
         model_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3488,7 +3536,7 @@ bool put_nl_search_model(const std::shared_ptr<http_req>& req, const std::shared
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3556,7 +3604,7 @@ bool post_create_event(const std::shared_ptr<http_req>& req, const std::shared_p
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3617,7 +3665,7 @@ bool post_create_analytics_rules(const std::shared_ptr<http_req>& req, const std
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3641,7 +3689,7 @@ bool put_upsert_analytics_rules(const std::shared_ptr<http_req>& req, const std:
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3676,7 +3724,7 @@ bool post_write_analytics_to_db(const std::shared_ptr<http_req>& req, const std:
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3791,7 +3839,7 @@ bool put_synonym_set(const std::shared_ptr<http_req>& req, const std::shared_ptr
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3881,7 +3929,7 @@ bool put_synonym_set_item(const std::shared_ptr<http_req>& req, const std::share
     try {
         syn_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -3967,7 +4015,7 @@ bool put_curation_set(const std::shared_ptr<http_req>& req, const std::shared_pt
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const nlohmann::json::parse_error& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }
@@ -4044,7 +4092,7 @@ bool put_curation_set_item(const std::shared_ptr<http_req>& req, const std::shar
     try {
         ov_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
-        LOG(ERROR) << "JSON error: " << e.what();
+        TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
         return false;
     }

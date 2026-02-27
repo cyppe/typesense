@@ -6,7 +6,23 @@
 #include "http_client.h"
 #include "raft_server.h"
 #include "option.h"
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#pragma clang diagnostic ignored "-Wreorder-ctor"
+#pragma clang diagnostic ignored "-Woverloaded-virtual"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#pragma GCC diagnostic ignored "-Wreorder"
+#pragma GCC diagnostic ignored "-Woverloaded-virtual"
+#endif
 #include "lru/lru.hpp"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 
 struct embedding_res_t {
@@ -19,7 +35,7 @@ struct embedding_res_t {
 
     embedding_res_t(const std::vector<float>& embedding) : embedding(embedding), success(true) {}
 
-    embedding_res_t(int status_code, const nlohmann::json& error) : error(error), success(false), status_code(status_code) {}
+    embedding_res_t(int status_code, const nlohmann::json& error) : error(error), status_code(status_code), success(false) {}
 
     bool operator!=(const embedding_res_t& other) const {
         return !(*this == other);
@@ -59,7 +75,7 @@ class RemoteEmbedder {
         virtual embedding_res_t embed_query(const std::string& text, const size_t remote_embedder_timeout_ms = 30000, const size_t remote_embedding_num_tries = 2) = 0;
         virtual std::vector<embedding_res_t> embed_documents(const std::vector<std::string>& inputs, const size_t remote_embedding_batch_size = 200,
                                                          const size_t remote_embedding_timeout_ms = 60000, const size_t remote_embedding_num_tries = 2) = 0;
-        static const std::string get_model_key(const nlohmann::json& model_config, size_t num_dims = 0);
+        static std::string get_model_key(const nlohmann::json& model_config, size_t num_dims = 0);
         static void init(ReplicationState* rs) {
             raft_server = rs;
         }
@@ -97,7 +113,7 @@ class OpenAIEmbedder : public RemoteEmbedder {
         std::string api_key;
         std::string openai_model_path;
         std::string openai_create_embedding_suffix;
-        static constexpr char* OPENAI_CREATE_EMBEDDING = "v1/embeddings";
+        static constexpr const char* OPENAI_CREATE_EMBEDDING = "v1/embeddings";
         bool has_custom_dims;
         size_t num_dims;
         std::string openai_url = "https://api.openai.com";
@@ -154,7 +170,7 @@ class GoogleEmbedder : public RemoteEmbedder {
         // only support this model for now
         inline static const char* SUPPORTED_MODEL = "embedding-gecko-001";
         inline static constexpr short GOOGLE_EMBEDDING_DIM = 768;
-        inline static constexpr char* GOOGLE_CREATE_EMBEDDING = "https://generativelanguage.googleapis.com/v1beta2/models/embedding-gecko-001:embedText?key=";
+        inline static constexpr const char* GOOGLE_CREATE_EMBEDDING = "https://generativelanguage.googleapis.com/v1beta2/models/embedding-gecko-001:embedText?key=";
         std::string google_api_key;
     public:
         GoogleEmbedder(const std::string& google_api_key);

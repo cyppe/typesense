@@ -6,8 +6,24 @@
 #include <memory>
 #include <mutex>
 #include <libstemmer.h>
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#pragma clang diagnostic ignored "-Wreorder-ctor"
+#pragma clang diagnostic ignored "-Woverloaded-virtual"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#pragma GCC diagnostic ignored "-Wreorder"
+#pragma GCC diagnostic ignored "-Woverloaded-virtual"
+#endif
 #include "lru/lru.hpp"
-#include "sparsepp.h"
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+#include "sparsepp_wrapper.h"
 #include "json.hpp"
 #include "store.h"
 
@@ -63,7 +79,7 @@ class StemmerManager {
 
         void delete_all_stemmers();
 
-        const bool validate_language(const std::string& language);
+        bool validate_language(const std::string& language);
 
         Option<bool> upsert_stemming_dictionary(const std::string& dictionary_name, const std::vector<std::string> &json_lines,
                                         bool write_to_store = true);

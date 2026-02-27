@@ -8,6 +8,8 @@
 #include "collection.h"
 #include "embedder_manager.h"
 #include "http_client.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionAllFieldsTest : public ::testing::Test {
 protected:
@@ -17,12 +19,13 @@ protected:
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
+    std::string state_dir_path;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_all_fields";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
-        system("mkdir -p /tmp/typesense_test/models");
+        state_dir_path = typesense_test::make_test_temp_dir("collection_all_fields");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
+        std::filesystem::create_directories(typesense_test::test_models_dir());
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -36,6 +39,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -90,16 +94,16 @@ TEST_F(CollectionAllFieldsTest, IndexDocsWithoutSchema) {
     // same should succeed when verbatim filter is made
     auto results = coll1->search("will", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
 
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("chris", {"cast"}, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(4, results["hits"].size());
-    ASSERT_EQ(4, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
 
     ASSERT_STREQ("6", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("8", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -125,7 +129,7 @@ TEST_F(CollectionAllFieldsTest, IndexDocsWithoutSchema) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("300", {"title"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("300", results["hits"][0]["document"]["title"].get<std::string>().c_str());
 
     // with dirty values set to `COERCE_OR_DROP`
@@ -137,9 +141,9 @@ TEST_F(CollectionAllFieldsTest, IndexDocsWithoutSchema) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("With bad cast field", {"title"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("With bad cast field.", results["hits"][0]["document"]["title"].get<std::string>().c_str());
-    ASSERT_EQ(0, results["hits"][0]["document"].count("cast"));
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"].count("cast"));
 
     // with dirty values set to `DROP`
     // no coercion should happen, `title` field will just be dropped, but record indexed
@@ -150,11 +154,11 @@ TEST_F(CollectionAllFieldsTest, IndexDocsWithoutSchema) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("1200", {"title"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("Jeremy Livingston", {"cast"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(0, results["hits"][0]["document"].count("title"));
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"].count("title"));
 
     // with dirty values set to `REJECT`
     doc_json = R"({"cast": ["Jeremy Livingston"],"points":63,"starring":"Will Ferrell",
@@ -220,11 +224,11 @@ TEST_F(CollectionAllFieldsTest, HandleArrayTypes) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("second", {"title"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // check that the "bad" value does not exists in the stored document
-    ASSERT_EQ(1, results["hits"][0]["document"].count("int_values"));
-    ASSERT_EQ(0, results["hits"][0]["document"]["int_values"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"].count("int_values"));
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"]["int_values"].size());
 
     // bad array type should follow coercion rules
     add_op = coll1->add(doc.dump(), CREATE, "", DIRTY_VALUES::REJECT);
@@ -241,8 +245,8 @@ TEST_F(CollectionAllFieldsTest, HandleArrayTypes) {
     add_op = coll1->add(doc.dump(), CREATE, "", DIRTY_VALUES::COERCE_OR_DROP);
     ASSERT_TRUE(add_op.ok());
     results = coll1->search("third", {"title"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(0, results["hits"][0]["document"].count("int_values"));
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"].count("int_values"));
 
     collectionManager.drop_collection("coll1");
 }
@@ -302,14 +306,14 @@ TEST_F(CollectionAllFieldsTest, ShouldBeAbleToUpdateSchemaDetectedDocs) {
 
     auto results = coll1->search("second", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("SECOND", results["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(4, results["hits"][0]["document"]["scores"].size());
+    ASSERT_EQ(size_t{4}, results["hits"][0]["document"]["scores"].size());
 
-    ASSERT_EQ(100, results["hits"][0]["document"]["scores"][0].get<size_t>());
-    ASSERT_EQ(250, results["hits"][0]["document"]["scores"][1].get<size_t>());
-    ASSERT_EQ(300, results["hits"][0]["document"]["scores"][2].get<size_t>());
-    ASSERT_EQ(400, results["hits"][0]["document"]["scores"][3].get<size_t>());
+    ASSERT_EQ(size_t{100}, results["hits"][0]["document"]["scores"][0].get<size_t>());
+    ASSERT_EQ(size_t{250}, results["hits"][0]["document"]["scores"][1].get<size_t>());
+    ASSERT_EQ(size_t{300}, results["hits"][0]["document"]["scores"][2].get<size_t>());
+    ASSERT_EQ(size_t{400}, results["hits"][0]["document"]["scores"][3].get<size_t>());
 
     // insert multiple docs at the same time
     const size_t NUM_DOCS = 20;
@@ -348,11 +352,11 @@ TEST_F(CollectionAllFieldsTest, ShouldBeAbleToUpdateSchemaDetectedDocs) {
     ASSERT_TRUE(res["success"].get<bool>());
 
     results = coll1->search("updated", {"title"}, "", {}, {}, {0}, 50, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(20, results["hits"].size());
+    ASSERT_EQ(size_t{20}, results["hits"].size());
 
     for(auto& hit: results["hits"]) {
         ASSERT_EQ(2000, hit["document"]["max"].get<int>());
-        ASSERT_EQ(2, hit["document"]["scores"].size());
+        ASSERT_EQ(size_t{2}, hit["document"]["scores"].size());
         ASSERT_EQ(1000, hit["document"]["scores"][0].get<int>());
         ASSERT_EQ(2000, hit["document"]["scores"][1].get<int>());
     }
@@ -388,11 +392,11 @@ TEST_F(CollectionAllFieldsTest, StringifyAllValues) {
     ASSERT_EQ("2", added_doc["int_values"][1].get<std::string>());
 
     auto results = coll1->search("first", {"title"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("FIRST", results["hits"][0]["document"]["title"].get<std::string>());
 
-    ASSERT_EQ(1, results["hits"][0]["document"].count("int_values"));
-    ASSERT_EQ(2, results["hits"][0]["document"]["int_values"].size());
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"].count("int_values"));
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"]["int_values"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["int_values"][0].get<std::string>());
     ASSERT_EQ("2", results["hits"][0]["document"]["int_values"][1].get<std::string>());
 
@@ -402,10 +406,10 @@ TEST_F(CollectionAllFieldsTest, StringifyAllValues) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("second", {"title"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("SECOND", results["hits"][0]["document"]["title"].get<std::string>());
-    ASSERT_EQ(1, results["hits"][0]["document"].count("int_values"));
-    ASSERT_EQ(0, results["hits"][0]["document"]["int_values"].size());  // since both array values are dropped
+    ASSERT_EQ(size_t{1}, results["hits"][0]["document"].count("int_values"));
+    ASSERT_EQ(size_t{0}, results["hits"][0]["document"]["int_values"].size());  // since both array values are dropped
 
     // try with REJECT
     doc["title"] = "THIRD";
@@ -451,7 +455,7 @@ TEST_F(CollectionAllFieldsTest, IntegerAllValues) {
     auto added_doc = add_op.get();
 
     auto results = coll1->search("*", {}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // try with DROP
     doc["age"] = "SECOND";
@@ -459,7 +463,7 @@ TEST_F(CollectionAllFieldsTest, IntegerAllValues) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("*", {}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // try with REJECT
     doc["age"] = "THIRD";
@@ -510,11 +514,11 @@ TEST_F(CollectionAllFieldsTest, SearchStringifiedField) {
 
     auto results_op = coll1->search("stark", {"company_name"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_TRUE(results_op.ok());
-    ASSERT_EQ(1, results_op.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, results_op.get()["hits"].size());
 
     results_op = coll1->search("engineering", {"department"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_TRUE(results_op.ok());
-    ASSERT_EQ(1, results_op.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, results_op.get()["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -546,7 +550,7 @@ TEST_F(CollectionAllFieldsTest, StringSingularAllValues) {
     ASSERT_EQ("123", added_doc["int_values"].get<std::string>());
 
     auto results = coll1->search("first", {"title"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("FIRST", results["hits"][0]["document"]["title"].get<std::string>());
     ASSERT_EQ("123", results["hits"][0]["document"]["int_values"].get<std::string>());
 
@@ -604,7 +608,7 @@ TEST_F(CollectionAllFieldsTest, NormalFieldWithAutoType) {
     auto res_op = coll1->search("austin", {"city"}, "publication_year: 2010", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_TRUE(res_op.ok());
     auto results = res_op.get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     auto schema = coll1->get_fields();
     ASSERT_EQ("city", schema[2].name);
@@ -629,7 +633,7 @@ TEST_F(CollectionAllFieldsTest, JsonFieldsToFieldsConversion) {
     auto parse_op = field::json_fields_to_fields(false, fields_json, fallback_field_type, fields);
 
     ASSERT_TRUE(parse_op.ok());
-    ASSERT_EQ(1, fields.size());
+    ASSERT_EQ(size_t{1}, fields.size());
     ASSERT_EQ("string*", fallback_field_type);
     ASSERT_EQ(true, fields[0].optional);
     ASSERT_EQ(false, fields[0].facet);
@@ -736,7 +740,7 @@ TEST_F(CollectionAllFieldsTest, WildcardFacetFieldsOnAutoSchema) {
 
     auto results = coll1->search("org", {"title"}, "", {"org_name"}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("Walmart", results["hits"][0]["document"]["org_name"].get<std::string>());
     ASSERT_EQ("Amazon", results["hits"][1]["document"]["org_name"].get<std::string>());
 
@@ -756,15 +760,15 @@ TEST_F(CollectionAllFieldsTest, WildcardFacetFieldsOnAutoSchema) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("*", {"title"}, "", {"company_name", "org_name"}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ASSERT_EQ("company_name", results["facet_counts"][0]["field_name"].get<std::string>());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Stark", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
 
     ASSERT_EQ("org_name", results["facet_counts"][1]["field_name"].get<std::string>());
-    ASSERT_EQ(2, results["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][1]["counts"].size());
     ASSERT_EQ("Amazon", results["facet_counts"][1]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ(1, (int) results["facet_counts"][1]["counts"][0]["count"]);
 
@@ -801,7 +805,7 @@ TEST_F(CollectionAllFieldsTest, WildcardFacetFieldsWithAuoFacetFieldType) {
 
     auto results = coll1->search("org", {"title"}, "", {"org_name"}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("Walmart", results["hits"][0]["document"]["org_name"].get<std::string>());
     ASSERT_EQ("Amazon", results["hits"][1]["document"]["org_name"].get<std::string>());
 
@@ -840,7 +844,7 @@ TEST_F(CollectionAllFieldsTest, WildcardFacetFieldsWithoutAutoSchema) {
 
     auto results = coll1->search("org", {"title"}, "", {"org_name"}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("Walmart", results["hits"][0]["document"]["org_name"].get<std::string>());
     ASSERT_EQ("Amazon", results["hits"][1]["document"]["org_name"].get<std::string>());
 
@@ -860,15 +864,15 @@ TEST_F(CollectionAllFieldsTest, WildcardFacetFieldsWithoutAutoSchema) {
     ASSERT_TRUE(add_op.ok());
 
     results = coll1->search("*", {"title"}, "", {"company_name", "org_name"}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ASSERT_EQ("company_name", results["facet_counts"][0]["field_name"].get<std::string>());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Stark", results["facet_counts"][0]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
 
     ASSERT_EQ("org_name", results["facet_counts"][1]["field_name"].get<std::string>());
-    ASSERT_EQ(2, results["facet_counts"][1]["counts"].size());
+    ASSERT_EQ(size_t{2}, results["facet_counts"][1]["counts"].size());
     ASSERT_EQ("Amazon", results["facet_counts"][1]["counts"][0]["value"].get<std::string>());
     ASSERT_EQ(1, (int) results["facet_counts"][1]["counts"][0]["count"]);
 
@@ -934,7 +938,7 @@ TEST_F(CollectionAllFieldsTest, RegexpExplicitFieldTypeCoercion) {
     ASSERT_EQ(field_types::STRING, schema[10].type);
 
     auto results = coll1->search("rand", {"title"}, "i_age: 28", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1001,10 +1005,10 @@ TEST_F(CollectionAllFieldsTest, AutoAndStringStarFieldsShouldAcceptNullValues) {
 
     auto res = coll1->search("*", {}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
     ASSERT_EQ("0", res["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ(1, res["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, res["hits"][0]["document"].size());
 
     auto schema = coll1->get_fields();
-    ASSERT_EQ(4, schema.size());
+    ASSERT_EQ(size_t{4}, schema.size());
 
     doc["foo"]  = {"hello", "world"};
     doc["buzz"]  = 123;
@@ -1015,7 +1019,7 @@ TEST_F(CollectionAllFieldsTest, AutoAndStringStarFieldsShouldAcceptNullValues) {
     ASSERT_TRUE(add_op.ok());
 
     schema = coll1->get_fields();
-    ASSERT_EQ(8, schema.size());
+    ASSERT_EQ(size_t{8}, schema.size());
 
     ASSERT_EQ("bar_one", schema[4].name);
     ASSERT_EQ(field_types::STRING, schema[4].type);
@@ -1047,8 +1051,8 @@ TEST_F(CollectionAllFieldsTest, BothFallbackAndDynamicFields) {
         coll1 = op.get();
     }
 
-    ASSERT_EQ(4, coll1->get_fields().size());
-    ASSERT_EQ(2, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{4}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{2}, coll1->get_dynamic_fields().size());
 
     ASSERT_TRUE(coll1->get_dynamic_fields().count(".*_name") != 0);
     ASSERT_TRUE(coll1->get_dynamic_fields()[".*_name"].optional);
@@ -1078,13 +1082,13 @@ TEST_F(CollectionAllFieldsTest, BothFallbackAndDynamicFields) {
     ASSERT_EQ("Could not find a facet field named `org_name` in the schema.", res_op.error());
 
     auto results = coll1->search("Amazon", {"org_name"}, "", {"org_year"}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     res_op = coll1->search("fizzbuzz", {"rand_str"}, "", {"rand_str"}, sort_fields, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_EQ("Could not find a facet field named `rand_str` in the schema.", res_op.error());
 
     results = coll1->search("fizzbuzz", {"rand_str"}, "", {"org_year"}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1111,10 +1115,10 @@ TEST_F(CollectionAllFieldsTest, WildcardFieldAndDictionaryField) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll1->search("*", {}, "year: 2000", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     auto schema = coll1->get_fields();
-    ASSERT_EQ(5, schema.size());
+    ASSERT_EQ(size_t{5}, schema.size());
     ASSERT_EQ(".*", schema[0].name);
     ASSERT_EQ("kinds", schema[1].name);
     ASSERT_EQ("year", schema[2].name);
@@ -1123,7 +1127,7 @@ TEST_F(CollectionAllFieldsTest, WildcardFieldAndDictionaryField) {
 
     // filter on object key
     results = coll1->search("*", {}, "kinds.CGXX: 13", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1243,7 +1247,7 @@ TEST_F(CollectionAllFieldsTest, DoNotIndexFieldMarkedAsNonIndex) {
     auto add_op = coll1->add(doc.dump(), CREATE);
     ASSERT_TRUE(add_op.ok());
 
-    ASSERT_EQ(0, coll1->_get_index()->_get_search_index().count("post"));
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_search_index().count("post"));
 
     auto res_op = coll1->search("Amazon", {"description_txt"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_FALSE(res_op.ok());
@@ -1256,14 +1260,14 @@ TEST_F(CollectionAllFieldsTest, DoNotIndexFieldMarkedAsNonIndex) {
     // wildcard pattern should exclude non-indexed field while searching,
     res_op = coll1->search("Amazon", {"*"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, res_op.get()["hits"].size());
 
     // try updating a document with non-indexable field
     doc["post"] = "Some post updated.";
     auto update_op = coll1->add(doc.dump(), UPDATE, "0");
     ASSERT_TRUE(add_op.ok());
 
-    ASSERT_EQ(0, coll1->_get_index()->_get_search_index().count("post"));
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_search_index().count("post"));
 
     auto res = coll1->search("Amazon", {"company_name"}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
     ASSERT_EQ("Some post updated.", res["hits"][0]["document"]["post"].get<std::string>());
@@ -1371,8 +1375,8 @@ TEST_F(CollectionAllFieldsTest, NullValueUpdate) {
     // ensure that the fields are removed from the document
     auto results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(2, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"].size());
     ASSERT_EQ("Hello", results["hits"][0]["document"]["unindexed"].get<std::string>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
@@ -1414,8 +1418,8 @@ TEST_F(CollectionAllFieldsTest, NullValueArrayUpdate) {
     add_op = coll1->add(doc.dump(), CREATE);
     ASSERT_TRUE(add_op.ok());
 
-    ASSERT_EQ(1, coll1->get_num_documents());
-    ASSERT_EQ(1, coll1->_get_index()->num_seq_ids());
+    ASSERT_EQ(uint32_t{1}, coll1->get_num_documents());
+    ASSERT_EQ(uint32_t{1}, coll1->_get_index()->num_seq_ids());
 
     doc["titles"] = nullptr;
     doc["company_names"]  = nullptr;
@@ -1428,13 +1432,13 @@ TEST_F(CollectionAllFieldsTest, NullValueArrayUpdate) {
     add_op = coll1->add(doc.dump(), UPDATE);
     ASSERT_TRUE(add_op.ok());
 
-    ASSERT_EQ(1, coll1->get_num_documents());
+    ASSERT_EQ(uint32_t{1}, coll1->get_num_documents());
 
     // ensure that the fields are removed from the document
     auto results = coll1->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(2, results["hits"][0]["document"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"][0]["document"].size());
     ASSERT_EQ("Hello", results["hits"][0]["document"]["unindexed"].get<std::string>());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
@@ -1449,7 +1453,7 @@ TEST_F(CollectionAllFieldsTest, NullValueArrayUpdate) {
     ASSERT_FALSE(add_op.ok());
     ASSERT_EQ("Field `countries` must be an array of string.", add_op.error());
 
-    ASSERT_EQ(1, coll1->get_num_documents());
+    ASSERT_EQ(uint32_t{1}, coll1->get_num_documents());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1510,10 +1514,10 @@ TEST_F(CollectionAllFieldsTest, DISABLED_SchemaUpdateShouldBeAtomicForAllFields)
 
     auto f = coll1->get_fields();
 
-    ASSERT_EQ(1, coll1->get_fields().size());
-    ASSERT_EQ(0, coll1->get_sort_fields().size());
-    ASSERT_EQ(0, coll1->_get_index()->_get_search_index().size());
-    ASSERT_EQ(0, coll1->_get_index()->_get_numerical_index().size());
+    ASSERT_EQ(size_t{1}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->get_sort_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_search_index().size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_numerical_index().size());
 
     // now insert document with just "int_1" key
     nlohmann::json doc2;
@@ -1521,10 +1525,10 @@ TEST_F(CollectionAllFieldsTest, DISABLED_SchemaUpdateShouldBeAtomicForAllFields)
     add_op = coll1->add(doc2.dump(), CREATE);
     ASSERT_TRUE(add_op.ok());
 
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_sort_fields().size());
-    ASSERT_EQ(0, coll1->_get_index()->_get_search_index().size());
-    ASSERT_EQ(1, coll1->_get_index()->_get_numerical_index().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_sort_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_search_index().size());
+    ASSERT_EQ(size_t{1}, coll1->_get_index()->_get_numerical_index().size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1550,8 +1554,8 @@ TEST_F(CollectionAllFieldsTest, FieldNameMatchingRegexpShouldNotBeIndexed) {
     json_lines[0] = doc1.dump();
     coll1->add_many(json_lines, doc1, UPSERT);
 
-    ASSERT_EQ(1, coll1->_get_index()->_get_search_index().size());
-    ASSERT_EQ(3, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->_get_index()->_get_search_index().size());
+    ASSERT_EQ(size_t{3}, coll1->get_fields().size());
 
     auto results = coll1->search("one", {"title"},
                                  "", {}, {}, {2}, 10,
@@ -1560,7 +1564,7 @@ TEST_F(CollectionAllFieldsTest, FieldNameMatchingRegexpShouldNotBeIndexed) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 5, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 }
 
 TEST_F(CollectionAllFieldsTest, AutoFieldValueCoercionRemoval) {
@@ -1596,7 +1600,7 @@ TEST_F(CollectionAllFieldsTest, AutoFieldValueCoercionRemoval) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 5, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionAllFieldsTest, FieldNameMatchingRegexpShouldNotBeIndexedInNonAutoSchema) {
@@ -1619,8 +1623,8 @@ TEST_F(CollectionAllFieldsTest, FieldNameMatchingRegexpShouldNotBeIndexedInNonAu
     json_lines[0] = doc1.dump();
     coll1->add_many(json_lines, doc1, UPSERT);
 
-    ASSERT_EQ(1, coll1->_get_index()->_get_search_index().size());
-    ASSERT_EQ(2, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->_get_index()->_get_search_index().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
 
     auto results = coll1->search("one", {"title"},
                                  "", {}, {}, {2}, 10,
@@ -1629,11 +1633,11 @@ TEST_F(CollectionAllFieldsTest, FieldNameMatchingRegexpShouldNotBeIndexedInNonAu
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 5, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 }
 
 TEST_F(CollectionAllFieldsTest, EmbedFromFieldJSONInvalidField) {
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     nlohmann::json field_json;
     field_json["name"] = "embedding";
     field_json["type"] = "float[]";
@@ -1654,7 +1658,7 @@ TEST_F(CollectionAllFieldsTest, EmbedFromFieldJSONInvalidField) {
 }
 
 TEST_F(CollectionAllFieldsTest, EmbedFromNotArray) {
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     nlohmann::json field_json;
     field_json["name"] = "embedding";
     field_json["type"] = "float[]";
@@ -1675,7 +1679,7 @@ TEST_F(CollectionAllFieldsTest, EmbedFromNotArray) {
 }
 
 TEST_F(CollectionAllFieldsTest, ModelParametersWithoutEmbedFrom) {
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     nlohmann::json field_json;
     field_json["name"] = "embedding";
     field_json["type"] = "float[]";
@@ -1693,7 +1697,7 @@ TEST_F(CollectionAllFieldsTest, ModelParametersWithoutEmbedFrom) {
 }
 
 TEST_F(CollectionAllFieldsTest, EmbedFromBasicValid) {
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     nlohmann::json schema = R"({
         "name": "obj_coll",
         "fields": [
@@ -1716,7 +1720,7 @@ TEST_F(CollectionAllFieldsTest, EmbedFromBasicValid) {
     ASSERT_TRUE(add_res.ok());
     ASSERT_TRUE(add_res.get()["name"].is_string());
     ASSERT_TRUE(add_res.get()["embedding"].is_array());
-    ASSERT_EQ(384, add_res.get()["embedding"].size());
+    ASSERT_EQ(size_t{384}, add_res.get()["embedding"].size());
 
 }
 
@@ -1816,10 +1820,10 @@ TEST_F(CollectionAllFieldsTest, FieldTokenSeparators) {
     Collection *coll = create_op.get();
     const auto &fields = coll->get_fields();
 
-    ASSERT_EQ(1, fields.size());
-    ASSERT_EQ(1, fields[0].token_separators.size());
+    ASSERT_EQ(size_t{1}, fields.size());
+    ASSERT_EQ(size_t{1}, fields[0].token_separators.size());
     ASSERT_EQ('-', fields[0].token_separators.at(0));
-    ASSERT_EQ(1, fields[0].symbols_to_index.size());
+    ASSERT_EQ(size_t{1}, fields[0].symbols_to_index.size());
     ASSERT_EQ('_', fields[0].symbols_to_index.at(0));
 
     //create another collection without fieldwise token separators
@@ -1852,7 +1856,7 @@ TEST_F(CollectionAllFieldsTest, FieldTokenSeparators) {
                             true, false, true, "", false, 6000 * 1000, 4, 7, fallback, 4, {off}, 3, 3, 2, 2, false, "",
                             true, 0, max_score, 100, 0, 0, 4294967295UL, "").get();
 
-    ASSERT_EQ(1, res["hits"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"]);
 
     //search in anothe collection without fieldwise token separators
@@ -1863,7 +1867,7 @@ TEST_F(CollectionAllFieldsTest, FieldTokenSeparators) {
                         true, false, true, "", false, 6000 * 1000, 4, 7, fallback, 4, {off}, 3, 3, 2, 2, false, "", true, 0,
                         max_score, 100, 0, 0, 4294967295UL, "").get();
 
-    ASSERT_EQ(0, res["hits"].size());
+    ASSERT_EQ(size_t{0}, res["hits"].size());
 
     //field level token separators should take presidence over collection level
     nlohmann::json schema3 = R"({
@@ -1892,7 +1896,7 @@ TEST_F(CollectionAllFieldsTest, FieldTokenSeparators) {
                        true, false, true, "", false, 6000 * 1000, 4, 7, fallback, 4, {off}, 3, 3, 2, 2, false, "", true, 0,
                        max_score, 100, 0, 0, 4294967295UL, "").get();
 
-    ASSERT_EQ(1, res["hits"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"]); //field token separator works over collection level
 
     //validation
@@ -1938,17 +1942,17 @@ TEST_F(CollectionAllFieldsTest, FieldTokenSeparatorsOnRestart) {
 
     auto fields = collection->get_fields();
 
-    ASSERT_EQ(2, fields.size());
+    ASSERT_EQ(size_t{2}, fields.size());
     ASSERT_EQ("product", fields[0].name);
-    ASSERT_EQ(1, fields[0].token_separators.size());
+    ASSERT_EQ(size_t{1}, fields[0].token_separators.size());
     ASSERT_EQ('-', fields[0].token_separators[0]);
-    ASSERT_EQ(1, fields[0].symbols_to_index.size());
+    ASSERT_EQ(size_t{1}, fields[0].symbols_to_index.size());
     ASSERT_EQ('_', fields[0].symbols_to_index[0]);
 
     ASSERT_EQ("desc", fields[1].name);
-    ASSERT_EQ(1, fields[1].token_separators.size());
+    ASSERT_EQ(size_t{1}, fields[1].token_separators.size());
     ASSERT_EQ('&', fields[1].token_separators[0]);
-    ASSERT_EQ(1, fields[1].symbols_to_index.size());
+    ASSERT_EQ(size_t{1}, fields[1].symbols_to_index.size());
     ASSERT_EQ('$', fields[1].symbols_to_index[0]);
 
     //dispose collection manager and reload
@@ -1956,7 +1960,6 @@ TEST_F(CollectionAllFieldsTest, FieldTokenSeparatorsOnRestart) {
     delete store;
     fields.clear();
 
-    std::string state_dir_path = "/tmp/typesense_test/collection_all_fields";
     store = new Store(state_dir_path);
 
     collectionManager.init(store, 1.0, "auth_key", quit);
@@ -1966,17 +1969,17 @@ TEST_F(CollectionAllFieldsTest, FieldTokenSeparatorsOnRestart) {
 
     fields = collection->get_fields();
 
-    ASSERT_EQ(2, fields.size());
+    ASSERT_EQ(size_t{2}, fields.size());
     ASSERT_EQ("product", fields[0].name);
-    ASSERT_EQ(1, fields[0].token_separators.size());
+    ASSERT_EQ(size_t{1}, fields[0].token_separators.size());
     ASSERT_EQ('-', fields[0].token_separators[0]);
-    ASSERT_EQ(1, fields[0].symbols_to_index.size());
+    ASSERT_EQ(size_t{1}, fields[0].symbols_to_index.size());
     ASSERT_EQ('_', fields[0].symbols_to_index[0]);
 
     ASSERT_EQ("desc", fields[1].name);
-    ASSERT_EQ(1, fields[1].token_separators.size());
+    ASSERT_EQ(size_t{1}, fields[1].token_separators.size());
     ASSERT_EQ('&', fields[1].token_separators[0]);
-    ASSERT_EQ(1, fields[1].symbols_to_index.size());
+    ASSERT_EQ(size_t{1}, fields[1].symbols_to_index.size());
     ASSERT_EQ('$', fields[1].symbols_to_index[0]);
 }
 

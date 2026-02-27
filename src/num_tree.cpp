@@ -400,7 +400,8 @@ void num_tree_t::seq_ids_outside_top_k(size_t k, std::vector<uint32_t> &seq_ids)
 }
 
 std::pair<int64_t, int64_t> num_tree_t::get_min_max(const uint32_t* result_ids, size_t result_ids_len) {
-    int64_t min, max;
+    int64_t min = 0;
+    int64_t max = 0;
     //first traverse from top to find min
     for(auto int64map_it = int64map.begin(); int64map_it != int64map.end(); ++int64map_it) {
         if(ids_t::intersect_count(int64map_it->second, result_ids, result_ids_len)) {

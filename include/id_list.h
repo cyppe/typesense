@@ -3,6 +3,7 @@
 #include <map>
 #include <unordered_map>
 #include "sorted_array.h"
+#include "logger.h"
 
 typedef uint32_t last_id_t;
 
@@ -194,7 +195,7 @@ bool id_list_t::block_intersect(std::vector<id_list_t::iterator_t>& its, result_
         default:
             while(!at_end(its)) {
                 if(equals(its)) {
-                    //LOG(INFO) << its[0].id();
+                    //TS_LOG(INFO) << its[0].id();
                     if(id_list_t::take_id(istate, its[0].id())) {
                         func(its[0].id(), its, istate.index);
                     }

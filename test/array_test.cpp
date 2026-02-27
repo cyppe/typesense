@@ -4,42 +4,42 @@
 
 TEST(ArrayTest, Append) {
     array arr;
-    int SIZE = 10 * 1000;
+    constexpr size_t SIZE = 10 * 1000;
 
-    EXPECT_EQ(arr.getLength(), 0);
+    EXPECT_EQ(arr.getLength(), size_t{0});
 
     // First try inserting sorted ints
 
-    for(int i=0; i < SIZE; i++) {
+    for(size_t i=0; i < SIZE; i++) {
         arr.append(i);
     }
 
-    EXPECT_EQ(arr.getLength(), SIZE);
+    EXPECT_EQ(arr.getLength(), size_t{SIZE});
 
-    for(int i=0; i < SIZE; i++) {
-        EXPECT_EQ(arr.at(i), i);
-        EXPECT_EQ(arr.indexOf(i), i);
+    for(size_t i=0; i < SIZE; i++) {
+        EXPECT_EQ(arr.at(i), size_t{i});
+        EXPECT_EQ(arr.indexOf(i), size_t{i});
         EXPECT_EQ(arr.contains(i), true);
     }
 
     EXPECT_EQ(arr.contains(SIZE), false);
-    EXPECT_EQ(arr.indexOf(SIZE), SIZE);
-    EXPECT_EQ(arr.indexOf(SIZE+1), SIZE);
+    EXPECT_EQ(arr.indexOf(SIZE), size_t{SIZE});
+    EXPECT_EQ(arr.indexOf(SIZE+1), size_t{SIZE});
 
     // Insert in unsorted fashion
     array arr2;
 
     std::vector<uint32_t> unsorted;
 
-    for(int i=0; i < SIZE; i++) {
+    for(size_t i=0; i < SIZE; i++) {
         uint32_t r = (uint32_t) rand();
         unsorted.push_back(r);
         arr2.append(r);
     }
 
-    EXPECT_EQ(arr2.getLength(), SIZE);
+    EXPECT_EQ(arr2.getLength(), size_t{SIZE});
 
-    for(int i=0; i < SIZE; i++) {
+    for(size_t i=0; i < SIZE; i++) {
         uint32_t value = unsorted.at(i);
         EXPECT_EQ(arr2.at(i), value);
     }

@@ -20,11 +20,11 @@ TEST(FacetIndexTest, FacetValueDeletionString) {
     doc["brand"] = "nike";
 
     findex.insert("brand", fvalue_to_seq_ids, seq_id_to_fvalues, true);
-    ASSERT_EQ(3, findex.facet_val_num_ids("brand", "nike"));
+    ASSERT_EQ(static_cast<size_t>(3), findex.facet_val_num_ids("brand", "nike"));
 
     findex.remove(doc, brandf, 0);
     findex.remove(doc, brandf, 1);
-    ASSERT_EQ(1, findex.facet_val_num_ids("brand", "nike"));
+    ASSERT_EQ(static_cast<size_t>(1), findex.facet_val_num_ids("brand", "nike"));
 
     findex.remove(doc, brandf, 2);
     ASSERT_FALSE(findex.facet_value_exists("brand", "nike"));
@@ -48,12 +48,12 @@ TEST(FacetIndexTest, HighCardinalityCheck) {
     seq_id_to_fvalues[2] = {nike};
 
     findex.insert("field_1", fvalue_to_seq_ids, seq_id_to_fvalues, true);
-    ASSERT_EQ(3, findex.facet_val_num_ids("field_1", "nike"));
+    ASSERT_EQ(static_cast<size_t>(3), findex.facet_val_num_ids("field_1", "nike"));
 
     findex.check_for_high_cardinality("field_1", 20000);
     ASSERT_TRUE(findex.facet_value_exists("field_1", "nike"));
 
-    ASSERT_EQ(0, findex.facet_val_num_ids("field_1", "nike"));
+    ASSERT_EQ(static_cast<size_t>(0), findex.facet_val_num_ids("field_1", "nike"));
 }
 
 TEST(FacetIndexTest, FacetValueDeletionOfLongString) {
@@ -81,11 +81,11 @@ TEST(FacetIndexTest, FacetValueDeletionOfLongString) {
     doc["brand"] = longval;
 
     findex.insert("brand", fvalue_to_seq_ids, seq_id_to_fvalues, true);
-    ASSERT_EQ(3, findex.facet_val_num_ids("brand", longval.substr(0, 255)));
+    ASSERT_EQ(static_cast<size_t>(3), findex.facet_val_num_ids("brand", longval.substr(0, 255)));
 
     findex.remove(doc, brandf, 0);
     findex.remove(doc, brandf, 1);
-    ASSERT_EQ(1, findex.facet_val_num_ids("brand", longval.substr(0, 255)));
+    ASSERT_EQ(static_cast<size_t>(1), findex.facet_val_num_ids("brand", longval.substr(0, 255)));
 
     findex.remove(doc, brandf, 2);
     ASSERT_FALSE(findex.facet_value_exists("brand", longval.substr(0, 255)));
@@ -109,11 +109,11 @@ TEST(FacetIndexTest, FacetValueDeletionFloat) {
     doc["price"] = 99.95;
 
     findex.insert("price", fvalue_to_seq_ids, seq_id_to_fvalues, true);
-    ASSERT_EQ(3, findex.facet_val_num_ids("price", "99.95"));
+    ASSERT_EQ(static_cast<size_t>(3), findex.facet_val_num_ids("price", "99.95"));
 
     findex.remove(doc, pricef, 0);
     findex.remove(doc, pricef, 1);
-    ASSERT_EQ(1, findex.facet_val_num_ids("price", "99.95"));
+    ASSERT_EQ(static_cast<size_t>(1), findex.facet_val_num_ids("price", "99.95"));
 
     findex.remove(doc, pricef, 2);
     ASSERT_FALSE(findex.facet_value_exists("price", "99.95"));

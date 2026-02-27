@@ -622,7 +622,6 @@ Option<bool> Join::include_references(nlohmann::json& doc, const uint32_t& seq_i
         }
 
         Option<bool> prune_doc_op = Option<bool>(true);
-        auto const& ref_collection_alias = ref_include_exclude.alias;
         if (has_filter_reference) {
             auto const& ref_filter_result = reference_filter_results.at(ref_collection_name);
             prune_doc_op = prune_ref_doc(doc, ref_filter_result, ref_include_fields_full, ref_exclude_fields_full,
@@ -806,7 +805,6 @@ void Join::get_reference_collection_names(const std::string& filter_query,
             break;
         }
 
-        auto c = filter_query[i];
         const auto& is_negate_join = filter_query[i] == '!';
         auto open_paren_pos = filter_query.find('(', ++i);
         if (open_paren_pos == std::string::npos) {
@@ -929,7 +927,7 @@ Option<bool> parse_ref_include_parameters(const std::string& include_field_exp, 
             }
 
             std::string val = kv_tokens[1];
-            for(auto i = 2; i < kv_tokens.size(); ++i) { //add and merge rest of parts
+            for(size_t i = 2; i < kv_tokens.size(); ++i) { //add and merge rest of parts
                 val += std::string(":") + kv_tokens[i];
             }
 
@@ -1207,7 +1205,7 @@ Option<bool> Join::initialize_ref_include_exclude_fields_vec(const std::string& 
 // If joins to the same collection are found in both `embedded_filter` and `query_filter`, remove the join from
 // `embedded_filter` and merge its join condition with the `query_filter` join in the following manner:
 // `$JoinCollectionName((<embedded_join_condition>) && <query_join_condition>)`
-bool Join::merge_join_conditions(string& embedded_filter, string& query_filter) {
+bool Join::merge_join_conditions(std::string& embedded_filter, std::string& query_filter) {
     std::unordered_map<std::string, std::string> coll_name_to_embedded_join;
     for (size_t i = 0; i < embedded_filter.size();) {
         auto const result = skip_index_to_join(embedded_filter, i);

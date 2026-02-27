@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <collection_manager.h>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionSchemaChangeTest : public ::testing::Test {
 protected:
@@ -14,11 +16,12 @@ protected:
 
     std::vector<std::string> query_fields;
     std::vector<sort_by> sort_fields;
+    std::string state_dir_path;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_schema_change";
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_schema_change");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -32,6 +35,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -54,8 +58,8 @@ TEST_F(CollectionSchemaChangeTest, AddNewFieldsToCollection) {
     auto results = coll1->search("fox",
                                  {"title"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     auto schema_changes = R"({
@@ -76,7 +80,7 @@ TEST_F(CollectionSchemaChangeTest, AddNewFieldsToCollection) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     sort_fields = { sort_by("category", "DESC") };
     results = coll1->search("*",
@@ -87,7 +91,7 @@ TEST_F(CollectionSchemaChangeTest, AddNewFieldsToCollection) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     schema_changes = R"({
         "fields": [
@@ -106,8 +110,8 @@ TEST_F(CollectionSchemaChangeTest, AddNewFieldsToCollection) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
     ASSERT_STREQ("100", results["facet_counts"][0]["counts"][0]["value"].get<std::string>().c_str());
     ASSERT_EQ(1, (int) results["facet_counts"][0]["counts"][0]["count"]);
 
@@ -123,7 +127,7 @@ TEST_F(CollectionSchemaChangeTest, AddNewFieldsToCollection) {
     ASSERT_TRUE(alter_op.ok());
 
     auto coll_fields = coll1->get_fields();
-    ASSERT_EQ(7, coll_fields.size());
+    ASSERT_EQ(size_t{7}, coll_fields.size());
     ASSERT_EQ(".*_bool", coll_fields[5].name);
     ASSERT_EQ("age", coll_fields[6].name);
 
@@ -146,7 +150,7 @@ TEST_F(CollectionSchemaChangeTest, AddNewFieldsToCollection) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("*",
@@ -157,7 +161,7 @@ TEST_F(CollectionSchemaChangeTest, AddNewFieldsToCollection) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_STREQ("1", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // add auto field
@@ -188,7 +192,7 @@ TEST_F(CollectionSchemaChangeTest, AddNewFieldsToCollection) {
                             "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 6000 * 1000, 4, 7, fallback,
                             4, {always}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_STREQ("2", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // try to add auto field again
@@ -230,28 +234,28 @@ TEST_F(CollectionSchemaChangeTest, AddNewFieldsToCollection) {
     ASSERT_FALSE(alter_op.ok());
     ASSERT_EQ("Field `id` cannot be altered.", alter_op.error());
 
-    ASSERT_EQ(9, coll1->get_schema().size());
-    ASSERT_EQ(12, coll1->get_fields().size());
-    ASSERT_EQ(5, coll1->_get_index()->_get_numerical_index().size());
+    ASSERT_EQ(size_t{9}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{12}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{5}, coll1->_get_index()->_get_numerical_index().size());
 
     // fields should also be persisted properly on disk
     std::string collection_meta_json;
     store->get(Collection::get_meta_key("coll1"), collection_meta_json);
     nlohmann::json collection_meta = nlohmann::json::parse(collection_meta_json);
-    ASSERT_EQ(12, collection_meta["fields"].size());
+    ASSERT_EQ(size_t{12}, collection_meta["fields"].size());
 
     // try restoring collection from disk: all fields should be preserved
     collectionManager.dispose();
     delete store;
 
-    store = new Store("/tmp/typesense_test/collection_schema_change");
+    store = new Store(state_dir_path);
     collectionManager.init(store, 1.0, "auth_key", quit);
     collectionManager.load(8, 1000);
     coll1 = collectionManager.get_collection("coll1").get();
 
-    ASSERT_EQ(9, coll1->get_schema().size());
-    ASSERT_EQ(12, coll1->get_fields().size());
-    ASSERT_EQ(5, coll1->_get_index()->_get_numerical_index().size());
+    ASSERT_EQ(size_t{9}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{12}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{5}, coll1->_get_index()->_get_numerical_index().size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -282,8 +286,8 @@ TEST_F(CollectionSchemaChangeTest, DropFieldsFromCollection) {
     auto results = coll1->search("*",
                                  {}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     auto schema_changes = R"({
@@ -301,23 +305,23 @@ TEST_F(CollectionSchemaChangeTest, DropFieldsFromCollection) {
     ASSERT_TRUE(alter_op.ok());
 
     results = coll1->search("*", {}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     auto res_op = coll1->search("quick", {"title"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5);
     ASSERT_FALSE(res_op.ok());
     ASSERT_EQ("Could not find a field named `title` in the schema.", res_op.error());
 
     auto search_schema = coll1->get_schema();
-    ASSERT_EQ(0, search_schema.size());
+    ASSERT_EQ(size_t{0}, search_schema.size());
 
     auto coll_fields = coll1->get_fields();
-    ASSERT_EQ(0, coll_fields.size());
+    ASSERT_EQ(size_t{0}, coll_fields.size());
 
-    ASSERT_EQ(0, coll1->_get_index()->_get_search_index().size());
-    ASSERT_EQ(0, coll1->_get_index()->_get_numerical_index().size());
-    ASSERT_EQ(0, coll1->_get_index()->_get_infix_index().size());
-    ASSERT_EQ(1, coll1->_get_index()->num_seq_ids());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_search_index().size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_numerical_index().size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_infix_index().size());
+    ASSERT_EQ(uint32_t{1}, coll1->_get_index()->num_seq_ids());
     ASSERT_EQ("", coll1->get_fallback_field_type());
     ASSERT_EQ("", coll1->get_default_sorting_field());
 
@@ -336,27 +340,27 @@ TEST_F(CollectionSchemaChangeTest, DropFieldsFromCollection) {
     collectionManager.dispose();
     delete store;
 
-    store = new Store("/tmp/typesense_test/collection_schema_change");
+    store = new Store(state_dir_path);
     collectionManager.init(store, 1.0, "auth_key", quit);
     collectionManager.load(8, 1000);
     coll1 = collectionManager.get_collection("coll1").get();
 
     search_schema = coll1->get_schema();
-    ASSERT_EQ(0, search_schema.size());
+    ASSERT_EQ(size_t{0}, search_schema.size());
 
     coll_fields = coll1->get_fields();
-    ASSERT_EQ(0, coll_fields.size());
+    ASSERT_EQ(size_t{0}, coll_fields.size());
 
-    ASSERT_EQ(0, coll1->_get_index()->_get_search_index().size());
-    ASSERT_EQ(0, coll1->_get_index()->_get_numerical_index().size());
-    ASSERT_EQ(0, coll1->_get_index()->_get_infix_index().size());
-    ASSERT_EQ(1, coll1->_get_index()->num_seq_ids());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_search_index().size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_numerical_index().size());
+    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_infix_index().size());
+    ASSERT_EQ(uint32_t{1}, coll1->_get_index()->num_seq_ids());
     ASSERT_EQ("", coll1->get_default_sorting_field());
     ASSERT_EQ("", coll1->get_fallback_field_type());
 
     results = coll1->search("*", {}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     res_op = coll1->search("quick", {"title"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5);
     ASSERT_FALSE(res_op.ok());
@@ -566,7 +570,7 @@ TEST_F(CollectionSchemaChangeTest, AbilityToDropAndReAddIndexAtTheSameTime) {
 
     // existing data should not have been touched
     auto res = coll1->search("he", {"title"}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, res["hits"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"].get<std::string>());
 
     // drop re-add with facet index
@@ -583,12 +587,12 @@ TEST_F(CollectionSchemaChangeTest, AbilityToDropAndReAddIndexAtTheSameTime) {
     res = coll1->search("*",
                         {}, "", {"title"}, {}, {0}, 3, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, res["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res["found"].get<size_t>());
     ASSERT_EQ("0", res["hits"][0]["document"]["id"].get<std::string>());
-    ASSERT_EQ(1, res["facet_counts"].size());
-    ASSERT_EQ(4, res["facet_counts"][0].size());
+    ASSERT_EQ(size_t{1}, res["facet_counts"].size());
+    ASSERT_EQ(size_t{4}, res["facet_counts"][0].size());
     ASSERT_EQ("title", res["facet_counts"][0]["field_name"]);
-    ASSERT_EQ(1, res["facet_counts"][0]["counts"].size());
+    ASSERT_EQ(size_t{1}, res["facet_counts"][0]["counts"].size());
     ASSERT_EQ("Hello", res["facet_counts"][0]["counts"][0]["value"].get<std::string>());
 
     // migrate int32 to int64
@@ -621,14 +625,14 @@ TEST_F(CollectionSchemaChangeTest, AddAndDropFieldImmediately) {
     doc["some_txt"] = "foo";
 
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
-    ASSERT_EQ(2, coll1->get_schema().size());
-    ASSERT_EQ(0, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{2}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{0}, coll1->get_dynamic_fields().size());
 
     auto results = coll1->search("*",
                                  {}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // add a field via alter which we will try dropping later
@@ -640,13 +644,13 @@ TEST_F(CollectionSchemaChangeTest, AddAndDropFieldImmediately) {
 
     auto alter_op = coll1->alter(schema_changes);
     ASSERT_TRUE(alter_op.ok());
-    ASSERT_EQ(3, coll1->get_schema().size());
-    ASSERT_EQ(4, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{3}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{4}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 
     results = coll1->search("*",
                             {}, "quantity_int: 1000", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // drop + re-add dynamic field
     schema_changes = R"({
@@ -659,15 +663,15 @@ TEST_F(CollectionSchemaChangeTest, AddAndDropFieldImmediately) {
     alter_op = coll1->alter(schema_changes);
     ASSERT_TRUE(alter_op.ok());
 
-    ASSERT_EQ(3, coll1->get_schema().size());
-    ASSERT_EQ(4, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{3}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{4}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 
     results = coll1->search("*",
                             {}, "", {"quantity_int"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("quantity_int", results["facet_counts"][0]["field_name"].get<std::string>());
 
     schema_changes = R"({
@@ -679,9 +683,9 @@ TEST_F(CollectionSchemaChangeTest, AddAndDropFieldImmediately) {
     alter_op = coll1->alter(schema_changes);
     ASSERT_TRUE(alter_op.ok());
 
-    ASSERT_EQ(2, coll1->get_schema().size());
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(0, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{2}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->get_dynamic_fields().size());
 
     // with bad on-disk data
     schema_changes = R"({
@@ -695,9 +699,9 @@ TEST_F(CollectionSchemaChangeTest, AddAndDropFieldImmediately) {
     ASSERT_EQ("Schema change is incompatible with the type of documents already stored in this collection. "
               "Existing data for field `some_txt` cannot be coerced into an int32.", alter_op.error());
 
-    ASSERT_EQ(2, coll1->get_schema().size());
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(0, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{2}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->get_dynamic_fields().size());
 }
 
 TEST_F(CollectionSchemaChangeTest, DropSpecificDynamicField) {
@@ -717,9 +721,9 @@ TEST_F(CollectionSchemaChangeTest, DropSpecificDynamicField) {
     doc["quantity_int"] = 1000;
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
 
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 
     // drop specific field via alter which we will try dropping later
     auto schema_changes = R"({
@@ -730,9 +734,9 @@ TEST_F(CollectionSchemaChangeTest, DropSpecificDynamicField) {
 
     auto alter_op = coll1->alter(schema_changes);
     ASSERT_TRUE(alter_op.ok());
-    ASSERT_EQ(1, coll1->get_fields().size());
-    ASSERT_EQ(0, coll1->get_schema().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 }
 
 TEST_F(CollectionSchemaChangeTest, AddDynamicFieldMatchingMultipleFields) {
@@ -749,8 +753,8 @@ TEST_F(CollectionSchemaChangeTest, AddDynamicFieldMatchingMultipleFields) {
     doc["year_int"] = 2020;
 
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
-    ASSERT_EQ(2, coll1->get_schema().size());
-    ASSERT_EQ(0, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{2}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{0}, coll1->get_dynamic_fields().size());
 
     // add a dynamic field via alter that will target both _int fields
     auto schema_changes = R"({
@@ -761,17 +765,17 @@ TEST_F(CollectionSchemaChangeTest, AddDynamicFieldMatchingMultipleFields) {
 
     auto alter_op = coll1->alter(schema_changes);
     ASSERT_TRUE(alter_op.ok());
-    ASSERT_EQ(4, coll1->get_schema().size());
-    ASSERT_EQ(5, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{4}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{5}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 
     auto results = coll1->search("*",
                             {}, "quantity_int: 1000", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll1->search("*",
                             {}, "year_int: 2020", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // drop + re-add dynamic field that targets 2 underlying fields
     schema_changes = R"({
@@ -784,22 +788,22 @@ TEST_F(CollectionSchemaChangeTest, AddDynamicFieldMatchingMultipleFields) {
     alter_op = coll1->alter(schema_changes);
     ASSERT_TRUE(alter_op.ok());
 
-    ASSERT_EQ(4, coll1->get_schema().size());
-    ASSERT_EQ(5, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{4}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{5}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 
     results = coll1->search("*",
                             {}, "", {"quantity_int"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("quantity_int", results["facet_counts"][0]["field_name"].get<std::string>());
 
     results = coll1->search("*",
                             {}, "", {"year_int"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["facet_counts"].size());
-    ASSERT_EQ(1, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, results["facet_counts"][0]["counts"][0]["count"].get<size_t>());
     ASSERT_EQ("year_int", results["facet_counts"][0]["field_name"].get<std::string>());
 
     schema_changes = R"({
@@ -811,9 +815,9 @@ TEST_F(CollectionSchemaChangeTest, AddDynamicFieldMatchingMultipleFields) {
     alter_op = coll1->alter(schema_changes);
     ASSERT_TRUE(alter_op.ok());
 
-    ASSERT_EQ(2, coll1->get_schema().size());
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(0, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{2}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->get_dynamic_fields().size());
 }
 
 TEST_F(CollectionSchemaChangeTest, DropFieldNotExistingInDocuments) {
@@ -883,9 +887,9 @@ TEST_F(CollectionSchemaChangeTest, ChangeFromPrimitiveToDynamicField) {
 
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
 
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(1, coll1->get_fields().size());
-    ASSERT_EQ(0, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{1}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->get_dynamic_fields().size());
 
     // try to alter to string* type
 
@@ -900,11 +904,11 @@ TEST_F(CollectionSchemaChangeTest, ChangeFromPrimitiveToDynamicField) {
     ASSERT_TRUE(alter_op.ok());
 
     auto results = coll1->search("123", {"tags"}, "", {"tags"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 
     // go back to plain string type
     schema_changes = R"({
@@ -918,11 +922,11 @@ TEST_F(CollectionSchemaChangeTest, ChangeFromPrimitiveToDynamicField) {
     ASSERT_TRUE(alter_op.ok());
 
     results = coll1->search("123", {"tags"}, "", {"tags"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(1, coll1->get_fields().size());
-    ASSERT_EQ(0, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{1}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->get_dynamic_fields().size());
 }
 
 TEST_F(CollectionSchemaChangeTest, ChangeFromPrimitiveToAutoField) {
@@ -944,9 +948,9 @@ TEST_F(CollectionSchemaChangeTest, ChangeFromPrimitiveToAutoField) {
 
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
 
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(1, coll1->get_fields().size());
-    ASSERT_EQ(0, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{1}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->get_dynamic_fields().size());
 
     // try to alter to auto type
 
@@ -961,11 +965,11 @@ TEST_F(CollectionSchemaChangeTest, ChangeFromPrimitiveToAutoField) {
     ASSERT_TRUE(alter_op.ok());
 
     auto results = coll1->search("123", {"tags"}, "", {"tags"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 
     // go back to plain string type
     schema_changes = R"({
@@ -979,11 +983,11 @@ TEST_F(CollectionSchemaChangeTest, ChangeFromPrimitiveToAutoField) {
     ASSERT_TRUE(alter_op.ok());
 
     results = coll1->search("123", {"tags"}, "", {"tags"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(1, coll1->get_fields().size());
-    ASSERT_EQ(0, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{1}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{0}, coll1->get_dynamic_fields().size());
 }
 
 TEST_F(CollectionSchemaChangeTest, ChangeFromStringStarToAutoField) {
@@ -1005,9 +1009,9 @@ TEST_F(CollectionSchemaChangeTest, ChangeFromStringStarToAutoField) {
 
     ASSERT_TRUE(coll1->add(doc.dump()).ok());
 
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 
     // try to alter to auto type
 
@@ -1022,11 +1026,11 @@ TEST_F(CollectionSchemaChangeTest, ChangeFromStringStarToAutoField) {
     ASSERT_TRUE(alter_op.ok());
 
     auto results = coll1->search("123", {"tags"}, "", {"tags"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 
     // go back to string* type
     schema_changes = R"({
@@ -1040,11 +1044,11 @@ TEST_F(CollectionSchemaChangeTest, ChangeFromStringStarToAutoField) {
     ASSERT_TRUE(alter_op.ok());
 
     results = coll1->search("123", {"tags"}, "", {"tags"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
-    ASSERT_EQ(1, coll1->get_schema().size());
-    ASSERT_EQ(2, coll1->get_fields().size());
-    ASSERT_EQ(1, coll1->get_dynamic_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_schema().size());
+    ASSERT_EQ(size_t{2}, coll1->get_fields().size());
+    ASSERT_EQ(size_t{1}, coll1->get_dynamic_fields().size());
 }
 
 TEST_F(CollectionSchemaChangeTest, OrderOfDropShouldNotMatter) {
@@ -1122,8 +1126,8 @@ TEST_F(CollectionSchemaChangeTest, IndexFalseToTrue) {
 
     auto res_op = coll1->search("type", {"title"}, "", {"title"}, {}, {0}, 3, 1, FREQUENCY, {true}, 5);
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
-    ASSERT_EQ(1, res_op.get()["facet_counts"].size());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["facet_counts"].size());
 }
 
 TEST_F(CollectionSchemaChangeTest, DropGeoPointArrayField) {
@@ -1190,7 +1194,7 @@ TEST_F(CollectionSchemaChangeTest, AddingFieldWithExistingNullValue) {
     ASSERT_TRUE(coll1->add(doc.dump(), UPSERT).ok());
 
     auto res = coll1->search("*", {}, "num:100", {}, {}, {2}, 10, 1, FREQUENCY, {true}).get();
-    ASSERT_EQ(1, res["hits"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
 }
 
 TEST_F(CollectionSchemaChangeTest, DropIntegerFieldAndAddStringValues) {
@@ -1265,7 +1269,7 @@ TEST_F(CollectionSchemaChangeTest, DropIntegerFieldAndAddStringValues) {
     // try searching for string label
     auto res_op = coll1->search("xyz", {"label"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5);
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 }
 
 TEST_F(CollectionSchemaChangeTest, NestedFieldExplicitSchemaDropping) {
@@ -1295,9 +1299,9 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldExplicitSchemaDropping) {
     auto fields = coll1->get_fields();
     auto schema_map = coll1->get_schema();
 
-    ASSERT_EQ(4, fields.size());
-    ASSERT_EQ(4, schema_map.size());
-    ASSERT_EQ(2, coll1->get_nested_fields().size());
+    ASSERT_EQ(size_t{4}, fields.size());
+    ASSERT_EQ(size_t{4}, schema_map.size());
+    ASSERT_EQ(size_t{2}, coll1->get_nested_fields().size());
 
     // drop object field
 
@@ -1313,9 +1317,9 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldExplicitSchemaDropping) {
     fields = coll1->get_fields();
     schema_map = coll1->get_schema();
 
-    ASSERT_EQ(2, fields.size());
-    ASSERT_EQ(2, schema_map.size());
-    ASSERT_EQ(1, coll1->get_nested_fields().size());
+    ASSERT_EQ(size_t{2}, fields.size());
+    ASSERT_EQ(size_t{2}, schema_map.size());
+    ASSERT_EQ(size_t{1}, coll1->get_nested_fields().size());
 
     // drop primitive nested field
 
@@ -1331,9 +1335,9 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldExplicitSchemaDropping) {
     fields = coll1->get_fields();
     schema_map = coll1->get_schema();
 
-    ASSERT_EQ(1, fields.size());
-    ASSERT_EQ(1, schema_map.size());
-    ASSERT_EQ(0, coll1->get_nested_fields().size());
+    ASSERT_EQ(size_t{1}, fields.size());
+    ASSERT_EQ(size_t{1}, schema_map.size());
+    ASSERT_EQ(size_t{0}, coll1->get_nested_fields().size());
 }
 
 TEST_F(CollectionSchemaChangeTest, NestedFieldSchemaAdditions) {
@@ -1361,9 +1365,9 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldSchemaAdditions) {
     auto fields = coll1->get_fields();
     auto schema_map = coll1->get_schema();
 
-    ASSERT_EQ(1, fields.size());
-    ASSERT_EQ(1, schema_map.size());
-    ASSERT_EQ(0, coll1->get_nested_fields().size());
+    ASSERT_EQ(size_t{1}, fields.size());
+    ASSERT_EQ(size_t{1}, schema_map.size());
+    ASSERT_EQ(size_t{0}, coll1->get_nested_fields().size());
 
     // add plain object field
 
@@ -1379,9 +1383,9 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldSchemaAdditions) {
     fields = coll1->get_fields();
     schema_map = coll1->get_schema();
 
-    ASSERT_EQ(3, fields.size());
-    ASSERT_EQ(3, schema_map.size());
-    ASSERT_EQ(1, coll1->get_nested_fields().size());
+    ASSERT_EQ(size_t{3}, fields.size());
+    ASSERT_EQ(size_t{3}, schema_map.size());
+    ASSERT_EQ(size_t{1}, coll1->get_nested_fields().size());
 
     // nested primitive field
 
@@ -1397,18 +1401,18 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldSchemaAdditions) {
     fields = coll1->get_fields();
     schema_map = coll1->get_schema();
 
-    ASSERT_EQ(4, fields.size());
-    ASSERT_EQ(4, schema_map.size());
-    ASSERT_EQ(2, coll1->get_nested_fields().size());
+    ASSERT_EQ(size_t{4}, fields.size());
+    ASSERT_EQ(size_t{4}, schema_map.size());
+    ASSERT_EQ(size_t{2}, coll1->get_nested_fields().size());
 
     // try searching on new fields
     auto res_op = coll1->search("jack", {"person.name"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5);
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
     res_op = coll1->search("nyc", {"school.city"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5);
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 }
 
 TEST_F(CollectionSchemaChangeTest, DropAndReAddNestedObject) {
@@ -1437,8 +1441,8 @@ TEST_F(CollectionSchemaChangeTest, DropAndReAddNestedObject) {
     auto fields = coll1->get_fields();
     auto schema_map = coll1->get_schema();
 
-    ASSERT_EQ(4, fields.size());
-    ASSERT_EQ(4, schema_map.size());
+    ASSERT_EQ(size_t{4}, fields.size());
+    ASSERT_EQ(size_t{4}, schema_map.size());
 
     // drop + re-add object field
 
@@ -1457,10 +1461,10 @@ TEST_F(CollectionSchemaChangeTest, DropAndReAddNestedObject) {
 
     auto res_op = coll1->search("jack", {"person.name"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5);
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 
-    ASSERT_EQ(4, fields.size());
-    ASSERT_EQ(4, schema_map.size());
+    ASSERT_EQ(size_t{4}, fields.size());
+    ASSERT_EQ(size_t{4}, schema_map.size());
 
     // drop + re-add school
 
@@ -1477,8 +1481,8 @@ TEST_F(CollectionSchemaChangeTest, DropAndReAddNestedObject) {
     fields = coll1->get_fields();
     schema_map = coll1->get_schema();
 
-    ASSERT_EQ(4, fields.size());
-    ASSERT_EQ(4, schema_map.size());
+    ASSERT_EQ(size_t{4}, fields.size());
+    ASSERT_EQ(size_t{4}, schema_map.size());
 }
 
 TEST_F(CollectionSchemaChangeTest, UpdateAfterNestedNullValue) {
@@ -1583,7 +1587,7 @@ TEST_F(CollectionSchemaChangeTest, AlterValidationShouldNotRejectBadValues) {
 
     auto res_op = coll1->search("test", {"description"}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(1, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_op.get()["found"].get<size_t>());
 }
 
 TEST_F(CollectionSchemaChangeTest, GeoFieldSchemaAddition) {
@@ -1619,7 +1623,7 @@ TEST_F(CollectionSchemaChangeTest, GeoFieldSchemaAddition) {
     // try searching on new fields
     auto res_op = coll1->search("*", {}, "location:(22.848641, 89.5406279, 50 km)", {}, {}, {0}, 3, 1, FREQUENCY, {true});
     ASSERT_TRUE(res_op.ok());
-    ASSERT_EQ(2, res_op.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_op.get()["found"].get<size_t>());
 }
 
 TEST_F(CollectionSchemaChangeTest, NestedFieldDrop) {
@@ -1632,7 +1636,7 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldDrop) {
                 ]
             })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
@@ -1652,8 +1656,8 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldDrop) {
     ASSERT_TRUE(schema_change_op.ok());
 
     auto actual_schema = coll->get_schema();
-    ASSERT_EQ(1, actual_schema.size());
-    ASSERT_EQ(1, actual_schema.count("shops"));
+    ASSERT_EQ(size_t{1}, actual_schema.size());
+    ASSERT_EQ(size_t{1}, actual_schema.count("shops"));
 
     // add the field back
 
@@ -1666,9 +1670,9 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldDrop) {
     schema_change_op = coll->alter(schema_change);
     ASSERT_TRUE(schema_change_op.ok());
     actual_schema = coll->get_schema();
-    ASSERT_EQ(2, actual_schema.size());
-    ASSERT_EQ(1, actual_schema.count("shops"));
-    ASSERT_EQ(1, actual_schema.count("shops.is_available"));
+    ASSERT_EQ(size_t{2}, actual_schema.size());
+    ASSERT_EQ(size_t{1}, actual_schema.count("shops"));
+    ASSERT_EQ(size_t{1}, actual_schema.count("shops.is_available"));
 }
 
 TEST_F(CollectionSchemaChangeTest, NestedFieldReIndex) {
@@ -1681,7 +1685,7 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldReIndex) {
                 ]
             })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
@@ -1702,7 +1706,7 @@ TEST_F(CollectionSchemaChangeTest, NestedFieldReIndex) {
     ASSERT_TRUE(schema_change_op.ok());
 
     auto actual_schema = coll->get_schema();
-    ASSERT_EQ(2, actual_schema.size());
+    ASSERT_EQ(size_t{2}, actual_schema.size());
     ASSERT_TRUE(actual_schema["shops.is_available"].facet);
 }
 
@@ -1714,7 +1718,7 @@ TEST_F(CollectionSchemaChangeTest, UpdateSchemaWithNewEmbeddingField) {
                 ]
             })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
     
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
@@ -1730,7 +1734,7 @@ TEST_F(CollectionSchemaChangeTest, UpdateSchemaWithNewEmbeddingField) {
     auto res = coll->alter(update_schema);
 
     ASSERT_TRUE(res.ok());
-    ASSERT_EQ(1, coll->get_embedding_fields().size());
+    ASSERT_EQ(size_t{1}, coll->get_embedding_fields().size());
 
     auto search_schema = coll->get_schema();
 
@@ -1738,7 +1742,7 @@ TEST_F(CollectionSchemaChangeTest, UpdateSchemaWithNewEmbeddingField) {
     ASSERT_TRUE(embedding_field_it != coll->get_schema().end());
     ASSERT_EQ("embedding", embedding_field_it.value().name);
     ASSERT_EQ("float[]", embedding_field_it.value().type);
-    ASSERT_EQ(384, embedding_field_it.value().num_dim);
+    ASSERT_EQ(uint32_t{384}, embedding_field_it.value().num_dim);
 
     nlohmann::json doc;
     doc["names"] = {"hello", "world"};
@@ -1747,7 +1751,7 @@ TEST_F(CollectionSchemaChangeTest, UpdateSchemaWithNewEmbeddingField) {
     ASSERT_TRUE(add_op.ok());
     auto added_doc = add_op.get();
     
-    ASSERT_EQ(384, added_doc["embedding"].get<std::vector<float>>().size());
+    ASSERT_EQ(size_t{384}, added_doc["embedding"].get<std::vector<float>>().size());
 }
 
 TEST_F(CollectionSchemaChangeTest, DropFieldUsedForEmbedding) {
@@ -1764,24 +1768,24 @@ TEST_F(CollectionSchemaChangeTest, DropFieldUsedForEmbedding) {
             ]
         })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
     Collection* coll = op.get();
 
-    LOG(INFO) << "Created collection";
+    TS_LOG(INFO) << "Created collection";
 
     auto embedding_fields = coll->get_embedding_fields();
-    ASSERT_EQ(2, embedding_fields.size());
-    ASSERT_EQ(2, embedding_fields["embedding"].embed[fields::from].get<std::vector<std::string>>().size());
-    ASSERT_EQ(1, embedding_fields["embedding2"].embed[fields::from].get<std::vector<std::string>>().size());
+    ASSERT_EQ(size_t{2}, embedding_fields.size());
+    ASSERT_EQ(size_t{2}, embedding_fields["embedding"].embed[fields::from].get<std::vector<std::string>>().size());
+    ASSERT_EQ(size_t{1}, embedding_fields["embedding2"].embed[fields::from].get<std::vector<std::string>>().size());
 
     auto coll_schema = coll->get_schema();
-    ASSERT_EQ(5, coll_schema.size());
+    ASSERT_EQ(size_t{5}, coll_schema.size());
 
     auto the_fields = coll->get_fields();
-    ASSERT_EQ(5, the_fields.size());
+    ASSERT_EQ(size_t{5}, the_fields.size());
 
     auto schema_changes = R"({
         "fields": [
@@ -1793,8 +1797,8 @@ TEST_F(CollectionSchemaChangeTest, DropFieldUsedForEmbedding) {
     ASSERT_TRUE(alter_op.ok());
 
     embedding_fields = coll->get_embedding_fields();
-    ASSERT_EQ(1, embedding_fields.size());
-    ASSERT_EQ(1, embedding_fields["embedding"].embed[fields::from].get<std::vector<std::string>>().size());
+    ASSERT_EQ(size_t{1}, embedding_fields.size());
+    ASSERT_EQ(size_t{1}, embedding_fields["embedding"].embed[fields::from].get<std::vector<std::string>>().size());
     ASSERT_EQ("category", embedding_fields["embedding"].embed[fields::from].get<std::vector<std::string>>()[0]);
 
     schema_changes = R"({
@@ -1807,17 +1811,17 @@ TEST_F(CollectionSchemaChangeTest, DropFieldUsedForEmbedding) {
     ASSERT_TRUE(alter_op.ok());
 
     embedding_fields = coll->get_embedding_fields();
-    ASSERT_EQ(0, embedding_fields.size());
-    ASSERT_EQ(0, coll->_get_index()->_get_vector_index().size());
+    ASSERT_EQ(size_t{0}, embedding_fields.size());
+    ASSERT_EQ(size_t{0}, coll->_get_index()->_get_vector_index().size());
 
     // only title remains
 
     coll_schema = coll->get_schema();
-    ASSERT_EQ(1, coll_schema.size());
+    ASSERT_EQ(size_t{1}, coll_schema.size());
     ASSERT_EQ("title", coll_schema["title"].name);
 
     the_fields = coll->get_fields();
-    ASSERT_EQ(1, the_fields.size());
+    ASSERT_EQ(size_t{1}, the_fields.size());
     ASSERT_EQ("title", the_fields[0].name);
 }
 
@@ -1830,18 +1834,18 @@ TEST_F(CollectionSchemaChangeTest, EmbeddingFieldsMapTest) {
                             ]
                         })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
     Collection* coll = op.get();
 
     auto embedding_fields_map = coll->get_embedding_fields();
-    ASSERT_EQ(1, embedding_fields_map.size());
+    ASSERT_EQ(size_t{1}, embedding_fields_map.size());
     auto embedding_field_it = embedding_fields_map.find("embedding");
     ASSERT_TRUE(embedding_field_it != embedding_fields_map.end());
     ASSERT_EQ("embedding", embedding_field_it.value().name);
-    ASSERT_EQ(1, embedding_field_it.value().embed[fields::from].get<std::vector<std::string>>().size());
+    ASSERT_EQ(size_t{1}, embedding_field_it.value().embed[fields::from].get<std::vector<std::string>>().size());
     ASSERT_EQ("name", embedding_field_it.value().embed[fields::from].get<std::vector<std::string>>()[0]);
 
     // drop the embedding field
@@ -1855,7 +1859,7 @@ TEST_F(CollectionSchemaChangeTest, EmbeddingFieldsMapTest) {
     ASSERT_TRUE(update_op.ok());
 
     embedding_fields_map = coll->get_embedding_fields();
-    ASSERT_EQ(0, embedding_fields_map.size());
+    ASSERT_EQ(size_t{0}, embedding_fields_map.size());
 }
 
 TEST_F(CollectionSchemaChangeTest, DropAndReindexEmbeddingField) {
@@ -1867,7 +1871,7 @@ TEST_F(CollectionSchemaChangeTest, DropAndReindexEmbeddingField) {
         ]
     })"_json;
     
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto create_op = collectionManager.create_collection(schema);
     ASSERT_TRUE(create_op.ok());
@@ -1886,7 +1890,7 @@ TEST_F(CollectionSchemaChangeTest, DropAndReindexEmbeddingField) {
 
     auto embedding_fields_map = coll->get_embedding_fields();
 
-    ASSERT_EQ(1, embedding_fields_map.size());
+    ASSERT_EQ(size_t{1}, embedding_fields_map.size());
 
     // try adding a document
     nlohmann::json doc;
@@ -1894,7 +1898,7 @@ TEST_F(CollectionSchemaChangeTest, DropAndReindexEmbeddingField) {
     auto add_op = coll->add(doc.dump());
     ASSERT_TRUE(add_op.ok());
     auto added_doc = add_op.get();
-    ASSERT_EQ(384, added_doc["embedding"].get<std::vector<float>>().size());
+    ASSERT_EQ(size_t{384}, added_doc["embedding"].get<std::vector<float>>().size());
 
     // alter with bad schema
     alter_schema = R"({
@@ -1924,7 +1928,7 @@ TEST_F(CollectionSchemaChangeTest, DropAndReindexEmbeddingField) {
     add_op = coll->add(doc.dump());
     ASSERT_TRUE(add_op.ok());
     added_doc = add_op.get();
-    ASSERT_EQ(384, added_doc["embedding"].get<std::vector<float>>().size());
+    ASSERT_EQ(size_t{384}, added_doc["embedding"].get<std::vector<float>>().size());
 }
 
 TEST_F(CollectionSchemaChangeTest, EmbeddingFieldAlterDropTest) {
@@ -1936,15 +1940,15 @@ TEST_F(CollectionSchemaChangeTest, EmbeddingFieldAlterDropTest) {
                 ]
             })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
     Collection* coll = op.get();
 
     auto& vec_index = coll->_get_index()->_get_vector_index();
-    ASSERT_EQ(1, vec_index.size());
-    ASSERT_EQ(1, vec_index.count("embedding"));
+    ASSERT_EQ(size_t{1}, vec_index.size());
+    ASSERT_EQ(size_t{1}, vec_index.count("embedding"));
 
 
     nlohmann::json schema_change = R"({
@@ -1956,8 +1960,8 @@ TEST_F(CollectionSchemaChangeTest, EmbeddingFieldAlterDropTest) {
     auto schema_change_op = coll->alter(schema_change);
 
     ASSERT_TRUE(schema_change_op.ok());
-    ASSERT_EQ(0, vec_index.size());
-    ASSERT_EQ(0, vec_index.count("embedding"));
+    ASSERT_EQ(size_t{0}, vec_index.size());
+    ASSERT_EQ(size_t{0}, vec_index.count("embedding"));
 }
 
 TEST_F(CollectionSchemaChangeTest, EmbeddingFieldAlterUpdateOldDocs) {
@@ -1970,7 +1974,7 @@ TEST_F(CollectionSchemaChangeTest, EmbeddingFieldAlterUpdateOldDocs) {
             "enable_nested_fields": true
         })"_json;
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto op = collectionManager.create_collection(schema);
     ASSERT_TRUE(op.ok());
@@ -1995,11 +1999,11 @@ TEST_F(CollectionSchemaChangeTest, EmbeddingFieldAlterUpdateOldDocs) {
 
     auto search_res = coll->search("*", {}, "", {}, {}, {0}, 3, 1, FREQUENCY, {true}, 5);
 
-    ASSERT_EQ(1, search_res.get()["found"].get<size_t>());
-    ASSERT_EQ(384, search_res.get()["hits"][0]["document"]["embedding"].get<std::vector<float>>().size());
-    ASSERT_EQ(1, search_res.get()["hits"][0]["document"]["nested"].size());
-    ASSERT_EQ(0, search_res.get()["hits"][0]["document"].count(".flat"));
-    ASSERT_EQ(0, search_res.get()["hits"][0]["document"].count("nested.hello"));
+    ASSERT_EQ(size_t{1}, search_res.get()["found"].get<size_t>());
+    ASSERT_EQ(size_t{384}, search_res.get()["hits"][0]["document"]["embedding"].get<std::vector<float>>().size());
+    ASSERT_EQ(size_t{1}, search_res.get()["hits"][0]["document"]["nested"].size());
+    ASSERT_EQ(size_t{0}, search_res.get()["hits"][0]["document"].count(".flat"));
+    ASSERT_EQ(size_t{0}, search_res.get()["hits"][0]["document"].count("nested.hello"));
 }
 
 TEST_F(CollectionSchemaChangeTest, AlterAddSameFieldTwice) {
@@ -2058,7 +2062,7 @@ TEST_F(CollectionSchemaChangeTest, AlterUnsortableFieldWithSortEnabled) {
 
     // Get fields to verify no update happened
     auto fields =  coll->get_fields();
-    ASSERT_EQ(1, fields.size());
+    ASSERT_EQ(size_t{1}, fields.size());
     ASSERT_EQ("title", fields[0].name);
     ASSERT_EQ("string", fields[0].type);
 }
@@ -2085,17 +2089,17 @@ TEST_F(CollectionSchemaChangeTest, DropObjectFieldWithSimilarPrefix) {
     auto fields = coll->get_fields();
     auto schema_map = coll->get_schema();
     
-    ASSERT_EQ(6, fields.size());
-    ASSERT_EQ(6, schema_map.size());
-    ASSERT_EQ(1, coll->get_nested_fields().size());
+    ASSERT_EQ(size_t{6}, fields.size());
+    ASSERT_EQ(size_t{6}, schema_map.size());
+    ASSERT_EQ(size_t{1}, coll->get_nested_fields().size());
     
-    ASSERT_EQ(1, schema_map.count("title"));
-    ASSERT_EQ(1, schema_map.count("attributes"));
+    ASSERT_EQ(size_t{1}, schema_map.count("title"));
+    ASSERT_EQ(size_t{1}, schema_map.count("attributes"));
 
-    ASSERT_EQ(1, schema_map.count("attributes.filter"));
-    ASSERT_EQ(1, schema_map.count("attributes.nested_string"));
-    ASSERT_EQ(1, schema_map.count("attributes_filter"));
-    ASSERT_EQ(1, schema_map.count("attributes_nested_string"));
+    ASSERT_EQ(size_t{1}, schema_map.count("attributes.filter"));
+    ASSERT_EQ(size_t{1}, schema_map.count("attributes.nested_string"));
+    ASSERT_EQ(size_t{1}, schema_map.count("attributes_filter"));
+    ASSERT_EQ(size_t{1}, schema_map.count("attributes_nested_string"));
 
     nlohmann::json doc;
     doc["title"] = "Test Company";
@@ -2121,15 +2125,15 @@ TEST_F(CollectionSchemaChangeTest, DropObjectFieldWithSimilarPrefix) {
     schema_map = coll->get_schema();
     
     // 3 fields left: title, attributes_filter, attributes_nested_string
-    ASSERT_EQ(3, fields.size());
-    ASSERT_EQ(3, schema_map.size());
-    ASSERT_EQ(0, coll->get_nested_fields().size());
+    ASSERT_EQ(size_t{3}, fields.size());
+    ASSERT_EQ(size_t{3}, schema_map.size());
+    ASSERT_EQ(size_t{0}, coll->get_nested_fields().size());
     
-    ASSERT_EQ(0, schema_map.count("attributes"));
-    ASSERT_EQ(0, schema_map.count("attributes.filter"));
-    ASSERT_EQ(0, schema_map.count("attributes.nested_string"));
+    ASSERT_EQ(size_t{0}, schema_map.count("attributes"));
+    ASSERT_EQ(size_t{0}, schema_map.count("attributes.filter"));
+    ASSERT_EQ(size_t{0}, schema_map.count("attributes.nested_string"));
     
-    ASSERT_EQ(1, schema_map.count("title"));
-    ASSERT_EQ(1, schema_map.count("attributes_filter"));
-    ASSERT_EQ(1, schema_map.count("attributes_nested_string"));
+    ASSERT_EQ(size_t{1}, schema_map.count("title"));
+    ASSERT_EQ(size_t{1}, schema_map.count("attributes_filter"));
+    ASSERT_EQ(size_t{1}, schema_map.count("attributes_nested_string"));
 }

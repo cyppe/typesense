@@ -3,6 +3,7 @@
 #include <butil/files/file_enumerator.h>
 #include <butil/string_printf.h>
 #include <file_utils.h>
+#include "logger.h"
 
 bool directory_exists(const std::string& dir_path) {
     struct stat info;
@@ -23,12 +24,12 @@ bool copy_dir(const std::string& from_path, const std::string& to_path) {
     struct stat from_stat;
 
     if (stat(from_path.c_str(), &from_stat) < 0 || !S_ISDIR(from_stat.st_mode)) {
-        LOG(WARNING) << "stat " << from_path << " failed";
+        TS_LOG(WARNING) << "stat " << from_path << " failed";
         return false;
     }
 
     if (!butil::CreateDirectory(butil::FilePath(to_path))) {
-        LOG(WARNING) << "CreateDirectory " << to_path << " failed";
+        TS_LOG(WARNING) << "CreateDirectory " << to_path << " failed";
         return false;
     }
 
@@ -41,7 +42,7 @@ bool copy_dir(const std::string& from_path, const std::string& to_path) {
 
         if (0 != link(src_file.c_str(), dst_file.c_str())) {
             if (!butil::CopyFile(butil::FilePath(src_file), butil::FilePath(dst_file))) {
-                LOG(WARNING) << "copy " << src_file << " to " << dst_file << " failed";
+                TS_LOG(WARNING) << "copy " << src_file << " to " << dst_file << " failed";
                 return false;
             }
         }
@@ -54,12 +55,12 @@ bool mv_dir(const std::string& from_path, const std::string& to_path) {
     struct stat from_stat;
 
     if (stat(from_path.c_str(), &from_stat) < 0 || !S_ISDIR(from_stat.st_mode)) {
-        LOG(WARNING) << "stat " << from_path << " failed";
+        TS_LOG(WARNING) << "stat " << from_path << " failed";
         return false;
     }
 
     if (!butil::CreateDirectory(butil::FilePath(to_path))) {
-        LOG(WARNING) << "CreateDirectory " << to_path << " failed";
+        TS_LOG(WARNING) << "CreateDirectory " << to_path << " failed";
         return false;
     }
 
@@ -79,7 +80,7 @@ bool mv_dir(const std::string& from_path, const std::string& to_path) {
 
         butil::File::Error error;
         if (!butil::ReplaceFile(butil::FilePath(src_file), butil::FilePath(dst_file), &error)) {
-            LOG(WARNING) << "move " << src_file << " to " << dst_file << " failed: " << error;
+            TS_LOG(WARNING) << "move " << src_file << " to " << dst_file << " failed: " << error;
             return false;
         }
     }

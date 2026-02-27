@@ -1,10 +1,18 @@
-#pragma
+#pragma once
 
 #include <vector>
 #include <unordered_map>
 #include <sentencepiece_processor.h>
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#pragma clang diagnostic ignored "-Wpessimizing-move"
+#endif
 #include <tokenizer/bert_tokenizer.hpp>
 #include <clip_tokenizer.h>
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 #include <core/session/onnxruntime_cxx_api.h>
 #include <mutex>
 
@@ -69,8 +77,8 @@ class XLMRobertaTokenizer : public TextEmbeddingTokenizer {
             {"<unk>", 3},
         };
         std::unique_ptr<sentencepiece::SentencePieceProcessor> sentencepiece_tokenizer_;
-        const int token_to_id(const std::string& token);
-        const std::vector<std::string> tokenize(const std::string& text);
+        int token_to_id(const std::string& token);
+        std::vector<std::string> tokenize(const std::string& text);
     public:
         XLMRobertaTokenizer(const std::string& model_path);
         encoded_input_t Encode(const std::string& text) override;

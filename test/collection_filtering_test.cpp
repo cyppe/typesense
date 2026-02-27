@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <collection_manager.h>
 #include "collection.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class CollectionFilteringTest : public ::testing::Test {
 protected:
-    std::string state_dir_path = "/tmp/typesense_test/collection_filtering";
+    std::string state_dir_path;
     Store *store;
     CollectionManager & collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
@@ -17,8 +19,9 @@ protected:
     std::vector<sort_by> sort_fields;
 
     void setupCollection() {
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_filtering");
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -32,6 +35,7 @@ protected:
     virtual void TearDown() {
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -64,7 +68,7 @@ TEST_F(CollectionFilteringTest, FilterOnTextFields) {
     query_fields = {"name"};
     std::vector<std::string> facets;
     nlohmann::json results = coll_array_fields->search("Jeremy", query_fields, "tags: gold", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     std::vector<std::string> ids = {"4", "0", "2"};
 
@@ -76,29 +80,29 @@ TEST_F(CollectionFilteringTest, FilterOnTextFields) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "tags : fine PLATINUM", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll_array_fields->search("Jeremy", query_fields, "tags : foobarbaz", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // using just ":", filtering should return documents that contain ALL tokens in the filter expression
     results = coll_array_fields->search("Jeremy", query_fields, "tags : PLATINUM", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // no documents contain "white"
     results = coll_array_fields->search("Jeremy", query_fields, "tags : WHITE", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // no documents contain both "white" and "platinum", so
     results = coll_array_fields->search("Jeremy", query_fields, "tags : WHITE PLATINUM", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // with exact match operator (:=) partial matches are not allowed
     results = coll_array_fields->search("Jeremy", query_fields, "tags:= PLATINUM", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll_array_fields->search("Jeremy", query_fields, "tags : bronze", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ids = {"4", "2"};
 
@@ -111,7 +115,7 @@ TEST_F(CollectionFilteringTest, FilterOnTextFields) {
 
     // search with a list of tags, also testing extra padding of space
     results = coll_array_fields->search("Jeremy", query_fields, "tags: [bronze,   silver]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"3", "4", "0", "2"};
 
@@ -124,17 +128,17 @@ TEST_F(CollectionFilteringTest, FilterOnTextFields) {
 
     // need to be exact matches
     results = coll_array_fields->search("Jeremy", query_fields, "tags: bronze", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // when comparators are used, they should be ignored
     results = coll_array_fields->search("Jeremy", query_fields, "tags:<bronze", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     results = coll_array_fields->search("Jeremy", query_fields, "tags:<=BRONZE", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     results = coll_array_fields->search("Jeremy", query_fields, "tags:>BRONZE", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     // bad filter value (empty)
     auto res_op = coll_array_fields->search("Jeremy", query_fields, "tags:=", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false});
@@ -193,8 +197,8 @@ TEST_F(CollectionFilteringTest, FilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"].at("id"));
     ASSERT_EQ("1", res_obj["hits"][1]["document"].at("id"));
     ASSERT_EQ("0", res_obj["hits"][2]["document"].at("id"));
@@ -209,8 +213,8 @@ TEST_F(CollectionFilteringTest, FilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("2", res_obj["hits"][0]["document"].at("id"));
     ASSERT_EQ("1", res_obj["hits"][1]["document"].at("id"));
 }
@@ -227,7 +231,7 @@ TEST_F(CollectionFilteringTest, FilterByExactPhraseMatch) {
     coll->add(R"({"id": "3", "text": "Formula One is a popular sport."})");
 
     auto results = coll->search("*", {"text"}, "text:\"Formula One\"", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("1", results["hits"][1]["document"]["id"].get<std::string>());
 }
@@ -244,7 +248,7 @@ TEST_F(CollectionFilteringTest, FilterByNegatedExactPhraseMatch) {
     coll->add(R"({"id": "3", "text": "another test case"})");
 
     auto results = coll->search("*", {"text"}, "text:!=\"this is a test\"", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
 
     std::set<std::string> expected_ids = {"2", "3"};
     std::set<std::string> actual_ids;
@@ -267,7 +271,7 @@ TEST_F(CollectionFilteringTest, FilterByExactPhraseMatchInArray) {
     coll->add(R"({"id": "4", "tags": ["new york", "paris"]})");
 
     auto results = coll->search("*", {"tags"}, "tags:[\"new york\", paris]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
 
     std::set<std::string> expected_ids = {"1", "3", "4"};
     std::set<std::string> actual_ids;
@@ -290,7 +294,7 @@ TEST_F(CollectionFilteringTest, FilterByNegatedExactPhraseMatchInArray) {
     coll->add(R"({"id": "4", "tags": ["new york", "paris"]})");
 
     auto results = coll->search("*", {"tags"}, "tags:!=[\"new york\", paris]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     std::set<std::string> expected_ids = {"2"};
     std::set<std::string> actual_ids;
@@ -331,7 +335,7 @@ TEST_F(CollectionFilteringTest, LazyEvaluationOfFilterBy) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
 
     std::set<std::string> expected_ids = {"2", "5", "8"};
     std::set<std::string> actual_ids;
@@ -372,7 +376,7 @@ TEST_F(CollectionFilteringTest, LazyEvaluationOfFilterByNegated) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
 
     std::set<std::string> expected_ids = {"1", "3", "7"};
     std::set<std::string> actual_ids;
@@ -413,7 +417,7 @@ TEST_F(CollectionFilteringTest, LazyEvaluationOfFilterByInArray) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
 
     std::set<std::string> expected_ids = {"1", "2", "5", "8"};
     std::set<std::string> actual_ids;
@@ -454,7 +458,7 @@ TEST_F(CollectionFilteringTest, LazyEvaluationOfFilterByInArrayNegated) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
 
     std::set<std::string> expected_ids = {"3", "7"};
     std::set<std::string> actual_ids;
@@ -498,36 +502,36 @@ TEST_F(CollectionFilteringTest, FacetFieldStringFiltering) {
     facets.clear();
     facets.emplace_back("starring");
     auto results = coll_str->search("*", query_fields, "starring:= samuel", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // multiple tokens but with a typo on one of them
     results = coll_str->search("*", query_fields, "starring:= ssamuel l. Jackson", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // same should succeed when verbatim filter is made
     results = coll_str->search("*", query_fields, "starring:= samuel l. Jackson", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
 
     // with backticks
     results = coll_str->search("*", query_fields, "starring:= `samuel l. Jackson`", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
 
     // contains filter with a single token should work as well
     results = coll_str->search("*", query_fields, "starring: jackson", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
 
     results = coll_str->search("*", query_fields, "starring: samuel", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
 
     // contains when only 1 token so should not match
     results = coll_str->search("*", query_fields, "starring: samuel johnson", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll_str");
 }
@@ -569,47 +573,47 @@ TEST_F(CollectionFilteringTest, FacetFieldStringArrayFiltering) {
     facets.clear();
     facets.push_back("tags");
     auto results = coll_array_fields->search("Jeremy", query_fields, "tags:= PLATINUM", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll_array_fields->search("Jeremy", query_fields, "tags:= FINE", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll_array_fields->search("Jeremy", query_fields, "tags:= FFINE PLATINUM", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // partial token filter should be made without "=" operator
     results = coll_array_fields->search("Jeremy", query_fields, "tags: PLATINUM", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     results = coll_array_fields->search("Jeremy", query_fields, "tags: FINE", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // to make tokens match facet value exactly, use "=" operator
     results = coll_array_fields->search("Jeremy", query_fields, "tags:= FINE PLATINUM", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     // allow exact filter on non-faceted field
     results = coll_array_fields->search("Jeremy", query_fields, "name:= Jeremy Howard", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
-    ASSERT_EQ(5, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["found"].get<size_t>());
 
     // multi match exact query (OR condition)
     results = coll_array_fields->search("Jeremy", query_fields, "tags:= [Gold, bronze]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
 
     results = coll_array_fields->search("Jeremy", query_fields, "tags:= [Gold, bronze, fine PLATINUM]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
-    ASSERT_EQ(4, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
 
     // single array multi match
     results = coll_array_fields->search("Jeremy", query_fields, "tags:= [fine PLATINUM]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
 
     collectionManager.drop_collection("coll_array_fields");
 }
@@ -638,11 +642,11 @@ TEST_F(CollectionFilteringTest, FilterOnTextFieldWithColon) {
     std::vector<std::string> facets;
 
     auto res = coll1->search("*", query_fields, "url:= https://example.com/1", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, res["hits"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
     ASSERT_STREQ("1", res["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     res = coll1->search("*", query_fields, "url: https://example.com/1", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, res["hits"].size());
+    ASSERT_EQ(size_t{1}, res["hits"].size());
     ASSERT_STREQ("1", res["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     collectionManager.drop_collection("coll1");
@@ -678,37 +682,37 @@ TEST_F(CollectionFilteringTest, HandleBadlyFormedFilterQuery) {
 
     // when filter field does not exist in the schema
     nlohmann::json results = coll_array_fields->search("Jeremy", query_fields, "tagzz: gold", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // compound filter expression containing an unknown field
     results = coll_array_fields->search("Jeremy", query_fields,
                "(age:>0 ||  timestamps:> 0) || tagzz: gold", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // unbalanced paranthesis
     results = coll_array_fields->search("Jeremy", query_fields,
                                         "(age:>0 ||  timestamps:> 0) || ", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // searching using a string for a numeric field
     results = coll_array_fields->search("Jeremy", query_fields, "age: abcdef", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // searching using a string for a numeric array field
     results = coll_array_fields->search("Jeremy", query_fields, "timestamps: abcdef", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // malformed k:v syntax
     results = coll_array_fields->search("Jeremy", query_fields, "timestamps abcdef", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // just spaces - must be treated as empty filter
     results = coll_array_fields->search("Jeremy", query_fields, "  ", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     // wrapping number with quotes
     results = coll_array_fields->search("Jeremy", query_fields, "age: '21'", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // empty value for a numerical filter field
     auto res_op = coll_array_fields->search("Jeremy", query_fields, "age:", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false});
@@ -760,7 +764,7 @@ TEST_F(CollectionFilteringTest, FilterAndQueryFieldRestrictions) {
     ASSERT_TRUE(result_op.ok());
 
     nlohmann::json results = result_op.get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     std::string solo_id = results["hits"].at(0)["document"]["id"];
     ASSERT_STREQ("14", solo_id.c_str());
 
@@ -770,7 +774,7 @@ TEST_F(CollectionFilteringTest, FilterAndQueryFieldRestrictions) {
                                         FREQUENCY, {false});
     ASSERT_EQ(true, result_op.ok());
     results = result_op.get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     solo_id = results["hits"].at(0)["document"]["id"];
     ASSERT_STREQ("6", solo_id.c_str());
 
@@ -780,7 +784,7 @@ TEST_F(CollectionFilteringTest, FilterAndQueryFieldRestrictions) {
                                         FREQUENCY, {false});
     ASSERT_EQ(true, result_op.ok());
     results = result_op.get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     // bad query string
     result_op = coll_mul_fields->search("captain", query_fields, "BLAH", facets, sort_fields, {0}, 10, 1,
@@ -885,7 +889,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
     query_fields = {"name"};
     std::vector<std::string> facets;
     nlohmann::json results = coll_array_fields->search("Jeremy", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     std::vector<std::string> ids = {"3", "1", "4", "0", "2"};
 
@@ -898,7 +902,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // Searching on an int32 field
     results = coll_array_fields->search("Jeremy", query_fields, "age:>24", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ids = {"3", "1", "4"};
 
@@ -910,21 +914,21 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "age:>=24", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     results = coll_array_fields->search("Jeremy", query_fields, "age:24", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // alternative `:=` syntax
     results = coll_array_fields->search("Jeremy", query_fields, "age:=24", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll_array_fields->search("Jeremy", query_fields, "age:= 24", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     // Searching a number against an int32 array field
     results = coll_array_fields->search("Jeremy", query_fields, "years:>2002", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ids = {"1", "0", "2"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -935,7 +939,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "years:<1989", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ids = {"3"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -947,7 +951,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // not equals
     results = coll_array_fields->search("Jeremy", query_fields, "age:!= 24", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"3", "1", "4", "2"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -958,7 +962,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "age:!= 0", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     ids = {"3", "1", "4", "0", "2"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -970,7 +974,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // multiple filters
     results = coll_array_fields->search("Jeremy", query_fields, "years:<2005 && years:>1987", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ids = {"4"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -982,7 +986,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // multiple search values (works like SQL's IN operator) against a single int field
     results = coll_array_fields->search("Jeremy", query_fields, "age:[21, 24, 63]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ids = {"3", "0", "2"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -994,11 +998,11 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // alternative `:=` syntax
     results = coll_array_fields->search("Jeremy", query_fields, "age:= [21, 24, 63]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     // individual comparators can still be applied.
     results = coll_array_fields->search("Jeremy", query_fields, "age: [!=21, >30]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"3", "1", "4", "0"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1010,7 +1014,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // negate multiple search values (works like SQL's NOT IN) against a single int field
     results = coll_array_fields->search("Jeremy", query_fields, "age:!= [21, 24, 63]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ids = {"1", "4"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1022,7 +1026,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // individual comparators can still be applied.
     results = coll_array_fields->search("Jeremy", query_fields, "age: != [<30, >60]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ids = {"1", "4"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1034,7 +1038,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // multiple search values against an int32 array field - also use extra padding between symbols
     results = coll_array_fields->search("Jeremy", query_fields, "years : [ 2015, 1985 , 1999]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"3", "1", "4", "0"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1046,7 +1050,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // searching on an int64 array field - also ensure that padded space causes no issues
     results = coll_array_fields->search("Jeremy", query_fields, "timestamps : > 475205222", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"1", "4", "0", "2"};
 
@@ -1059,7 +1063,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
 
     // range based filter
     results = coll_array_fields->search("Jeremy", query_fields, "age: 21..32", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ids = {"4", "0", "2"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1070,10 +1074,10 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "age: 0 .. 100", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     results = coll_array_fields->search("Jeremy", query_fields, "age: [21..24, 40..65]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"3", "1", "0", "2"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1084,7 +1088,7 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "rating: 7.812 .. 9.999", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ids = {"1", "2"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1095,15 +1099,15 @@ TEST_F(CollectionFilteringTest, FilterOnNumericFields) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "rating: [7.812 .. 9.999, 1.05 .. 1.09]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     // when filters don't match any record, no results should be returned
     results = coll_array_fields->search("Jeremy", query_fields, "timestamps:>1591091288061", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     testing_not_equals_bug = true;
     results = coll_array_fields->search("Jeremy", query_fields, "age:!= [21, 24, 63, 44, 32]", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll_array_fields");
 
@@ -1178,7 +1182,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
     query_fields = {"name"};
     std::vector<std::string> facets;
     nlohmann::json results = coll_array_fields->search("Jeremy", query_fields, "", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     std::vector<std::string> ids = {"1", "2", "4", "0", "3"};
 
@@ -1191,7 +1195,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
 
     // Plain search with no filters - results should be sorted by rating field ASC
     results = coll_array_fields->search("Jeremy", query_fields, "", facets, sort_fields_asc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     ids = {"3", "0", "4", "2", "1"};
 
@@ -1203,7 +1207,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "rating:!=0", facets, sort_fields_asc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"0", "4", "2", "1"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1215,7 +1219,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
 
     // Searching on a float field, sorted desc by rating
     results = coll_array_fields->search("Jeremy", query_fields, "rating:>0.0", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"1", "2", "4", "0"};
 
@@ -1228,7 +1232,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
 
     // Searching a float against an float array field
     results = coll_array_fields->search("Jeremy", query_fields, "top_3:>7.8", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ids = {"1", "2"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1240,7 +1244,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
 
     // multiple filters
     results = coll_array_fields->search("Jeremy", query_fields, "top_3:>7.8 && rating:>7.9", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ids = {"1"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1252,7 +1256,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
 
     // multiple search values (works like SQL's IN operator) against a single float field
     results = coll_array_fields->search("Jeremy", query_fields, "rating:[1.09, 7.812]", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ids = {"2", "0"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1264,7 +1268,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
 
     // negate multiple search values (works like SQL's NOT IN operator) against a single float field
     results = coll_array_fields->search("Jeremy", query_fields, "rating:!= [1.09, 7.812]", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ids = {"1", "4", "3"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1276,7 +1280,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
 
     // individual comparators can still be applied.
     results = coll_array_fields->search("Jeremy", query_fields, "rating: != [<5.4, >9]", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ids = {"2", "4"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1287,7 +1291,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
     }
 
     results = coll_array_fields->search("Jeremy", query_fields, "rating: [!= 1]", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     ids = {"1", "2", "4", "0", "3"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1299,7 +1303,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
 
     // multiple search values against a float array field - also use extra padding between symbols
     results = coll_array_fields->search("Jeremy", query_fields, "top_3 : [ 5.431, 0.001 , 7.812, 11.992]", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ids = {"2", "4", "0"};
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -1313,13 +1317,13 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
     auto results_op = coll_array_fields->search("Jeremy", query_fields, "rating:<-2.78", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_TRUE(results_op.ok());
     results = results_op.get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     // rank tokens by default sorting field
     results_op = coll_array_fields->search("j", query_fields, "", facets, sort_fields_desc, {0}, 10, 1, MAX_SCORE, {true});
     ASSERT_TRUE(results_op.ok());
     results = results_op.get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     ids = {"1", "2", "4", "0", "3"};
 
@@ -1332,7 +1336,7 @@ TEST_F(CollectionFilteringTest, FilterOnFloatFields) {
 
     testing_not_equals_bug = true;
     results = coll_array_fields->search("Jeremy", query_fields, "rating:!= [1.09, 7.812, 9.999, 0.0, 5.5]", facets, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll_array_fields");
 
@@ -1410,22 +1414,22 @@ TEST_F(CollectionFilteringTest, FilterOnNegativeNumericalFields) {
 
     auto results = coll1->search("*", {}, "int32_field:<0", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
 
     results = coll1->search("*", {}, "int64_field:<0", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("*", {}, "float_field:<0", {}, {sort_by("float_field", "desc")}, {0}, 10, 1, FREQUENCY,
                             {true}, 10).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("0", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -1464,7 +1468,7 @@ TEST_F(CollectionFilteringTest, ComparatorsOnMultiValuedNumericalField) {
     nlohmann::json results = coll_array_fields->search("Jeremy", query_fields, "age: [24, >32]",
             facets, sort_fields_desc, {0}, 10, 1,FREQUENCY, {false}).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     std::vector<std::string> ids = {"1", "0", "3"};
 
@@ -1480,7 +1484,7 @@ TEST_F(CollectionFilteringTest, ComparatorsOnMultiValuedNumericalField) {
     results = coll_array_fields->search("Jeremy", query_fields, "age: [<=24, >=44]",
                                         facets, sort_fields_desc, {0}, 10, 1,FREQUENCY, {false}).get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"1", "2", "0", "3"};
 
@@ -1530,8 +1534,8 @@ TEST_F(CollectionFilteringTest, FilteringWithPrefixSearch) {
 
     auto results = res_op.get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ASSERT_STREQ("23", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
@@ -1572,8 +1576,8 @@ TEST_F(CollectionFilteringTest, NumericalFilteringWithAnd) {
                                 {}, "num_employees:>=100 && num_employees:<=300",
                                 {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ASSERT_STREQ("125", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("127", results["hits"][1]["document"]["id"].get<std::string>().c_str());
@@ -1583,14 +1587,14 @@ TEST_F(CollectionFilteringTest, NumericalFilteringWithAnd) {
                                  {}, "num_employees:>=100 && num_employees:<=10",
                                  {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // check boundaries
     results = coll1->search("*",
                             {}, "num_employees:>=150 && num_employees:<=250",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_STREQ("125", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("127", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -1598,14 +1602,14 @@ TEST_F(CollectionFilteringTest, NumericalFilteringWithAnd) {
                             {}, "num_employees:>150 && num_employees:<250",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
 
     results = coll1->search("*",
                             {}, "num_employees:>50 && num_employees:<250",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_STREQ("125", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // extreme boundaries
@@ -1614,7 +1618,7 @@ TEST_F(CollectionFilteringTest, NumericalFilteringWithAnd) {
                             {}, "num_employees:>50 && num_employees:<=500",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
     ASSERT_STREQ("125", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("127", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("129", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1623,7 +1627,7 @@ TEST_F(CollectionFilteringTest, NumericalFilteringWithAnd) {
                             {}, "num_employees:>=50 && num_employees:<500",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
     ASSERT_STREQ("123", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("125", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("127", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1633,7 +1637,7 @@ TEST_F(CollectionFilteringTest, NumericalFilteringWithAnd) {
                             {}, "num_employees:>3000 && num_employees:<10",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1672,16 +1676,16 @@ TEST_F(CollectionFilteringTest, FilteringViaDocumentIds) {
                                  {}, "id: 123",
                                  {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("123", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("*",
                             {}, "id: != 123",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_STREQ("125", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("127", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("129", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1692,8 +1696,8 @@ TEST_F(CollectionFilteringTest, FilteringViaDocumentIds) {
                             {}, "id: `123`",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("123", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // single ID with condition
@@ -1701,8 +1705,8 @@ TEST_F(CollectionFilteringTest, FilteringViaDocumentIds) {
                             {}, "id: 125 && num_employees: 150",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("125", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // multiple IDs
@@ -1710,8 +1714,8 @@ TEST_F(CollectionFilteringTest, FilteringViaDocumentIds) {
                             {}, "id: [123, 125, 127, 129] && num_employees: <300",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_STREQ("123", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("125", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("127", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1721,8 +1725,8 @@ TEST_F(CollectionFilteringTest, FilteringViaDocumentIds) {
                             {}, "id:= [129, 123, 127, 125] && num_employees: <300",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_STREQ("123", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("125", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("127", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1732,8 +1736,8 @@ TEST_F(CollectionFilteringTest, FilteringViaDocumentIds) {
                             {}, "id:= [`123`, `125`, `127`, `129`] && num_employees: <300",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
     ASSERT_STREQ("123", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("125", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("127", results["hits"][2]["document"]["id"].get<std::string>().c_str());
@@ -1742,16 +1746,16 @@ TEST_F(CollectionFilteringTest, FilteringViaDocumentIds) {
                            {}, "id:!= [123,125] && num_employees: <300",
                            {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("127", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("*",
                            {}, "id:![123,125] && num_employees: <300",
                            {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_STREQ("127", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // empty id list not allowed
@@ -1776,39 +1780,39 @@ TEST_F(CollectionFilteringTest, FilteringViaDocumentIds) {
                             {}, "id: [1000] && num_employees: <300",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*",
                             {}, "id: 1000",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     // match all IDs
     results = coll1->search("*",
                             {}, "id: *",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
 
     results = coll1->search("*",
                             {}, "id:= [*]",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
 
     // match no IDs
     results = coll1->search("*",
                             {}, "id: != *",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     results = coll1->search("*",
                             {}, "id: != [*]",
                             {}, sort_fields, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1852,8 +1856,8 @@ TEST_F(CollectionFilteringTest, NumericalFilteringWithArray) {
                                  {}, "prices:1",
                                  {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     // check ranges
 
@@ -1861,29 +1865,29 @@ TEST_F(CollectionFilteringTest, NumericalFilteringWithArray) {
                             {}, "prices:>=1",
                             {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     results = coll1->search("*",
                             {}, "prices:>=2",
                             {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     results = coll1->search("*",
                             {}, "prices:<4",
                             {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     results = coll1->search("*",
                             {}, "prices:<=2",
                             {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
 
-    ASSERT_EQ(4, results["found"].get<size_t>());
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -1921,26 +1925,26 @@ TEST_F(CollectionFilteringTest, NegationOperatorBasics) {
 
     auto results = coll1->search("*", {"artist"}, "artist:!=Michael Jackson", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(3, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, results["found"].get<size_t>());
 
     ASSERT_STREQ("3", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("2", results["hits"][1]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][2]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("*", {"artist"}, "artist:!= Michael Jackson && points: >0", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_STREQ("3", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("2", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
     // negation operation on multiple values
 
     results = coll1->search("*", {"artist"}, "artist:!= [Michael Jackson, Taylor Swift]", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_STREQ("3", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     // when no such value exists: should return all results
     results = coll1->search("*", {"artist"}, "artist:!=Foobar", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 10).get();
-    ASSERT_EQ(4, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, results["found"].get<size_t>());
 
     results = coll1->search("*", {"artist"}, "artist:! Jackson", {}, {}, {0}, 10, 1, FREQUENCY, {true}, 10).get();
     ASSERT_EQ(2, results["found"]);
@@ -2010,38 +2014,38 @@ TEST_F(CollectionFilteringTest, FilterStringsWithComma) {
     auto results = coll1->search("*", {"place"}, "place:= St. John's Cathedral, Denver, Colorado", {}, {}, {0}, 10, 1,
                                  FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("*", {"place"}, "place:= `St. John's Cathedral, Denver, Colorado`", {}, {}, {0}, 10, 1,
                             FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("*", {"place"}, "place:= [`St. John's Cathedral, Denver, Colorado`]", {}, {}, {0}, 10, 1,
                             FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("*", {"place"}, "place:= [`St. John's Cathedral, Denver, Colorado`, `St. Patrick's Cathedral, Manhattan`]", {}, {}, {0}, 10, 1,
                             FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_STREQ("2", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("0", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("*", {"place"}, "place: [`Cathedral, Denver, Colorado`]", {}, {}, {0}, 10, 1,
                             FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
     results = coll1->search("*", {"place"}, "place: []", {}, {}, {0}, 10, 1,
                             FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(0, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, results["found"].get<size_t>());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2074,7 +2078,7 @@ TEST_F(CollectionFilteringTest, NumericalRangeFilter) {
     auto results = coll1->search("*", {}, "num_employees:>=100 && num_employees:<=300", {}, sort_fields, {0}, 10, 1,
                                  FREQUENCY, {true}, 10).get();
 
-    ASSERT_EQ(2, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
     ASSERT_STREQ("125", results["hits"][0]["document"]["id"].get<std::string>().c_str());
     ASSERT_STREQ("127", results["hits"][1]["document"]["id"].get<std::string>().c_str());
 
@@ -2107,7 +2111,7 @@ TEST_F(CollectionFilteringTest, RangeFilterOnTimestamp) {
     auto results = coll1->search("*", {},"ts:[1646092800000..1648771199000]", {}, {}, {0}, 10,
                                  1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2142,7 +2146,7 @@ TEST_F(CollectionFilteringTest, QueryBoolFields) {
     query_fields = {"title"};
     std::vector<std::string> facets;
     nlohmann::json results = coll_bool->search("the", query_fields, "", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     std::vector<std::string> ids = {"1", "3", "4", "9", "2"};
 
@@ -2155,7 +2159,7 @@ TEST_F(CollectionFilteringTest, QueryBoolFields) {
 
     // Searching on a bool field
     results = coll_bool->search("the", query_fields, "popular:true", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ids = {"1", "3", "4"};
 
@@ -2167,7 +2171,7 @@ TEST_F(CollectionFilteringTest, QueryBoolFields) {
     }
 
     results = coll_bool->search("*", query_fields, "popular:true", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(7, results["hits"].size());
+    ASSERT_EQ(size_t{7}, results["hits"].size());
 
     ids = {"1", "0", "3", "5", "6", "7", "4"};
 
@@ -2180,13 +2184,13 @@ TEST_F(CollectionFilteringTest, QueryBoolFields) {
 
     // alternative `:=` syntax
     results = coll_bool->search("the", query_fields, "popular:=true", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     results = coll_bool->search("the", query_fields, "popular:false", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     results = coll_bool->search("the", query_fields, "popular:= false", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ids = {"9", "2"};
 
@@ -2205,10 +2209,10 @@ TEST_F(CollectionFilteringTest, QueryBoolFields) {
     ASSERT_TRUE(res_op.ok());
     results = res_op.get();
 
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     results = coll_bool->search("the", query_fields, "bool_array: true", facets, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
     ids = {"1", "4", "9", "2"};
 
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -2223,7 +2227,7 @@ TEST_F(CollectionFilteringTest, QueryBoolFields) {
     results = coll_bool->search("the", query_fields, "bool_array:[true]", facets,
                                  sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     for(size_t i = 0; i < results["hits"].size(); i++) {
         nlohmann::json result = results["hits"].at(i);
@@ -2237,7 +2241,7 @@ TEST_F(CollectionFilteringTest, QueryBoolFields) {
     results = coll_bool->search("the", query_fields, "popular:!= true", facets,
                              sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("9", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("2", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -2245,7 +2249,7 @@ TEST_F(CollectionFilteringTest, QueryBoolFields) {
     results = coll_bool->search("the", query_fields, "bool_array:!= [true]", facets,
                                 sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("3", results["hits"][0]["document"]["id"].get<std::string>());
 
     // empty filter value
@@ -2259,7 +2263,7 @@ TEST_F(CollectionFilteringTest, QueryBoolFields) {
     results = coll_bool->search("the", query_fields, "popular: !=[true, false]", facets,
                                 sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll_bool");
 }
@@ -2280,12 +2284,12 @@ TEST_F(CollectionFilteringTest, FilteringWithTokenSeparators) {
     auto results = coll1->search("*", {},"code:=7318.15", {}, {}, {0}, 10,
                                  1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll1->search("*", {},"code:=`7318.15`", {}, {}, {0}, 10,
                             1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 
@@ -2301,7 +2305,7 @@ TEST_F(CollectionFilteringTest, FilteringWithTokenSeparators) {
     results = coll2->search("*", {},"code:=7318.15", {}, {}, {0}, 10,
                                  1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     collectionManager.drop_collection("coll2");
 }
@@ -2329,12 +2333,12 @@ TEST_F(CollectionFilteringTest, ExactFilteringSingleQueryTerm) {
 
     auto results = coll1->search("*", {},"name:=AT&T", {}, {}, {0}, 10,
                                  1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("*", {},"tags:=AT&T", {}, {}, {0}, 10,
                             1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     nlohmann::json doc3;
@@ -2346,7 +2350,7 @@ TEST_F(CollectionFilteringTest, ExactFilteringSingleQueryTerm) {
 
     results = coll1->search("*", {},"tags:=Phone", {}, {}, {0}, 10,
                             1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("2", results["hits"][0]["document"]["id"].get<std::string>());
 
     collectionManager.drop_collection("coll1");
@@ -2382,21 +2386,21 @@ TEST_F(CollectionFilteringTest, ExactFilteringRepeatingTokensSingularField) {
 
     auto results = coll1->search("*", {},"name:=Cardiology - Interventional Cardiology", {}, {}, {0}, 10,
                                  1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("*", {},"name:=Cardiology - Interventional", {}, {}, {0}, 10,
                             1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("*", {},"name:=Interventional Cardiology", {}, {}, {0}, 10,
                             1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("*", {},"name:=Cardiology", {}, {}, {0}, 10,
                             1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2431,21 +2435,21 @@ TEST_F(CollectionFilteringTest, ExactFilteringRepeatingTokensArrayField) {
 
     auto results = coll1->search("*", {},"name:=Cardiology - Interventional Cardiology", {}, {}, {0}, 10,
                                  1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("*", {},"name:=Cardiology - Interventional", {}, {}, {0}, 10,
                             1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll1->search("*", {},"name:=Interventional Cardiology", {}, {}, {0}, 10,
                             1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("*", {},"name:=Cardiology", {}, {}, {0}, 10,
                             1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2494,8 +2498,8 @@ TEST_F(CollectionFilteringTest, ExcludeMultipleTokens) {
             {"title"}, "",
             {}, {}, {0}, 10, 1, FREQUENCY).get();
 
-    ASSERT_EQ(1, results["found"].get<size_t>());
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ASSERT_STREQ("0", results["hits"][0]["document"]["id"].get<std::string>().c_str());
 
@@ -2525,7 +2529,7 @@ TEST_F(CollectionFilteringTest, FilteringAfterUpsertOnArrayWithTokenSeparators) 
     ASSERT_TRUE(coll1->add(doc2.dump()).ok());
 
     auto results = coll1->search("david", {"name"},"tags:=[foo-bar-baz]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // upsert with "foo-bar-baz" removed
@@ -2533,10 +2537,10 @@ TEST_F(CollectionFilteringTest, FilteringAfterUpsertOnArrayWithTokenSeparators) 
     coll1->add(doc1.dump(), UPSERT);
 
     results = coll1->search("david", {"name"},"tags:=[foo-bar-baz]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("david", {"name"},"tags:=[bar-foo-baz]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     // repeat for singular string field: upsert with "foo-bar-baz" removed
@@ -2544,7 +2548,7 @@ TEST_F(CollectionFilteringTest, FilteringAfterUpsertOnArrayWithTokenSeparators) 
     coll1->add(doc1.dump(), UPSERT);
 
     results = coll1->search("david", {"name"},"tag:=[foo-bar-baz]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2572,7 +2576,7 @@ TEST_F(CollectionFilteringTest, FilteringAfterUpsertOnArrayWithSymbolsToIndex) {
     ASSERT_TRUE(coll1->add(doc2.dump()).ok());
 
     auto results = coll1->search("david", {"name"},"tags:=[foo-bar-baz]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("0", results["hits"][0]["document"]["id"].get<std::string>());
 
     // upsert with "foo-bar-baz" removed
@@ -2580,10 +2584,10 @@ TEST_F(CollectionFilteringTest, FilteringAfterUpsertOnArrayWithSymbolsToIndex) {
     coll1->add(doc1.dump(), UPSERT);
 
     results = coll1->search("david", {"name"},"tags:=[foo-bar-baz]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll1->search("david", {"name"},"tags:=[bar-foo-baz]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("1", results["hits"][0]["document"]["id"].get<std::string>());
 
     // repeat for singular string field: upsert with "foo-bar-baz" removed
@@ -2591,7 +2595,7 @@ TEST_F(CollectionFilteringTest, FilteringAfterUpsertOnArrayWithSymbolsToIndex) {
     coll1->add(doc1.dump(), UPSERT);
 
     results = coll1->search("david", {"name"},"tag:=[foo-bar-baz]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     collectionManager.drop_collection("coll1");
 }
@@ -2624,15 +2628,15 @@ TEST_F(CollectionFilteringTest, ComplexFilterQuery) {
     std::vector<sort_by> sort_fields_desc = {sort_by("rating", "DESC")};
     nlohmann::json results = coll->search("Jeremy", {"name"}, "(rating:>=0 && years:>2000) && age:>50",
                                           {}, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 
     results = coll->search("*", {"name"}, "(age:>50 && rating:>5) || years:<2000",
                                           {}, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     results = coll->search("Jeremy", {"name"}, "(age:>50 || rating:>5) && years:<2000",
                                           {}, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     std::vector<std::string> ids = {"4", "3"};
     for (size_t i = 0; i < results["hits"].size(); i++) {
@@ -2644,7 +2648,7 @@ TEST_F(CollectionFilteringTest, ComplexFilterQuery) {
 
     results = coll->search("Jeremy", {"name"}, "(age:<50 && rating:10) || (years:>2000 && rating:<5)",
                                           {}, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ids = {"0"};
     for (size_t i = 0; i < results["hits"].size(); i++) {
@@ -2656,7 +2660,7 @@ TEST_F(CollectionFilteringTest, ComplexFilterQuery) {
 
     results = coll->search("Jeremy", {"name"}, "years:>2000 && ((age:<30 && rating:>5) || (age:>50 && rating:<5))",
                            {}, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     ids = {"2"};
     for (size_t i = 0; i < results["hits"].size(); i++) {
@@ -2680,7 +2684,7 @@ TEST_F(CollectionFilteringTest, ComplexFilterQuery) {
     auto search_op = coll->search("Jeremy", {"name"}, extreme_filter,
                                   {}, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, search_op.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, search_op.get()["hits"].size());
 
     extreme_filter += "|| (years:>2000 && ((age:<30 && rating:>5) || (age:>50 && rating:<5)))";
     search_op = coll->search("Jeremy", {"name"}, extreme_filter,
@@ -2697,7 +2701,7 @@ TEST_F(CollectionFilteringTest, ComplexFilterQuery) {
     auto load_op = collectionManager.load(8, 1000);
 
     if(!load_op.ok()) {
-        LOG(ERROR) << load_op.error();
+        TS_LOG(ERROR) << load_op.error();
     }
     ASSERT_TRUE(load_op.ok());
 
@@ -2705,7 +2709,7 @@ TEST_F(CollectionFilteringTest, ComplexFilterQuery) {
     search_op = coll2->search("Jeremy", {"name"}, extreme_filter,
                                   {}, sort_fields_desc, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_TRUE(search_op.ok());
-    ASSERT_EQ(1, search_op.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, search_op.get()["hits"].size());
 
     extreme_filter += "|| (years:>2000 && ((age:<30 && rating:>5) || (age:>50 && rating:<5)))";
     search_op = coll2->search("Jeremy", {"name"}, extreme_filter,
@@ -2746,7 +2750,7 @@ TEST_F(CollectionFilteringTest, PrefixSearchWithFilter) {
                                  spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 5,
                                  "", 10).get();
-    ASSERT_EQ(7, results["hits"].size());
+    ASSERT_EQ(size_t{7}, results["hits"].size());
     std::vector<std::string> ids = {"6", "12", "19", "22", "13", "8", "15"};
 
     for(size_t i = 0; i < results["hits"].size(); i++) {
@@ -2784,18 +2788,18 @@ TEST_F(CollectionFilteringTest, LargeFilterToken) {
     ASSERT_TRUE(add_op.ok());
 
     auto results = coll->search("*", query_fields, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     results = coll->search("*", query_fields, "uri:" + token, {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     token.erase(100); // Max token length that's indexed is 100, we'll still get a match.
     results = coll->search("*", query_fields, "uri:" + token, {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
 
     token.erase(99);
     results = coll->search("*", query_fields, "uri:" + token, {}, sort_fields, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 }
 
 TEST_F(CollectionFilteringTest, NonIndexedFiltering) {
@@ -2821,7 +2825,7 @@ TEST_F(CollectionFilteringTest, NonIndexedFiltering) {
     ASSERT_TRUE(add_op.ok());
 
     auto search_op = coll->search("*", {}, "", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false});
-    ASSERT_EQ(1, search_op.get()["hits"].size());
+    ASSERT_EQ(size_t{1}, search_op.get()["hits"].size());
 
     search_op = coll->search("*", {}, "non_index:= bar", {}, sort_fields, {0}, 10, 1, FREQUENCY, {false});
     ASSERT_FALSE(search_op.ok());
@@ -2891,7 +2895,7 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
 
     nlohmann::json results = coll_mul_fields->search("*", {}, "cast: Chris", {}, {}, {0},
                                                      10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     std::vector<std::string> ids = {"6", "8", "1", "7"};
 
@@ -2904,7 +2908,7 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
 
     results = coll_mul_fields->search("*", {}, "cast: Ch*", {}, {}, {0},
                                                      10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(4, results["hits"].size());
+    ASSERT_EQ(size_t{4}, results["hits"].size());
 
     ids = {"6", "8", "1", "7"};
 
@@ -2917,7 +2921,7 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
 
     results = coll_mul_fields->search("*", {}, "cast: M*", {}, {}, {0},
                                                      10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ids = {"3", "2", "16"};
 
@@ -2930,7 +2934,7 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
 
     results = coll_mul_fields->search("*", {}, "cast: Chris P*", {}, {}, {0},
                                                      10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
 
     ids = {"1", "7"};
 
@@ -2943,7 +2947,7 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
 
     results = coll_mul_fields->search("*", {}, "cast: [Martin, Chris P*]", {}, {}, {0},
                                                      10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(3, results["hits"].size());
+    ASSERT_EQ(size_t{3}, results["hits"].size());
 
     ids = {"2", "1", "7"};
 
@@ -2956,7 +2960,7 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
 
     results = coll_mul_fields->search("*", {}, "cast: [M*, Chris P*]", {}, {}, {0},
                                                      10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(5, results["hits"].size());
+    ASSERT_EQ(size_t{5}, results["hits"].size());
 
     ids = {"3", "2", "16", "1", "7"};
 
@@ -3006,8 +3010,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("Steve Jobs", res_obj["hits"][0]["document"].at("name"));
 
     req_params = {
@@ -3021,8 +3025,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("Adam Stator", res_obj["hits"][0]["document"].at("name"));
     ASSERT_EQ("Steve Jobs", res_obj["hits"][1]["document"].at("name"));
 
@@ -3054,8 +3058,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"].at("name"));
     ASSERT_EQ("Storm", res_obj["hits"][1]["document"].at("name"));
     ASSERT_EQ("Steve Reiley", res_obj["hits"][2]["document"].at("name"));
@@ -3072,8 +3076,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"].at("name"));
     ASSERT_EQ("Storm", res_obj["hits"][1]["document"].at("name"));
     ASSERT_EQ("Steve Reiley", res_obj["hits"][2]["document"].at("name"));
@@ -3091,8 +3095,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"].at("name"));
     ASSERT_EQ("Steve Reiley", res_obj["hits"][1]["document"].at("name"));
 
@@ -3107,8 +3111,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"].at("name"));
     ASSERT_EQ("Steve Reiley", res_obj["hits"][1]["document"].at("name"));
 
@@ -3140,8 +3144,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("Steve Jobs", res_obj["hits"][0]["document"]["names"][0]);
 
     req_params = {
@@ -3155,8 +3159,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("Adam Stator", res_obj["hits"][0]["document"]["names"][0]);
     ASSERT_EQ("Steve Jobs", res_obj["hits"][1]["document"]["names"][0]);
 
@@ -3188,8 +3192,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"]["names"][1]);
     ASSERT_EQ("Storm", res_obj["hits"][1]["document"]["names"][0]);
     ASSERT_EQ("Steve Reiley", res_obj["hits"][2]["document"]["names"][0]);
@@ -3206,8 +3210,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(5, res_obj["found"].get<size_t>());
-    ASSERT_EQ(5, res_obj["hits"].size());
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"]["names"][1]);
     ASSERT_EQ("Storm", res_obj["hits"][1]["document"]["names"][0]);
     ASSERT_EQ("Steve Reiley", res_obj["hits"][2]["document"]["names"][0]);
@@ -3225,8 +3229,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"]["names"][1]);
     ASSERT_EQ("Steve Reiley", res_obj["hits"][1]["document"]["names"][0]);
     ASSERT_EQ("Steve Jobs", res_obj["hits"][2]["document"]["names"][0]);
@@ -3242,8 +3246,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"]["names"][1]);
     ASSERT_EQ("Steve Reiley", res_obj["hits"][1]["document"]["names"][0]);
     ASSERT_EQ("Steve Jobs", res_obj["hits"][2]["document"]["names"][0]);
@@ -3259,8 +3263,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"]["names"][1]);
     ASSERT_EQ("Steve Reiley", res_obj["hits"][1]["document"]["names"][0]);
 
@@ -3275,8 +3279,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, res_obj["found"].get<size_t>());
-    ASSERT_EQ(2, res_obj["hits"].size());
+    ASSERT_EQ(size_t{2}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("Steve Rogers", res_obj["hits"][0]["document"]["names"][1]);
     ASSERT_EQ("Steve Reiley", res_obj["hits"][1]["document"]["names"][0]);
 
@@ -3305,8 +3309,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, res_obj["found"].get<size_t>());
-    ASSERT_EQ(3, res_obj["hits"].size());
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
     ASSERT_EQ("Steve Runner foo", res_obj["hits"][0]["document"]["names"][0]);
     ASSERT_EQ("Steve Rogers", res_obj["hits"][1]["document"]["names"][1]);
     ASSERT_EQ("Steve Reiley", res_obj["hits"][2]["document"]["names"][0]);
@@ -3322,8 +3326,8 @@ TEST_F(CollectionFilteringTest, PrefixFilterOnTextFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
     ASSERT_EQ("foo Steve Runner", res_obj["hits"][0]["document"]["names"][0]);
     ASSERT_EQ("Steve Runner foo", res_obj["hits"][1]["document"]["names"][0]);
     ASSERT_EQ("Steve Rogers", res_obj["hits"][2]["document"]["names"][1]);
@@ -3357,7 +3361,7 @@ TEST_F(CollectionFilteringTest, ExactFilterOnLongField) {
     ASSERT_TRUE(coll->add(doc1.dump()).ok());
 
     auto results = coll->search("*", {}, "keywords:=" + arr_value, {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(0, results["hits"].size());
+    ASSERT_EQ(size_t{0}, results["hits"].size());
 }
 
 TEST_F(CollectionFilteringTest, FilterOnStemmedField) {
@@ -3386,33 +3390,33 @@ TEST_F(CollectionFilteringTest, FilterOnStemmedField) {
     for (auto const &json: documents) {
         auto add_op = coll->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
 
     auto results = coll->search("*", {}, "keywords:=Baking", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("125", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll->search("*", {}, "keywords:=Running Shoes", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("124", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll->search("*", {}, "keywords:=run Shoes", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("124", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll->search("*", {}, "keywords:=run Shoe", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("124", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll->search("*", {}, "keywords:shoe", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("124", results["hits"][0]["document"]["id"].get<std::string>());
 
     results = coll->search("*", {}, "keywords:[shoe, baking]", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(2, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ("125", results["hits"][0]["document"]["id"].get<std::string>());
     ASSERT_EQ("124", results["hits"][1]["document"]["id"].get<std::string>());
 
@@ -3449,8 +3453,8 @@ TEST_F(CollectionFilteringTest, MaxFilterByCandidates) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, res_obj["found"].get<size_t>());
-    ASSERT_EQ(4, res_obj["hits"].size());
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
     ASSERT_EQ("Independent19", res_obj["hits"][0]["document"]["title"]);
     ASSERT_EQ("Independent18", res_obj["hits"][1]["document"]["title"]);
     ASSERT_EQ("Independent17", res_obj["hits"][2]["document"]["title"]);
@@ -3467,8 +3471,8 @@ TEST_F(CollectionFilteringTest, MaxFilterByCandidates) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(0, res_obj["found"].get<size_t>());
-    ASSERT_EQ(0, res_obj["hits"].size());
+    ASSERT_EQ(size_t{0}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{0}, res_obj["hits"].size());
 
     req_params = {
             {"collection", "coll1"},
@@ -3481,8 +3485,8 @@ TEST_F(CollectionFilteringTest, MaxFilterByCandidates) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("Independent19", res_obj["hits"][0]["document"]["title"]);
 }
 
@@ -3533,14 +3537,14 @@ TEST_F(CollectionFilteringTest, FilterOnObjectFields) {
             })"_json
     };
 
-    EmbedderManager::set_model_dir("/tmp/typesense_test/models");
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
 
     auto collection_create_op = collectionManager.create_collection(schema_json);
     ASSERT_TRUE(collection_create_op.ok());
     for (auto const &json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3560,14 +3564,14 @@ TEST_F(CollectionFilteringTest, FilterOnObjectFields) {
     ASSERT_TRUE(search_op.ok());
 
     auto res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("product_a", res_obj["hits"][0]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("stocks"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"].count("26"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"]["26"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"]["26"].count("rec"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("stocks"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"].count("26"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"]["26"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"]["26"].count("rec"));
     ASSERT_TRUE(res_obj["hits"][0]["document"]["stocks"]["26"]["rec"]);
 
     req_params = {
@@ -3580,14 +3584,14 @@ TEST_F(CollectionFilteringTest, FilterOnObjectFields) {
     ASSERT_TRUE(search_op.ok());
 
     res_obj = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, res_obj["found"].get<size_t>());
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("product_b", res_obj["hits"][0]["document"]["product_id"]);
-    ASSERT_EQ(1, res_obj["hits"][0]["document"].count("stocks"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"].count("26"));
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"]["26"].size());
-    ASSERT_EQ(1, res_obj["hits"][0]["document"]["stocks"]["26"].count("rec"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"].count("stocks"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"].count("26"));
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"]["26"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"][0]["document"]["stocks"]["26"].count("rec"));
     ASSERT_FALSE(res_obj["hits"][0]["document"]["stocks"]["26"]["rec"]);
 }
 
@@ -3676,7 +3680,7 @@ TEST_F(CollectionFilteringTest, IgnoreFieldValidation) {
 
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(1, res_obj["found"]);
-    ASSERT_EQ(1, res_obj["hits"].size());
+    ASSERT_EQ(size_t{1}, res_obj["hits"].size());
     ASSERT_EQ("8", res_obj["hits"][0]["document"].at("id"));
 }
 
@@ -3724,7 +3728,7 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     for (auto const& json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -3743,8 +3747,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, result["found"].get<size_t>());
-    ASSERT_EQ(3, result["hits"].size());
+    ASSERT_EQ(size_t{3}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, result["hits"].size());
     ASSERT_EQ("Popcorn", result["hits"][0]["document"]["name"]);
     ASSERT_EQ("Pizza", result["hits"][1]["document"]["name"]);
     ASSERT_EQ("Pasta", result["hits"][2]["document"]["name"]);
@@ -3762,8 +3766,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["found"].get<size_t>());
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("Lasagna", result["hits"][0]["document"]["name"]);
 
     req_params = {
@@ -3780,8 +3784,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, result["found"].get<size_t>());
-    ASSERT_EQ(3, result["hits"].size());
+    ASSERT_EQ(size_t{3}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, result["hits"].size());
     ASSERT_EQ("Popcorn", result["hits"][0]["document"]["name"]);
     ASSERT_EQ("Pizza", result["hits"][1]["document"]["name"]);
     ASSERT_EQ("Pasta", result["hits"][2]["document"]["name"]);
@@ -3799,8 +3803,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, result["found"].get<size_t>());
-    ASSERT_EQ(2, result["hits"].size());
+    ASSERT_EQ(size_t{2}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, result["hits"].size());
     ASSERT_EQ("Lasagna", result["hits"][0]["document"]["name"]);
     ASSERT_EQ("Pasta", result["hits"][1]["document"]["name"]);
 
@@ -3817,8 +3821,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, result["found"].get<size_t>());
-    ASSERT_EQ(2, result["hits"].size());
+    ASSERT_EQ(size_t{2}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, result["hits"].size());
     ASSERT_EQ("Lasagna", result["hits"][0]["document"]["name"]);
     ASSERT_EQ("Pasta", result["hits"][1]["document"]["name"]);
 
@@ -3835,8 +3839,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(4, result["found"].get<size_t>());
-    ASSERT_EQ(4, result["hits"].size());
+    ASSERT_EQ(size_t{4}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, result["hits"].size());
     ASSERT_EQ("Pizza Rolls", result["hits"][0]["document"]["name"]);
     ASSERT_EQ("Popcorn", result["hits"][1]["document"]["name"]);
     ASSERT_EQ("Lasagna", result["hits"][2]["document"]["name"]);
@@ -3858,8 +3862,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, result["found"].get<size_t>());
-    ASSERT_EQ(2, result["hits"].size());
+    ASSERT_EQ(size_t{2}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, result["hits"].size());
     ASSERT_EQ("Pizza", result["hits"][0]["document"]["name"]);
     ASSERT_EQ("Pasta", result["hits"][1]["document"]["name"]);
 
@@ -3879,8 +3883,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, result["found"].get<size_t>());
-    ASSERT_EQ(3, result["hits"].size());
+    ASSERT_EQ(size_t{3}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, result["hits"].size());
     ASSERT_EQ("Pizza Rolls", result["hits"][0]["document"]["name"]);
     ASSERT_EQ("Lasagna", result["hits"][1]["document"]["name"]);
     ASSERT_EQ("Pizza", result["hits"][2]["document"]["name"]);
@@ -3901,8 +3905,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFiltering) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(3, result["found"].get<size_t>());
-    ASSERT_EQ(3, result["hits"].size());
+    ASSERT_EQ(size_t{3}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, result["hits"].size());
     ASSERT_EQ("Pizza Rolls", result["hits"][0]["document"]["name"]);
     ASSERT_EQ("Lasagna", result["hits"][1]["document"]["name"]);
     ASSERT_EQ("Pizza", result["hits"][2]["document"]["name"]);
@@ -4045,7 +4049,7 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFilteringMultiple) {
     for (auto const& json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -4064,8 +4068,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFilteringMultiple) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, result["found"].get<size_t>());
-    ASSERT_EQ(2, result["hits"].size());
+    ASSERT_EQ(size_t{2}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, result["hits"].size());
     ASSERT_EQ("Popcorn", result["hits"][0]["document"]["name"]);
     ASSERT_EQ("Pizza", result["hits"][1]["document"]["name"]);
 
@@ -4082,8 +4086,8 @@ TEST_F(CollectionFilteringTest, NestedObjectFieldsFilteringMultiple) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["found"].get<size_t>());
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("Lasagna", result["hits"][0]["document"]["name"]);
 }
 
@@ -4117,12 +4121,12 @@ TEST_F(CollectionFilteringTest, FilterOnFieldWithSymbolsToIndex) {
 
     auto results = coll->search("*", {"title"}, "root:=~~", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
 
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("Document one", results["hits"][0]["document"]["title"].get<std::string>());
     ASSERT_EQ("~~", results["hits"][0]["document"]["root"].get<std::string>());
 
     results = coll->search("*", {"title"}, "root:=somethingElse", {}, {}, {0}, 10, 1, FREQUENCY, {false}).get();
-    ASSERT_EQ(1, results["hits"].size());
+    ASSERT_EQ(size_t{1}, results["hits"].size());
     ASSERT_EQ("Document two", results["hits"][0]["document"]["title"].get<std::string>());
 
     collectionManager.drop_collection("symbols_test");
@@ -4167,7 +4171,7 @@ TEST_F(CollectionFilteringTest, DeepNestedObjectFieldsFiltering) {
     for (auto const& json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -4186,8 +4190,8 @@ TEST_F(CollectionFilteringTest, DeepNestedObjectFieldsFiltering) {
     auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     auto result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(1, result["found"].get<size_t>());
-    ASSERT_EQ(1, result["hits"].size());
+    ASSERT_EQ(size_t{1}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{1}, result["hits"].size());
     ASSERT_EQ("Pasta", result["hits"][0]["document"]["main"]["name"]);
 
     //deep nested field
@@ -4236,7 +4240,7 @@ TEST_F(CollectionFilteringTest, DeepNestedObjectFieldsFiltering) {
     for (auto const& json: documents) {
         auto add_op = collection_create_op.get()->add(json.dump());
         if (!add_op.ok()) {
-            LOG(INFO) << add_op.error();
+            TS_LOG(INFO) << add_op.error();
         }
         ASSERT_TRUE(add_op.ok());
     }
@@ -4254,8 +4258,8 @@ TEST_F(CollectionFilteringTest, DeepNestedObjectFieldsFiltering) {
     search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
     ASSERT_TRUE(search_op.ok());
     result = nlohmann::json::parse(json_res);
-    ASSERT_EQ(2, result["found"].get<size_t>());
-    ASSERT_EQ(2, result["hits"].size());
+    ASSERT_EQ(size_t{2}, result["found"].get<size_t>());
+    ASSERT_EQ(size_t{2}, result["hits"].size());
     ASSERT_EQ("Pizza", result["hits"][0]["document"]["root"]["main"]["name"]);
     ASSERT_EQ("Pasta", result["hits"][1]["document"]["root"]["main"]["name"]);
 }

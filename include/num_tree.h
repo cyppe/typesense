@@ -1,7 +1,7 @@
 #pragma once
 
 #include <map>
-#include "sparsepp.h"
+#include "sparsepp_wrapper.h"
 #include "sorted_array.h"
 #include "array_utils.h"
 #include "ids_t.h"

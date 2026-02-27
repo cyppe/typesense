@@ -1,5 +1,6 @@
 load("@com_grail_bazel_compdb//:defs.bzl", "compilation_database")
 load("@com_grail_bazel_output_base_util//:defs.bzl", "OUTPUT_BASE")
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 
 # Target to generate a compile_commands.json compilation database file
 compilation_database(
@@ -47,13 +48,19 @@ cc_library(
         "@sentencepiece//:sentencepiece_headers",
         "@com_github_brpc_braft//:braft",
         "@com_github_brpc_brpc//:brpc",
-        "@com_github_google_glog//:glog",
+        "@com_github_google_glog//:glog",  # retained for brpc/braft
+        "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/log:initialize",
+        "@com_google_absl//absl/log:globals",
+        "@com_google_absl//absl/log:log_sink",
+        "@com_google_absl//absl/log:log_sink_registry",
+        "@com_google_absl//absl/log:log_entry",
         "@curl",
         "@for",
         "@h2o",
         "@iconv",
         "@icu",
-        "@jemalloc",
         "@kakasi",
         "@lrucache",
         "@rocksdb",
@@ -66,7 +73,11 @@ cc_library(
         "@snowball//:snowball_headers",
         "@archive",
         # "@zip",
-    ])
+    ] + select({
+        ":asan_mode": [],
+        ":tsan_mode": [],
+        "//conditions:default": ["@jemalloc"],
+    }))
 
 cc_library(
     name = "linux_deps",
@@ -83,14 +94,9 @@ COPTS = [
     "-Wextra",
     "-Wno-unused-parameter",
     "-Werror=return-type",
+    "-fsized-deallocation",
     "-O2",
     "-g",
-]
-
-ASAN_COPTS = [
-    "-fsanitize=address",
-    "-fno-omit-frame-pointer",
-    "-DASAN_BUILD"
 ]
 
 cc_binary(
@@ -139,7 +145,10 @@ cc_binary(
 
 filegroup(
     name = "test_src_files",
-    srcs = glob(["test/*.cpp"]),
+    srcs = glob(["test/*.cpp"]) + [
+        "test/runfiles_utils.h",
+        "test/temp_dir_utils.h",
+    ],
 )
 
 filegroup(
@@ -157,6 +166,7 @@ TEST_COPTS = [
     "-Wextra",
     "-Wno-unused-parameter",
     "-Werror=return-type",
+    "-fsized-deallocation",
     "-g",
     "-DTEST_BUILD"
 ]
@@ -174,11 +184,17 @@ config_setting(
 
 config_setting(
     name = "asan_mode",
-    define_values = { "mode": "asan" }
+    define_values = { "mode": "asan" },
+)
+
+config_setting(
+    name = "tsan_mode",
+    define_values = { "mode": "tsan" },
 )
 
 cc_test(
     name = "typesense-test",
+    size = "large",
     srcs = [
         ":src_files",
         ":test_src_files",

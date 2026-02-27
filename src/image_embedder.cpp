@@ -1,7 +1,9 @@
 #include "image_embedder.h"
+#include "logger.h"
 #include "text_embedder_remote.h"
 
-CLIPImageEmbedder::CLIPImageEmbedder(const std::shared_ptr<Ort::Session>& session, const std::shared_ptr<Ort::Env>& env, const std::string& model_path, const std::string& processor_filename) : image_processor_(model_path, processor_filename), session_(session), env_(env) {
+CLIPImageEmbedder::CLIPImageEmbedder(const std::shared_ptr<Ort::Session>& session, const std::shared_ptr<Ort::Env>& env, const std::string& model_path, const std::string& processor_filename)
+    : session_(session), env_(env), image_processor_(model_path, processor_filename) {
 }
 
 embedding_res_t CLIPImageEmbedder::embed(const std::string& encoded_image) {
@@ -97,7 +99,7 @@ std::vector<embedding_res_t> CLIPImageEmbedder::embed_documents(const std::vecto
     // no valid images
     if (processed_images.empty()) {
         std::vector<embedding_res_t> result_vector(inputs.size());
-        for (int i = 0; i < inputs.size(); i++) {
+        for (size_t i = 0; i < inputs.size(); i++) {
             result_vector[i] = results[i];
         }
 
@@ -147,7 +149,7 @@ std::vector<embedding_res_t> CLIPImageEmbedder::embed_documents(const std::vecto
 
 
     // run inference
-    // LOG(INFO) << "Running image embedder";
+    // TS_LOG(INFO) << "Running image embedder";
     std::unique_lock<std::mutex> lock(mutex_);
     auto output_tensors = session_->Run(Ort::RunOptions{nullptr}, input_names.data(), input_tensors.data(), input_tensors.size(), output_names.data(), output_names.size());
     lock.unlock();

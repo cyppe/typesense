@@ -2,28 +2,38 @@
 #include "personalization_model_manager.h"
 #include "store.h"
 #include <filesystem>
+#include <fstream>
 #include "collection_manager.h"
+#include "runfiles_utils.h"
+#include "temp_dir_utils.h"
+#include "logger.h"
 
 class PersonalizationModelManagerTest : public ::testing::Test {
 protected:
     std::string temp_dir;
+    std::string test_root_path;
+    std::string state_dir_path;
+    std::string model_dir_path;
     Store *store;
     CollectionManager& collectionManager = CollectionManager::get_instance();
     std::atomic<bool> quit = false;
 
     void SetUp() override {
-        temp_dir = (std::filesystem::temp_directory_path() / "personalization_model_manager_test").string();
-        system(("rm -rf " + temp_dir + " && mkdir -p " + temp_dir).c_str());
-        std::string test_dir = "/tmp/typesense_test/personalization_model_manager_test/models";
-        system(("rm -rf " + test_dir + " && mkdir -p " + test_dir).c_str());
-        EmbedderManager::set_model_dir(test_dir);
+        temp_dir = typesense_test::make_test_temp_dir("personalization_model_manager_tmp");
+        typesense_test::reset_test_temp_dir(temp_dir);
+
+        test_root_path = typesense_test::make_test_temp_dir("personalization_model_manager");
+        model_dir_path = test_root_path + "/models";
+        state_dir_path = test_root_path + "/state";
+
+        typesense_test::reset_test_temp_dir(model_dir_path);
+        typesense_test::reset_test_temp_dir(state_dir_path);
+        EmbedderManager::set_model_dir(model_dir_path);
 
         // Create test collection
-        std::string state_dir_path = "/tmp/typesense_test/personalization_model_manager_test";
         Config::get_instance().set_data_dir(state_dir_path);
 
-        LOG(INFO) << "Truncating and creating: " << state_dir_path;
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        TS_LOG(INFO) << "Truncating and creating: " << state_dir_path;
         nlohmann::json collection_schema = R"({
             "name": "companies",
             "fields": [
@@ -38,11 +48,11 @@ protected:
     }
 
     void TearDown() override {
-        std::string test_dir = "/tmp/typesense_test";
-        system(("rm -rf " + test_dir).c_str());
         collectionManager.dispose();
         PersonalizationModelManager::dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(temp_dir);
+        typesense_test::cleanup_test_temp_dir(test_root_path);
     }
 
     nlohmann::json create_valid_model(const std::string& id = "") {
@@ -55,9 +65,16 @@ protected:
     }
 
     std::string get_onnx_model_archive() {
-        std::string archive_name = "test/resources/models.tar.gz";
+        std::string archive_name = resolve_test_path({
+            "test/resources/models.tar.gz",
+            "_main/test/resources/models.tar.gz",
+        });
 
         std::ifstream archive_file(archive_name, std::ios::binary);
+        EXPECT_TRUE(archive_file.is_open()) << "Unable to open archive: " << archive_name;
+        if (!archive_file.is_open()) {
+            return {};
+        }
         std::string archive_content((std::istreambuf_iterator<char>(archive_file)), std::istreambuf_iterator<char>());
 
         archive_file.close();
@@ -80,7 +97,7 @@ TEST_F(PersonalizationModelManagerTest, AddModelDuplicate) {
     ASSERT_TRUE(result.ok());
     auto result1 = PersonalizationModelManager::add_model(model, "test_id", true);
     ASSERT_FALSE(result1.ok());
-    ASSERT_EQ(result1.code(), 409);
+    ASSERT_EQ(result1.code(), 409u);
     ASSERT_EQ(result1.error(), "Model id already exists");
 }
 
@@ -100,7 +117,7 @@ TEST_F(PersonalizationModelManagerTest, GetModelSuccess) {
 TEST_F(PersonalizationModelManagerTest, GetModelNotFound) {
     auto result = PersonalizationModelManager::get_model("nonexistent");
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 404);
+    ASSERT_EQ(result.code(), 404u);
     ASSERT_EQ(result.error(), "Model not found");
 }
 
@@ -118,14 +135,14 @@ TEST_F(PersonalizationModelManagerTest, DeleteModelSuccess) {
 
     auto get_result = PersonalizationModelManager::get_model("test_id");
     ASSERT_FALSE(get_result.ok());
-    ASSERT_EQ(get_result.code(), 404);
+    ASSERT_EQ(get_result.code(), 404u);
     ASSERT_EQ(get_result.error(), "Model not found");
 }
 
 TEST_F(PersonalizationModelManagerTest, DeleteModelNotFound) {
     auto result = PersonalizationModelManager::delete_model("nonexistent");
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 404);
+    ASSERT_EQ(result.code(), 404u);
     ASSERT_EQ(result.error(), "Model not found");
 }
 
@@ -144,7 +161,7 @@ TEST_F(PersonalizationModelManagerTest, GetAllModelsWithData) {
 
     auto result = PersonalizationModelManager::get_all_models();
     ASSERT_TRUE(result.ok());
-    ASSERT_EQ(result.get().size(), 2);
+    ASSERT_EQ(result.get().size(), size_t{2});
 }
 
 TEST_F(PersonalizationModelManagerTest, UpdateModelSuccess) {
@@ -166,7 +183,7 @@ TEST_F(PersonalizationModelManagerTest, UpdateModelNotFound) {
     update["name"] = "ts/tyrec-1";
     auto result = PersonalizationModelManager::update_model("nonexistent", update, "");
     ASSERT_FALSE(result.ok());
-    ASSERT_EQ(result.code(), 404);
+    ASSERT_EQ(result.code(), 404u);
     ASSERT_EQ(result.error(), "Model not found");
 }
 
@@ -179,6 +196,6 @@ TEST_F(PersonalizationModelManagerTest, UpdateModelInvalidData) {
     update["name"] = "invalid/name";
     auto update_result = PersonalizationModelManager::update_model("test_id", update, "");
     ASSERT_FALSE(update_result.ok());
-    ASSERT_EQ(update_result.code(), 400);
+    ASSERT_EQ(update_result.code(), 400u);
     ASSERT_EQ(update_result.error(), "Model namespace must be 'ts'.");
 }

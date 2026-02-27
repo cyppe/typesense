@@ -51,9 +51,9 @@ public:
     void delete_image_embedder(const std::string& model_path);
     void delete_all_image_embedders();
 
-    static const TokenizerType get_tokenizer_type(const nlohmann::json& model_config);
-    const std::string get_indexing_prefix(const nlohmann::json& model_config);
-    const std::string get_query_prefix(const nlohmann::json& model_config);
+    static TokenizerType get_tokenizer_type(const nlohmann::json& model_config);
+    std::string get_indexing_prefix(const nlohmann::json& model_config);
+    std::string get_query_prefix(const nlohmann::json& model_config);
     static void set_model_dir(const std::string& dir);
     static const std::string& get_model_dir();
 
@@ -63,18 +63,18 @@ public:
     inline static const std::string MODEL_CONFIG_FILE = "config.json";
     inline static std::string model_dir = "";
 
-    static const std::string get_absolute_model_path(const std::string& model_name, const bool is_public);
-    static const std::string get_absolute_vocab_path(const std::string& model_name, const std::string& vocab_file_name, const bool is_public);
-    static const std::string get_absolute_config_path(const std::string& model_name, const bool is_public);
-    static const std::string get_model_url(const text_embedding_model& model);
-    static const std::string get_model_data_url(const text_embedding_model& model);
-    static const std::string get_vocab_url(const text_embedding_model& model);
+    static std::string get_absolute_model_path(const std::string& model_name, const bool is_public);
+    static std::string get_absolute_vocab_path(const std::string& model_name, const std::string& vocab_file_name, const bool is_public);
+    static std::string get_absolute_config_path(const std::string& model_name, const bool is_public);
+    static std::string get_model_url(const text_embedding_model& model);
+    static std::string get_model_data_url(const text_embedding_model& model);
+    static std::string get_vocab_url(const text_embedding_model& model);
     static Option<nlohmann::json> get_public_model_config(const std::string& model_name);
     static void save_public_model_config(const std::string& model_name, const nlohmann::json& model_config);
-    static const std::string get_model_name_without_namespace(const std::string& model_name);
-    static const std::string get_model_namespace(const std::string& model_name);
-    static const std::string get_model_subdir(const std::string& model_name, const bool is_public);
-    static const bool check_md5(const std::string& file_path, const std::string& target_md5);
+    static std::string get_model_name_without_namespace(const std::string& model_name);
+    static std::string get_model_namespace(const std::string& model_name);
+    static std::string get_model_subdir(const std::string& model_name, const bool is_public);
+    static bool check_md5(const std::string& file_path, const std::string& target_md5);
     Option<bool> download_public_model(const text_embedding_model& model);
 
     Option<bool> init_public_model(const std::string& model_name);
@@ -105,4 +105,3 @@ private:
 
     bool is_model_public(const std::string& model_name);
 };
-

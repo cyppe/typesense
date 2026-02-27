@@ -21,7 +21,7 @@ private:
 
 
         /*if(new_length == 15) {
-            LOG(INFO) << "value: " << value << ", m: " << m << ", M: " << M << ", bnew: "
+            TS_LOG(INFO) << "value: " << value << ", m: " << m << ", M: " << M << ", bnew: "
                       << bnew << ", size_bits: " << size_bits;
         }*/
 

@@ -225,10 +225,10 @@ long HttpClient::perform_curl(CURL *curl, std::map<std::string, std::string>& re
         if(res == CURLE_OPERATION_TIMEDOUT) {
             double total_time;
             curl_easy_getinfo(curl, CURLINFO_TOTAL_TIME, &total_time);
-            LOG(ERROR) << "CURL timeout. Time taken: " << total_time << ", method: " << method << ", url: " << url;
+            TS_LOG(ERROR) << "CURL timeout. Time taken: " << total_time << ", method: " << method << ", url: " << url;
             status_code = 408;
         } else {
-            LOG(ERROR) << "CURL failed. Code: " << res << ", strerror: " << curl_easy_strerror(res)
+            TS_LOG(ERROR) << "CURL failed. Code: " << res << ", strerror: " << curl_easy_strerror(res)
                        << ", method: " << method << ", url: " << url;
             status_code = 500;
         }
@@ -259,13 +259,13 @@ void HttpClient::extract_response_headers(CURL* curl, std::map<std::string, std:
 }
 
 size_t HttpClient::curl_req_send_callback(char* buffer, size_t size, size_t nitems, void* userdata) {
-    //LOG(INFO) << "curl_req_send_callback";
+    //TS_LOG(INFO) << "curl_req_send_callback";
     // callback for request body to be sent to remote host
     deferred_req_res_t* req_res = static_cast<deferred_req_res_t *>(userdata);
 
     if(!req_res->res->is_alive) {
         // underlying client request is dead, don't proxy anymore data to upstream (leader)
-        //LOG(INFO) << "req_res->req->req is: null";
+        //TS_LOG(INFO) << "req_res->req->req is: null";
         return 0;
     }
 
@@ -281,12 +281,12 @@ size_t HttpClient::curl_req_send_callback(char* buffer, size_t size, size_t nite
 
     req_res->req->body_index += bytes_to_read;
 
-    /*LOG(INFO) << "Wrote " << bytes_to_read << " bytes to request body (max_buffer_bytes=" << max_req_bytes << ")";
-    LOG(INFO) << "req_res->req->body_index: " << req_res->req->body_index
+    /*TS_LOG(INFO) << "Wrote " << bytes_to_read << " bytes to request body (max_buffer_bytes=" << max_req_bytes << ")";
+    TS_LOG(INFO) << "req_res->req->body_index: " << req_res->req->body_index
               << ", req_res->req->body.size(): " << req_res->req->body.size();*/
 
     if(req_res->req->body_index == req_res->req->body.size()) {
-        //LOG(INFO) << "Current body buffer has been consumed fully.";
+        //TS_LOG(INFO) << "Current body buffer has been consumed fully.";
 
         req_res->req->body_index = 0;
         req_res->req->body = "";
@@ -296,10 +296,10 @@ size_t HttpClient::curl_req_send_callback(char* buffer, size_t size, size_t nite
         server->get_message_dispatcher()->send_message(HttpServer::REQUEST_PROCEED_MESSAGE, req_res);
 
         if(!req_res->req->last_chunk_aggregate) {
-            //LOG(INFO) << "Waiting for request body to be ready";
+            //TS_LOG(INFO) << "Waiting for request body to be ready";
             req_res->req->wait();
-            //LOG(INFO) << "Request body is ready";
-            //LOG(INFO) << "Buffer refilled, unpausing request forwarding, body_size=" << req_res->req->body.size();
+            //TS_LOG(INFO) << "Request body is ready";
+            //TS_LOG(INFO) << "Buffer refilled, unpausing request forwarding, body_size=" << req_res->req->body.size();
         }
     }
 
@@ -308,7 +308,7 @@ size_t HttpClient::curl_req_send_callback(char* buffer, size_t size, size_t nite
 
 size_t HttpClient::curl_write_async(char *buffer, size_t size, size_t nmemb, void *context) {
     // callback for response body to be sent back to client
-    //LOG(INFO) << "curl_write_async";
+    //TS_LOG(INFO) << "curl_write_async";
     deferred_req_res_t* req_res = static_cast<deferred_req_res_t *>(context);
 
     if(!req_res->res->is_alive) {
@@ -358,17 +358,17 @@ size_t HttpClient::curl_write_async(char *buffer, size_t size, size_t nmemb, voi
 
     req_res->res->body = resp_str;
 
-    //LOG(INFO) << "curl_write_async response, res body size: " << req_res->res->body.size();
+    //TS_LOG(INFO) << "curl_write_async response, res body size: " << req_res->res->body.size();
 
     // wait for previous chunk to finish (if any)
-    //LOG(INFO) << "Waiting on req_res " << req_res->res;
+    //TS_LOG(INFO) << "Waiting on req_res " << req_res->res;
     req_res->res->wait();
 
     async_req_res_t* async_req_res = new async_req_res_t(req_res->req, req_res->res, true);
     req_res->server->get_message_dispatcher()->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, async_req_res);
 
     // wait until response is sent
-    //LOG(INFO) << "Response sent";
+    //TS_LOG(INFO) << "Response sent";
 
     return res_size;
 }
@@ -392,7 +392,7 @@ size_t HttpClient::curl_write_stream_done(void *context, curl_socket_t item) {
 }
 
 size_t HttpClient::curl_write_async_done(void *context, curl_socket_t item) {
-    //LOG(INFO) << "curl_write_async_done";
+    //TS_LOG(INFO) << "curl_write_async_done";
     deferred_req_res_t* req_res = static_cast<deferred_req_res_t *>(context);
     if(req_res->req->is_write) {
        req_res->server->decr_pending_writes();
@@ -402,7 +402,7 @@ size_t HttpClient::curl_write_async_done(void *context, curl_socket_t item) {
         bool output = req_res->req->async_res_done_callback(req_res->req, req_res->res);
         if(!output) {
             // if the callback returns false, don't send response, early return
-            //LOG(INFO) << "async_res_done_callback returned false";
+            //TS_LOG(INFO) << "async_res_done_callback returned false";
             return 0;
         }
     }
@@ -420,7 +420,7 @@ size_t HttpClient::curl_write_async_done(void *context, curl_socket_t item) {
     req_res->res->final = true;
 
     // wait until final response is flushed or response object will be destroyed by caller
-    //LOG(INFO) << "Waiting on req_res " << req_res->res;
+    //TS_LOG(INFO) << "Waiting on req_res " << req_res->res;
     req_res->res->wait();
 
     async_req_res_t* async_req_res = new async_req_res_t(req_res->req, req_res->res, true);
@@ -438,7 +438,7 @@ CURL *HttpClient::init_curl_stream(const std::string& url, async_stream_response
     if(!ca_cert_path.empty()) {
         curl_easy_setopt(curl, CURLOPT_CAINFO, ca_cert_path.c_str());
     } else if (url.compare(0, 5, "https") == 0) {
-        LOG(WARNING) << "Unable to locate system SSL certificates.";
+        TS_LOG(WARNING) << "Unable to locate system SSL certificates.";
     }
 
 
@@ -475,7 +475,7 @@ CURL *HttpClient::init_curl_sse(const std::string& url, long timeout_ms,
     if(!ca_cert_path.empty()) {
     curl_easy_setopt(curl, CURLOPT_CAINFO, ca_cert_path.c_str());
     } else {
-    LOG(WARNING) << "Unable to locate system SSL certificates.";
+    TS_LOG(WARNING) << "Unable to locate system SSL certificates.";
     }
 
     req_res->req->data = new client_state_t(curl);  // destruction of data is managed by req destructor
@@ -533,7 +533,7 @@ CURL *HttpClient::init_curl_async(const std::string& url, deferred_req_res_t* re
     if(!ca_cert_path.empty()) {
         curl_easy_setopt(curl, CURLOPT_CAINFO, ca_cert_path.c_str());
     } else if (url.compare(0, 5, "https") == 0) {
-        LOG(WARNING) << "Unable to locate system SSL certificates.";
+        TS_LOG(WARNING) << "Unable to locate system SSL certificates.";
     }
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -567,7 +567,7 @@ CURL *HttpClient::init_curl(const std::string& url, std::string& response, const
     if(!ca_cert_path.empty()) {
         curl_easy_setopt(curl, CURLOPT_CAINFO, ca_cert_path.c_str());
     } else if (url.compare(0, 5, "https") == 0) {
-        LOG(WARNING) << "Unable to locate system SSL certificates.";
+        TS_LOG(WARNING) << "Unable to locate system SSL certificates.";
     }
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -608,7 +608,7 @@ long HttpClient::download_file(const std::string& url, const std::string& file_p
     FILE *fp = fopen(file_path.c_str(), "wb");
 
     if(fp == nullptr) {
-        LOG(ERROR) << "Unable to open file for writing: " << file_path;
+        TS_LOG(ERROR) << "Unable to open file for writing: " << file_path;
         return -1;
     }
 
@@ -624,7 +624,7 @@ long HttpClient::download_file(const std::string& url, const std::string& file_p
     CURLcode res_code = curl_easy_perform(curl);
 
     if(res_code != CURLE_OK) {
-        LOG(ERROR) << "Unable to download file: " << url << " to " << file_path << " - " << curl_easy_strerror(res_code);
+        TS_LOG(ERROR) << "Unable to download file: " << url << " to " << file_path << " - " << curl_easy_strerror(res_code);
         return -1;
     }
     long http_code = 0;

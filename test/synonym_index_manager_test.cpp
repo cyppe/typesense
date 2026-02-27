@@ -4,15 +4,17 @@
 #include <algorithm>
 #include "synonym_index_manager.h"
 #include "store.h"
+#include "temp_dir_utils.h"
 
 class SynonymIndexManagerTest : public ::testing::Test {
 protected:
     Store* store = nullptr;
     SynonymIndexManager& mgr = SynonymIndexManager::get_instance();
+    std::string state_dir_path;
 
     virtual void SetUp() {
-        std::string state_dir_path = "/tmp/typesense_test/synonym_index_manager";
-        system(("rm -rf " + state_dir_path + " && mkdir -p " + state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("synonym_index_manager");
+        typesense_test::reset_test_temp_dir(state_dir_path);
         store = new Store(state_dir_path);
         mgr.init_store(store);
     }
@@ -21,6 +23,7 @@ protected:
         mgr.remove_synonym_index("testset");
         mgr.remove_synonym_index("testset2");
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -33,7 +36,7 @@ TEST_F(SynonymIndexManagerTest, UpsertSynonymSet) {
     ASSERT_TRUE(upsert_op.ok()) << upsert_op.error();
     auto created_json = upsert_op.get();
     ASSERT_TRUE(created_json.contains("items"));
-    ASSERT_EQ(2, created_json["items"].size());
+    ASSERT_EQ(size_t{2}, created_json["items"].size());
 }
 
 TEST_F(SynonymIndexManagerTest, ListSynonymItems) {
@@ -45,19 +48,19 @@ TEST_F(SynonymIndexManagerTest, ListSynonymItems) {
 
     auto list_all = mgr.list_synonym_items("testset", 0, 0);
     ASSERT_TRUE(list_all.ok()) << list_all.error();
-    ASSERT_EQ(2, list_all.get().size());
+    ASSERT_EQ(size_t{2}, list_all.get().size());
 
     auto list_limited = mgr.list_synonym_items("testset", 1, 0);
     ASSERT_TRUE(list_limited.ok()) << list_limited.error();
-    ASSERT_EQ(1, list_limited.get().size());
+    ASSERT_EQ(size_t{1}, list_limited.get().size());
 
     auto list_from_offset = mgr.list_synonym_items("testset", 1, 1);
     ASSERT_TRUE(list_from_offset.ok()) << list_from_offset.error();
-    ASSERT_EQ(1, list_from_offset.get().size());
+    ASSERT_EQ(size_t{1}, list_from_offset.get().size());
 
     auto list_bad_offset = mgr.list_synonym_items("testset", 0, 5);
     ASSERT_FALSE(list_bad_offset.ok());
-    ASSERT_EQ(400, list_bad_offset.code());
+    ASSERT_EQ(400u, list_bad_offset.code());
 }
 
 TEST_F(SynonymIndexManagerTest, GetSynonymItem) {
@@ -72,7 +75,7 @@ TEST_F(SynonymIndexManagerTest, GetSynonymItem) {
 
     auto not_found = mgr.get_synonym_item("testset", "does-not-exist");
     ASSERT_FALSE(not_found.ok());
-    ASSERT_EQ(404, not_found.code());
+    ASSERT_EQ(404u, not_found.code());
 }
 
 TEST_F(SynonymIndexManagerTest, UpsertSynonymItem) {
@@ -106,5 +109,5 @@ TEST_F(SynonymIndexManagerTest, DeleteSynonymItem) {
 
     auto get_deleted = mgr.get_synonym_item("testset", "syn-phone");
     ASSERT_FALSE(get_deleted.ok());
-    ASSERT_EQ(404, get_deleted.code());
+    ASSERT_EQ(404u, get_deleted.code());
 }

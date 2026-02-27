@@ -51,8 +51,8 @@ CONFIGURE_OPTIONS = [
     "enable-cms",
     "no-capieng",
     "enable-ec_nistp_64_gcc_128",
-    "--with-zlib-include=$$EXT_BUILD_DEPS$$",
-    "--with-zlib-lib=$$EXT_BUILD_DEPS$$",
+    "--with-zlib-include=$$EXT_BUILD_DEPS",
+    "--with-zlib-lib=$$EXT_BUILD_DEPS",
     # https://stackoverflow.com/questions/36220341/struct-in6-addr-has-no-member-named-s6-addr32-with-ansi
     "-D_DEFAULT_SOURCE=1",
     "-DPEDANTIC",
@@ -137,10 +137,10 @@ configure_make(
     env = select({
         "@platforms//os:macos": {
             "AR": "",
-            "PERL": "$$EXT_BUILD_ROOT$$/$(PERL)",
+            "PERL": "$$EXT_BUILD_ROOT/$(PERL)",
         },
         "//conditions:default": {
-            "PERL": "$$EXT_BUILD_ROOT$$/$(PERL)",
+            "PERL": "$$EXT_BUILD_ROOT/$(PERL)",
         },
     }),
     lib_name = LIB_NAME,

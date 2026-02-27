@@ -8,12 +8,18 @@
 #include <mutex>
 #include <thread>
 #include <shared_mutex>
+#include <vector>
 #include <option.h>
 #include <rocksdb/db.h>
 #include <rocksdb/write_batch.h>
 #include <rocksdb/options.h>
 #include <rocksdb/merge_operator.h>
 #include <rocksdb/transaction_log.h>
+#include <rocksdb/cache.h>
+#include <rocksdb/table.h>
+#include <rocksdb/filter_policy.h>
+#include <rocksdb/rate_limiter.h>
+#include <rocksdb/statistics.h>
 #include <butil/file_util.h>
 #include <mutex>
 #include <rocksdb/utilities/checkpoint.h>
@@ -55,9 +61,10 @@ class Store {
 private:
 
     const std::string state_dir_path;
-    rocksdb::DB *db;
+    std::unique_ptr<rocksdb::DB> db;
     rocksdb::Options options;
     rocksdb::WriteOptions write_options;
+    bool async_io_enabled;
 
     // Used to protect assignment to DB handle, which is otherwise thread safe
     // So we use unique lock only for assignment, but shared locks for all other operations on DB
@@ -77,7 +84,26 @@ public:
           size_t write_buffer_size = 4*1048576,
           size_t max_write_buffer_number = 2,
           size_t max_log_file_size = 4*1048576,
-          size_t keep_log_file_num = 5);
+          size_t keep_log_file_num = 5,
+          size_t block_cache_size = 256*1048576,
+          int64_t rate_limit_bytes_per_sec = 0,
+          bool level_compaction_dynamic_level_bytes = true,
+          uint32_t block_size = 16*1024,
+          uint32_t format_version = 7,
+          bool enable_statistics = true,
+          uint32_t compression_parallel_threads = 4,
+          uint64_t bytes_per_sync = 1048576,
+          uint64_t max_manifest_file_size = 1048576,
+          bool enable_async_io = true,
+          const std::string& offpeak_time_utc = "02:00-06:00",
+          bool unordered_write = true,
+          uint32_t max_subcompactions = 2,
+          uint32_t max_background_jobs = 0,
+          bool use_direct_reads = false,
+          bool use_direct_io_for_flush_and_compaction = false,
+          uint64_t compaction_readahead_size = 0,
+          bool optimize_filters_for_hits = false,
+          bool paranoid_memory_checks = true);
 
     ~Store();
 
@@ -87,7 +113,10 @@ public:
 
     bool contains(const std::string& key) const;
 
-    StoreStatus get(const std::string& key, std::string& value) const;
+    StoreStatus get(const std::string& key, std::string& value, bool fill_cache = true) const;
+
+    void multi_get(const std::vector<std::string>& keys, std::vector<StoreStatus>& statuses,
+                   std::vector<std::string>& values, bool fill_cache = true) const;
 
     bool remove(const std::string& key);
 
@@ -125,6 +154,8 @@ public:
     const rocksdb::Options &get_db_options() const;
 
     void print_memory_usage();
+
+    std::string get_statistics() const;
 
     void get_last_N_values(const std::string& userid_prefix, uint32_t N, std::vector<std::string>& values);
 };

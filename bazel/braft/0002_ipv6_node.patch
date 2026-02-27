@@ -1,0 +1,14 @@
+--- src/braft/node.cpp	2026-02-28 07:33:05.276211417 +0100
++++ src/braft/node.cpp	2026-02-28 07:36:03.683500611 +0100
+@@ -493,9 +493,9 @@
+     _options = options;
+ 
+     // check _server_id
+-    if (butil::IP_ANY == _server_id.addr.ip) {
++    if (!is_endpoint_extended(_server_id.addr) && butil::IP_ANY == _server_id.addr.ip) {
+         LOG(ERROR) << "Group " << _group_id 
+-                   << " Node can't started from IP_ANY";
++                   << " Node can't be started from IP_ANY: " << _server_id;
+         return -1;
+     }
+ 

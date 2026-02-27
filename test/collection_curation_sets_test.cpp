@@ -5,6 +5,7 @@
 #include <collection_manager.h>
 #include "collection.h"
 #include "curation_index_manager.h"
+#include "temp_dir_utils.h"
 
 class CollectionCurationSetsTest : public ::testing::Test {
 protected:
@@ -13,10 +14,11 @@ protected:
     CurationIndexManager & ovManager = CurationIndexManager::get_instance();
     std::atomic<bool> quit = false;
     Collection *coll;
+    std::string state_dir_path;
 
     void setupCollection() {
-        std::string state_dir_path = "/tmp/typesense_test/collection_curation_sets";
-        system(("rm -rf "+state_dir_path+" && mkdir -p "+state_dir_path).c_str());
+        state_dir_path = typesense_test::make_test_temp_dir("collection_curation_sets");
+        typesense_test::reset_test_temp_dir(state_dir_path);
 
         store = new Store(state_dir_path);
         collectionManager.init(store, 1.0, "auth_key", quit);
@@ -50,6 +52,7 @@ protected:
         collectionManager.drop_collection("coll_osets");
         collectionManager.dispose();
         delete store;
+        typesense_test::cleanup_test_temp_dir(state_dir_path);
     }
 };
 
@@ -57,8 +60,7 @@ TEST_F(CollectionCurationSetsTest, CurationSetsApplied) {
     auto res = coll->search("titanic", {"title"}, "", {}, {}, {0}, 10);
     ASSERT_TRUE(res.ok());
     auto json = res.get();
-    ASSERT_GE(json["hits"].size(), 1);
+    ASSERT_GE(json["hits"].size(), size_t{1});
     ASSERT_EQ("1", json["hits"][0]["document"]["id"].get<std::string>());
 }
-
 
