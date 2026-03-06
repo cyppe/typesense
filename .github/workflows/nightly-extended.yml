@@ -95,26 +95,15 @@ jobs:
       - name: Build Typesense server
         run: scripts/bazel_in_docker.sh build //:typesense-server
 
-      - name: Set TYPESENSE_BINARY_PATH
-        run: echo "TYPESENSE_BINARY_PATH=$(readlink -f bazel-bin/typesense-server)" >> $GITHUB_ENV
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install API test dependencies
-        working-directory: api_tests
-        run: bun install
-
       - name: Run full API suite (3 iterations)
-        working-directory: api_tests
         run: |
           set -o pipefail
-          mkdir -p ../multi-node-logs
+          mkdir -p multi-node-logs
           for i in $(seq 1 3); do
-            echo "[api-multi-node] iteration ${i}/3" | tee -a ../multi-node-logs/summary.log
+            echo "[api-multi-node] iteration ${i}/3" | tee -a multi-node-logs/summary.log
             TYPESENSE_DATA_DIR="${{ github.workspace }}/tmp/test-${i}" \
-              bun src/cli.ts --no-secrets --download-migration-binary 2>&1 \
-              | tee "../multi-node-logs/api-run-${i}.log"
+              scripts/run_api_tests.sh -- --no-secrets --download-migration-binary 2>&1 \
+              | tee "multi-node-logs/api-run-${i}.log"
           done
 
       - name: Save Bazel cache
@@ -131,7 +120,7 @@ jobs:
           name: api-multi-node-logs
           path: |
             multi-node-logs/
-            api_tests/tmp/
+            tmp/
           if-no-files-found: warn
 
       - name: Report Bazel cache size

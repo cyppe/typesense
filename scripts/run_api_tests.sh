@@ -5,7 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 API_TESTS_DIR="${REPO_ROOT}/api_tests"
-RUNTIME_BUNDLE_DIR="${REPO_ROOT}/typesense-runtime-bundle"
+RUNTIME_BUNDLE_DIR="${TYPESENSE_RUNTIME_BUNDLE_DIR:-${REPO_ROOT}/typesense-runtime-bundle}"
 DATA_DIR="${REPO_ROOT}/tmp/test"
 BUN_IMAGE="${TYPESENSE_API_TEST_BUN_IMAGE:-typesense/api-tests-bun:local}"
 USE_HOST_BUN=false
@@ -14,7 +14,7 @@ SKIP_INSTALL=false
 usage() {
 	cat <<'EOF'
 Usage:
-  scripts/run_api_tests.sh [--host-bun] [--skip-install] [-- <api test args...>]
+  scripts/run_api_tests.sh [--host-bun] [--skip-install] [--runtime-bundle-dir DIR] [-- <api test args...>]
 
 Defaults:
   - Prepares the runtime bundle from the current Bazel build output
@@ -25,10 +25,12 @@ Defaults:
 Examples:
   scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
   scripts/run_api_tests.sh -- tests/health.test.ts
+  scripts/run_api_tests.sh --runtime-bundle-dir ./typesense-server-binary -- --no-secrets
   scripts/run_api_tests.sh --host-bun -- --no-secrets tests/health.test.ts
 
 Environment:
   TYPESENSE_API_TEST_BUN_IMAGE  Override Bun image tag (default: typesense/api-tests-bun:local)
+  TYPESENSE_RUNTIME_BUNDLE_DIR  Reuse an existing runtime bundle instead of preparing one in typesense-runtime-bundle
   TYPESENSE_API_HOST            Set internally to 127.0.0.1 for reliable Dockerized health checks
 EOF
 }
@@ -42,6 +44,10 @@ while [[ $# -gt 0 ]]; do
 	--skip-install)
 		SKIP_INSTALL=true
 		shift
+		;;
+	--runtime-bundle-dir)
+		RUNTIME_BUNDLE_DIR="$2"
+		shift 2
 		;;
 	--help | -h)
 		usage
@@ -58,7 +64,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 mkdir -p "${DATA_DIR}"
-bash "${REPO_ROOT}/api_tests/scripts/prepare_runtime_bundle.sh" "${RUNTIME_BUNDLE_DIR}"
+if [[ ! -x "${RUNTIME_BUNDLE_DIR}/typesense-server" ]]; then
+	bash "${REPO_ROOT}/api_tests/scripts/prepare_runtime_bundle.sh" "${RUNTIME_BUNDLE_DIR}"
+fi
 
 API_TEST_ARGS=("$@")
 ENV_VARS=(

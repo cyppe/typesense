@@ -97,26 +97,15 @@ jobs:
       - name: Build Typesense server
         run: scripts/bazel_in_docker.sh build //:typesense-server
 
-      - name: Set TYPESENSE_BINARY_PATH
-        run: echo "TYPESENSE_BINARY_PATH=$(readlink -f bazel-bin/typesense-server)" >> $GITHUB_ENV
-
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install API test dependencies
-        working-directory: api_tests
-        run: bun install
-
       - name: Run API flake stress lane
-        working-directory: api_tests
         run: |
           set -o pipefail
-          mkdir -p ../flake-logs
-          cmd='TYPESENSE_DATA_DIR="${{ github.workspace }}/tmp/test" bun src/cli.ts --no-secrets --download-migration-binary tests/documents.test.ts'
-          echo "[api-flake] command: ${cmd}" | tee ../flake-logs/api-flake.log
+          mkdir -p flake-logs
+          cmd='scripts/run_api_tests.sh -- --no-secrets --download-migration-binary tests/documents.test.ts'
+          echo "[api-flake] command: ${cmd}" | tee flake-logs/api-flake.log
           for i in $(seq 1 10); do
-            echo "[api-flake] run ${i}/10" | tee -a ../flake-logs/api-flake.log
-            TYPESENSE_DATA_DIR="${{ github.workspace }}/tmp/test" bun src/cli.ts --no-secrets --download-migration-binary tests/documents.test.ts 2>&1 | tee "../flake-logs/api-documents-run-${i}.log"
+            echo "[api-flake] run ${i}/10" | tee -a flake-logs/api-flake.log
+            TYPESENSE_DATA_DIR="${{ github.workspace }}/tmp/test" scripts/run_api_tests.sh -- --no-secrets --download-migration-binary tests/documents.test.ts 2>&1 | tee "flake-logs/api-documents-run-${i}.log"
           done
 
       - name: Save Bazel cache
@@ -133,7 +122,7 @@ jobs:
           name: flake-api-logs
           path: |
             flake-logs/
-            api_tests/tmp/test/
+            tmp/test/
           if-no-files-found: warn
 
       - name: Report Bazel cache size

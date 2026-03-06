@@ -231,9 +231,6 @@ jobs:
           LD_LIBRARY_PATH: ${{ github.workspace }}/typesense-server-binary/lib
         run: ldd ./typesense-server-binary/typesense-server | tee ./typesense-server-binary/ldd.txt
 
-      - name: Install bun
-        uses: oven-sh/setup-bun@v2
-
       - name: Start TEI Container
         run: |
           docker run -d --name tei-container --runtime=runc -p 8080:80 \
@@ -251,14 +248,6 @@ jobs:
         if: failure()
         run: docker logs tei-container || echo "No logs found"
 
-      - name: Install dependencies
-        working-directory: api_tests
-        run: bun install
-
-      - name: Install typesense-api-tests
-        working-directory: api_tests
-        run: bun link
-
       - name: Detect embedding secret availability
         id: embedding_secrets
         env:
@@ -274,34 +263,25 @@ jobs:
 
       - name: Run API tests with secrets
         if: steps.embedding_secrets.outputs.has_secrets == 'true'
-        working-directory: api_tests
         env:
-          TYPESENSE_BINARY_PATH: ${{ github.workspace }}/typesense-server-binary/typesense-server
-          TYPESENSE_DATA_DIR: ${{ github.workspace }}/tmp/test
-          LD_LIBRARY_PATH: ${{ github.workspace }}/typesense-server-binary/lib
+          TYPESENSE_RUNTIME_BUNDLE_DIR: ${{ github.workspace }}/typesense-server-binary
           OPEN_AI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_URL: ${{ secrets.AZURE_OPENAI_URL }}
-        run: typesense-api-tests --download-migration-binary
+        run: scripts/run_api_tests.sh -- --download-migration-binary
 
       - name: Run API tests without secrets
         if: steps.embedding_secrets.outputs.has_secrets != 'true'
-        working-directory: api_tests
         env:
-          TYPESENSE_BINARY_PATH: ${{ github.workspace }}/typesense-server-binary/typesense-server
-          TYPESENSE_DATA_DIR: ${{ github.workspace }}/tmp/test
-          LD_LIBRARY_PATH: ${{ github.workspace }}/typesense-server-binary/lib
+          TYPESENSE_RUNTIME_BUNDLE_DIR: ${{ github.workspace }}/typesense-server-binary
           OPEN_AI_API_KEY: ""
-        run: typesense-api-tests --no-secrets --download-migration-binary
+        run: scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
 
       - name: Run TEI integration lane
-        working-directory: api_tests
         env:
-          TYPESENSE_BINARY_PATH: ${{ github.workspace }}/typesense-server-binary/typesense-server
-          TYPESENSE_DATA_DIR: ${{ github.workspace }}/tmp/test
-          LD_LIBRARY_PATH: ${{ github.workspace }}/typesense-server-binary/lib
+          TYPESENSE_RUNTIME_BUNDLE_DIR: ${{ github.workspace }}/typesense-server-binary
           TYPESENSE_TEST_TEI_URL: http://localhost:8080
-        run: typesense-api-tests --no-secrets --download-migration-binary tests/tei-integration.test.ts
+        run: scripts/run_api_tests.sh -- --no-secrets --download-migration-binary tests/tei-integration.test.ts
 
       - name: Upload model cache for next run
         if: always()
