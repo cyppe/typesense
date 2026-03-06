@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "skills": {
+    "bazel-build-optimization": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "computedHash": "cc3118b02fb484431b26a0bba5ad95ff3bbf1c2a0890049d210024bf2ba16e88"
+    },
+    "cpp-pro": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "computedHash": "d13a1a12b4a902c5054c05e5fb4a8bfd1e132093f65adff2827b54ec0b1f8bea"
+    }
+  }
+}
