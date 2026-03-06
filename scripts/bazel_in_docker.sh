@@ -20,10 +20,22 @@ Usage:
   scripts/bazel_in_docker.sh --build-image-only
   scripts/bazel_in_docker.sh <bazel-subcommand> [args...]
 
+Defaults:
+  - Docker image: typesense/ci-bazel:local
+  - Host cache dir: ~/.cache/typesense/bazel-docker
+  - C repo env opts: -std=gnu17
+
 Examples:
   scripts/bazel_in_docker.sh --build-image-only
   scripts/bazel_in_docker.sh build //:typesense-server
   scripts/bazel_in_docker.sh test --cache_test_results=no //:typesense-test
+
+Environment:
+  TYPESENSE_BAZEL_IMAGE               Override Docker image tag
+  TYPESENSE_BAZEL_CACHE_DIR           Override host cache/output root
+  TYPESENSE_BAZEL_DOCKERFILE          Override Dockerfile path
+  TYPESENSE_BAZEL_DOCKER_CONTEXT      Override Docker build context
+  TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS  Override C-only repo env opts
 EOF
 }
 

@@ -20,6 +20,7 @@ Defaults:
   - Prepares the runtime bundle from the current Bazel build output
   - Runs the API test CLI in Docker using the repo's Ubuntu-based Bun image
   - Does not require Bun on the host
+  - Forces IPv4 API health checks via TYPESENSE_API_HOST=127.0.0.1
 
 Examples:
   scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
@@ -28,6 +29,7 @@ Examples:
 
 Environment:
   TYPESENSE_API_TEST_BUN_IMAGE  Override Bun image tag (default: typesense/api-tests-bun:local)
+  TYPESENSE_API_HOST            Set internally to 127.0.0.1 for reliable Dockerized health checks
 EOF
 }
 

@@ -25,6 +25,12 @@ Modes:
   - Default: compare upstream release vs current fork build/cache
   - Explicit binary mode: pass --baseline-binary and --fork-binary
 
+Profiles:
+  quick         15s feedback loop for faster iteration
+  standard      default mixed import/search comparison
+  write-stress  heavier concurrent read/write validation
+  full          longer run with preserved history support
+
 Options:
   --build                  Build the fork binary first via bazel_in_docker.sh
   --upstream VER           Upstream version to compare against (default: 30.1)
@@ -40,6 +46,10 @@ Options:
   --no-flush               Keep existing InfluxDB data for trend analysis
   --server-args ...        Extra args passed through to typesense-server
   -h, --help               Show this help
+
+Environment:
+  OPENAI_API_KEY             Passed through to the benchmark CLI when needed
+  TYPESENSE_BAZEL_CACHE_DIR  Reused when staging a built fork binary
 
 Examples:
   scripts/benchmark_vs_upstream.sh --build --profile standard
