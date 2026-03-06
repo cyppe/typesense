@@ -126,46 +126,26 @@ jobs:
           mkdir -p ./influxdb-data
           sudo chown -R 999:999 ./influxdb-data
 
-      - name: Start containers
-        working-directory: benchmark
-        run: docker compose up -d
-
-      - name: Wait for InfluxDB to be ready
-        working-directory: benchmark
-        run: |
-          timeout 30s bash -c '
-          until curl -s http://localhost:8086/ping; do
-            echo "Waiting for InfluxDB..."
-            sleep 1
-          done
-          '
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '20'
-
-      - name: Install dependencies
-        working-directory: benchmark
-        run: |
-          npm install -g pnpm
-          pnpm install
-
-      - name: Build CLI
-        working-directory: benchmark
-        run: pnpm build
+          bun-version: 1.3.10
 
       - name: Run Benchmark Comparison
-        working-directory: benchmark
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          BENCHMARK_WORK_DIR: ${{ github.workspace }}/benchmark/benchmark-workdir
         run: |
-          # Print the SHAs for reference
           echo "Latest SHA: ${{ steps.get-runs.outputs.latest_sha }}"
           echo "Previous SHA: ${{ steps.get-runs.outputs.previous_sha }}"
-          
-          ./dist/index.js benchmark \
-            --binaries $(pwd)/../base-binary/typesense-server $(pwd)/../current-binary/typesense-server -c ${{ steps.get-runs.outputs.previous_sha }} ${{ steps.get-runs.outputs.latest_sha }} -d $(pwd)/benchmark-workdir  -y -v  --duration 1m
+          scripts/benchmark_vs_upstream.sh \
+            --baseline-binary "${{ github.workspace }}/base-binary/typesense-server" \
+            --baseline-label "${{ steps.get-runs.outputs.previous_sha }}" \
+            --fork-binary "${{ github.workspace }}/current-binary/typesense-server" \
+            --fork-label "${{ steps.get-runs.outputs.latest_sha }}" \
+            --work-dir "${{ github.workspace }}/benchmark/benchmark-workdir" \
+            --duration 1m \
+            --no-flush
 
       # Fix permissions and save data
       - name: Fix permissions for artifact upload

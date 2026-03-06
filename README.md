@@ -399,7 +399,7 @@ If you want to build on your host directly, Typesense requires the following dep
 * C++20 compatible compiler (recommended: GCC >= 14)
 * Snappy
 * zlib
-* OpenSSL (>=1.0.2)
+* OpenSSL development package (recommended: 3.x)
 * curl
 * ICU
 
@@ -412,6 +412,13 @@ scripts/check_local_toolchain.sh
 Please refer to the [CI build steps](.github/workflows/tests.yml) for the latest set of dependencies.
 
 For a practical local + CI-parity test workflow, see [TESTING_RUNBOOK.md](TESTING_RUNBOOK.md).
+
+For API tests, prefer the Dockerized wrapper:
+
+```shell
+scripts/bazel_in_docker.sh build //:typesense-server
+scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
+```
 
 Once you've installed them, run the following from the root of the repo:
 

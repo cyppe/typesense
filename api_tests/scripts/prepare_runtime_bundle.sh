@@ -23,6 +23,7 @@ else
 fi
 
 mkdir -p "${LIB_DIR}"
+chmod u+w "${OUTPUT_DIR}/typesense-server" 2>/dev/null || true
 cp "${SERVER_BINARY}" "${OUTPUT_DIR}/typesense-server"
 
 ONNX_RUNTIME_LIB="$(find "${BAZEL_CACHE_ROOT}" -type f -path "*/onnxruntime/lib/libonnxruntime.so.1" | sort | tail -n 1)"
@@ -32,6 +33,8 @@ if [[ -z "${ONNX_RUNTIME_LIB}" ]]; then
 	exit 1
 fi
 
+chmod u+w "${LIB_DIR}/libonnxruntime.so.1" 2>/dev/null || true
+chmod u+w "${LIB_DIR}/libonnxruntime.so" 2>/dev/null || true
 cp "${ONNX_RUNTIME_LIB}" "${LIB_DIR}/libonnxruntime.so.1"
 cp "$(dirname "${ONNX_RUNTIME_LIB}")/libonnxruntime.so" "${LIB_DIR}/libonnxruntime.so"
 

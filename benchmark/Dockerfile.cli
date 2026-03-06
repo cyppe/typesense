@@ -1,6 +1,4 @@
-FROM node:22-slim
-
-RUN corepack enable && corepack prepare pnpm@latest --activate
+FROM oven/bun:1.3.10-slim
 
 # Docker CLI + compose plugin — needed to spawn Typesense containers and run k6 via compose
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,11 +14,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Install dependencies first (cache layer)
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 
 # Copy source and build
 COPY . .
-RUN pnpm build
+RUN bun run build
 
-ENTRYPOINT ["node", "dist/index.js"]
+ENTRYPOINT ["bun", "dist/index.js"]

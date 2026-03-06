@@ -1,37 +1,7 @@
 #!/usr/bin/env bash
-# Compare fork build against upstream Typesense release.
-# Everything runs inside Docker — no host dependencies beyond Docker itself.
-#
-# Usage:
-#   scripts/benchmark_vs_upstream.sh [options]
-#
-# Options:
-#   --build          Build the fork binary first (via bazel_in_docker.sh)
-#   --upstream VER   Upstream version to compare against (default: 30.1)
-#   --duration DUR   Duration per benchmark scenario (default: 30s)
-#   --port PORT      Base HTTP port for Typesense (default: 12108)
-#   --work-dir DIR   Working directory for binaries and data (default: /tmp/typesense-benchmark)
-#   --clean          Remove work dir and InfluxDB data before running
-#   --profile NAME   Benchmark profile: quick, standard, write-stress, full (default: standard)
-#   --no-flush       Don't flush InfluxDB data (keep historical data for trend analysis)
-#   --server-args    Extra args to pass to typesense-server (e.g. --server-args --max-indexing-concurrency=16)
-#
-# Profiles:
-#   quick        - 15s per scenario, search only (fastest feedback loop)
-#   standard     - 30s per scenario, import + search (default)
-#   write-stress - 60s import, parallel writes with 4 VUs, 3 iterations each
-#   full         - 60s per scenario, import + search + stress import + metrics collection
-#
-# Examples:
-#   scripts/benchmark_vs_upstream.sh --build                     # build + benchmark
-#   scripts/benchmark_vs_upstream.sh                             # benchmark only (binary must exist)
-#   scripts/benchmark_vs_upstream.sh --upstream 30.1 --duration 60s
-#   scripts/benchmark_vs_upstream.sh --clean --build             # fresh start
-#   scripts/benchmark_vs_upstream.sh --profile write-stress      # heavy write testing
-#   scripts/benchmark_vs_upstream.sh --profile full --no-flush   # everything, keep history
+# Compare a local fork build against an upstream release or any two explicit binaries.
 set -euo pipefail
 
-# --- Defaults ---
 BUILD=false
 CLEAN=false
 FLUSH_DB=true
@@ -41,8 +11,44 @@ PORT="12108"
 WORK_DIR="${HOME}/.cache/typesense/benchmark"
 PROFILE="standard"
 SERVER_ARGS=()
+FORK_BINARY_OVERRIDE=""
+FORK_LABEL_OVERRIDE=""
+BASELINE_BINARY_OVERRIDE=""
+BASELINE_LABEL_OVERRIDE=""
 
-# --- Parse args ---
+usage() {
+	cat <<'EOF'
+Usage:
+  scripts/benchmark_vs_upstream.sh [options]
+
+Modes:
+  - Default: compare upstream release vs current fork build/cache
+  - Explicit binary mode: pass --baseline-binary and --fork-binary
+
+Options:
+  --build                  Build the fork binary first via bazel_in_docker.sh
+  --upstream VER           Upstream version to compare against (default: 30.1)
+  --baseline-binary PATH   Explicit baseline binary path
+  --baseline-label LABEL   Label for baseline binary (default: upstream-<ver> or file basename)
+  --fork-binary PATH       Explicit fork/candidate binary path
+  --fork-label LABEL       Label for fork/candidate binary (default: current git SHA or file basename)
+  --duration DUR           Duration per benchmark scenario (default: 30s)
+  --port PORT              Base HTTP port for Typesense (default: 12108)
+  --work-dir DIR           Working directory for binaries and data
+  --clean                  Remove work dir and InfluxDB data before running
+  --profile NAME           quick, standard, write-stress, full (default: standard)
+  --no-flush               Keep existing InfluxDB data for trend analysis
+  --server-args ...        Extra args passed through to typesense-server
+  -h, --help               Show this help
+
+Examples:
+  scripts/benchmark_vs_upstream.sh --build --profile standard
+  scripts/benchmark_vs_upstream.sh --profile write-stress --server-args --max-indexing-concurrency=16
+  scripts/benchmark_vs_upstream.sh --baseline-binary ./base/typesense-server --baseline-label abc123 \
+    --fork-binary ./head/typesense-server --fork-label def456 --duration 1m --no-flush
+EOF
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--build)
@@ -59,6 +65,22 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--upstream)
 		UPSTREAM_VERSION="$2"
+		shift 2
+		;;
+	--baseline-binary)
+		BASELINE_BINARY_OVERRIDE="$2"
+		shift 2
+		;;
+	--baseline-label)
+		BASELINE_LABEL_OVERRIDE="$2"
+		shift 2
+		;;
+	--fork-binary)
+		FORK_BINARY_OVERRIDE="$2"
+		shift 2
+		;;
+	--fork-label)
+		FORK_LABEL_OVERRIDE="$2"
 		shift 2
 		;;
 	--duration)
@@ -85,7 +107,7 @@ while [[ $# -gt 0 ]]; do
 		done
 		;;
 	-h | --help)
-		head -36 "$0" | tail -34
+		usage
 		exit 0
 		;;
 	*)
@@ -95,19 +117,24 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
-# --- Apply profile defaults ---
 case "${PROFILE}" in
 quick)
-	DURATION="${DURATION:-15s}"
+	if [[ "${DURATION}" == "30s" ]]; then
+		DURATION="15s"
+	fi
 	;;
 standard)
-	# defaults are fine
+	:
 	;;
 write-stress)
-	DURATION="${DURATION:-60s}"
+	if [[ "${DURATION}" == "30s" ]]; then
+		DURATION="60s"
+	fi
 	;;
 full)
-	DURATION="${DURATION:-60s}"
+	if [[ "${DURATION}" == "30s" ]]; then
+		DURATION="60s"
+	fi
 	;;
 *)
 	echo "Unknown profile: ${PROFILE}. Use: quick, standard, write-stress, full" >&2
@@ -120,7 +147,29 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BENCHMARK_DIR="${REPO_DIR}/benchmark"
 UPSTREAM_URL="https://dl.typesense.org/releases/${UPSTREAM_VERSION}/typesense-server-${UPSTREAM_VERSION}-linux-amd64.tar.gz"
 
-# --- Clean if requested ---
+if [[ -n "${BASELINE_BINARY_OVERRIDE}" ]] && [[ ! -x "${BASELINE_BINARY_OVERRIDE}" ]]; then
+	echo "Error: baseline binary is not executable: ${BASELINE_BINARY_OVERRIDE}" >&2
+	exit 1
+fi
+
+if [[ -n "${FORK_BINARY_OVERRIDE}" ]] && [[ ! -x "${FORK_BINARY_OVERRIDE}" ]]; then
+	echo "Error: fork binary is not executable: ${FORK_BINARY_OVERRIDE}" >&2
+	exit 1
+fi
+
+if [[ -n "${FORK_BINARY_OVERRIDE}" ]] && [[ "${BUILD}" == "true" ]]; then
+	echo "Error: --build and --fork-binary are mutually exclusive." >&2
+	exit 1
+fi
+
+if [[ -n "${BASELINE_BINARY_OVERRIDE}" ]] && [[ -z "${BASELINE_LABEL_OVERRIDE}" ]]; then
+	BASELINE_LABEL_OVERRIDE="$(basename "${BASELINE_BINARY_OVERRIDE}")"
+fi
+
+if [[ -n "${FORK_BINARY_OVERRIDE}" ]] && [[ -z "${FORK_LABEL_OVERRIDE}" ]]; then
+	FORK_LABEL_OVERRIDE="$(basename "${FORK_BINARY_OVERRIDE}")"
+fi
+
 if [[ "${CLEAN}" == "true" ]]; then
 	echo "Cleaning work directory and InfluxDB data..."
 	rm -rf "${WORK_DIR}" 2>/dev/null || sudo rm -rf "${WORK_DIR}" 2>/dev/null || true
@@ -129,88 +178,124 @@ fi
 
 mkdir -p "${WORK_DIR}"
 
-# --- Step 1: Build fork binary (optional) ---
 if [[ "${BUILD}" == "true" ]]; then
 	echo "=== Building fork binary ==="
 	"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server
 fi
 
-# --- Step 2: Locate and stage fork binary + shared libs ---
-echo "=== Staging fork binary ==="
-FORK_DIR="${WORK_DIR}/fork"
-mkdir -p "${FORK_DIR}"
-
-# Find the built binary in the Bazel cache
-# The bazel-bin symlink points into the Docker build cache
-BAZEL_CACHE="${TYPESENSE_BAZEL_CACHE_DIR:-${HOME}/.cache/typesense/bazel-docker}"
-FORK_BINARY=""
-
-# Try the bazel_in_docker.sh cache first, then the legacy cache
-for cache_dir in "${BAZEL_CACHE}" /tmp/typesense-bazel-cache-fork; do
-	if [[ -d "${cache_dir}" ]]; then
-		found=$(find "${cache_dir}" -path "*/bin/typesense-server" -type f -newer "${cache_dir}" 2>/dev/null | head -1 || true)
-		if [[ -z "${found}" ]]; then
-			# Fallback: find any typesense-server binary
-			found=$(find "${cache_dir}" -name "typesense-server" -not -name "*.pic.*" -not -name "*.params" -type f 2>/dev/null |
-				while read -r f; do file "$f" | grep -q "ELF" && echo "$f" && break; done || true)
+resolve_fork_binary() {
+	if [[ -n "${FORK_BINARY_OVERRIDE}" ]]; then
+		local fork_dir="${WORK_DIR}/fork-explicit"
+		mkdir -p "${fork_dir}"
+		chmod u+w "${fork_dir}/typesense-server" 2>/dev/null || true
+		cp "${FORK_BINARY_OVERRIDE}" "${fork_dir}/typesense-server"
+		chmod +x "${fork_dir}/typesense-server"
+		if [[ -d "$(dirname "${FORK_BINARY_OVERRIDE}")/lib" ]]; then
+			find "$(dirname "${FORK_BINARY_OVERRIDE}")/lib" -maxdepth 1 -type f -name "*.so*" -exec cp {} "${fork_dir}/" \;
 		fi
-		if [[ -n "${found}" ]]; then
-			FORK_BINARY="${found}"
-			break
+		FORK_BINARY="${fork_dir}/typesense-server"
+		FORK_LABEL="${FORK_LABEL_OVERRIDE}"
+		return
+	fi
+
+	echo "=== Staging fork binary ==="
+	local fork_dir="${WORK_DIR}/fork"
+	mkdir -p "${fork_dir}"
+
+	local bazel_cache="${TYPESENSE_BAZEL_CACHE_DIR:-${HOME}/.cache/typesense/bazel-docker}"
+	local found=""
+	for cache_dir in "${bazel_cache}" /tmp/typesense-bazel-cache-fork; do
+		if [[ -d "${cache_dir}" ]]; then
+			found=$(find "${cache_dir}" -path "*/bin/typesense-server" -type f -newer "${cache_dir}" 2>/dev/null | head -1 || true)
+			if [[ -z "${found}" ]]; then
+				found=$(find "${cache_dir}" -name "typesense-server" -not -name "*.pic.*" -not -name "*.params" -type f 2>/dev/null |
+					while read -r f; do file "$f" | grep -q "ELF" && echo "$f" && break; done || true)
+			fi
+			if [[ -n "${found}" ]]; then
+				break
+			fi
 		fi
-	fi
-done
+	done
 
-if [[ -z "${FORK_BINARY}" ]]; then
-	echo "Error: Fork binary not found in Bazel cache." >&2
-	echo "Build it first: scripts/benchmark_vs_upstream.sh --build" >&2
-	exit 1
-fi
-
-echo "Found fork binary: ${FORK_BINARY}"
-# Ensure previous binary is writable before overwriting (Bazel cache files are read-only)
-chmod u+w "${FORK_DIR}/typesense-server" 2>/dev/null || true
-cp "${FORK_BINARY}" "${FORK_DIR}/typesense-server"
-chmod +x "${FORK_DIR}/typesense-server"
-
-# Copy shared libraries that the binary needs (e.g. libonnxruntime)
-CACHE_ROOT="$(dirname "$(dirname "$(dirname "$(dirname "${FORK_BINARY}")")")")"
-for lib in libonnxruntime.so.1; do
-	lib_path=$(find "${CACHE_ROOT}" -name "${lib}" -type f 2>/dev/null | head -1 || true)
-	if [[ -n "${lib_path}" ]]; then
-		echo "Staging shared lib: ${lib}"
-		chmod u+w "${FORK_DIR}/${lib}" 2>/dev/null || true
-		cp "${lib_path}" "${FORK_DIR}/"
-	fi
-done
-
-# Verify the binary runs
-if ! docker run --rm -e "LD_LIBRARY_PATH=${FORK_DIR}" \
-	-v "${FORK_DIR}:${FORK_DIR}:ro" ubuntu:24.04 \
-	"${FORK_DIR}/typesense-server" --help >/dev/null 2>&1; then
-	echo "Warning: Fork binary may have missing shared libraries." >&2
-	echo "Checking..." >&2
-	docker run --rm -v "${FORK_DIR}:${FORK_DIR}:ro" ubuntu:24.04 \
-		ldd "${FORK_DIR}/typesense-server" 2>&1 | grep "not found" || true
-fi
-
-# --- Step 3: Download upstream binary (cached) ---
-echo "=== Staging upstream binary ==="
-UPSTREAM_DIR="${WORK_DIR}/upstream"
-UPSTREAM_BINARY="${UPSTREAM_DIR}/typesense-server"
-if [[ -x "${UPSTREAM_BINARY}" ]]; then
-	echo "Using cached upstream Typesense ${UPSTREAM_VERSION}"
-else
-	echo "Downloading upstream Typesense ${UPSTREAM_VERSION}..."
-	mkdir -p "${UPSTREAM_DIR}"
-	curl -fSL "${UPSTREAM_URL}" | tar -xz -C "${UPSTREAM_DIR}"
-	if [[ ! -x "${UPSTREAM_BINARY}" ]]; then
-		echo "Error: Upstream binary not found after extraction." >&2
+	if [[ -z "${found}" ]]; then
+		echo "Error: Fork binary not found in Bazel cache." >&2
+		echo "Build it first: scripts/benchmark_vs_upstream.sh --build" >&2
 		exit 1
 	fi
-fi
 
-# --- Step 4: Start benchmark infrastructure ---
+	echo "Found fork binary: ${found}"
+	chmod u+w "${fork_dir}/typesense-server" 2>/dev/null || true
+	cp "${found}" "${fork_dir}/typesense-server"
+	chmod +x "${fork_dir}/typesense-server"
+
+	local cache_root
+	cache_root="$(dirname "$(dirname "$(dirname "$(dirname "${found}")")")")"
+	for lib in libonnxruntime.so.1; do
+		local lib_path
+		lib_path=$(find "${cache_root}" -name "${lib}" -type f 2>/dev/null | head -1 || true)
+		if [[ -n "${lib_path}" ]]; then
+			echo "Staging shared lib: ${lib}"
+			chmod u+w "${fork_dir}/${lib}" 2>/dev/null || true
+			cp "${lib_path}" "${fork_dir}/"
+		fi
+	done
+
+	FORK_BINARY="${fork_dir}/typesense-server"
+	FORK_LABEL="${FORK_LABEL_OVERRIDE:-$(git -C "${REPO_DIR}" rev-parse --short HEAD)}"
+}
+
+resolve_baseline_binary() {
+	if [[ -n "${BASELINE_BINARY_OVERRIDE}" ]]; then
+		local baseline_dir="${WORK_DIR}/baseline-explicit"
+		mkdir -p "${baseline_dir}"
+		chmod u+w "${baseline_dir}/typesense-server" 2>/dev/null || true
+		cp "${BASELINE_BINARY_OVERRIDE}" "${baseline_dir}/typesense-server"
+		chmod +x "${baseline_dir}/typesense-server"
+		if [[ -d "$(dirname "${BASELINE_BINARY_OVERRIDE}")/lib" ]]; then
+			find "$(dirname "${BASELINE_BINARY_OVERRIDE}")/lib" -maxdepth 1 -type f -name "*.so*" -exec cp {} "${baseline_dir}/" \;
+		fi
+		BASELINE_BINARY="${baseline_dir}/typesense-server"
+		BASELINE_LABEL="${BASELINE_LABEL_OVERRIDE}"
+		return
+	fi
+
+	echo "=== Staging upstream binary ==="
+	local upstream_dir="${WORK_DIR}/upstream"
+	local upstream_binary="${upstream_dir}/typesense-server"
+	if [[ -x "${upstream_binary}" ]]; then
+		echo "Using cached upstream Typesense ${UPSTREAM_VERSION}"
+	else
+		echo "Downloading upstream Typesense ${UPSTREAM_VERSION}..."
+		mkdir -p "${upstream_dir}"
+		curl -fSL "${UPSTREAM_URL}" | tar -xz -C "${upstream_dir}"
+		if [[ ! -x "${upstream_binary}" ]]; then
+			echo "Error: Upstream binary not found after extraction." >&2
+			exit 1
+		fi
+	fi
+
+	BASELINE_BINARY="${upstream_binary}"
+	BASELINE_LABEL="${BASELINE_LABEL_OVERRIDE:-upstream-${UPSTREAM_VERSION}}"
+}
+
+verify_binary() {
+	local binary_path="$1"
+	local binary_dir
+	binary_dir="$(dirname "${binary_path}")"
+	if ! docker run --rm -e "LD_LIBRARY_PATH=${binary_dir}" \
+		-v "${binary_dir}:${binary_dir}:ro" ubuntu:24.04 \
+		"${binary_path}" --help >/dev/null 2>&1; then
+		echo "Warning: binary may have missing shared libraries: ${binary_path}" >&2
+		docker run --rm -v "${binary_dir}:${binary_dir}:ro" ubuntu:24.04 \
+			ldd "${binary_path}" 2>&1 | grep "not found" || true
+	fi
+}
+
+resolve_fork_binary
+resolve_baseline_binary
+verify_binary "${FORK_BINARY}"
+verify_binary "${BASELINE_BINARY}"
+
 echo "=== Starting benchmark infrastructure ==="
 cd "${BENCHMARK_DIR}"
 docker compose up -d influxdb grafana k6
@@ -231,18 +316,15 @@ else
 	curl -sf -X POST 'http://localhost:8086/query' --data-urlencode "q=CREATE DATABASE k6" >/dev/null 2>&1 || true
 fi
 
-# --- Step 5: Build and run the benchmark CLI ---
 echo "=== Building benchmark CLI ==="
 cd "${BENCHMARK_DIR}"
-pnpm install --frozen-lockfile
-pnpm build
-
-FORK_SHA="$(git -C "${REPO_DIR}" rev-parse --short HEAD)"
+bun install --frozen-lockfile
+bun run build
 
 echo ""
 echo "========================================="
 echo "  Profile: ${PROFILE}"
-echo "  upstream-${UPSTREAM_VERSION} vs fork-${FORK_SHA}"
+echo "  ${BASELINE_LABEL} vs ${FORK_LABEL}"
 echo "  Duration: ${DURATION} per scenario"
 echo "  Port: ${PORT}"
 if [[ ${#SERVER_ARGS[@]} -gt 0 ]]; then
@@ -260,8 +342,8 @@ fi
 
 node dist/index.js \
 	benchmark \
-	--binaries "${UPSTREAM_BINARY}" "${FORK_DIR}/typesense-server" \
-	-c "upstream-${UPSTREAM_VERSION}" "${FORK_SHA}" \
+	--binaries "${BASELINE_BINARY}" "${FORK_BINARY}" \
+	-c "${BASELINE_LABEL}" "${FORK_LABEL}" \
 	-d "${WORK_DIR}/data" \
 	--duration "${DURATION}" \
 	--port "${PORT}" \
@@ -315,8 +397,8 @@ if [[ -d "${METRICS_DIR}" ]]; then
 	cp "${METRICS_DIR}"/*.json "${ARCHIVE_DIR}/" 2>/dev/null || true
 fi
 
-printf "upstream=%s\nfork_sha=%s\nprofile=%s\nduration=%s\nport=%s\nserver_args=%s\nmetrics_dir=%s\n" \
-	"${UPSTREAM_VERSION}" "${FORK_SHA}" "${PROFILE}" "${DURATION}" "${PORT}" \
+printf "baseline_label=%s\nfork_label=%s\nprofile=%s\nduration=%s\nport=%s\nserver_args=%s\nmetrics_dir=%s\n" \
+	"${BASELINE_LABEL}" "${FORK_LABEL}" "${PROFILE}" "${DURATION}" "${PORT}" \
 	"${SERVER_ARGS[*]:-}" "${METRICS_DIR}" >"${ARCHIVE_DIR}/run-info.txt"
 
 echo "Archived benchmark snapshot: ${ARCHIVE_DIR}"

@@ -31,6 +31,15 @@ The phases within a given path run **sequentially** because each later phase reâ
 > [!IMPORTANT]
 > Run the API test CLI from the `api_tests/` directory so Bun only discovers this test suite.
 
+Recommended repo-level entrypoint:
+
+```bash
+scripts/bazel_in_docker.sh build //:typesense-server
+scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
+```
+
+This wrapper prepares the runtime bundle automatically and runs Bun on the host by default; use `--docker-bun` only when you explicitly want the Bun runtime containerized.
+
 > [!NOTE]
 > Migration tests are only meaningful when `TYPESENSE_MIGRATION_SOURCE_BINARY_PATH` points to a legacy binary that is different from `TYPESENSE_BINARY_PATH`. If not, migration tests are skipped.
 

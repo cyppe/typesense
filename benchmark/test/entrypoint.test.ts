@@ -12,7 +12,7 @@ const CLI_PATH = path.resolve("./dist/index.js");
 describe("CLI Integration", () => {
   beforeAll(async () => {
     // Build the CLI before running tests
-    await execAsync("pnpm build");
+    await execAsync("bun run build");
   });
 
   test("displays version with -v flag", async () => {

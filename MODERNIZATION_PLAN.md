@@ -50,8 +50,10 @@ scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_out
 scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800
 
 # Run API tests (after building the server):
-cd api_tests && bun install && TYPESENSE_BINARY_PATH=$(readlink -f ../bazel-bin/typesense-server) bun src/cli.ts --no-secrets --download-migration-binary
+scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
 ```
+
+`TESTING_RUNBOOK.md` owns the fuller build/test/replay command matrix; keep this section short and aligned with it.
 
 ### Environment variables used by `bazel_in_docker.sh`
 
@@ -296,7 +298,7 @@ Done. Dockerized Bazel wrapper (`scripts/bazel_in_docker.sh`), CI uses repo Dock
 
 **Audit findings (Mar 2026):**
 
-**Stack:** TypeScript CLI (`benchmark/`) using [Commander](https://github.com/tj/commander.js) + [neverthrow](https://github.com/supermacro/neverthrow). Load generation via [k6](https://k6.io/) (Grafana). Metrics stored in InfluxDB 1.8. Visualization via Grafana 8.5.21. All three services run as Docker Compose containers (`benchmark/docker-compose.yml`).
+**Stack:** TypeScript CLI (`benchmark/`) using [Commander](https://github.com/tj/commander.js) + [neverthrow](https://github.com/supermacro/neverthrow). Repo-managed JS tooling is Bun-first. Load generation via [k6](https://k6.io/) (Grafana). Metrics stored in InfluxDB 1.8. Visualization via Grafana 8.5.21. All three services run as Docker Compose containers (`benchmark/docker-compose.yml`).
 
 **CI workflow** (`benchmark-testing.yml`): Runs every 12 hours. Downloads the two most recent successful `typesense-server` binaries from the `tests` workflow using `dawidd6/action-download-artifact@v6`. Starts Docker Compose services, builds the CLI, runs `./dist/index.js benchmark --binaries <old> <new> -c <old-sha> <new-sha> --duration 1m`. InfluxDB data is persisted across runs via artifact upload/download. Results are compared using configurable p95 regression thresholds per scenario.
 
@@ -314,7 +316,7 @@ Each search scenario runs at **50 VUs** and **100 VUs** sequentially with 5s gap
 **Local execution:**
 
 ```bash
-# Prerequisites: Docker, Node.js 20+, pnpm, a built typesense-server binary
+# Prerequisites: Docker, Bun 1.3+, a built typesense-server binary
 
 # 1. Build two binaries to compare (or use one binary twice for baseline)
 scripts/bazel_in_docker.sh build //:typesense-server
@@ -322,8 +324,8 @@ cp bazel-bin/typesense-server /tmp/binary-new
 
 # 2. Install and build the benchmark CLI
 cd benchmark
-pnpm install
-pnpm build
+bun install
+bun run build
 
 # 3. Start infrastructure (InfluxDB, Grafana, k6)
 docker compose up -d
@@ -353,6 +355,8 @@ docker compose down
 | `BUILD` | Top-level build targets (`//:typesense-server`, `//:typesense-test`) |
 | `bazel/` | External dep BUILD files, patches, and `PATCH_DEBT.md` inventory |
 | `scripts/bazel_in_docker.sh` | Dockerized build/test wrapper (single entry point for all builds) |
+| `scripts/run_api_tests.sh` | Dockerized API test wrapper (runtime bundle + Bun harness) |
+| `scripts/benchmark_vs_upstream.sh` | Benchmark wrapper for upstream-vs-fork or explicit binary comparisons |
 | `docker/ci-bazel.Dockerfile` | CI Docker image definition |
 | `test/temp_dir_utils.h` | Per-test-instance temp directory isolation |
 | `test/scripts/prewarm_e5_small_model.sh` | Model cache warmup for embedding tests |
@@ -381,12 +385,13 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 12 | ~~Fix Bazel 9.0.0 not running in Docker~~ | P1.6 | **done** | Verified with `scripts/bazel_in_docker.sh version` and `TYPESENSE_BAZEL_IMAGE=typesense/ci-bazel:ci scripts/bazel_in_docker.sh version`: Bazelisk `v1.28.1`, Bazel `9.0.0`. CI workflows already run `--build-image-only`; stale local images were the mismatch source. |
 | 13 | RocksDB perf tuning Phase 3 (data-driven) | P2.13 | **done** | Runs 9-13 complete: observability, sweeps, read-path optimizations, `max-indexing-concurrency` validation, and import `batch_size` A/B check. Final policy keeps conservative defaults with hardware-based tuning guidance. |
 | 14 | ~~Benchmark observability: full metrics collection + Grafana dashboard~~ | P2.13 | **done** | Core observability is in place: benchmark runs collect system/API/RocksDB metrics continuously and dashboard includes concurrent search+import visibility. Tuning-specific counter extraction is tracked under item 13. |
+| 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
 
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now (execution lane):** no P2.13 execution work remains; proceed to the next non-blocked modernization item.
+- **Active now (execution lane):** no active tooling-lane work remains; proceed to the next non-blocked modernization item.
 - **Later (blocked or dependency-coupled):** item **9** (`Protobuf 34`) and section **6b** (`brpc`/rule compatibility work) plus section **7** patch-debt follow-up (`replace patch-only forks`) when dependency updates are available.
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
@@ -413,6 +418,15 @@ Done. Core observability plumbing landed:
 - Benchmark runs now preserve enough telemetry to explain most import/search regressions without rerunning blindly.
 
 Remaining tuning-specific counter extraction (RocksDB statistics parser, p99-first views, per-scenario split panels) is tracked as part of item 13 Phase 3.
+
+### 15) JS tooling and Docker workflow consolidation
+
+Done.
+
+- Benchmark CLI and workflow now use Bun instead of pnpm.
+- `scripts/benchmark_vs_upstream.sh` supports explicit baseline/fork binaries so CI and local runs share the same wrapper.
+- `scripts/run_api_tests.sh` provides the single supported API wrapper entrypoint; it defaults to host Bun for reliable local process orchestration and keeps `--docker-bun` as an opt-in path.
+- Legacy `ci_build.sh` is now a compatibility shim that redirects users to the canonical Bazel wrapper instead of acting as a parallel build system.
 
 ### 13a) RocksDB Phase 3 execution plan (next chunk)
 
