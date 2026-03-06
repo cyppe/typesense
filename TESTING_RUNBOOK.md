@@ -52,7 +52,16 @@ scripts/bazel_in_docker.sh clean --expunge
 scripts/bazel_in_docker.sh test --verbose_failures //:typesense-test
 ```
 
-## 6) API replay (one-command style)
+## 6) Sanitizer lanes
+
+Use these for memory, UB, and race checks when you are touching lower-level C++ code, build plumbing, or concurrency-sensitive paths.
+
+```bash
+scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800
+scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800
+```
+
+## 7) API replay (one-command style)
 
 When API tests fail in CI (especially startup/runtime linker issues), use the API wrapper. It prepares the runtime bundle automatically and runs the Bun harness in Docker by default, so the host does not need Bun installed:
 
@@ -73,7 +82,7 @@ If you intentionally want to bypass the Dockerized Bun image and use host Bun:
 scripts/run_api_tests.sh --host-bun -- --no-secrets tests/health.test.ts
 ```
 
-## 7) C++ integration replay (one-command style)
+## 8) C++ integration replay (one-command style)
 
 When `//:typesense-test` fails in CI, replay the same lane locally with one command. The helper will prewarm the `ts/e5-small` model cache if needed and run the Dockerized Bazel test command with CI-like flags.
 
