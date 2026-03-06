@@ -812,7 +812,7 @@ scripts/benchmark_vs_upstream.sh --clean --build --profile standard
 
 ### P2 — Experimental / High Potential
 
-- [ ] SstFileWriter / IngestExternalFile for bulk imports (bypass memtable — most promising import optimization)
+- [ ] SstFileWriter / IngestExternalFile for bulk imports (deferred for now — reconsider only if future profiling shows the RocksDB write path, not in-memory indexing, is the dominant remaining import bottleneck)
 - [ ] `disable_auto_compactions` during bulk load + manual compact after
 - [ ] Prefix extractor + prefix bloom for prefix scans
 - [ ] Dynamic `SetOptions()` — switch to import-optimized settings during bulk load, then back for search

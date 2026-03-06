@@ -393,7 +393,9 @@ Done.
 - Benchmark CLI and workflow now use Bun instead of pnpm.
 - `scripts/benchmark_vs_upstream.sh` supports explicit baseline/fork binaries so CI and local runs share the same wrapper.
 - `scripts/run_api_tests.sh` provides the single supported API wrapper entrypoint; it now defaults to the repo's Dockerized Bun image and keeps `--host-bun` only as an escape hatch.
-- Legacy `ci_build.sh` is now a compatibility shim that redirects users to the canonical Bazel wrapper instead of acting as a parallel build system.
+- Legacy `ci_build.sh` was removed after the repo fully converged on `scripts/bazel_in_docker.sh` as the single supported build entrypoint.
+
+**Deferred for now:** `SstFileWriter / IngestExternalFile` is intentionally not the next lane. It remains a future bulk-import idea, but current evidence suggests the in-memory indexing critical section is a larger bottleneck than the final RocksDB write primitive, so this path is not worth immediate engineering time.
 
 ### 13a) RocksDB Phase 3 execution plan (next chunk)
 
