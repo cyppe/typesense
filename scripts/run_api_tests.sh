@@ -7,34 +7,34 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 API_TESTS_DIR="${REPO_ROOT}/api_tests"
 RUNTIME_BUNDLE_DIR="${REPO_ROOT}/typesense-runtime-bundle"
 DATA_DIR="${REPO_ROOT}/tmp/test"
-BUN_IMAGE="${TYPESENSE_API_TEST_BUN_IMAGE:-oven/bun:1.3.10}"
-USE_DOCKER_BUN=false
+BUN_IMAGE="${TYPESENSE_API_TEST_BUN_IMAGE:-typesense/api-tests-bun:local}"
+USE_HOST_BUN=false
 SKIP_INSTALL=false
 
 usage() {
 	cat <<'EOF'
 Usage:
-  scripts/run_api_tests.sh [--docker-bun] [--skip-install] [-- <api test args...>]
+  scripts/run_api_tests.sh [--host-bun] [--skip-install] [-- <api test args...>]
 
 Defaults:
   - Prepares the runtime bundle from the current Bazel build output
-  - Runs the API test CLI with host Bun for reliable host process/port orchestration
-  - Keeps Dockerized Bun available via --docker-bun when you explicitly want it
+  - Runs the API test CLI in Docker using the repo's Ubuntu-based Bun image
+  - Does not require Bun on the host
 
 Examples:
   scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
   scripts/run_api_tests.sh -- tests/health.test.ts
-  scripts/run_api_tests.sh --docker-bun -- --no-secrets tests/health.test.ts
+  scripts/run_api_tests.sh --host-bun -- --no-secrets tests/health.test.ts
 
 Environment:
-  TYPESENSE_API_TEST_BUN_IMAGE  Override Bun image tag (default: oven/bun:1.3.10)
+  TYPESENSE_API_TEST_BUN_IMAGE  Override Bun image tag (default: typesense/api-tests-bun:local)
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
-	--docker-bun)
-		USE_DOCKER_BUN=true
+	--host-bun)
+		USE_HOST_BUN=true
 		shift
 		;;
 	--skip-install)
@@ -63,9 +63,10 @@ ENV_VARS=(
 	"TYPESENSE_BINARY_PATH=${RUNTIME_BUNDLE_DIR}/typesense-server"
 	"LD_LIBRARY_PATH=${RUNTIME_BUNDLE_DIR}/lib"
 	"TYPESENSE_DATA_DIR=${DATA_DIR}"
+	"TYPESENSE_API_HOST=127.0.0.1"
 )
 
-if [[ "${USE_DOCKER_BUN}" != "true" ]]; then
+if [[ "${USE_HOST_BUN}" == "true" ]]; then
 	if [[ "${SKIP_INSTALL}" != "true" ]]; then
 		(cd "${API_TESTS_DIR}" && bun install --frozen-lockfile)
 	fi
@@ -75,6 +76,8 @@ if [[ "${USE_DOCKER_BUN}" != "true" ]]; then
 	)
 	exit 0
 fi
+
+docker build -f "${REPO_ROOT}/api_tests/Dockerfile.bun" -t "${BUN_IMAGE}" "${REPO_ROOT}" >/dev/null
 
 if [[ "${SKIP_INSTALL}" == "true" ]]; then
 	INSTALL_PREFIX=""
@@ -93,6 +96,7 @@ docker run \
 	-e "TYPESENSE_BINARY_PATH=${RUNTIME_BUNDLE_DIR}/typesense-server" \
 	-e "LD_LIBRARY_PATH=${RUNTIME_BUNDLE_DIR}/lib" \
 	-e "TYPESENSE_DATA_DIR=${DATA_DIR}" \
+	-e "TYPESENSE_API_HOST=127.0.0.1" \
 	-v "${REPO_ROOT}:${REPO_ROOT}" \
 	-w "${API_TESTS_DIR}" \
 	"${BUN_IMAGE}" \

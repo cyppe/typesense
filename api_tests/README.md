@@ -38,7 +38,7 @@ scripts/bazel_in_docker.sh build //:typesense-server
 scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
 ```
 
-This wrapper prepares the runtime bundle automatically and runs Bun on the host by default; use `--docker-bun` only when you explicitly want the Bun runtime containerized.
+This wrapper prepares the runtime bundle automatically and runs Bun in Docker by default, so the host does not need Bun installed. Use `--host-bun` only as an escape hatch.
 
 > [!NOTE]
 > Migration tests are only meaningful when `TYPESENSE_MIGRATION_SOURCE_BINARY_PATH` points to a legacy binary that is different from `TYPESENSE_BINARY_PATH`. If not, migration tests are skipped.

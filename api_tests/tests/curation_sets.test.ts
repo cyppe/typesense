@@ -19,7 +19,7 @@ const CurationObject = z.object({
   remove_matched_tokens: z.boolean().optional(),
   filter_curated_hits: z.boolean().optional(),
   stop_processing: z.boolean().optional(),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
 });
 
 const CurationSetResponse = z.object({

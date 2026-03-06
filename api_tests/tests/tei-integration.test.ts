@@ -49,7 +49,7 @@ const MultiSearchResponse = z.object({
             content: z.string(),
             id: z.string(),
           }),
-          highlight: z.record(z.any()),
+          highlight: z.record(z.string(), z.any()),
           highlights: z.array(z.any()),
           vector_distance: z.number(),
         })

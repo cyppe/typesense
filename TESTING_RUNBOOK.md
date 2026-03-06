@@ -49,7 +49,7 @@ scripts/bazel_in_docker.sh test --verbose_failures //:typesense-test
 
 ## 6) API replay (one-command style)
 
-When API tests fail in CI (especially startup/runtime linker issues), use the API wrapper. It prepares the runtime bundle automatically and runs the Bun harness on the host by default, which matches the harness's local subprocess and port-management model:
+When API tests fail in CI (especially startup/runtime linker issues), use the API wrapper. It prepares the runtime bundle automatically and runs the Bun harness in Docker by default, so the host does not need Bun installed:
 
 ```bash
 scripts/bazel_in_docker.sh build //:typesense-server
@@ -62,10 +62,10 @@ To replay a single lane/file quickly, append the test path:
 scripts/run_api_tests.sh -- --no-secrets tests/health.test.ts
 ```
 
-If you intentionally want the Bun harness itself containerized:
+If you intentionally want to bypass the Dockerized Bun image and use host Bun:
 
 ```bash
-scripts/run_api_tests.sh --docker-bun -- --no-secrets tests/health.test.ts
+scripts/run_api_tests.sh --host-bun -- --no-secrets tests/health.test.ts
 ```
 
 ## 7) C++ integration replay (one-command style)

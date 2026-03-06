@@ -80,7 +80,7 @@ scripts/bazel_in_docker.sh build //:typesense-server
 scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
 ```
 
-`run_api_tests.sh` defaults to host Bun because the harness manages local subprocesses and ports directly; use `--docker-bun` only when you explicitly need the Bun runtime containerized.
+`run_api_tests.sh` defaults to Dockerized Bun via the repo's Ubuntu-based API image so agents do not need Bun installed on the host; use `--host-bun` only as an escape hatch.
 
 Run benchmark comparison:
 

@@ -83,13 +83,13 @@ const SearchHitDocument = DocumentBase.extend({
 
 const SearchHit = z.object({
   document: SearchHitDocument,
-  highlight: z.record(z.string()).optional(),
+  highlight: z.record(z.string(), z.string()).optional(),
   text_match: z.number().optional(),
-  text_match_info: z.record(z.unknown()).optional(),
+  text_match_info: z.record(z.string(), z.unknown()).optional(),
   curated: z.boolean().optional(),
   hybrid_search_info: z.object({ rank_fusion_score: z.number().optional() }).optional(),
   vector_distance: z.number().optional(),
-  geo_distance_meters: z.record(z.number()).optional(),
+  geo_distance_meters: z.record(z.string(), z.number()).optional(),
 });
 
 const FacetCountEntry = z.object({
@@ -121,9 +121,9 @@ const SearchResponse = z.object({
   hits: z.array(SearchHit).optional(),
   grouped_hits: z.array(GroupedHits).optional(),
   facet_counts: z.array(FacetResult),
-  request_params: z.record(z.unknown()).optional(),
-  parsed_nl_query: z.record(z.unknown()).optional(),
-  union_request_params: z.array(z.record(z.unknown())).optional(),
+  request_params: z.record(z.string(), z.unknown()).optional(),
+  parsed_nl_query: z.record(z.string(), z.unknown()).optional(),
+  union_request_params: z.array(z.record(z.string(), z.unknown())).optional(),
 });
 
 const MultiSearchHitDocument = DocumentBase.extend({
@@ -140,14 +140,14 @@ const MultiSearchResult = z.object({
   hits: z.array(
     z.object({
       document: MultiSearchHitDocument,
-      highlight: z.record(z.string()).optional(),
+      highlight: z.record(z.string(), z.string()).optional(),
       highlights: z.array(z.unknown()).optional(),
       vector_distance: z.number().optional(),
     })
   ),
   out_of: z.number().optional(),
   page: z.number().optional(),
-  request_params: z.record(z.unknown()).optional(),
+  request_params: z.record(z.string(), z.unknown()).optional(),
   search_cutoff: z.boolean().optional(),
   search_time_ms: z.number().optional(),
 });

@@ -12,13 +12,13 @@ const DocumentSchema = z.object({
 
 const SearchHit = z.object({
   document: DocumentSchema,
-  highlight: z.record(z.any()).optional(),
+  highlight: z.record(z.string(), z.any()).optional(),
   text_match: z.number().optional(),
-  text_match_info: z.record(z.any()).optional(),
+  text_match_info: z.record(z.string(), z.any()).optional(),
   curated: z.boolean().optional(),
   hybrid_search_info: z.object({ rank_fusion_score: z.number().optional() }).optional(),
   vector_distance: z.number().optional(),
-  geo_distance_meters: z.record(z.number()).optional(),
+  geo_distance_meters: z.record(z.string(), z.number()).optional(),
 });
 
 const FacetCountEntry = z.object({
@@ -50,9 +50,9 @@ const SearchResponse = z.object({
   hits: z.array(SearchHit).optional(),
   grouped_hits: z.array(GroupedHits).optional(),
   facet_counts: z.array(FacetResult),
-  request_params: z.record(z.any()).optional(),
-  parsed_nl_query: z.record(z.any()).optional(),
-  union_request_params: z.array(z.record(z.any())).optional(),
+  request_params: z.record(z.string(), z.any()).optional(),
+  parsed_nl_query: z.record(z.string(), z.any()).optional(),
+  union_request_params: z.array(z.record(z.string(), z.any())).optional(),
 });
 
 type Document = z.infer<typeof DocumentSchema>;
@@ -334,4 +334,3 @@ describe(Phases.MULTI_SNAPSHOT, () => {
     expect(d.data?.id).toBe("m2");
   });
 });
-

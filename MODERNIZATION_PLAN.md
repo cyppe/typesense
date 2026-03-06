@@ -425,7 +425,7 @@ Done.
 
 - Benchmark CLI and workflow now use Bun instead of pnpm.
 - `scripts/benchmark_vs_upstream.sh` supports explicit baseline/fork binaries so CI and local runs share the same wrapper.
-- `scripts/run_api_tests.sh` provides the single supported API wrapper entrypoint; it defaults to host Bun for reliable local process orchestration and keeps `--docker-bun` as an opt-in path.
+- `scripts/run_api_tests.sh` provides the single supported API wrapper entrypoint; it now defaults to the repo's Dockerized Bun image and keeps `--host-bun` only as an escape hatch.
 - Legacy `ci_build.sh` is now a compatibility shim that redirects users to the canonical Bazel wrapper instead of acting as a parallel build system.
 
 ### 13a) RocksDB Phase 3 execution plan (next chunk)
@@ -510,3 +510,5 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 8. **Import API `batch_size` must stay wired to actual indexing batches.** The request parameter is now passed through to `Collection::add_many(...)` and controls import-side batch flushing; avoid regressing this by reintroducing a hardcoded internal batch size in the API path.
 
 9. **Import `batch_size` is a secondary throughput knob on this dataset.** A/B checks (`40` vs `1000`) showed only marginal import delta (~0.2% in current runs). Keep default `40` for mixed workloads; use larger values only as deliberate ingest-window overrides.
+
+10. **Dockerized API harness should force IPv4 localhost.** Inside the API Bun container, `localhost` health checks can miss servers that are listening on IPv4 only. Set `TYPESENSE_API_HOST=127.0.0.1` in the wrapper to keep Dockerized API runs reliable.
