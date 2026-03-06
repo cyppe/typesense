@@ -42,51 +42,16 @@ Before adding a new helper script, check whether one of these should become the 
 
 ## Default Commands
 
-Build CI image once:
+`TESTING_RUNBOOK.md` owns the canonical build/test/replay/API command matrix.
 
-```bash
-scripts/bazel_in_docker.sh --build-image-only
-```
+Use these short defaults unless a task explicitly needs a different lane:
 
-Build server:
-
-```bash
-scripts/bazel_in_docker.sh build //:typesense-server
-```
-
-Run C++ suite:
-
-```bash
-scripts/bazel_in_docker.sh test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=1200
-```
-
-Run sanitizers:
-
-```bash
-scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800
-scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800
-```
-
-Replay one failing C++ test:
-
-```bash
-test/scripts/replay_typesense_test.sh FilterTest.FilterTreeIteratorTimeout
-```
-
-Run API tests:
-
-```bash
-scripts/bazel_in_docker.sh build //:typesense-server
-scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
-```
+- Build server: `scripts/bazel_in_docker.sh build //:typesense-server`
+- Run API suite: `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`
+- Replay one C++ test: `test/scripts/replay_typesense_test.sh FilterTest.FilterTreeIteratorTimeout`
+- Benchmark comparison: `scripts/benchmark_vs_upstream.sh --build --profile standard`
 
 `run_api_tests.sh` defaults to Dockerized Bun via the repo's Ubuntu-based API image so agents do not need Bun installed on the host; use `--host-bun` only as an escape hatch.
-
-Run benchmark comparison:
-
-```bash
-scripts/benchmark_vs_upstream.sh --build --profile standard
-```
 
 ## Docs Ownership
 

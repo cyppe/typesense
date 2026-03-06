@@ -33,27 +33,13 @@ Completed and historical migration notes are tracked in git history and PRs.
 
 ## Quick Reference: How To Build And Test
 
-All builds run inside Docker via `scripts/bazel_in_docker.sh`. The script auto-builds the CI image from `docker/ci-bazel.Dockerfile` on first run.
+`TESTING_RUNBOOK.md` is the canonical owner for build/test/replay/API command lines.
 
-```bash
-# Build the Docker image only (pre-warm step, done once):
-scripts/bazel_in_docker.sh --build-image-only
+- Build server: `scripts/bazel_in_docker.sh build //:typesense-server`
+- Run API suite: `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`
+- Run benchmarks: `scripts/benchmark_vs_upstream.sh --build --profile standard`
 
-# Build the server:
-scripts/bazel_in_docker.sh build //:typesense-server
-
-# Run the C++ test suite:
-scripts/bazel_in_docker.sh test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=1200
-
-# Run with sanitizers (ASAN+UBSAN or TSAN):
-scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800
-scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800
-
-# Run API tests (after building the server):
-scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
-```
-
-`TESTING_RUNBOOK.md` owns the fuller build/test/replay command matrix; keep this section short and aligned with it.
+Keep this section short and point to the owning docs instead of duplicating the full command matrix here.
 
 ### Environment variables used by `bazel_in_docker.sh`
 
@@ -293,7 +279,7 @@ Done. Dockerized Bazel wrapper (`scripts/bazel_in_docker.sh`), CI uses repo Dock
 
 - [x] Investigate current `benchmark-testing.yml` workflow.
 - [x] Enable local benchmark execution (documented below).
-- [x] Cross-fork comparison: `scripts/benchmark_vs_upstream.sh` downloads an upstream release binary and runs the full benchmark suite against the fork build. Usage: `scripts/benchmark_vs_upstream.sh [version] [duration]` (defaults: 30.1, 30s).
+- [x] Cross-fork comparison: `scripts/benchmark_vs_upstream.sh` downloads an upstream release binary and runs the full benchmark suite against the fork build. Canonical usage now lives in `benchmark/README.md` and `scripts/benchmark_vs_upstream.sh --help`.
 - [x] Evaluate whether CI benchmark should compare against a fixed baseline (upstream release) in addition to previous-run regression detection. Decision: the cross-fork script serves as the baseline comparison mechanism; CI continues with commit-to-commit regression detection.
 
 **Audit findings (Mar 2026):**
@@ -318,29 +304,10 @@ Each search scenario runs at **50 VUs** and **100 VUs** sequentially with 5s gap
 ```bash
 # Prerequisites: Docker, Bun 1.3+, a built typesense-server binary
 
-# 1. Build two binaries to compare (or use one binary twice for baseline)
-scripts/bazel_in_docker.sh build //:typesense-server
-cp bazel-bin/typesense-server /tmp/binary-new
+# The supported default is the root wrapper:
+scripts/benchmark_vs_upstream.sh --build --profile standard
 
-# 2. Install and build the benchmark CLI
-cd benchmark
-bun install
-bun run build
-
-# 3. Start infrastructure (InfluxDB, Grafana, k6)
-docker compose up -d
-
-# 4. Run benchmark comparison
-./dist/index.js benchmark \
-  --binaries /tmp/binary-old /tmp/binary-new \
-  -c old-commit-sha new-commit-sha \
-  -d /tmp/benchmark-workdir \
-  --duration 30s \
-  -y -v
-
-# 5. View results in Grafana at http://localhost:3000
-# 6. Cleanup
-docker compose down
+# Use the raw benchmark CLI only when developing benchmark tooling itself.
 ```
 
 **Cross-fork comparison feasibility:** The `--binaries` flag accepts arbitrary binary paths, so comparing fork vs upstream is straightforward: download a release binary from typesense.org, build the fork binary, and pass both. The CLI already generates comparison tables and ASCII plots. No workflow changes needed — just provide two binaries.

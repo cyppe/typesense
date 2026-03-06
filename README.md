@@ -390,7 +390,6 @@ We use [Bazel](https://bazel.build) to build Typesense.
 Preferred (reproducible) flow: run Bazel in the repo's Dockerized CI toolchain.
 
 ```shell
-scripts/bazel_in_docker.sh --build-image-only
 scripts/bazel_in_docker.sh build //:typesense-server
 ```
 
@@ -411,22 +410,7 @@ scripts/check_local_toolchain.sh
 
 Please refer to the [CI build steps](.github/workflows/tests.yml) for the latest set of dependencies.
 
-For a practical local + CI-parity test workflow, see [TESTING_RUNBOOK.md](TESTING_RUNBOOK.md).
-
-For API tests, prefer the Dockerized wrapper:
-
-```shell
-scripts/bazel_in_docker.sh build //:typesense-server
-scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
-```
-
-Once you've installed them, run the following from the root of the repo:
-
-```shell
-bazel build //:typesense-server
-```
-
-The first build will take some time since other third-party libraries are pulled and built as part of the build process.
+`TESTING_RUNBOOK.md` is the canonical owner for local build, test, replay, and API test commands. Use it instead of copying command variants into multiple docs.
 
 ---
 &copy; 2016-present Typesense Inc.

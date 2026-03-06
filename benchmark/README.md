@@ -10,6 +10,8 @@ scripts/benchmark_vs_upstream.sh --build --profile standard
 
 Use the CLI in `benchmark/` directly only when you are developing the benchmark tool itself or need custom invocations beyond the wrapper.
 
+`benchmark/BENCHMARK_RESULTS.md` owns benchmark policy and accepted tuning decisions. Keep this README focused on benchmark-tool usage.
+
 ## Prerequisites
 
 - Docker

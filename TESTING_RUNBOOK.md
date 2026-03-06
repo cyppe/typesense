@@ -2,6 +2,11 @@
 
 This runbook is Docker-first for reproducibility. Local host toolchains are supported, but optional.
 
+Docs ownership:
+- This file owns build/test/replay/API command lines.
+- `benchmark/README.md` owns benchmark CLI usage.
+- `benchmark/BENCHMARK_RESULTS.md` owns benchmark decisions and tuning guidance.
+
 ## 1) Recommended default: Dockerized Bazel
 
 Build the CI toolchain image once, then run Bazel commands inside it.

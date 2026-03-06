@@ -40,6 +40,8 @@ scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
 
 This wrapper prepares the runtime bundle automatically and runs Bun in Docker by default, so the host does not need Bun installed. Use `--host-bun` only as an escape hatch.
 
+`TESTING_RUNBOOK.md` owns the broader build/test/replay command matrix; keep this README focused on API-suite-specific behavior.
+
 > [!NOTE]
 > Migration tests are only meaningful when `TYPESENSE_MIGRATION_SOURCE_BINARY_PATH` points to a legacy binary that is different from `TYPESENSE_BINARY_PATH`. If not, migration tests are skipped.
 
