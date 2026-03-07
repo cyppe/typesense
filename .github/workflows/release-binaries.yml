@@ -85,12 +85,16 @@ jobs:
 
       - name: Build Typesense server on macOS
         if: ${{ !matrix.uses_docker_bazel }}
-        env:
-          PATH: ${{ matrix.openssl_prefix }}/bin:${{ matrix.icu_prefix }}/bin:${{ env.PATH }}
-          LDFLAGS: -L${{ matrix.openssl_prefix }}/lib -L${{ matrix.icu_prefix }}/lib
-          CPPFLAGS: -I${{ matrix.openssl_prefix }}/include -I${{ matrix.icu_prefix }}/include
-          PKG_CONFIG_PATH: ${{ matrix.openssl_prefix }}/lib/pkgconfig:${{ matrix.icu_prefix }}/lib/pkgconfig
-        run: bazelisk build //:typesense-server
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          OPENSSL_PREFIX="$(brew --prefix openssl@3)"
+          ICU_PREFIX="$(brew --prefix icu4c 2>/dev/null || brew --prefix icu4c@78)"
+          ZLIB_PREFIX="$(brew --prefix zlib)"
+          export PATH="${BREW_PREFIX}/bin:${OPENSSL_PREFIX}/bin:${ICU_PREFIX}/bin:$PATH"
+          export LDFLAGS="-L${OPENSSL_PREFIX}/lib -L${ICU_PREFIX}/lib -L${ZLIB_PREFIX}/lib"
+          export CPPFLAGS="-I${OPENSSL_PREFIX}/include -I${ICU_PREFIX}/include -I${ZLIB_PREFIX}/include"
+          export PKG_CONFIG_PATH="${OPENSSL_PREFIX}/lib/pkgconfig:${ICU_PREFIX}/lib/pkgconfig:${ZLIB_PREFIX}/lib/pkgconfig"
+          bazelisk build //:typesense-server
 
       - name: Verify linux self-contained binary shape
         if: matrix.target_os == 'linux'
@@ -125,7 +129,16 @@ jobs:
 
       - name: Smoke-test staged binary
         run: |
-          "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server" --help >/dev/null
+          HELP_OUTPUT="${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server-help.txt"
+          set +e
+          "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server" --help >"${HELP_OUTPUT}" 2>&1
+          STATUS=$?
+          set -e
+          cat "${HELP_OUTPUT}"
+          if [ "${STATUS}" -ne 0 ] && [ "${STATUS}" -ne 1 ]; then
+            exit "${STATUS}"
+          fi
+          grep -q "Command line usage:" "${HELP_OUTPUT}"
 
       - name: Package tarball
         run: |

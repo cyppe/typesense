@@ -495,6 +495,8 @@ Latest one-Protobuf research and execution notes (Mar 2026):
 - `publish_release.sh` now uploads the new `artifacts/typesense-server-<version>-<platform>.tar.gz` outputs plus their `.sha256.txt` sidecars, while still falling back to legacy `build-Linux` / `build-Darwin` tarballs if needed.
 - End-to-end Linux package validation now succeeds locally against a workflow-style tarball: in an Ubuntu 24.04 container with `alien`, `rpm`, and `dpkg-dev`, `TSV=0.0.0-local ARCH=amd64 RELEASE_ARTIFACT_DIR=./artifacts RELEASE_PACKAGE_DIR=./artifacts/packages bash debian-pkg/generate_deb_rpm.sh` produced both `.deb` and `.rpm` outputs from the staged tarball.
 - Based on that validation, the draft `.github/workflows/release-binaries.yml` now includes Linux DEB/RPM generation + upload steps driven from the tarball it already built, instead of leaving package generation entirely manual.
+- First real GitHub run of `release-binaries` on `v32` found workflow bugs, not release-shape regressions: Linux built the self-contained binary successfully but the smoke step treated the server's expected `--help`/usage exit (`1`) as failure, and macOS arm64 failed before the build because a step-level `PATH` override hid Homebrew's `bazelisk`.
+- The current workflow fix keeps the Linux smoke test but accepts exit `0/1` so long as `Command line usage:` is printed, and the macOS build step now computes Homebrew prefixes at runtime and prepends them to the existing `PATH` instead of replacing it.
 - Upstream still has open build-packaging friction for downstream consumers (for example ONNX Runtime issue `microsoft/onnxruntime#7150` about modern CMake/vcpkg/external-project support), so do not assume the remaining productionization work will be patch-free.
 
 ### Takeover snapshot for item 17
@@ -512,8 +514,8 @@ If a new agent takes over mid-stream, assume the following:
   - Direct local embedding smoke now passes against the probe using public model `ts/e5-small` (embedding created and vector search succeeds).
   - The full no-secrets API suite and direct local embedding smoke also pass against the promoted main `typesense-server` target.
 - Immediate next coding tasks:
-  - run the draft `.github/workflows/release-binaries.yml` for real on at least one Linux lane and one macOS lane,
-  - validate that the in-workflow Linux DEB/RPM steps behave the same on GitHub runners as they do in the local Ubuntu container,
+  - re-run the draft `.github/workflows/release-binaries.yml` after the Linux smoke-test / macOS PATH fixes,
+  - validate that the in-workflow Linux DEB/RPM steps behave the same on GitHub runners as they did in the local Ubuntu container,
   - keep `ldd`/runtime-bundle checks in mind for future ORT bumps so the self-contained assumption is continuously verified.
 - Working tree snapshot when this note was updated:
   - modified: `.github/workflows/release-binaries.yml`
