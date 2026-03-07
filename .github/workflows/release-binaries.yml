@@ -77,7 +77,7 @@ jobs:
 
       - name: Install macOS build dependencies
         if: ${{ !matrix.uses_docker_bazel }}
-        run: brew install bazelisk coreutils snappy zlib openssl@3 curl icu4c
+        run: brew install bazelisk coreutils gnu-sed snappy zlib openssl@3 curl icu4c
 
       - name: Build Typesense server in Docker
         if: matrix.uses_docker_bazel
@@ -90,7 +90,8 @@ jobs:
           OPENSSL_PREFIX="$(brew --prefix openssl@3)"
           ICU_PREFIX="$(brew --prefix icu4c 2>/dev/null || brew --prefix icu4c@78)"
           ZLIB_PREFIX="$(brew --prefix zlib)"
-          export PATH="${BREW_PREFIX}/bin:${OPENSSL_PREFIX}/bin:${ICU_PREFIX}/bin:$PATH"
+          GNU_SED_PREFIX="$(brew --prefix gnu-sed)"
+          export PATH="${GNU_SED_PREFIX}/libexec/gnubin:${BREW_PREFIX}/bin:${OPENSSL_PREFIX}/bin:${ICU_PREFIX}/bin:$PATH"
           export LDFLAGS="-L${OPENSSL_PREFIX}/lib -L${ICU_PREFIX}/lib -L${ZLIB_PREFIX}/lib"
           export CPPFLAGS="-I${OPENSSL_PREFIX}/include -I${ICU_PREFIX}/include -I${ZLIB_PREFIX}/include"
           export PKG_CONFIG_PATH="${OPENSSL_PREFIX}/lib/pkgconfig:${ICU_PREFIX}/lib/pkgconfig:${ZLIB_PREFIX}/lib/pkgconfig"

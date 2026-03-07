@@ -125,8 +125,8 @@ git_repository(
         "//bazel/braft:0005_bazel9_string_view.patch",
     ],
     patch_cmds = [
-        "sed -i 's|@zlib//:zlib|@com_github_madler_zlib//:zlib|g' BUILD",
-        "grep -q '@rules_cc//cc:defs.bzl' BUILD || sed -i '1iload(\"@rules_cc//cc:defs.bzl\", \"cc_library\")' BUILD",
+        "perl -0pi -e 's|@zlib//:zlib|@com_github_madler_zlib//:zlib|g' BUILD",
+        "grep -q '@rules_cc//cc:defs.bzl' BUILD || { printf 'load(\"@rules_cc//cc:defs.bzl\", \"cc_library\")\\n%s' \"$(cat BUILD)\" > BUILD; }",
         """cat > bazel/braft.bzl << 'BZLEOF'
 load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")

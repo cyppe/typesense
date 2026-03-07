@@ -24,6 +24,10 @@ fi
 set -ex
 CURR_DIR=$(dirname "$0" | while read -r a; do cd "$a" && pwd && break; done)
 ARTIFACT_BASENAME="typesense-server-${TSV}-linux-${ARCH}${ARTIFACT_SUFFIX}.tar.gz"
+PACKAGE_VERSION="${TSV}"
+if [[ ! "${PACKAGE_VERSION}" =~ ^[0-9] ]]; then
+	PACKAGE_VERSION="0~${PACKAGE_VERSION}"
+fi
 RELEASE_PACKAGE_DIR="${RELEASE_PACKAGE_DIR:-${CURR_DIR}/../artifacts/packages}"
 mkdir -p "${RELEASE_PACKAGE_DIR}"
 
@@ -78,7 +82,7 @@ fi
 
 rm -rf /tmp/typesense-server-$TSV /tmp/typesense-server-$TSV.tar.gz
 
-sed -i "s/\$VERSION/$TSV/g" $(find /tmp/typesense-deb-build -maxdepth 10 -type f)
+sed -i "s/\$VERSION/${PACKAGE_VERSION}/g" $(find /tmp/typesense-deb-build -maxdepth 10 -type f)
 sed -i "s/\$ARCH/$ARCH/g" $(find /tmp/typesense-deb-build -maxdepth 10 -type f)
 
 dpkg-deb -Zgzip -z6 \
