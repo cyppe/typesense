@@ -44,7 +44,7 @@ git_repository(
     patches = ["//bazel/brpc:0001_dynamic_annotations_guards.patch"],
     patch_args = ["-p1"],
     patch_cmds = [
-        "sed -i.bak '/\":macos_lib\",/d' BUILD.bazel && rm -f BUILD.bak",
+        "sed -i.bak '/:darwin\": \[\":macos_lib\"\],/d' BUILD.bazel && rm -f BUILD.bak",
     ],
     remote = "https://github.com/apache/brpc.git",
 )
