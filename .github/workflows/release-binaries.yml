@@ -55,7 +55,7 @@ jobs:
             openssl_prefix: /opt/homebrew/opt/openssl@3
             icu_prefix: /opt/homebrew/opt/icu4c
           - artifact_name: darwin-amd64
-            runner: macos-13
+            runner: macos-15-intel
             target_os: darwin
             target_arch: amd64
             uses_docker_bazel: false
@@ -95,7 +95,7 @@ jobs:
           export LDFLAGS="-L${OPENSSL_PREFIX}/lib -L${ICU_PREFIX}/lib -L${ZLIB_PREFIX}/lib"
           export CPPFLAGS="-I${OPENSSL_PREFIX}/include -I${ICU_PREFIX}/include -I${ZLIB_PREFIX}/include"
           export PKG_CONFIG_PATH="${OPENSSL_PREFIX}/lib/pkgconfig:${ICU_PREFIX}/lib/pkgconfig:${ZLIB_PREFIX}/lib/pkgconfig"
-          bazelisk build //:typesense-server --verbose_failures --experimental_ui_max_stdouterr_bytes=20000000 || {
+          if ! bazelisk build //:typesense-server --verbose_failures --experimental_ui_max_stdouterr_bytes=20000000; then
             python - <<'PY'
             import pathlib
             for path in sorted(pathlib.Path("bazel-out").glob("**/*openssl*.log")):
@@ -106,7 +106,7 @@ jobs:
                     print(f"Failed to read {path}: {exc}")
             PY
             exit 1
-          }
+          fi
 
       - name: Verify linux self-contained binary shape
         if: matrix.target_os == 'linux'
