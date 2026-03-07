@@ -276,8 +276,8 @@ http_archive(
     urls = ["https://github.com/google/s2geometry/archive/refs/tags/v0.12.0.tar.gz"],
     patch_cmds = [
         "find . -mindepth 2 \\( -name BUILD -o -name BUILD.bazel \\) -delete",
-        "sed -i -E 's/absl::Nonnull<([^>]+)>/\\1/g' src/s2/s2edge_tessellator.h src/s2/s2density_tree.h src/s2/s2density_tree.cc",
-        "sed -i '/VERSION 0.12.0)/a if(NOT MSVC)\\n  add_compile_options(-fsized-deallocation)\\nendif()' CMakeLists.txt",
+        "perl -0777 -i -pe 's/absl::Nonnull<([^>]+)>/$1/g' src/s2/s2edge_tessellator.h src/s2/s2density_tree.h src/s2/s2density_tree.cc",
+        "perl -0777 -i -pe 's/VERSION 0\\.12\\.0\\)\\n/VERSION 0.12.0)\\nif(NOT MSVC)\\n  add_compile_options(-fsized-deallocation)\\nendif()\\n/' CMakeLists.txt",
         """cat > absl_stubs.cmake << 'STUBEOF'
 include_directories(SYSTEM ${ABSL_INCLUDE_DIR})
 set(_S2_ABSL_STUBS base btree check config core_headers dynamic_annotations endian
@@ -290,7 +290,7 @@ foreach(_n ${_S2_ABSL_STUBS})
     endif()
 endforeach()
 STUBEOF""",
-        "sed -i 's|find_package(absl REQUIRED)|include(absl_stubs.cmake)|' CMakeLists.txt",
+        "perl -0777 -i -pe 's/find_package\\(absl REQUIRED\\)/include(absl_stubs.cmake)/g' CMakeLists.txt",
     ],
 )
 

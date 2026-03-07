@@ -497,6 +497,7 @@ Latest one-Protobuf research and execution notes (Mar 2026):
 - Based on that validation, the draft `.github/workflows/release-binaries.yml` now includes Linux DEB/RPM generation + upload steps driven from the tarball it already built, instead of leaving package generation entirely manual.
 - First real GitHub run of `release-binaries` on `v32` found workflow bugs, not release-shape regressions: Linux built the self-contained binary successfully but the smoke step treated the server's expected `--help`/usage exit (`1`) as failure, and macOS arm64 failed before the build because a step-level `PATH` override hid Homebrew's `bazelisk`.
 - The current workflow fix keeps the Linux smoke test but accepts exit `0/1` so long as `Command line usage:` is printed, and the macOS build step now computes Homebrew prefixes at runtime and prepends them to the existing `PATH` instead of replacing it.
+- Second GitHub run on commit `030b706f` confirms Linux lanes end-to-end (amd64 + arm64) are green, including tarball checks, DEB/RPM generation, and artifact uploads. Remaining blocker is macOS arm64 fetch-time failure in `@s2geometry` because `MODULE.bazel` used a GNU-style `sed -i -E ...` patch command that is not BSD-sed portable.
 - Upstream still has open build-packaging friction for downstream consumers (for example ONNX Runtime issue `microsoft/onnxruntime#7150` about modern CMake/vcpkg/external-project support), so do not assume the remaining productionization work will be patch-free.
 
 ### Takeover snapshot for item 17
@@ -514,10 +515,11 @@ If a new agent takes over mid-stream, assume the following:
   - Direct local embedding smoke now passes against the probe using public model `ts/e5-small` (embedding created and vector search succeeds).
   - The full no-secrets API suite and direct local embedding smoke also pass against the promoted main `typesense-server` target.
 - Immediate next coding tasks:
-  - re-run the draft `.github/workflows/release-binaries.yml` after the Linux smoke-test / macOS PATH fixes,
-  - validate that the in-workflow Linux DEB/RPM steps behave the same on GitHub runners as they did in the local Ubuntu container,
+  - land the `MODULE.bazel` macOS-portable `s2geometry` patch-command fix and re-run `release-binaries`,
+  - confirm both macOS lanes (arm64 + amd64) pass with the same artifact/checksum flow already validated on Linux,
   - keep `ldd`/runtime-bundle checks in mind for future ORT bumps so the self-contained assumption is continuously verified.
 - Working tree snapshot when this note was updated:
+  - modified: `MODULE.bazel`
   - modified: `.github/workflows/release-binaries.yml`
   - modified: `.github/workflows/tests.yml`
   - modified: `BUILD`
@@ -579,3 +581,5 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 21. **Downstream packaging helpers should resolve both draft and legacy artifact locations.** During workflow migration, scripts like `debian-pkg/generate_deb_rpm.sh` and `publish_release.sh` should prefer the new `artifacts/` layout but keep a legacy fallback until the older release path is fully retired.
 
 22. **Alien-derived RPM layouts are not stable enough for hardcoded spec/buildroot paths.** `generate_deb_rpm.sh` should discover the generated `.spec`, use a clean copied buildroot, and avoid assuming the output directory name exactly matches the package version string.
+
+23. **Bazel `patch_cmds` must avoid GNU-only `sed -i` assumptions when macOS lanes are in scope.** Commands like `sed -i -E ...` can parse differently under BSD sed and break repository fetches; prefer portable `perl`/`python` edits or explicit cross-platform flag forms.
