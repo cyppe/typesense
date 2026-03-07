@@ -1,10 +1,80 @@
+diff --git a/cmake/external/extensions.cmake b/cmake/external/extensions.cmake
+index bd3c47d..55bc17c 100644
 --- a/cmake/external/extensions.cmake
 +++ b/cmake/external/extensions.cmake
-@@ -45,6 +45,7 @@
+@@ -45,6 +45,12 @@ if (NOT onnxruntime_EXTENSIONS_OVERRIDDEN)
      EXCLUDE_FROM_ALL
    )
    onnxruntime_fetchcontent_makeavailable(extensions)
 +  set(onnxruntime_EXTENSIONS_PATH ${extensions_SOURCE_DIR})
++  if (EXISTS "${onnxruntime_EXTENSIONS_PATH}/operators/vision/image_encoder.hpp")
++    file(READ "${onnxruntime_EXTENSIONS_PATH}/operators/vision/image_encoder.hpp" ORT_EXT_IMAGE_ENCODER_HPP)
++    string(REPLACE "#if ZLIB_VERNUM != 0x12b0" "#if ZLIB_VERNUM != 0x12b0 && ZLIB_VERNUM != 0x1300 && ZLIB_VERNUM != 0x1310" ORT_EXT_IMAGE_ENCODER_HPP "${ORT_EXT_IMAGE_ENCODER_HPP}")
++    file(WRITE "${onnxruntime_EXTENSIONS_PATH}/operators/vision/image_encoder.hpp" "${ORT_EXT_IMAGE_ENCODER_HPP}")
++  endif()
  else()
    # when onnxruntime-extensions is not a subdirectory of onnxruntime,
    # output binary directory must be explicitly specified.
+@@ -79,7 +85,23 @@ onnxruntime_add_include_to_target(noexcep_operators ${PROTOBUF_LIB} ${ABSEIL_LIB
+ add_dependencies(ocos_operators ${onnxruntime_EXTERNAL_DEPENDENCIES})
+ add_dependencies(ortcustomops ${onnxruntime_EXTERNAL_DEPENDENCIES})
+ 
++if (TARGET libpng_static_c)
++  get_target_property(libpng_static_c_INTERFACE_INCLUDES libpng_static_c INTERFACE_INCLUDE_DIRECTORIES)
++  if (libpng_static_c_INTERFACE_INCLUDES)
++    target_include_directories(libpng_static_c PRIVATE ${libpng_static_c_INTERFACE_INCLUDES})
++    set_target_properties(libpng_static_c PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "")
++  endif()
++endif()
++
+ if (NOT onnxruntime_BUILD_SHARED_LIB)
++  if (TARGET libpng_static_c)
++    install(TARGETS libpng_static_c EXPORT ${PROJECT_NAME}Targets
++              ARCHIVE   DESTINATION ${CMAKE_INSTALL_LIBDIR})
++  endif()
++  if (TARGET libjpeg_static_c)
++    install(TARGETS libjpeg_static_c EXPORT ${PROJECT_NAME}Targets
++              ARCHIVE   DESTINATION ${CMAKE_INSTALL_LIBDIR})
++  endif()
+   install(TARGETS ocos_operators ortcustomops noexcep_operators EXPORT ${PROJECT_NAME}Targets
+             ARCHIVE   DESTINATION ${CMAKE_INSTALL_LIBDIR}
+             LIBRARY   DESTINATION ${CMAKE_INSTALL_LIBDIR}
+diff --git a/cmake/external/onnxruntime_external_deps.cmake b/cmake/external/onnxruntime_external_deps.cmake
+index 9feb777..5014645 100644
+--- a/cmake/external/onnxruntime_external_deps.cmake
++++ b/cmake/external/onnxruntime_external_deps.cmake
+@@ -192,6 +192,26 @@ else()
+  set(ONNXRUNTIME_PROTOBUF_PATCH_COMMAND "")
+ endif()
+ 
++if (onnxruntime_USE_TYPESENSE_EXTERNAL_PROTOBUF)
++  add_library(protobuf::libprotobuf STATIC IMPORTED GLOBAL)
++  set_target_properties(protobuf::libprotobuf PROPERTIES
++                        IMPORTED_LOCATION "${onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LIBRARY}"
++                        INTERFACE_INCLUDE_DIRECTORIES "${onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_INCLUDE_DIR}")
++  add_library(protobuf::libprotobuf-lite STATIC IMPORTED GLOBAL)
++  set_target_properties(protobuf::libprotobuf-lite PROPERTIES
++                        IMPORTED_LOCATION "${onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LITE_LIBRARY}"
++                        INTERFACE_INCLUDE_DIRECTORIES "${onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_INCLUDE_DIR}")
++  add_executable(protobuf::protoc IMPORTED GLOBAL)
++  set_target_properties(protobuf::protoc PROPERTIES
++                        IMPORTED_LOCATION "${onnxruntime_TYPESENSE_EXTERNAL_PROTOC_EXECUTABLE}")
++  set(Protobuf_FOUND ON)
++  set(Protobuf_VERSION "${onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_VERSION}")
++  set(Protobuf_INCLUDE_DIR "${onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_INCLUDE_DIR}")
++  set(Protobuf_INCLUDE_DIRS "${onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_INCLUDE_DIR}")
++  set(Protobuf_LIBRARY "${onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LIBRARY}")
++  set(Protobuf_LITE_LIBRARY "${onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LITE_LIBRARY}")
++  set(Protobuf_PROTOC_EXECUTABLE "${onnxruntime_TYPESENSE_EXTERNAL_PROTOC_EXECUTABLE}")
++else()
+ #Protobuf depends on absl and utf8_range
+ onnxruntime_fetchcontent_declare(
+   Protobuf
+@@ -222,6 +242,7 @@ include(protobuf_function)
+ #protobuf end
+ 
+ onnxruntime_fetchcontent_makeavailable(Protobuf)
++endif()
+ if(Protobuf_FOUND)
+   message(STATUS "Using protobuf from find_package(or vcpkg). Protobuf version: ${Protobuf_VERSION}")
+ else()

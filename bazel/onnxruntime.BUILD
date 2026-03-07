@@ -44,6 +44,76 @@ cp $$BUILD_TMPDIR/libonnxruntime_providers_shared.so $$INSTALLDIR/../../../
 cp $$BUILD_TMPDIR/libonnxruntime_providers_cuda.so $$INSTALLDIR/../../../
 """
 
+__STATIC_POSTFIX = """
+mkdir -p $$INSTALLDIR/lib
+mkdir -p $$INSTALLDIR/lib/_deps
+mkdir -p $$INSTALLDIR/lib/_deps/onnx-build
+mkdir -p $$INSTALLDIR/lib/_deps/protobuf-build
+mkdir -p $$INSTALLDIR/lib/_deps/re2-build
+mkdir -p $$INSTALLDIR/lib/_deps/abseil_cpp-build
+mkdir -p $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/container
+mkdir -p $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/hash
+mkdir -p $$INSTALLDIR/lib/_deps/google_nsync-build
+mkdir -p $$INSTALLDIR/lib/_deps/pytorch_cpuinfo-build
+mkdir -p $$INSTALLDIR/lib/_deps/pytorch_cpuinfo-build/deps
+mkdir -p $$INSTALLDIR/lib/_deps/pytorch_cpuinfo-build/deps/clog
+mkdir -p $$INSTALLDIR/lib/_deps/opencv-build
+mkdir -p $$INSTALLDIR/lib/_deps/opencv-build/lib
+mkdir -p $$INSTALLDIR/lib/_deps/opencv-build/3rdparty
+mkdir -p $$INSTALLDIR/lib/_deps/opencv-build/3rdparty/lib
+cp $$BUILD_TMPDIR/_deps/onnx-build/libonnx.a $$INSTALLDIR/lib/_deps/onnx-build
+cp $$BUILD_TMPDIR/_deps/onnx-build/libonnx_proto.a $$INSTALLDIR/lib/_deps/onnx-build
+cp $$BUILD_TMPDIR/_deps/protobuf-build/libprotobuf-lite.a $$INSTALLDIR/lib/_deps/protobuf-build
+cp $$BUILD_TMPDIR/_deps/protobuf-build/libprotobuf.a $$INSTALLDIR/lib/_deps/protobuf-build
+cp $$BUILD_TMPDIR/_deps/re2-build/libre2.a $$INSTALLDIR/lib/_deps/re2-build
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/base/libabsl_base.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/base
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/base/libabsl_throw_delegate.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/base
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/container/libabsl_raw_hash_set.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/container
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/hash/libabsl_hash.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/hash
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/hash/libabsl_city.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/hash
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/container/libabsl_hashtablez_sampler.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/container
+cp $$BUILD_TMPDIR/_deps/pytorch_cpuinfo-build/libcpuinfo.a $$INSTALLDIR/lib/_deps/pytorch_cpuinfo-build
+cp $$BUILD_TMPDIR/lib/libnoexcep_operators.a $$INSTALLDIR/lib
+cp $$BUILD_TMPDIR/lib/libocos_operators.a $$INSTALLDIR/lib
+cp $$BUILD_TMPDIR/lib/libortcustomops.a $$INSTALLDIR/lib
+"""
+
+__STATIC_POSTFIX_WITH_CUDA = __STATIC_POSTFIX + """
+cp $$BUILD_TMPDIR/libonnxruntime_providers_shared.so $$INSTALLDIR/../../../
+cp $$BUILD_TMPDIR/libonnxruntime_providers_cuda.so $$INSTALLDIR/../../../
+"""
+
+__STATIC_ONE_PROTOBUF_POSTFIX = """
+mkdir -p $$INSTALLDIR/lib
+mkdir -p $$INSTALLDIR/lib/_deps
+mkdir -p $$INSTALLDIR/lib/_deps/onnx-build
+mkdir -p $$INSTALLDIR/lib/_deps/re2-build
+mkdir -p $$INSTALLDIR/lib/_deps/abseil_cpp-build
+mkdir -p $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/container
+mkdir -p $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/hash
+mkdir -p $$INSTALLDIR/lib/_deps/google_nsync-build
+mkdir -p $$INSTALLDIR/lib/_deps/pytorch_cpuinfo-build
+mkdir -p $$INSTALLDIR/lib/_deps/pytorch_cpuinfo-build/deps
+mkdir -p $$INSTALLDIR/lib/_deps/pytorch_cpuinfo-build/deps/clog
+mkdir -p $$INSTALLDIR/lib/_deps/opencv-build
+mkdir -p $$INSTALLDIR/lib/_deps/opencv-build/lib
+mkdir -p $$INSTALLDIR/lib/_deps/opencv-build/3rdparty
+mkdir -p $$INSTALLDIR/lib/_deps/opencv-build/3rdparty/lib
+cp $$BUILD_TMPDIR/_deps/onnx-build/libonnx.a $$INSTALLDIR/lib/_deps/onnx-build
+cp $$BUILD_TMPDIR/_deps/onnx-build/libonnx_proto.a $$INSTALLDIR/lib/_deps/onnx-build
+cp $$BUILD_TMPDIR/_deps/re2-build/libre2.a $$INSTALLDIR/lib/_deps/re2-build
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/base/libabsl_base.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/base
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/base/libabsl_throw_delegate.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/base
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/container/libabsl_raw_hash_set.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/container
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/hash/libabsl_hash.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/hash
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/hash/libabsl_city.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/hash
+cp $$BUILD_TMPDIR/_deps/abseil_cpp-build/absl/container/libabsl_hashtablez_sampler.a $$INSTALLDIR/lib/_deps/abseil_cpp-build/absl/container
+cp $$BUILD_TMPDIR/_deps/pytorch_cpuinfo-build/libcpuinfo.a $$INSTALLDIR/lib/_deps/pytorch_cpuinfo-build
+cp $$BUILD_TMPDIR/lib/libnoexcep_operators.a $$INSTALLDIR/lib
+cp $$BUILD_TMPDIR/lib/libocos_operators.a $$INSTALLDIR/lib
+cp $$BUILD_TMPDIR/lib/libortcustomops.a $$INSTALLDIR/lib
+"""
+
 
 load("@cuda_home_repo//:cuda_home.bzl", "CUDA_HOME")
 load("@cuda_home_repo//:cudnn_home.bzl", "CUDNN_HOME")
@@ -215,4 +285,151 @@ cc_library(
     name = "onnxruntime_lib",
     deps = ["//:onnxruntime", "//:hdrs", "@onnx_runtime_extensions//:operators"],
     visibility = ["//visibility:public"]
+)
+
+cmake(
+    name = "onnxruntime_static",
+    lib_source = ":all_srcs",
+    cache_entries = select({
+        ":with_cuda": dict(__ONNXRUNTIME_WITH_CUDA, onnxruntime_BUILD_SHARED_LIB = "OFF"),
+        "//conditions:default": dict(__ONNXRUNTIME_WITHOUT_CUDA, onnxruntime_BUILD_SHARED_LIB = "OFF"),
+    }),
+    working_directory = "cmake",
+    generate_args = ["--compile-no-warning-as-error"],
+    build_args = [
+        "--config Release",
+        "-j3",
+    ],
+    tags = ["requires-network", "no-sandbox"],
+    features = ["-default_compile_flags", "-fno-canonical-system-headers", "-Wno-builtin-macro-redefined"],
+    out_static_libs = [
+        "libonnxruntime_session.a",
+        "libonnxruntime_optimizer.a",
+        "libonnxruntime_providers.a",
+        "libonnxruntime_util.a",
+        "libonnxruntime_framework.a",
+        "libonnxruntime_graph.a",
+        "libonnxruntime_lora.a",
+        "libonnxruntime_mlas.a",
+        "libonnxruntime_common.a",
+        "libonnxruntime_flatbuffers.a",
+        "liblibjpeg_static_c.a",
+        "liblibpng_static_c.a",
+        "libortcustomops.a",
+        "libocos_operators.a",
+        "libnoexcep_operators.a",
+        "_deps/onnx-build/libonnx.a",
+        "_deps/onnx-build/libonnx_proto.a",
+        "_deps/protobuf-build/libprotobuf-lite.a",
+        "_deps/protobuf-build/libprotobuf.a",
+        "_deps/re2-build/libre2.a",
+        "_deps/abseil_cpp-build/absl/base/libabsl_base.a",
+        "_deps/abseil_cpp-build/absl/base/libabsl_throw_delegate.a",
+        "_deps/abseil_cpp-build/absl/container/libabsl_raw_hash_set.a",
+        "_deps/abseil_cpp-build/absl/hash/libabsl_hash.a",
+        "_deps/abseil_cpp-build/absl/hash/libabsl_city.a",
+        "_deps/abseil_cpp-build/absl/container/libabsl_hashtablez_sampler.a",
+        "_deps/pytorch_cpuinfo-build/libcpuinfo.a",
+    ],
+    postfix_script = select({
+        ":with_cuda": __STATIC_POSTFIX_WITH_CUDA,
+        "//conditions:default": __STATIC_POSTFIX,
+    }),
+)
+
+cc_library(
+    name = "onnxruntime_static_lib",
+    deps = ["//:onnxruntime_static", "//:hdrs", "@onnx_runtime_extensions//:operators_headers"],
+    linkopts = select({
+        "@platforms//os:linux": ["-static-libstdc++", "-static-libgcc"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
+)
+
+cmake(
+    name = "onnxruntime_static_one_protobuf",
+    lib_source = ":all_srcs",
+    cache_entries = select({
+        ":with_cuda": dict(
+            __ONNXRUNTIME_WITH_CUDA,
+            onnxruntime_BUILD_SHARED_LIB = "OFF",
+            FETCHCONTENT_TRY_FIND_PACKAGE_MODE = "ALWAYS",
+            onnxruntime_USE_FULL_PROTOBUF = "ON",
+            onnxruntime_USE_TYPESENSE_EXTERNAL_PROTOBUF = "ON",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_VERSION = "33.5",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_INCLUDE_DIR = "$$EXT_BUILD_ROOT/external/protobuf+/src",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LIBRARY = "$$EXT_BUILD_DEPS/lib/libprotobuf.a",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LITE_LIBRARY = "$$EXT_BUILD_DEPS/lib/libprotobuf_lite.a",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOC_EXECUTABLE = "$(execpath @com_google_protobuf//:protoc)",
+            ONNX_CUSTOM_PROTOC_EXECUTABLE = "$(execpath @com_google_protobuf//:protoc)",
+            CMAKE_CXX_FLAGS = "-I$$EXT_BUILD_ROOT/external/abseil-cpp+ -I$$EXT_BUILD_ROOT/external/protobuf+/third_party/utf8_range",
+        ),
+        "//conditions:default": dict(
+            __ONNXRUNTIME_WITHOUT_CUDA,
+            onnxruntime_BUILD_SHARED_LIB = "OFF",
+            FETCHCONTENT_TRY_FIND_PACKAGE_MODE = "ALWAYS",
+            onnxruntime_USE_FULL_PROTOBUF = "ON",
+            onnxruntime_USE_TYPESENSE_EXTERNAL_PROTOBUF = "ON",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_VERSION = "33.5",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_INCLUDE_DIR = "$$EXT_BUILD_ROOT/external/protobuf+/src",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LIBRARY = "$$EXT_BUILD_DEPS/lib/libprotobuf.a",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LITE_LIBRARY = "$$EXT_BUILD_DEPS/lib/libprotobuf_lite.a",
+            onnxruntime_TYPESENSE_EXTERNAL_PROTOC_EXECUTABLE = "$(execpath @com_google_protobuf//:protoc)",
+            ONNX_CUSTOM_PROTOC_EXECUTABLE = "$(execpath @com_google_protobuf//:protoc)",
+            CMAKE_CXX_FLAGS = "-I$$EXT_BUILD_ROOT/external/abseil-cpp+ -I$$EXT_BUILD_ROOT/external/protobuf+/third_party/utf8_range",
+        ),
+    }),
+    working_directory = "cmake",
+    generate_args = ["--compile-no-warning-as-error"],
+    build_args = [
+        "--config Release",
+        "-j3",
+    ],
+    build_data = ["@com_google_protobuf//:protoc"],
+    deps = [
+        "@com_google_protobuf//:protobuf_lite",
+        "@com_google_protobuf//:protobuf",
+        "@com_google_protobuf//:protobuf_headers",
+    ],
+    tags = ["requires-network", "no-sandbox"],
+    features = ["-default_compile_flags", "-fno-canonical-system-headers", "-Wno-builtin-macro-redefined"],
+    out_static_libs = [
+        "libonnxruntime_session.a",
+        "libonnxruntime_optimizer.a",
+        "libonnxruntime_providers.a",
+        "libonnxruntime_util.a",
+        "libonnxruntime_framework.a",
+        "libonnxruntime_graph.a",
+        "libonnxruntime_lora.a",
+        "libonnxruntime_mlas.a",
+        "libonnxruntime_common.a",
+        "libonnxruntime_flatbuffers.a",
+        "liblibjpeg_static_c.a",
+        "liblibpng_static_c.a",
+        "libortcustomops.a",
+        "libocos_operators.a",
+        "libnoexcep_operators.a",
+        "_deps/onnx-build/libonnx.a",
+        "_deps/onnx-build/libonnx_proto.a",
+        "_deps/re2-build/libre2.a",
+        "_deps/abseil_cpp-build/absl/base/libabsl_base.a",
+        "_deps/abseil_cpp-build/absl/base/libabsl_throw_delegate.a",
+        "_deps/abseil_cpp-build/absl/container/libabsl_raw_hash_set.a",
+        "_deps/abseil_cpp-build/absl/hash/libabsl_hash.a",
+        "_deps/abseil_cpp-build/absl/hash/libabsl_city.a",
+        "_deps/abseil_cpp-build/absl/container/libabsl_hashtablez_sampler.a",
+        "_deps/pytorch_cpuinfo-build/libcpuinfo.a",
+    ],
+    postfix_script = __STATIC_ONE_PROTOBUF_POSTFIX,
+)
+
+cc_library(
+    name = "onnxruntime_static_one_protobuf_lib",
+    deps = ["//:onnxruntime_static_one_protobuf", "//:hdrs", "@onnx_runtime_extensions//:operators_headers"],
+    linkopts = select({
+        "@platforms//os:linux": ["-static-libstdc++", "-static-libgcc"],
+        "//conditions:default": [],
+    }),
+    visibility = ["//visibility:public"],
 )

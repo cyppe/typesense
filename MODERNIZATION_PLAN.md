@@ -353,13 +353,15 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 13 | RocksDB perf tuning Phase 3 (data-driven) | P2.13 | **done** | Runs 9-13 complete: observability, sweeps, read-path optimizations, `max-indexing-concurrency` validation, and import `batch_size` A/B check. Final policy keeps conservative defaults with hardware-based tuning guidance. |
 | 14 | ~~Benchmark observability: full metrics collection + Grafana dashboard~~ | P2.13 | **done** | Core observability is in place: benchmark runs collect system/API/RocksDB metrics continuously and dashboard includes concurrent search+import visibility. Tuning-specific counter extraction is tracked under item 13. |
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
+| 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
+| 17 | Release packaging / multi-arch workflow hardening | Known Issues | **in progress** | `.github/workflows/release-binaries.yml` is still a draft, but item 16 is no longer blocking it. The draft now has Linux `ldd` guardrails, staged MD5 / tarball SHA256 manifests, downstream helper compatibility (`generate_deb_rpm.sh`, `publish_release.sh`), and Linux DEB/RPM generation steps. Remaining work is real cross-platform execution/validation of the workflow itself. |
 
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now (execution lane):** no active tooling-lane work remains; proceed to the next non-blocked modernization item.
-- **Later (blocked or dependency-coupled):** item **9** (`Protobuf 34`) and section **6b** (`brpc`/rule compatibility work) plus section **7** patch-debt follow-up (`replace patch-only forks`) when dependency updates are available.
+- **Active now (execution lane):** item **17** (`Release packaging / multi-arch workflow hardening`) is now the live lane. The main binary has already been promoted to the self-contained one-Protobuf path locally, so the next work is making workflows/artifacts reflect that default across release packaging and other platforms.
+- **Later (blocked or dependency-coupled):** item **9** (`Protobuf 34`), section **6b** (`brpc`/rule compatibility work), and section **7** patch-debt follow-up (`replace patch-only forks`) when dependency updates are available.
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
   - `TODO.md` upstream product backlog (not the modernization source of truth; mine opportunistically only when an item aligns with current modernization goals).
@@ -458,6 +460,76 @@ Pre-existing issues discovered during modernization work. Fix opportunistically 
 
 Console log output moved from stdout to stderr as part of the glog→Abseil swap (P1.8). This is more standard for daemons but may affect users who pipe stdout. Documented in commit `2139421d`.
 
+### Core release artifact convergence status
+
+Upstream core server artifacts (`typesense-server` tarballs / DEB packages) do not ship a hard runtime dependency on `libonnxruntime.so.1`; upstream Bazel builds ONNX Runtime as static libs. This fork now matches that artifact shape on the promoted local Linux build: `typesense-server` links through the one-Protobuf static ORT path, and `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1` dependency.
+
+The historical blocker was real: once the earlier static probe linked ONNX Runtime's bundled Protobuf 21.12 archives into the final binary, `ld.lld` reported duplicate `google::protobuf` symbols against the repo's Protobuf 33 runtime (`external/protobuf+`). The path that resolved it was unifying ORT onto the repo's protobuf rather than keeping the shared-library boundary. Remaining work is no longer basic linkage feasibility; it is release/multi-platform automation and validation.
+
+Latest one-Protobuf research and execution notes (Mar 2026):
+
+- ORT's own CMake already has an external-protobuf path. `cmake/external/onnxruntime_external_deps.cmake` declares Protobuf with `FIND_PACKAGE_ARGS NAMES Protobuf protobuf`, and vendored ONNX reuses pre-existing `protobuf::libprotobuf`, `protobuf::libprotobuf-lite`, and `protobuf::protoc` targets instead of fetching protobuf again.
+- Our current Bazel integration intentionally disables that path for both shared and static builds via `FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER` in `bazel/onnxruntime.BUILD`.
+- This repo does **not** currently expose a ready-to-use `ProtobufConfig.cmake` package inside `rules_foreign_cc`. The realistic inputs available in foreign_cc are raw Bazel artifacts (`$$EXT_BUILD_DEPS/lib/libprotobuf.a`, `$$EXT_BUILD_DEPS/lib/libprotobuf_lite.a`, `$(execpath @com_google_protobuf//:protoc)`, headers under `$$EXT_BUILD_ROOT/external/protobuf+/src`), similar to how `bazel/sentencepiece.BUILD` wires protobuf.
+- Most realistic prototype paths are:
+  - patch ORT static builds to accept repo-provided protobuf imported targets created from those raw Bazel artifacts, or
+  - stage a tiny synthetic protobuf CMake package/prefix for ORT static builds.
+- We took the first path. `bazel/onnxruntime.patch` now patches `cmake/external/onnxruntime_external_deps.cmake` to short-circuit FetchContent and create imported `protobuf::...` targets from Bazel-provided artifacts, and `bazel/onnxruntime.BUILD` wires a dedicated `onnxruntime_static_one_protobuf` target.
+- The patch had to be regenerated from the exact pinned ORT commit (`058787ceead760166e3c50a0a4cba8a833a6f53f`); an earlier hand-shaped/WIP patch targeted the wrong upstream file layout and Bazel rejected it during repository fetch.
+- ORT 1.24.2 static packaging also needs `libonnxruntime_lora.a` exposed through Bazel. Without it, final linking fails on `onnxruntime::adapters::utils::*` symbols from `lora_adapters.cc` even after the protobuf collision is removed.
+- Verification now succeeds with both `scripts/bazel_in_docker.sh build //:typesense-server-static-one-protobuf-probe` and the promoted `scripts/bazel_in_docker.sh build //:typesense-server`.
+- `common_deps` in `BUILD` now points at `@onnx_runtime//:onnxruntime_static_one_protobuf_lib`, so the main `typesense-server` target uses the validated self-contained path, not just the probe target.
+- `ldd bazel-bin/typesense-server` now shows no `libonnxruntime.so.1` dependency. The main local Linux artifact is now self-contained by default.
+- Runtime validation now includes:
+  - `scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-static-one-protobuf-probe -- --no-secrets tests/health.test.ts` passing all single-node + multi-node health/restart/snapshot phases.
+  - `scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-static-one-protobuf-probe -- --no-secrets --download-migration-binary` passing the broader no-secrets API suite, including migration replay from the v29 source binary.
+  - a direct probe-binary smoke that prewarms `ts/e5-small`, creates an embedding collection, indexes a document, observes a populated embedding (`384` dims), and returns a vector-search hit.
+- After promotion, the same validations also pass on the real `typesense-server` target: `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`, `ldd bazel-bin/typesense-server`, and a direct local `ts/e5-small` embedding/vector-search smoke.
+- `api_tests/scripts/prepare_runtime_bundle.sh` is now binary-shape-aware: it copies `libonnxruntime.so.1` only when `ldd` shows the tested binary actually needs it. `scripts/run_api_tests.sh` also accepts `--server-binary` / `TYPESENSE_SERVER_BINARY_PATH`, so the API harness can validate either shared-ORT or self-contained binaries without manual bundle surgery.
+- `.github/workflows/tests.yml` no longer uploads `libonnxruntime.so*` as a required build artifact, because the promoted server bundle may legitimately be just the binary.
+- `.github/workflows/tests.yml` and the draft `.github/workflows/release-binaries.yml` now include `ldd` guardrails that fail if `typesense-server` silently regresses back to a `libonnxruntime.so.1` dependency on Linux.
+- The draft `.github/workflows/release-binaries.yml` now also writes `typesense-server.md5.txt` into each staged release bundle and uploads a tarball `.sha256.txt` sidecar so downstream packaging helpers have the expected checksum metadata.
+- The draft release workflow now verifies the packaged tarball actually contains `typesense-server` plus `typesense-server.md5.txt`, and that the embedded MD5 manifest matches the packaged binary bytes.
+- The draft release workflow now smoke-tests the staged `typesense-server` with `--help`, which gives the macOS lanes at least a minimal runtime sanity check before packaging/upload.
+- `debian-pkg/generate_deb_rpm.sh` now resolves release tarballs from either the new `artifacts/` output or legacy `bazel-bin/`, and verifies the tarball SHA256 sidecar when present before extracting.
+- `publish_release.sh` now uploads the new `artifacts/typesense-server-<version>-<platform>.tar.gz` outputs plus their `.sha256.txt` sidecars, while still falling back to legacy `build-Linux` / `build-Darwin` tarballs if needed.
+- End-to-end Linux package validation now succeeds locally against a workflow-style tarball: in an Ubuntu 24.04 container with `alien`, `rpm`, and `dpkg-dev`, `TSV=0.0.0-local ARCH=amd64 RELEASE_ARTIFACT_DIR=./artifacts RELEASE_PACKAGE_DIR=./artifacts/packages bash debian-pkg/generate_deb_rpm.sh` produced both `.deb` and `.rpm` outputs from the staged tarball.
+- Based on that validation, the draft `.github/workflows/release-binaries.yml` now includes Linux DEB/RPM generation + upload steps driven from the tarball it already built, instead of leaving package generation entirely manual.
+- Upstream still has open build-packaging friction for downstream consumers (for example ONNX Runtime issue `microsoft/onnxruntime#7150` about modern CMake/vcpkg/external-project support), so do not assume the remaining productionization work will be patch-free.
+
+### Takeover snapshot for item 17
+
+If a new agent takes over mid-stream, assume the following:
+
+- Confirmed finished work:
+  - Static probe already proved the real blocker is duplicate protobuf runtimes, not export/install plumbing.
+  - ORT Extensions static export-set issues, build-tree include metadata, and zlib 1.3 guard were already patched far enough to reach the final link result.
+  - Research is complete enough to know ORT can theoretically reuse external protobuf; the gap is Bazel/foreign_cc plumbing, not lack of an upstream ORT hook.
+  - The exact-pinned-commit patch now applies cleanly, `//:typesense-server-static-one-protobuf-probe` builds successfully, and `ldd` confirms that probe has no `libonnxruntime.so.1` dependency.
+  - The canonical `scripts/bazel_in_docker.sh build //:typesense-server` now uses the one-Protobuf static ORT path and `ldd` confirms it has no `libonnxruntime.so.1` dependency.
+  - API runtime smoke now passes against the probe via `scripts/run_api_tests.sh --server-binary ... tests/health.test.ts`.
+  - The full no-secrets API suite, including migration replay, now passes against the probe via `scripts/run_api_tests.sh --server-binary ... -- --no-secrets --download-migration-binary`.
+  - Direct local embedding smoke now passes against the probe using public model `ts/e5-small` (embedding created and vector search succeeds).
+  - The full no-secrets API suite and direct local embedding smoke also pass against the promoted main `typesense-server` target.
+- Immediate next coding tasks:
+  - run the draft `.github/workflows/release-binaries.yml` for real on at least one Linux lane and one macOS lane,
+  - validate that the in-workflow Linux DEB/RPM steps behave the same on GitHub runners as they do in the local Ubuntu container,
+  - keep `ldd`/runtime-bundle checks in mind for future ORT bumps so the self-contained assumption is continuously verified.
+- Working tree snapshot when this note was updated:
+  - modified: `.github/workflows/release-binaries.yml`
+  - modified: `.github/workflows/tests.yml`
+  - modified: `BUILD`
+  - modified: `MODERNIZATION_PLAN.md`
+  - modified: `TESTING_RUNBOOK.md`
+  - modified: `bazel/onnxruntime.BUILD`
+  - modified: `bazel/onnxruntime.patch`
+  - modified: `bazel/onnxruntime_extensions.BUILD`
+  - modified: `debian-pkg/generate_deb_rpm.sh`
+  - modified: `publish_release.sh`
+  - modified: `api_tests/scripts/prepare_runtime_bundle.sh`
+  - modified: `scripts/run_api_tests.sh`
+- Important caution: `.github/workflows/release-binaries.yml` is still just a draft. The linkage/runtime model is now settled locally, but the workflow itself still needs cross-platform packaging validation before it should be treated as production-ready.
+
 ## Lessons Learned
 
 Important patterns and gotchas that save future AI agents significant time. Keep this section concise — only add entries that would prevent wasted effort.
@@ -481,3 +553,27 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 9. **Import `batch_size` is a secondary throughput knob on this dataset.** A/B checks (`40` vs `1000`) showed only marginal import delta (~0.2% in current runs). Keep default `40` for mixed workloads; use larger values only as deliberate ingest-window overrides.
 
 10. **Dockerized API harness should force IPv4 localhost.** Inside the API Bun container, `localhost` health checks can miss servers that are listening on IPv4 only. Set `TYPESENSE_API_HOST=127.0.0.1` in the wrapper to keep Dockerized API runs reliable.
+
+11. **Upstream ships self-contained core CPU artifacts, and this fork now matches that on the promoted local target.** Keep checking with `ldd` after future ORT/build-graph changes so the repo does not silently regress back to a `libonnxruntime.so.1` runtime dependency.
+
+12. **Static ONNX Runtime probes hit multiple false-front blockers before the real protobuf conflict.** Modern CMake 3.31 first rejects ONNX Runtime Extensions' export set and build-tree include metadata, then the static vision build trips an upstream zlib-1.3 guard. Patch through those only far enough to reach the final link result; they are not the core reason this repo needs the shared `libonnxruntime.so.1` boundary.
+
+13. **The real static-link blocker is duplicate protobuf runtimes in one binary.** After adding ONNX Runtime's bundled Protobuf 21.12 archives to the static probe, `ld.lld` reports duplicate `google::protobuf` symbols against the repo's Protobuf 33 runtime. That is the concrete evidence that a self-contained upstream-style binary needs a one-Protobuf strategy, not just more archive copying.
+
+14. **ORT already has an external protobuf hook; our Bazel plumbing is what blocks it.** `onnxruntime_external_deps.cmake` already supports `find_package`/pre-existing protobuf targets, but `bazel/onnxruntime.BUILD` forces `FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER`. Future work should focus on feeding ORT one protobuf from Bazel/foreign_cc rather than assuming ORT itself must be fundamentally redesigned.
+
+15. **`rules_foreign_cc` exposes raw Bazel protobuf artifacts more naturally than CMake packages.** Inside foreign_cc, this repo already has a working pattern in `bazel/sentencepiece.BUILD`: pass `libprotobuf.a`, `libprotobuf_lite.a`, `protoc`, and include paths directly. There is no ready-made protobuf CMake package in this repo's foreign_cc flow today, so the fastest prototype path is imported targets or a tiny synthetic package, not waiting for a full upstream-style protobuf install tree.
+
+16. **ORT 1.24 static builds now include `libonnxruntime_lora.a`.** If Bazel static targets do not expose that archive, final linking fails with unresolved `onnxruntime::adapters::utils::*` symbols from `lora_adapters.cc`, even after the protobuf collision itself is fixed.
+
+17. **Check the produced binary with `ldd` before claiming packaging parity.** A successful static-probe build is not enough; confirm whether the final executable still depends on `libonnxruntime.so.1` so release-workflow decisions are based on the binary shape, not just the archive list.
+
+18. **Runtime-bundle prep must follow the tested binary's actual dependency shape.** Do not hardcode `libonnxruntime.so.1` into API/release bundle prep for every artifact; detect whether the selected binary needs that shared library, or self-contained probes will fail validation for the wrong reason.
+
+19. **CI artifact upload paths must not require optional runtime libs.** Once `typesense-server` is self-contained, workflows like `.github/workflows/tests.yml` should upload the binary itself and treat `libonnxruntime.so*` as conditional, not mandatory.
+
+20. **Release tarballs need checksum metadata inside and outside the archive.** `debian-pkg/generate_deb_rpm.sh` expects `typesense-server.md5.txt` inside the extracted tarball, and release automation benefits from a tarball-level SHA256 sidecar. Keep both when changing artifact assembly.
+
+21. **Downstream packaging helpers should resolve both draft and legacy artifact locations.** During workflow migration, scripts like `debian-pkg/generate_deb_rpm.sh` and `publish_release.sh` should prefer the new `artifacts/` layout but keep a legacy fallback until the older release path is fully retired.
+
+22. **Alien-derived RPM layouts are not stable enough for hardcoded spec/buildroot paths.** `generate_deb_rpm.sh` should discover the generated `.spec`, use a clean copied buildroot, and avoid assuming the output directory name exactly matches the package version string.

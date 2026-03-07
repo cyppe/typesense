@@ -43,7 +43,7 @@ cc_library(
     }),
     deps = [
         ":headers",
-        "@onnx_runtime//:onnxruntime_lib",
+        "@onnx_runtime//:onnxruntime_static_one_protobuf_lib",
         "@sentencepiece",
         "@sentencepiece//:sentencepiece_headers",
         "@com_github_brpc_braft//:braft",
@@ -89,6 +89,100 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "common_deps_static_probe",
+    defines = [
+        "NDEBUG",
+    ],
+    linkopts = select({
+        "@platforms//os:macos": ["-framework Foundation -framework SystemConfiguration"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":headers",
+        "@onnx_runtime//:onnxruntime_static_lib",
+        "@sentencepiece",
+        "@sentencepiece//:sentencepiece_headers",
+        "@com_github_brpc_braft//:braft",
+        "@com_github_brpc_brpc//:brpc",
+        "@com_github_google_glog//:glog",  # retained for brpc/braft
+        "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/log:initialize",
+        "@com_google_absl//absl/log:globals",
+        "@com_google_absl//absl/log:log_sink",
+        "@com_google_absl//absl/log:log_sink_registry",
+        "@com_google_absl//absl/log:log_entry",
+        "@curl",
+        "@for",
+        "@h2o",
+        "@iconv",
+        "@icu",
+        "@kakasi",
+        "@lrucache",
+        "@rocksdb",
+        "@s2geometry",
+        "@hnsw",
+        "@clip_tokenizer//:clip",
+        "@whisper.cpp//:whisper",
+        "@whisper.cpp//:whisper_headers",
+        "@snowball",
+        "@snowball//:snowball_headers",
+        "@archive",
+    ] + select({
+        ":asan_mode": [],
+        ":tsan_mode": [],
+        "//conditions:default": ["@jemalloc"],
+    }),
+)
+
+cc_library(
+    name = "common_deps_static_one_protobuf_probe",
+    defines = [
+        "NDEBUG",
+    ],
+    linkopts = select({
+        "@platforms//os:macos": ["-framework Foundation -framework SystemConfiguration"],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":headers",
+        "@onnx_runtime//:onnxruntime_static_one_protobuf_lib",
+        "@sentencepiece",
+        "@sentencepiece//:sentencepiece_headers",
+        "@com_github_brpc_braft//:braft",
+        "@com_github_brpc_brpc//:brpc",
+        "@com_github_google_glog//:glog",  # retained for brpc/braft
+        "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/log:absl_check",
+        "@com_google_absl//absl/log:initialize",
+        "@com_google_absl//absl/log:globals",
+        "@com_google_absl//absl/log:log_sink",
+        "@com_google_absl//absl/log:log_sink_registry",
+        "@com_google_absl//absl/log:log_entry",
+        "@curl",
+        "@for",
+        "@h2o",
+        "@iconv",
+        "@icu",
+        "@kakasi",
+        "@lrucache",
+        "@rocksdb",
+        "@s2geometry",
+        "@hnsw",
+        "@clip_tokenizer//:clip",
+        "@whisper.cpp//:whisper",
+        "@whisper.cpp//:whisper_headers",
+        "@snowball",
+        "@snowball//:snowball_headers",
+        "@archive",
+    ] + select({
+        ":asan_mode": [],
+        ":tsan_mode": [],
+        "//conditions:default": ["@jemalloc"],
+    }),
+)
+
 COPTS = [
     "-Wall",
     "-Wextra",
@@ -131,6 +225,54 @@ cc_binary(
     ],
     copts = COPTS,
     deps = [":common_deps"],
+)
+
+cc_binary(
+    name = "typesense-server-static-probe",
+    srcs = [
+        "src/main/typesense_server.cpp",
+        ":src_files",
+    ],
+    local_defines = [
+        "TYPESENSE_VERSION=\\\"$(TYPESENSE_VERSION)\\\"",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-static-libstdc++", "-static-libgcc", "-fuse-ld=lld"],
+        "@platforms//os:macos": ["-framework Foundation", "-framework Accelerate", "-framework Metal", "-framework MetalKit"],
+        "//conditions:default": [],
+    }),
+    copts = COPTS + select({
+        "@platforms//os:linux": ["-DBACKWARD_HAS_DW=1", "-DBACKWARD_HAS_UNWIND=1"],
+        "//conditions:default": [],
+    }),
+    deps = [":common_deps_static_probe"] + select({
+        "@platforms//os:linux": [":linux_deps"],
+        "//conditions:default": [],
+    }),
+)
+
+cc_binary(
+    name = "typesense-server-static-one-protobuf-probe",
+    srcs = [
+        "src/main/typesense_server.cpp",
+        ":src_files",
+    ],
+    local_defines = [
+        "TYPESENSE_VERSION=\\\"$(TYPESENSE_VERSION)\\\"",
+    ],
+    linkopts = select({
+        "@platforms//os:linux": ["-static-libstdc++", "-static-libgcc", "-fuse-ld=lld"],
+        "@platforms//os:macos": ["-framework Foundation", "-framework Accelerate", "-framework Metal", "-framework MetalKit"],
+        "//conditions:default": [],
+    }),
+    copts = COPTS + select({
+        "@platforms//os:linux": ["-DBACKWARD_HAS_DW=1", "-DBACKWARD_HAS_UNWIND=1"],
+        "//conditions:default": [],
+    }),
+    deps = [":common_deps_static_one_protobuf_probe"] + select({
+        "@platforms//os:linux": [":linux_deps"],
+        "//conditions:default": [],
+    }),
 )
 
 cc_binary(

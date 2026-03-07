@@ -83,6 +83,13 @@ jobs:
         run: echo "BAZEL_TESTLOGS_FULL_PATH=$(readlink -f bazel-testlogs)" >> $GITHUB_ENV
         if: failure()
 
+      - name: Verify self-contained typesense-server
+        run: |
+          if ldd bazel-bin/typesense-server | grep -q 'libonnxruntime\.so\.1'; then
+            echo "typesense-server unexpectedly depends on libonnxruntime.so.1" >&2
+            exit 1
+          fi
+
       - name: Prepare Typesense runtime bundle
         run: bash api_tests/scripts/prepare_runtime_bundle.sh "${{ github.workspace }}/typesense-runtime-bundle"
 
@@ -92,8 +99,6 @@ jobs:
           name: typesense-server
           path: |
             ${{ github.workspace }}/typesense-runtime-bundle/typesense-server
-            ${{ github.workspace }}/typesense-runtime-bundle/lib/libonnxruntime.so
-            ${{ github.workspace }}/typesense-runtime-bundle/lib/libonnxruntime.so.1
 
       - name: Save test logs on failure
         uses: actions/upload-artifact@v7

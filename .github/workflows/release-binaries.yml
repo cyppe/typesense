@@ -1,0 +1,202 @@
+name: release-binaries
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build
+        required: false
+        default: ""
+      version_label:
+        description: Version label used in artifact file names
+        required: false
+        default: snapshot
+      upload_artifacts:
+        description: Upload build artifacts
+        required: false
+        default: true
+        type: boolean
+      build_linux_packages:
+        description: Build DEB and RPM artifacts for Linux lanes
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-binaries:
+    name: ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - artifact_name: linux-amd64
+            runner: ubuntu-24.04
+            target_os: linux
+            target_arch: amd64
+            rpm_arch: x86_64
+            uses_docker_bazel: true
+          - artifact_name: linux-arm64
+            runner: ubuntu-24.04-arm
+            target_os: linux
+            target_arch: arm64
+            rpm_arch: aarch64
+            uses_docker_bazel: true
+          - artifact_name: darwin-arm64
+            runner: macos-14
+            target_os: darwin
+            target_arch: arm64
+            uses_docker_bazel: false
+            openssl_prefix: /opt/homebrew/opt/openssl@3
+            icu_prefix: /opt/homebrew/opt/icu4c
+          - artifact_name: darwin-amd64
+            runner: macos-13
+            target_os: darwin
+            target_arch: amd64
+            uses_docker_bazel: false
+            openssl_prefix: /usr/local/opt/openssl@3
+            icu_prefix: /usr/local/opt/icu4c
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+
+      - name: Build CI Bazel image
+        if: matrix.uses_docker_bazel
+        run: scripts/bazel_in_docker.sh --build-image-only
+
+      - name: Install macOS build dependencies
+        if: ${{ !matrix.uses_docker_bazel }}
+        run: brew install bazelisk coreutils snappy zlib openssl@3 curl icu4c
+
+      - name: Build Typesense server in Docker
+        if: matrix.uses_docker_bazel
+        run: scripts/bazel_in_docker.sh build //:typesense-server
+
+      - name: Build Typesense server on macOS
+        if: ${{ !matrix.uses_docker_bazel }}
+        env:
+          PATH: ${{ matrix.openssl_prefix }}/bin:${{ matrix.icu_prefix }}/bin:${{ env.PATH }}
+          LDFLAGS: -L${{ matrix.openssl_prefix }}/lib -L${{ matrix.icu_prefix }}/lib
+          CPPFLAGS: -I${{ matrix.openssl_prefix }}/include -I${{ matrix.icu_prefix }}/include
+          PKG_CONFIG_PATH: ${{ matrix.openssl_prefix }}/lib/pkgconfig:${{ matrix.icu_prefix }}/lib/pkgconfig
+        run: bazelisk build //:typesense-server
+
+      - name: Verify linux self-contained binary shape
+        if: matrix.target_os == 'linux'
+        run: |
+          if ldd bazel-bin/typesense-server | grep -q 'libonnxruntime\.so\.1'; then
+            echo "typesense-server unexpectedly depends on libonnxruntime.so.1" >&2
+            exit 1
+          fi
+
+      - name: Prepare linux runtime bundle
+        if: matrix.target_os == 'linux'
+        run: bash api_tests/scripts/prepare_runtime_bundle.sh "${{ github.workspace }}/release/${{ matrix.artifact_name }}"
+
+      - name: Prepare darwin artifact staging
+        if: matrix.target_os == 'darwin'
+        run: |
+          mkdir -p "${{ github.workspace }}/release/${{ matrix.artifact_name }}"
+          cp bazel-bin/typesense-server "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server"
+          chmod +x "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server"
+
+      - name: Write binary checksum manifest
+        run: |
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          release_dir = Path(r"${{ github.workspace }}/release/${{ matrix.artifact_name }}")
+          binary = release_dir / "typesense-server"
+          digest = hashlib.md5(binary.read_bytes()).hexdigest()
+          (release_dir / "typesense-server.md5.txt").write_text(digest + "\n")
+          PY
+
+      - name: Smoke-test staged binary
+        run: |
+          "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server" --help >/dev/null
+
+      - name: Package tarball
+        run: |
+          mkdir -p "${{ github.workspace }}/artifacts"
+          tar -czf "${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz" -C "${{ github.workspace }}/release/${{ matrix.artifact_name }}" .
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          archive = Path(r"${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz")
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          Path(str(archive) + ".sha256.txt").write_text(f"{digest}  {archive.name}\n")
+          PY
+
+      - name: Verify packaged artifact contents
+        run: |
+          python - <<'PY'
+          import hashlib
+          import tarfile
+          from pathlib import Path
+
+          archive = Path(r"${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz")
+          with tarfile.open(archive, "r:gz") as tf:
+              members = {member.name.lstrip("./"): member for member in tf.getmembers() if member.isfile()}
+              if "typesense-server" not in members:
+                  raise SystemExit("typesense-server missing from packaged artifact")
+              if "typesense-server.md5.txt" not in members:
+                  raise SystemExit("typesense-server.md5.txt missing from packaged artifact")
+              binary_bytes = tf.extractfile(members["typesense-server"]).read()
+              md5_bytes = tf.extractfile(members["typesense-server.md5.txt"]).read().decode().strip()
+              digest = hashlib.md5(binary_bytes).hexdigest()
+              if digest != md5_bytes:
+                  raise SystemExit(f"binary md5 mismatch: expected {md5_bytes}, got {digest}")
+          PY
+
+      - name: Install Linux packaging tools
+        if: matrix.target_os == 'linux' && inputs.build_linux_packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends alien rpm dpkg-dev
+
+      - name: Build Linux DEB/RPM packages
+        if: matrix.target_os == 'linux' && inputs.build_linux_packages
+        env:
+          TSV: ${{ inputs.version_label }}
+          ARCH: ${{ matrix.target_arch }}
+          RELEASE_ARTIFACT_DIR: ${{ github.workspace }}/artifacts
+          RELEASE_PACKAGE_DIR: ${{ github.workspace }}/artifacts/packages
+        run: bash debian-pkg/generate_deb_rpm.sh
+
+      - name: Upload platform artifact
+        if: inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}
+          path: |
+            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz
+            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz.sha256.txt
+          retention-days: 14
+
+      - name: Upload Linux package artifacts
+        if: matrix.target_os == 'linux' && inputs.build_linux_packages && inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-packages
+          path: |
+            ${{ github.workspace }}/artifacts/packages/typesense-server-${{ inputs.version_label }}-${{ matrix.target_arch }}.deb
+            ${{ github.workspace }}/artifacts/packages/typesense-server-${{ inputs.version_label }}*.${{ matrix.rpm_arch }}.rpm
+          retention-days: 14
+
+# Notes:
+# - This is a draft manual workflow for core binary artifacts only.
+# - It follows GitHub Actions best practices for native multi-platform builds: matrix fan-out, named artifacts, and separation of artifact build from any future publishing workflow.
+# - It does not yet automate GPU dependency artifacts, lg-page16 variants, Docker image publishing, or Homebrew tap updates.
+# - Linux lanes now build DEB/RPM packages from the workflow-produced tarballs, but these package outputs still need real cross-platform workflow validation before this draft should be considered production-ready.
+# - Windows support in upstream docs is via WSL, not a native Windows server binary, so no native Windows artifact is produced here.

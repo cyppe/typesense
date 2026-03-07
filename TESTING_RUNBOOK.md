@@ -76,6 +76,12 @@ To replay a single lane/file quickly, append the test path:
 scripts/run_api_tests.sh -- --no-secrets tests/health.test.ts
 ```
 
+To replay the API harness against an alternate built binary (for example the self-contained ONNX Runtime probe), point the wrapper at it directly:
+
+```bash
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-static-one-protobuf-probe -- --no-secrets tests/health.test.ts
+```
+
 If you intentionally want to bypass the Dockerized Bun image and use host Bun:
 
 ```bash

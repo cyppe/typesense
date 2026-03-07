@@ -17,3 +17,16 @@ cc_library(
     includes = ["operators", "base"],
     visibility = ["//visibility:public"],
 )
+
+cc_library(
+    name = "operators_headers",
+    hdrs = [
+        "operators/tokenizer/bert_tokenizer.hpp",
+        "operators/tokenizer/basic_tokenizer.hpp",
+        "base/ustring.h",
+        "base/string_utils.h",
+        "base/ortx_stubs.h",
+    ],
+    includes = ["operators", "base"],
+    visibility = ["//visibility:public"],
+)
