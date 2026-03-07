@@ -3,6 +3,7 @@ module(
     version = "0.0.0",
 )
 
+bazel_dep(name = "apple_support", version = "2.3.0", repo_name = "build_bazel_apple_support")
 bazel_dep(name = "rules_cc", version = "0.2.17")
 bazel_dep(name = "rules_foreign_cc", version = "0.15.1")
 bazel_dep(name = "bazel_skylib", version = "1.9.0")
@@ -43,9 +44,6 @@ git_repository(
     commit = "37efd2e2b26aa6408fd308490acf14d86713c3fc",
     patches = ["//bazel/brpc:0001_dynamic_annotations_guards.patch"],
     patch_args = ["-p1"],
-    patch_cmds = [
-        "sed -i.bak '/:darwin\": \[\":macos_lib\"\],/d' BUILD.bazel && rm -f BUILD.bak",
-    ],
     remote = "https://github.com/apache/brpc.git",
 )
 
