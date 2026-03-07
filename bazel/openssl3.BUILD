@@ -1,5 +1,37 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
 
+config_setting(
+    name = "darwin_arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:arm64",
+    ],
+)
+
+config_setting(
+    name = "darwin_x86_64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:arm64",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
 filegroup(
     name = "all_srcs",
     srcs = glob(["**"]),
@@ -8,19 +40,19 @@ filegroup(
 
 configure_make(
     name = "openssl",
-    configure_command = "config",
+    configure_command = "Configure",
     configure_in_place = True,
-    configure_options = [
-        "enable-rfc3779",
-        "enable-cms",
-        "enable-ec_nistp_64_gcc_128",
+    configure_options = select({
+        ":darwin_arm64": ["darwin64-arm64-cc"],
+        ":darwin_x86_64": ["darwin64-x86_64-cc"],
+        ":linux_arm64": ["linux-aarch64"],
+        ":linux_x86_64": ["linux-x86_64"],
+        "//conditions:default": [],
+    }) + [
         "--libdir=lib",
         "no-shared",
-        "--with-zlib-include=$$EXT_BUILD_DEPS",
-        "--with-zlib-lib=$$EXT_BUILD_DEPS",
-        # https://stackoverflow.com/questions/36220341/struct-in6-addr-has-no-member-named-s6-addr32-with-ansi
-        "-D_DEFAULT_SOURCE=1",
-        "-DPEDANTIC",
+        "no-tests",
+        "no-apps",
     ],
     env = select({
         "@platforms//os:macos": {
@@ -37,15 +69,9 @@ configure_make(
         "libssl.a",
         "libcrypto.a",
     ],
-    targets = [
-        "build_libs",
-        "install_dev",
-    ],
+    targets = ["install_sw"],
     toolchains = ["@rules_perl//:current_toolchain"],
     visibility = ["//visibility:public"],
-    deps = [
-        "@com_github_madler_zlib//:zlib",
-    ],
 )
 
 alias(
