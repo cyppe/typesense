@@ -218,11 +218,11 @@ These three h2o-ecosystem deps are tightly coupled and must be bumped together. 
 
 Build a deliberate next-wave upgrade shortlist instead of bumping opportunistically while release-lane work is active.
 
-- [ ] Turn the current-vs-latest inventory into a ranked upgrade plan with explicit owners/blockers.
-- [ ] High-priority audit findings so far:
-  - Protobuf `33.5` -> `34.0` is the largest obvious core bump still open, but remains blocked by `brpc` compatibility.
-  - Vendored `magic_enum` is materially stale (`0.7.2` vs upstream `0.9.7`) and already caused AppleClang friction; plan a proper refresh after the release lane is stable.
-- [ ] Medium-priority candidates worth evaluating after item 17 settles:
+- [x] Turn the current-vs-latest inventory into a ranked upgrade plan with explicit owners/blockers.
+- [x] High-priority audit findings so far:
+  - Vendored `magic_enum` `0.7.2` -> `0.9.7` is now done; the full header refresh replaces the temporary AppleClang-only backport and keeps the compiler fix aligned with upstream.
+  - Protobuf `33.5` -> `34.0` remains the largest obvious core bump still open, but is still blocked by `brpc` compatibility.
+- [ ] Medium-priority candidates worth evaluating next:
   - ONNX Runtime `1.24.2` -> `1.24.3` (re-verify one-protobuf/static packaging path).
   - `libarchive` `3.7.7` -> `3.8.x` for packaging/security posture.
   - `snappy` `1.1.7` -> `1.2.x` for compiler/perf hygiene.
@@ -370,7 +370,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
-| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Build a repo-wide shortlist of major pinned deps (Bazel/Bzlmod externals, vendored headers, JS tooling, workflow actions), compare current pins with latest upstream releases, and rank by payoff/risk so follow-up upgrades are deliberate rather than ad hoc. |
+| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; next likely candidates are ORT `1.24.3`, `libarchive 3.8.x`, `snappy 1.2.x`, and `typesense-js 3.x`, while Protobuf 34 stays blocked on `brpc`. |
 
 ### Backlog map (active / later / archival)
 
