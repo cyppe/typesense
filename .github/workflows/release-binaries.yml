@@ -96,15 +96,7 @@ jobs:
           export CPPFLAGS="-I${OPENSSL_PREFIX}/include -I${ICU_PREFIX}/include -I${ZLIB_PREFIX}/include"
           export PKG_CONFIG_PATH="${OPENSSL_PREFIX}/lib/pkgconfig:${ICU_PREFIX}/lib/pkgconfig:${ZLIB_PREFIX}/lib/pkgconfig"
           if ! bazelisk build //:typesense-server --verbose_failures --experimental_ui_max_stdouterr_bytes=20000000; then
-            python - <<'PY'
-            import pathlib
-            for path in sorted(pathlib.Path("bazel-out").glob("**/*openssl*.log")):
-                print(f"===== {path} =====")
-                try:
-                    print(path.read_text(errors="replace"))
-                except Exception as exc:
-                    print(f"Failed to read {path}: {exc}")
-            PY
+            python -c "from pathlib import Path; [print('===== %s =====\\n%s' % (path, path.read_text(errors='replace'))) for path in sorted(Path('bazel-out').glob('**/*openssl*.log'))]"
             exit 1
           fi
 
