@@ -49,7 +49,7 @@ git_repository(
 
 new_git_repository(
     name = "onnx_runtime",
-    commit = "058787ceead760166e3c50a0a4cba8a833a6f53f",
+    commit = "3a728b75062256951b6e19ce718907cf1a1d4cf0",
     build_file = "//bazel:onnxruntime.BUILD",
     remote = "https://github.com/microsoft/onnxruntime",
     patches = ["//bazel:onnxruntime.patch"],
