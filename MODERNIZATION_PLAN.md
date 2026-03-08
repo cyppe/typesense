@@ -226,7 +226,7 @@ Build a deliberate next-wave upgrade shortlist instead of bumping opportunistica
   - ONNX Runtime `1.24.2` -> `1.24.3` is now done; canonical Docker build passed, `ldd bazel-bin/typesense-server` still shows no `libonnxruntime.so.1` dependency, and the Dockerized API `tests/health.test.ts` replay passed against the promoted binary.
   - `libarchive` `3.7.7` -> `3.8.x` for packaging/security posture. *(Now in progress on `3.8.5`.)*
   - `snappy` `1.1.7` -> `1.2.x` for compiler/perf hygiene. *(Now done on `1.2.2`.)*
-  - `typesense-js` in `tests/` `2.0.3` -> `3.x` to match the benchmark toolchain client line.
+  - `typesense-js` in `tests/` `2.0.3` -> `3.0.2` is now done to match the benchmark toolchain client line; `pnpm exec tsc --noEmit` passes in `tests/` after the bump.
 - [ ] Keep treating patch-debt reduction as at least as important as raw version bumps; some deps (for example `whisper.cpp`, `braft`) matter more because of maintenance surface than because they are numerically old.
 
 ### 8) Modernize logging stack (glog to Abseil Logging)
@@ -370,7 +370,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
-| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now at `3.8.5`; `snappy` is now at `1.2.2`; ONNX Runtime is now at `1.24.3` with the one-protobuf/self-contained checks still green; next likely candidate is `typesense-js 3.x`, while Protobuf 34 stays blocked on `brpc`. |
+| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now at `3.8.5`; `snappy` is now at `1.2.2`; ONNX Runtime is now at `1.24.3` with the one-protobuf/self-contained checks still green; `tests/` now uses `typesense-js 3.0.2`; next work should bias toward patch-debt reduction or the next deliberate dep candidate, while Protobuf 34 stays blocked on `brpc`. |
 
 ### Backlog map (active / later / archival)
 
@@ -607,3 +607,5 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 24. **Bazel `patch_cmds` must avoid GNU-only `sed -i` assumptions when macOS lanes are in scope.** Commands like `sed -i -E ...` can parse differently under BSD sed and break repository fetches; prefer portable `perl`/`python` edits or explicit cross-platform flag forms.
 
 25. **Add a workflow input before splitting release workflows.** A single `release-binaries.yml` with a `target_scope` / matrix-filter input was enough to debug one macOS lane quickly without duplicating logic across multiple workflows. Keep one canonical workflow unless maintenance pressure truly forces a reusable split.
+
+26. **`tests/` currently has no Vitest spec files.** For dependency-only maintenance in that package, `pnpm exec tsc --noEmit` is the useful verification command; `pnpm exec vitest run` exits with "No test files found".
