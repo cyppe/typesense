@@ -40,41 +40,78 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  select_targets:
+    name: select-targets
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Select target matrix
+        id: select
+        env:
+          TARGET_SCOPE: ${{ inputs.target_scope }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+
+          targets = [
+              {
+                  "artifact_name": "linux-amd64",
+                  "runner": "ubuntu-24.04",
+                  "target_os": "linux",
+                  "target_arch": "amd64",
+                  "rpm_arch": "x86_64",
+                  "uses_docker_bazel": True,
+              },
+              {
+                  "artifact_name": "linux-arm64",
+                  "runner": "ubuntu-24.04-arm",
+                  "target_os": "linux",
+                  "target_arch": "arm64",
+                  "rpm_arch": "aarch64",
+                  "uses_docker_bazel": True,
+              },
+              {
+                  "artifact_name": "darwin-arm64",
+                  "runner": "macos-14",
+                  "target_os": "darwin",
+                  "target_arch": "arm64",
+                  "uses_docker_bazel": False,
+                  "openssl_prefix": "/opt/homebrew/opt/openssl@3",
+                  "icu_prefix": "/opt/homebrew/opt/icu4c",
+              },
+              {
+                  "artifact_name": "darwin-amd64",
+                  "runner": "macos-15-intel",
+                  "target_os": "darwin",
+                  "target_arch": "amd64",
+                  "uses_docker_bazel": False,
+                  "openssl_prefix": "/usr/local/opt/openssl@3",
+                  "icu_prefix": "/usr/local/opt/icu4c",
+              },
+          ]
+
+          scope = os.environ["TARGET_SCOPE"] or "all"
+          selected = [
+              target for target in targets
+              if scope in ("all", target["target_os"], target["artifact_name"])
+          ]
+          if not selected:
+              raise SystemExit(f"No release targets matched target_scope={scope!r}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"matrix={json.dumps({'include': selected})}\n")
+          PY
+
   core-binaries:
+    needs: select_targets
     name: ${{ matrix.artifact_name }}
-    if: ${{ inputs.target_scope == 'all' || inputs.target_scope == matrix.target_os || inputs.target_scope == matrix.artifact_name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       max-parallel: 2
-      matrix:
-        include:
-          - artifact_name: linux-amd64
-            runner: ubuntu-24.04
-            target_os: linux
-            target_arch: amd64
-            rpm_arch: x86_64
-            uses_docker_bazel: true
-          - artifact_name: linux-arm64
-            runner: ubuntu-24.04-arm
-            target_os: linux
-            target_arch: arm64
-            rpm_arch: aarch64
-            uses_docker_bazel: true
-          - artifact_name: darwin-arm64
-            runner: macos-14
-            target_os: darwin
-            target_arch: arm64
-            uses_docker_bazel: false
-            openssl_prefix: /opt/homebrew/opt/openssl@3
-            icu_prefix: /opt/homebrew/opt/icu4c
-          - artifact_name: darwin-amd64
-            runner: macos-15-intel
-            target_os: darwin
-            target_arch: amd64
-            uses_docker_bazel: false
-            openssl_prefix: /usr/local/opt/openssl@3
-            icu_prefix: /usr/local/opt/icu4c
+      matrix: ${{ fromJSON(needs.select_targets.outputs.matrix) }}
     env:
       TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
       TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
