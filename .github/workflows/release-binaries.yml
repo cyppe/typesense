@@ -21,6 +21,19 @@ on:
         required: false
         default: true
         type: boolean
+      target_scope:
+        description: Limit the workflow to a platform group or single lane
+        required: false
+        default: all
+        type: choice
+        options:
+          - all
+          - linux
+          - linux-amd64
+          - linux-arm64
+          - darwin
+          - darwin-amd64
+          - darwin-arm64
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -29,6 +42,7 @@ concurrency:
 jobs:
   core-binaries:
     name: ${{ matrix.artifact_name }}
+    if: ${{ inputs.target_scope == 'all' || inputs.target_scope == matrix.target_os || inputs.target_scope == matrix.artifact_name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

@@ -2,6 +2,22 @@ load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
 
 package(default_visibility = ["//visibility:public"])
 
+config_setting(
+    name = "darwin_arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:arm64",
+    ],
+)
+
+config_setting(
+    name = "darwin_x86_64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
 filegroup(
     name = "all_srcs",
     srcs = glob(["**"]),
@@ -25,12 +41,12 @@ COMMON_GENERATE_ARGS = [
 ]
 
 MACOS_GENERATE_ARGS = [
-    "-DOPENSSL_ROOT_DIR=$$EXT_BUILD_DEPS",
-    "-DOPENSSL_INCLUDE_DIR=$$EXT_BUILD_DEPS/include",
-    "-DOPENSSL_CRYPTO_LIBRARY=$$EXT_BUILD_DEPS/lib/libcrypto.a",
-    "-DOPENSSL_SSL_LIBRARY=$$EXT_BUILD_DEPS/lib/libssl.a",
     "-DOPENSSL_USE_STATIC_LIBS=TRUE",
 ]
+
+DARWIN_ARM64_OPENSSL_PREFIX = "bazel-out/darwin_arm64-fastbuild/bin/external/+http_archive+openssl/openssl"
+
+DARWIN_X86_64_OPENSSL_PREFIX = "bazel-out/darwin_x86_64-fastbuild/bin/external/+http_archive+openssl/openssl"
 
 CMAKE_MACOS_CACHE_ENTRIES = dict(CMAKE_CACHE_ENTRIES.items() + {}.items())
 
@@ -48,7 +64,18 @@ cmake(
         "//conditions:default": CMAKE_CACHE_ENTRIES,
     }),
     generate_args = COMMON_GENERATE_ARGS + select({
-        "@platforms//os:macos": MACOS_GENERATE_ARGS,
+        ":darwin_arm64": MACOS_GENERATE_ARGS + [
+            "-DOPENSSL_ROOT_DIR=%s" % DARWIN_ARM64_OPENSSL_PREFIX,
+            "-DOPENSSL_INCLUDE_DIR=%s/include" % DARWIN_ARM64_OPENSSL_PREFIX,
+            "-DOPENSSL_CRYPTO_LIBRARY=%s/lib/libcrypto.a" % DARWIN_ARM64_OPENSSL_PREFIX,
+            "-DOPENSSL_SSL_LIBRARY=%s/lib/libssl.a" % DARWIN_ARM64_OPENSSL_PREFIX,
+        ],
+        ":darwin_x86_64": MACOS_GENERATE_ARGS + [
+            "-DOPENSSL_ROOT_DIR=%s" % DARWIN_X86_64_OPENSSL_PREFIX,
+            "-DOPENSSL_INCLUDE_DIR=%s/include" % DARWIN_X86_64_OPENSSL_PREFIX,
+            "-DOPENSSL_CRYPTO_LIBRARY=%s/lib/libcrypto.a" % DARWIN_X86_64_OPENSSL_PREFIX,
+            "-DOPENSSL_SSL_LIBRARY=%s/lib/libssl.a" % DARWIN_X86_64_OPENSSL_PREFIX,
+        ],
         "//conditions:default": [],
     }),
     lib_source = ":all_srcs",
