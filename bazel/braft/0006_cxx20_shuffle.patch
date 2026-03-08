@@ -1,0 +1,21 @@
+--- a/src/braft/replicator.cpp
++++ b/src/braft/replicator.cpp
+@@ -16,6 +16,8 @@
+ //          Wang,Yao(wangyao02@baidu.com)
+ //          Xiong,Kai(xiongkai@baidu.com)
+ 
++#include <algorithm>
++#include <random>
+ #include <gflags/gflags.h>                       // DEFINE_int32
+ #include <butil/unique_ptr.h>                    // std::unique_ptr
+ #include <butil/time.h>                          // butil::gettimeofday_us
+@@ -1542,7 +1544,8 @@
+             iter = _rmap.begin();  iter != _rmap.end(); ++iter) {
+        peers.emplace_back(peerInfo(iter->first,iter->second));
+     }
+-    std::random_shuffle(peers.begin(), peers.end());
++    thread_local std::mt19937 rng(std::random_device{}());
++    std::shuffle(peers.begin(), peers.end(), rng);
+     for (auto iter = peers.begin();  iter != peers.end(); ++iter) {
+         if (!conf.contains(iter->peer_id)) {
+             continue;

@@ -124,6 +124,7 @@ git_repository(
         "//bazel/braft:0002_ipv6_node.patch",
         "//bazel/braft:0004_util_namespace.patch",
         "//bazel/braft:0005_bazel9_string_view.patch",
+        "//bazel/braft:0006_cxx20_shuffle.patch",
     ],
     patch_cmds = [
         "sed -i.bak 's|@zlib//:zlib|@com_github_madler_zlib//:zlib|g' BUILD && rm -f BUILD.bak",

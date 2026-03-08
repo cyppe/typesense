@@ -13,6 +13,25 @@ CMAKE_CACHE_ENTRIES = {
     "CMAKE_BUILD_TYPE": "Release",
 }
 
+COMMON_GENERATE_ARGS = [
+    "-DCMAKE_FIND_LIBRARY_SUFFIXES=.a",
+    "-DCMAKE_CXX_FLAGS=-DNDEBUG",
+    "-DCMAKE_C_FLAGS=-DNDEBUG",
+    "-DWITH_MRUBY=OFF",
+    "-DWITH_CCACHE=OFF",
+    "-DWITH_IO_URING=OFF",
+    "-DWITH_AEGIS=OFF",
+    "-DWITH_ACME=OFF",
+]
+
+MACOS_GENERATE_ARGS = [
+    "-DOPENSSL_ROOT_DIR=$$EXT_BUILD_DEPS",
+    "-DOPENSSL_INCLUDE_DIR=$$EXT_BUILD_DEPS/include",
+    "-DOPENSSL_CRYPTO_LIBRARY=$$EXT_BUILD_DEPS/lib/libcrypto.a",
+    "-DOPENSSL_SSL_LIBRARY=$$EXT_BUILD_DEPS/lib/libssl.a",
+    "-DOPENSSL_USE_STATIC_LIBS=TRUE",
+]
+
 CMAKE_MACOS_CACHE_ENTRIES = dict(CMAKE_CACHE_ENTRIES.items() + {}.items())
 
 CMAKE_LINUX_CACHE_ENTRIES = dict(CMAKE_CACHE_ENTRIES.items() + {
@@ -28,16 +47,10 @@ cmake(
         "@platforms//os:macos": CMAKE_MACOS_CACHE_ENTRIES,
         "//conditions:default": CMAKE_CACHE_ENTRIES,
     }),
-    generate_args = [
-        "-DCMAKE_FIND_LIBRARY_SUFFIXES=.a",
-        "-DCMAKE_CXX_FLAGS=-DNDEBUG",
-        "-DCMAKE_C_FLAGS=-DNDEBUG",
-        "-DWITH_MRUBY=OFF",
-        "-DWITH_CCACHE=OFF",
-        "-DWITH_IO_URING=OFF",
-        "-DWITH_AEGIS=OFF",
-        "-DWITH_ACME=OFF",
-    ],
+    generate_args = COMMON_GENERATE_ARGS + select({
+        "@platforms//os:macos": MACOS_GENERATE_ARGS,
+        "//conditions:default": [],
+    }),
     lib_source = ":all_srcs",
     install = False,
     out_static_libs = ["libh2o-evloop.a"],
