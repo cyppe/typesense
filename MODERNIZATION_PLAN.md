@@ -225,7 +225,7 @@ Build a deliberate next-wave upgrade shortlist instead of bumping opportunistica
 - [ ] Medium-priority candidates worth evaluating next:
   - ONNX Runtime `1.24.2` -> `1.24.3` (re-verify one-protobuf/static packaging path).
   - `libarchive` `3.7.7` -> `3.8.x` for packaging/security posture. *(Now in progress on `3.8.5`.)*
-  - `snappy` `1.1.7` -> `1.2.x` for compiler/perf hygiene.
+  - `snappy` `1.1.7` -> `1.2.x` for compiler/perf hygiene. *(Now in progress on `1.2.2`.)*
   - `typesense-js` in `tests/` `2.0.3` -> `3.x` to match the benchmark toolchain client line.
 - [ ] Keep treating patch-debt reduction as at least as important as raw version bumps; some deps (for example `whisper.cpp`, `braft`) matter more because of maintenance surface than because they are numerically old.
 
@@ -370,7 +370,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
-| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now being bumped to `3.8.5`; next likely candidates after that are ORT `1.24.3`, `snappy 1.2.x`, and `typesense-js 3.x`, while Protobuf 34 stays blocked on `brpc`. |
+| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` has been bumped to `3.8.5`; `snappy` is now being bumped to `1.2.2`; next likely candidates after that are ORT `1.24.3` and `typesense-js 3.x`, while Protobuf 34 stays blocked on `brpc`. |
 
 ### Backlog map (active / later / archival)
 
