@@ -83,6 +83,14 @@ cp $$BUILD_TMPDIR/libonnxruntime_providers_shared.so $$INSTALLDIR/../../../
 cp $$BUILD_TMPDIR/libonnxruntime_providers_cuda.so $$INSTALLDIR/../../../
 """
 
+__ORT_EXT_IMAGE_CODEC_LIBS = select({
+    "@platforms//os:macos": [],
+    "//conditions:default": [
+        "liblibjpeg_static_c.a",
+        "liblibpng_static_c.a",
+    ],
+})
+
 __STATIC_ONE_PROTOBUF_POSTFIX = """
 mkdir -p $$INSTALLDIR/lib
 mkdir -p $$INSTALLDIR/lib/_deps
@@ -313,8 +321,7 @@ cmake(
         "libonnxruntime_mlas.a",
         "libonnxruntime_common.a",
         "libonnxruntime_flatbuffers.a",
-        "liblibjpeg_static_c.a",
-        "liblibpng_static_c.a",
+    ] + __ORT_EXT_IMAGE_CODEC_LIBS + [
         "libortcustomops.a",
         "libocos_operators.a",
         "libnoexcep_operators.a",
@@ -405,8 +412,7 @@ cmake(
         "libonnxruntime_mlas.a",
         "libonnxruntime_common.a",
         "libonnxruntime_flatbuffers.a",
-        "liblibjpeg_static_c.a",
-        "liblibpng_static_c.a",
+    ] + __ORT_EXT_IMAGE_CODEC_LIBS + [
         "libortcustomops.a",
         "libocos_operators.a",
         "libnoexcep_operators.a",
