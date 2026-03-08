@@ -214,6 +214,21 @@ These three h2o-ecosystem deps are tightly coupled and must be bumped together. 
 3. Bump h2o to `725e54bc` in MODULE.bazel; regenerate patch file; add `-DWITH_IO_URING=OFF -DWITH_AEGIS=OFF -DWITH_ACME=OFF` to `bazel/h2o/BUILD` generate_args.
 4. Full Docker build + test verification.
 
+### 7c) Dependency refresh audit
+
+Build a deliberate next-wave upgrade shortlist instead of bumping opportunistically while release-lane work is active.
+
+- [ ] Turn the current-vs-latest inventory into a ranked upgrade plan with explicit owners/blockers.
+- [ ] High-priority audit findings so far:
+  - Protobuf `33.5` -> `34.0` is the largest obvious core bump still open, but remains blocked by `brpc` compatibility.
+  - Vendored `magic_enum` is materially stale (`0.7.2` vs upstream `0.9.7`) and already caused AppleClang friction; plan a proper refresh after the release lane is stable.
+- [ ] Medium-priority candidates worth evaluating after item 17 settles:
+  - ONNX Runtime `1.24.2` -> `1.24.3` (re-verify one-protobuf/static packaging path).
+  - `libarchive` `3.7.7` -> `3.8.x` for packaging/security posture.
+  - `snappy` `1.1.7` -> `1.2.x` for compiler/perf hygiene.
+  - `typesense-js` in `tests/` `2.0.3` -> `3.x` to match the benchmark toolchain client line.
+- [ ] Keep treating patch-debt reduction as at least as important as raw version bumps; some deps (for example `whisper.cpp`, `braft`) matter more because of maintenance surface than because they are numerically old.
+
 ### 8) Modernize logging stack (glog to Abseil Logging)
 
 Done. Backend swapped from glog to Abseil Logging. Key artifacts:
@@ -354,13 +369,15 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 14 | ~~Benchmark observability: full metrics collection + Grafana dashboard~~ | P2.13 | **done** | Core observability is in place: benchmark runs collect system/API/RocksDB metrics continuously and dashboard includes concurrent search+import visibility. Tuning-specific counter extraction is tracked under item 13. |
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
-| 17 | Release packaging / multi-arch workflow hardening | Known Issues | **in progress** | `.github/workflows/release-binaries.yml` is still a draft, but item 16 is no longer blocking it. The draft now has Linux `ldd` guardrails, staged MD5 / tarball SHA256 manifests, downstream helper compatibility (`generate_deb_rpm.sh`, `publish_release.sh`), Linux DEB/RPM generation steps, and a `workflow_dispatch` `target_scope` input so one lane can be re-run without waiting for the full matrix. Remaining work is real cross-platform execution/validation of the workflow itself. |
+| 17 | Release packaging / multi-arch workflow hardening | Known Issues | **in progress** | `.github/workflows/release-binaries.yml` is still a draft, but item 16 is no longer blocking it. The draft now has Linux `ldd` guardrails, staged MD5 / tarball SHA256 manifests, downstream helper compatibility (`generate_deb_rpm.sh`, `publish_release.sh`), Linux DEB/RPM generation steps, and a `workflow_dispatch` `target_scope` input so one lane can be re-run without waiting for the full matrix. Linux lanes are green end-to-end; current work is burning down Darwin-specific issues exposed by modern AppleClang / host-runner builds (`apple_support` toolchain registration, BSD/GNU shell differences, `h2o` OpenSSL root wiring, ONNX Runtime Darwin output list drift, vendored `magic_enum` Clang warning fix, hermetic curl feature toggles, and any remaining final-link/runtime issues) before re-running the full matrix. |
+| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Build a repo-wide shortlist of major pinned deps (Bazel/Bzlmod externals, vendored headers, JS tooling, workflow actions), compare current pins with latest upstream releases, and rank by payoff/risk so follow-up upgrades are deliberate rather than ad hoc. |
 
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
 - **Active now (execution lane):** item **17** (`Release packaging / multi-arch workflow hardening`) is now the live lane. The main binary has already been promoted to the self-contained one-Protobuf path locally, so the next work is making workflows/artifacts reflect that default across release packaging and other platforms.
+- **Parallel research lane:** item **18** (`Dependency refresh audit`) can run while release validation is in flight so the next modernization wave has an evidence-backed upgrade queue.
 - **Later (blocked or dependency-coupled):** item **9** (`Protobuf 34`), section **6b** (`brpc`/rule compatibility work), and section **7** patch-debt follow-up (`replace patch-only forks`) when dependency updates are available.
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
