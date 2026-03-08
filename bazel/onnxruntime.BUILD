@@ -91,6 +91,20 @@ __ORT_EXT_IMAGE_CODEC_LIBS = select({
     ],
 })
 
+__ORT_EXT_APPLE_FRAMEWORK_LINKOPTS = select({
+    "@platforms//os:macos": [
+        "-framework",
+        "CoreFoundation",
+        "-framework",
+        "CoreGraphics",
+        "-framework",
+        "ImageIO",
+        "-framework",
+        "CoreServices",
+    ],
+    "//conditions:default": [],
+})
+
 __STATIC_ONE_PROTOBUF_POSTFIX = """
 mkdir -p $$INSTALLDIR/lib
 mkdir -p $$INSTALLDIR/lib/_deps
@@ -350,7 +364,7 @@ cc_library(
     linkopts = select({
         "@platforms//os:linux": ["-static-libstdc++", "-static-libgcc"],
         "//conditions:default": [],
-    }),
+    }) + __ORT_EXT_APPLE_FRAMEWORK_LINKOPTS,
     visibility = ["//visibility:public"],
 )
 
@@ -436,6 +450,6 @@ cc_library(
     linkopts = select({
         "@platforms//os:linux": ["-static-libstdc++", "-static-libgcc"],
         "//conditions:default": [],
-    }),
+    }) + __ORT_EXT_APPLE_FRAMEWORK_LINKOPTS,
     visibility = ["//visibility:public"],
 )
