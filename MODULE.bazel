@@ -391,7 +391,7 @@ new_git_repository(
 http_archive(
     name = "archive",
     build_file = "//bazel:archive.BUILD",
-    sha256 = "4cc540a3e9a1eebdefa1045d2e4184831100667e6d7d5b315bb1cbc951f8ddff",
-    strip_prefix = "libarchive-3.7.7",
-    urls = ["https://github.com/libarchive/libarchive/releases/download/v3.7.7/libarchive-3.7.7.tar.gz"],
+    sha256 = "8a60f3a7bfd59c54ce82ae805a93dba65defd04148c3333b7eaa2102f03b7ffd",
+    strip_prefix = "libarchive-3.8.5",
+    urls = ["https://github.com/libarchive/libarchive/releases/download/v3.8.5/libarchive-3.8.5.tar.gz"],
 )
