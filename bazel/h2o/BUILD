@@ -53,6 +53,7 @@ cmake(
         cp -r "$$src_dir/include/"* $$INSTALLDIR/include/
     """,
     deps = [
+        "@openssl",
         "@picotls_openssl",
         "@quicly",
     ],
