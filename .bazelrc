@@ -29,7 +29,7 @@ build --per_file_copt=.*clip_tokenizer.*@-Wno-unused-variable
 build --per_file_copt=.*quicly.*@-Wno-unused-but-set-variable
 # GCC 15 defaults C to gnu23; pin C dialect until third-party C deps are C23-clean.
 build --conlyopt="-std=gnu17"
-build --conlyopt="-D_GNU_SOURCE"
+build:linux --conlyopt="-D_GNU_SOURCE"
 build --strip=never
 build --define=BRPC_WITH_GLOG=true
 build --jobs=6
