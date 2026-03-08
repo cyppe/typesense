@@ -1,5 +1,5 @@
---- a/src/braft/replicator.cpp
-+++ b/src/braft/replicator.cpp
+--- src/braft/replicator.cpp
++++ src/braft/replicator.cpp
 @@ -16,6 +16,8 @@
  //          Wang,Yao(wangyao02@baidu.com)
  //          Xiong,Kai(xiongkai@baidu.com)
