@@ -294,6 +294,7 @@ cc_library(
         "src/nuraft/nuraft_metadata_store.cpp",
         "src/nuraft/nuraft_peer_resolver.cpp",
         "src/nuraft/nuraft_request_envelope.cpp",
+        "src/nuraft/nuraft_segment_log_store.cpp",
         "src/nuraft/nuraft_state_initializer.cpp",
         "src/nuraft/nuraft_state_layout.cpp",
     ],
@@ -346,6 +347,19 @@ cc_test(
     name = "nuraft-replication-controller-test",
     srcs = [
         "test/nuraft_replication_controller_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "nuraft-segment-log-store-test",
+    srcs = [
+        "test/nuraft_segment_log_store_test.cpp",
     ],
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
