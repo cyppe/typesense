@@ -9,8 +9,24 @@ RUNTIME_BUNDLE_DIR="${TYPESENSE_RUNTIME_BUNDLE_DIR:-${REPO_ROOT}/typesense-runti
 DATA_DIR="${REPO_ROOT}/tmp/test"
 BUN_IMAGE="${TYPESENSE_API_TEST_BUN_IMAGE:-typesense/api-tests-bun:local}"
 SERVER_BINARY_PATH="${TYPESENSE_SERVER_BINARY_PATH:-}"
+SERVER_BINARY_FLAVOR="${TYPESENSE_SERVER_FLAVOR:-typesense-server}"
 USE_HOST_BUN=false
 SKIP_INSTALL=false
+
+detect_server_flavor() {
+	local binary_path="$1"
+	local binary_name
+	binary_name="$(basename "${binary_path}")"
+
+	case "${binary_name}" in
+	typesense-server-nuraft-runtime)
+		echo "nuraft-runtime"
+		;;
+	*)
+		echo "typesense-server"
+		;;
+	esac
+}
 
 usage() {
 	cat <<'EOF'
@@ -26,6 +42,7 @@ Defaults:
 Examples:
   scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
   scripts/run_api_tests.sh -- tests/health.test.ts
+  scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_smoke.test.ts
   scripts/run_api_tests.sh --runtime-bundle-dir ./typesense-server-binary -- --no-secrets
   scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-static-one-protobuf-probe -- --no-secrets tests/health.test.ts
   scripts/run_api_tests.sh --host-bun -- --no-secrets tests/health.test.ts
@@ -72,17 +89,23 @@ done
 
 mkdir -p "${DATA_DIR}"
 if [[ -n "${SERVER_BINARY_PATH}" ]]; then
+	SERVER_BINARY_FLAVOR="$(detect_server_flavor "${SERVER_BINARY_PATH}")"
 	bash "${REPO_ROOT}/api_tests/scripts/prepare_runtime_bundle.sh" "${RUNTIME_BUNDLE_DIR}" "${SERVER_BINARY_PATH}"
 elif [[ ! -x "${RUNTIME_BUNDLE_DIR}/typesense-server" ]]; then
 	bash "${REPO_ROOT}/api_tests/scripts/prepare_runtime_bundle.sh" "${RUNTIME_BUNDLE_DIR}"
 fi
 
 API_TEST_ARGS=("$@")
+if [[ "${SERVER_BINARY_FLAVOR}" == "nuraft-runtime" ]]; then
+	API_TEST_ARGS=("--single-node-only" "${API_TEST_ARGS[@]}")
+fi
+
 ENV_VARS=(
 	"TYPESENSE_BINARY_PATH=${RUNTIME_BUNDLE_DIR}/typesense-server"
 	"LD_LIBRARY_PATH=${RUNTIME_BUNDLE_DIR}/lib"
 	"TYPESENSE_DATA_DIR=${DATA_DIR}"
 	"TYPESENSE_API_HOST=127.0.0.1"
+	"TYPESENSE_SERVER_FLAVOR=${SERVER_BINARY_FLAVOR}"
 )
 
 if [[ "${USE_HOST_BUN}" == "true" ]]; then
@@ -116,6 +139,7 @@ docker run \
 	-e "LD_LIBRARY_PATH=${RUNTIME_BUNDLE_DIR}/lib" \
 	-e "TYPESENSE_DATA_DIR=${DATA_DIR}" \
 	-e "TYPESENSE_API_HOST=127.0.0.1" \
+	-e "TYPESENSE_SERVER_FLAVOR=${SERVER_BINARY_FLAVOR}" \
 	-v "${REPO_ROOT}:${REPO_ROOT}" \
 	-w "${API_TESTS_DIR}" \
 	"${BUN_IMAGE}" \

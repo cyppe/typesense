@@ -82,6 +82,16 @@ To replay the API harness against an alternate built binary (for example the sel
 scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-static-one-protobuf-probe -- --no-secrets tests/health.test.ts
 ```
 
+To replay the bounded NuRaft HTTP runtime lane through the same wrapper:
+
+```bash
+scripts/bazel_in_docker.sh build //:typesense-server-nuraft-runtime
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_smoke.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/health.test.ts
+```
+
+`run_api_tests.sh` auto-applies `--single-node-only` for `typesense-server-nuraft-runtime`, so existing files can reuse their single-node phases without tripping the still-unimplemented multi-node runtime path.
+
 If you intentionally want to bypass the Dockerized Bun image and use host Bun:
 
 ```bash
@@ -129,6 +139,13 @@ scripts/bazel_in_docker.sh test //:nuraft-http-runtime-test
 ```
 
 The current runtime smoke covers a real subprocess-backed HTTP binary with health/status, collection/document writes, restart persistence, snapshot export, and snapshot install into a fresh node. It is intentionally narrower than the full `api_tests` harness and currently keeps the NuRaft write/snapshot response path on a simplified synchronous model until broader async/import/streaming parity is revisited.
+
+The same bounded runtime now also passes the real `api_tests` wrapper for the focused single-node smoke lane:
+
+```bash
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_smoke.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/health.test.ts
+```
 
 ## 11) Raft recovery comparison
 

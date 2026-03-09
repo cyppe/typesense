@@ -496,7 +496,10 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
     static_cast<void>(params);
     static_cast<void>(embedded_params_vec);
     static_cast<void>(body);
-    static_cast<void>(rpath);
+
+    if (rpath.handler == get_health) {
+        return true;
+    }
 
     const std::string configured_api_key = Config::get_instance().get_api_key();
     return configured_api_key.empty() || configured_api_key == auth_key;

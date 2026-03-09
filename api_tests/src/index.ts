@@ -4,12 +4,17 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, resolve } from "node:path";
 
+type RunOptions = {
+  singleNodeOnly?: boolean;
+};
+
 export class TypesenseTestRunner {
   private manager: TypesenseProcessManager;
   private static instance: TypesenseTestRunner;
   private exit_code: number = 0;
   private testFileContentCache: Map<string, string> = new Map();
   private readonly apiTestsRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
+  private runOptions: RunOptions = {};
 
   constructor() {
     this.manager = new TypesenseProcessManager();
@@ -29,7 +34,21 @@ export class TypesenseTestRunner {
     return phase;
   }
 
+  private shouldAllowPhase(phase: Phases): boolean {
+    if (this.runOptions.singleNodeOnly === true) {
+      return phase !== Phases.MULTI_FRESH &&
+        phase !== Phases.MULTI_RESTARTED &&
+        phase !== Phases.MULTI_SNAPSHOT;
+    }
+
+    return true;
+  }
+
   private async shouldRunPhase(phase: Phases, testFile: string | null): Promise<boolean> {
+    if (!this.shouldAllowPhase(phase)) {
+      return false;
+    }
+
     if (!testFile) {
       return true;
     }
@@ -57,7 +76,8 @@ export class TypesenseTestRunner {
     );
   }
 
-  async run(filters: Filters[], testFile: string | null = null) {
+  async run(filters: Filters[], testFile: string | null = null, runOptions: RunOptions = {}) {
+    this.runOptions = runOptions;
     const resolvedTestFile = this.resolveTestFilePath(testFile);
 
     try {
@@ -207,6 +227,9 @@ export class TypesenseTestRunner {
     const replayArgs: string[] = [];
     if (filters.includes(Filters.SECRETS)) {
       replayArgs.push("--no-secrets");
+    }
+    if (this.runOptions.singleNodeOnly === true) {
+      replayArgs.push("--single-node-only");
     }
     if (testFile) {
       replayArgs.push(testFile);

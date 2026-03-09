@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 import { appendFileSync, rmSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 type ServerInstance = {
   process: Bun.Subprocess;
@@ -68,6 +68,7 @@ export class TypesenseProcessManager {
   readonly apiHost: string;
   readonly apiKey: string;
   readonly runId: string;
+  readonly serverFlavor: string;
 
   processes: Map<string, ServerInstance> = new Map();
   private processExitCodes: Map<string, number> = new Map();
@@ -105,6 +106,8 @@ export class TypesenseProcessManager {
       throw new Error("Typesense binary path is required (TYPESENSE_BINARY_PATH)");
     }
     this.binaryPath = resolvedBinaryPath;
+    this.serverFlavor = process.env.TYPESENSE_SERVER_FLAVOR
+      ?? (basename(this.binaryPath) === "typesense-server-nuraft-runtime" ? "nuraft-runtime" : "typesense-server");
 
     this.apiHost = process.env.TYPESENSE_API_HOST ?? "localhost";
     this.apiKey = process.env.TYPESENSE_API_KEY ?? "xyz";
@@ -233,17 +236,26 @@ export class TypesenseProcessManager {
     mkdirSync(logDir, { recursive: true });
     mkdirSync(analyticsDir, { recursive: true });
 
-    const args = [
-      `--data-dir=${resolvedDataDir}`,
-      `--api-key=${this.apiKey}`,
-      `--api-port=${resolvedPort}`,
-      "--api-address=0.0.0.0",
-      `--log-dir=${logDir}`,
-      `--analytics-dir=${analyticsDir}`,
-      `--peering-address=${this.ipAddress}`,
-      `--peering-port=${resolvedPeeringPort}`,
-      ...TypesenseProcessManager.additionalConfigs,
-    ];
+    const args = this.serverFlavor === "nuraft-runtime"
+      ? [
+        `--data-dir=${resolvedDataDir}`,
+        `--api-key=${this.apiKey}`,
+        `--api-port=${resolvedPort}`,
+        "--listen-address=0.0.0.0",
+        `--node-host=${this.ipAddress}`,
+        `--peering-port=${resolvedPeeringPort}`,
+      ]
+      : [
+        `--data-dir=${resolvedDataDir}`,
+        `--api-key=${this.apiKey}`,
+        `--api-port=${resolvedPort}`,
+        "--api-address=0.0.0.0",
+        `--log-dir=${logDir}`,
+        `--analytics-dir=${analyticsDir}`,
+        `--peering-address=${this.ipAddress}`,
+        `--peering-port=${resolvedPeeringPort}`,
+        ...TypesenseProcessManager.additionalConfigs,
+      ];
 
     this.singleNodeState = {
       name,
@@ -257,6 +269,10 @@ export class TypesenseProcessManager {
   }
 
   async startMultiNode() {
+    if (this.serverFlavor === "nuraft-runtime") {
+      throw new Error("NuRaft runtime API replay currently supports only single-node phases.");
+    }
+
     const configs = await this.resolveMultiNodeConfigs();
 
     const clusterStr = configs

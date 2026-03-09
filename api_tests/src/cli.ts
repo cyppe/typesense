@@ -13,6 +13,7 @@ type CliOptions = {
   migrationVersion: string;
   migrationTarget: string;
   migrationOutputDir: string | null;
+  singleNodeOnly: boolean;
 };
 
 function printHelp() {
@@ -20,6 +21,7 @@ function printHelp() {
 
 Options:
   --no-secrets                         Exclude tests tagged with ${Filters.SECRETS}
+  --single-node-only                   Run only single-node phases
   --download-migration-binary          Download and use migration source binary
   --migration-version <version>        Migration binary version (default: 29.0)
   --migration-target <target>          Migration binary target (default: linux-amd64)
@@ -43,6 +45,7 @@ function parseArgs(args: string[]): CliOptions {
   let migrationVersion = "29.0";
   let migrationTarget = "linux-amd64";
   let migrationOutputDir: string | null = null;
+  let singleNodeOnly = false;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
@@ -54,6 +57,11 @@ function parseArgs(args: string[]): CliOptions {
 
     if (arg === "--no-secrets") {
       noSecrets = true;
+      continue;
+    }
+
+    if (arg === "--single-node-only") {
+      singleNodeOnly = true;
       continue;
     }
 
@@ -107,6 +115,7 @@ function parseArgs(args: string[]): CliOptions {
     migrationVersion,
     migrationTarget,
     migrationOutputDir,
+    singleNodeOnly,
   };
 }
 
@@ -159,7 +168,7 @@ async function main() {
   await maybeDownloadMigrationBinary(options);
 
   const runner = TypesenseTestRunner.getInstance();
-  await runner.run(options.filters, options.testFile);
+  await runner.run(options.filters, options.testFile, { singleNodeOnly: options.singleNodeOnly });
 }
 
 main();
