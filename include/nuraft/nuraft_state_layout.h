@@ -11,6 +11,7 @@ struct NuRaftStateLayout {
     std::string snapshot_dir;
 
     std::string identity_file;
+    std::string bootstrap_config_file;
     std::string server_state_file;
     std::string cluster_config_file;
     std::string snapshot_descriptor_file;

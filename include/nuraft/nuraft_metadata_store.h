@@ -2,8 +2,10 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "nuraft_file_store.h"
+#include "nuraft_peer_resolver.h"
 
 struct NuRaftIdentity {
     static constexpr uint32_t kCurrentFormatVersion = 1;
@@ -16,6 +18,18 @@ struct NuRaftIdentity {
     bool operator==(const NuRaftIdentity& other) const;
 };
 
+struct NuRaftBootstrapConfig {
+    static constexpr uint32_t kCurrentFormatVersion = 1;
+
+    uint32_t format_version = kCurrentFormatVersion;
+    std::string group_id = "default_group";
+    NuRaftPeerAddress self;
+    std::vector<NuRaftPeerAddress> peers;
+    bool api_uses_ssl = false;
+
+    bool operator==(const NuRaftBootstrapConfig& other) const;
+};
+
 class NuRaftMetadataStore {
 public:
     explicit NuRaftMetadataStore(NuRaftStateLayout layout);
@@ -24,6 +38,8 @@ public:
     bool initialize(std::string& error) const;
     bool write_identity(const NuRaftIdentity& identity, std::string& error) const;
     bool read_identity(NuRaftIdentity& identity, std::string& error) const;
+    bool write_bootstrap_config(const NuRaftBootstrapConfig& config, std::string& error) const;
+    bool read_bootstrap_config(NuRaftBootstrapConfig& config, std::string& error) const;
 
 private:
     NuRaftStateLayout layout_;

@@ -367,6 +367,19 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "nuraft-bootstrap-config-test",
+    srcs = [
+        "test/nuraft_bootstrap_config_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 filegroup(
     name = "test_src_files",
     srcs = glob(["test/*.cpp"]) + [
