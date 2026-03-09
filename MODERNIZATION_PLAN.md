@@ -234,6 +234,75 @@ Build a deliberate next-wave upgrade shortlist instead of bumping opportunistica
   - `typesense-js` in `tests/` `2.0.3` -> `3.0.2` is now done to match the benchmark toolchain client line; `pnpm exec tsc --noEmit` passes in `tests/` after the bump.
 - [ ] Keep treating patch-debt reduction as at least as important as raw version bumps; some deps (for example `whisper.cpp`, `braft`) matter more because of maintenance surface than because they are numerically old.
 
+### 7d) Raft replacement feasibility sprint (NuRaft)
+
+Determine whether replacing `braft`/`brpc` with NuRaft would be a net improvement in correctness, maintainability, and performance, not just a dependency swap.
+
+**Investigation summary (Mar 2026):**
+
+- NuRaft is the strongest in-process replacement candidate found so far; a Rust Raft service remains a possible long-term architecture, but it is a larger boundary change and should not be the first replacement experiment.
+- NuRaft appears materially healthier than `braft` on release cadence and active feature work: current upstream docs and examples are maintained, latest release is `v3.0.0` (2025), and the feature set includes pre-vote, leadership expiration, learners, custom quorum control, auto-forwarding, streaming mode, parallel log appending, and scheduled snapshots.
+- We explicitly reviewed `docs/how_to_use.md` and the example implementations under `examples/`; they confirm the main migration reality: NuRaft is a library, not a drop-in runtime. Typesense would need its own durable `state_mgr`, `log_store`, and `state_machine` integration instead of relying on `braft` + `brpc` built-ins.
+- The examples are useful for API shape and lifecycle, but they are intentionally lightweight (`in_memory_state_mgr`, in-memory log store, CLI-driven add/remove). They do not solve Typesense's persistent log/meta storage, RocksDB snapshot transport, HTTP leader redirect behavior, or node-IP refresh behavior.
+- Current Typesense coupling to `braft` is deep in `src/raft_server.cpp` and `src/typesense_server_utils.cpp`: `braft::Node`, `braft::Task`, `braft::Closure`, built-in RPC service wiring, URI-based log/meta/snapshot storage, peer reset flows, and leader/follower status checks are all first-class parts of the server lifecycle.
+
+**Why this sprint exists:**
+
+- `braft`/`brpc` are now one of the main blockers to future cleanup: patch debt, glog retention, and the Protobuf 34 upgrade are all coupled to that stack.
+- A replacement is only worth doing if it is actually better than `braft` for Typesense's workload. A library with nicer APIs but worse commit latency, catch-up, or snapshot behavior is not an upgrade.
+
+**Sprint goal:**
+
+- Produce a go/no-go decision backed by code, replay results, and benchmark data.
+- If the answer is "go", produce a migration design that is broken into incremental stories instead of a single risky rewrite.
+
+**Story A - Capture the current replication contract**
+
+- [ ] Inventory all current `braft`/`brpc` touchpoints in first-party code and classify them as: Raft core, transport, snapshotting, membership, leader discovery, or operational workaround.
+- [ ] Write down the non-negotiable behaviors the replacement must preserve: leader redirect/proxy behavior, streaming import handling, follower health/catch-up checks, snapshot export/restore, restart replay, IPv6 peer parsing, and single-node recovery after peer/IP drift.
+- [ ] Document which current behaviors are true product requirements vs temporary `braft` workarounds (especially `reset_peers()` and the periodic peer-refresh loop).
+
+**Story B - Design a Typesense-specific NuRaft adapter**
+
+- [ ] Design a durable NuRaft `state_mgr` for term/vote/config persistence under the existing `state_dir` layout.
+- [ ] Design a durable NuRaft `log_store` with crash recovery, compaction, and bounded disk growth; decide whether it should live on RocksDB, separate segment files, or another local format.
+- [ ] Map the current replicated payload format (`http_req` JSON replay into the batched indexer) onto NuRaft `buffer` entries and commit callbacks.
+- [ ] Decide whether to use NuRaft's built-in Asio transport or a custom transport shim; document the implications for TLS, observability, and integration with the existing server runtime.
+
+**Story C - Build the prototype behind an isolated target**
+
+- [ ] Add a non-default experimental target or branch path so the prototype does not destabilize the production `typesense-server` target.
+- [ ] Implement single-node boot, write, restart, and replay.
+- [ ] Implement three-node append/commit, leader discovery, and follower catch-up.
+- [ ] Implement snapshot create/install using the current RocksDB checkpoint model, plus external snapshot export compatibility expected by the API/runtime harness.
+- [ ] Implement membership changes and define the replacement behavior for today's peer refresh / IP-change handling.
+
+**Story D - Verify correctness and operational parity**
+
+- [ ] Replay a focused API subset against the prototype: health, restart, snapshot, and multi-node write/read phases before attempting the full suite.
+- [ ] Add focused replication tests for leadership changes, lagging followers, snapshot installation, restart replay, and peer reconfiguration edge cases.
+- [ ] Verify that leader redirects or auto-forwarding semantics are acceptable for import, streaming, and long-running write paths.
+- [ ] Verify that snapshot install and catch-up semantics remain parallel-safe and do not regress the repo's current test isolation guarantees.
+
+**Story E - Prove it is actually better than `braft`**
+
+- [ ] Benchmark the prototype against the current `braft` path for commit latency, write throughput, follower catch-up speed, snapshot creation/install time, and steady-state CPU/memory cost.
+- [ ] Measure at least one realistic contention case (concurrent write load plus follower recovery or snapshot activity), not just clean single-thread append throughput.
+- [ ] Record whether NuRaft's extra features are materially useful to Typesense (`pre-vote`, leadership expiration, learners, streaming mode, parallel log appending) or just theoretical headroom.
+
+**Story F - Make the decision**
+
+- [ ] Recommend `go` only if the prototype preserves product-critical behavior, removes enough maintenance debt to justify the migration, and does not materially regress write-path or recovery-path performance.
+- [ ] Recommend `no-go` if the storage/transport rewrite cost is too high, the operational semantics diverge too far from current Typesense needs, or the benchmark results do not beat/hold the current `braft` path.
+- [ ] If `go`, split the full migration into follow-up stories with explicit cut lines (transport, state/log persistence, snapshotting, membership, test migration, benchmark gates).
+- [ ] If `no-go`, record the reasons and shift effort back to minimizing `braft`/`brpc` drag rather than leaving the question open.
+
+**Exit criteria for this sprint:**
+
+- A written go/no-go recommendation exists.
+- The recommendation is backed by at least one working prototype target and real benchmark data.
+- The outcome explicitly answers whether NuRaft is better than `braft` for Typesense, not just whether NuRaft can be made to compile.
+
 ### 8) Modernize logging stack (glog to Abseil Logging)
 
 Done. Backend swapped from glog to Abseil Logging. Key artifacts:
@@ -376,14 +445,15 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
 | 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now at `3.8.5`; `snappy` is now at `1.2.2`; ONNX Runtime is now at `1.24.3` with the one-protobuf/self-contained checks still green; `tests/` now uses `typesense-js 3.0.2`; the latest patch-debt audits confirmed `bazel/onnxruntime.patch` is still non-droppable on `1.24.3`, trimmed `bazel/whisper.patch` to 7 hunks, reduced `bazel/icu/icu.patch` to the AR fix only, and added upstream-tracker links for the active brpc/braft upstream-candidate patches, so the next work should bias toward the remaining `whisper`/upstream-candidate patch debt or the next deliberate dep candidate, while Protobuf 34 stays blocked on `brpc`. |
+| 19 | NuRaft replacement feasibility sprint | P1.7d | **planned** | Investigation says NuRaft is the only serious in-process replacement candidate, but it is a real subsystem rewrite, not a dependency bump. The sprint section now captures the required prototype, parity checks, and benchmark gates before any go/no-go decision. |
 
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now (execution lane):** item **18** (`Dependency refresh audit`) is now the live lane. Release packaging hardening has a green full-matrix validation run, so the next modernization wave should prioritize deliberate dependency refreshes and patch-debt reduction.
+- **Active now (execution lane):** item **18** (`Dependency refresh audit`) is still the live modernization lane. Item **19** (`NuRaft replacement feasibility sprint`) is now defined as a separate follow-on sprint, but should not displace dependency/patch-debt work until explicitly prioritized for execution.
 - **Recently finished:** item **17** (`Release packaging / multi-arch workflow hardening`) validated the draft workflow end-to-end across both Linux and macOS architectures.
-- **Later (blocked or dependency-coupled):** item **9** (`Protobuf 34`), section **6b** (`brpc`/rule compatibility work), and section **7** patch-debt follow-up (`replace patch-only forks`) when dependency updates are available.
+- **Later (blocked or dependency-coupled):** item **9** (`Protobuf 34`), section **6b** (`brpc`/rule compatibility work), section **7** patch-debt follow-up (`replace patch-only forks`) when dependency updates are available, and item **19** (`NuRaft replacement feasibility sprint`) when/if the repo is ready to spend a full replication-focused spike.
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
   - `TODO.md` upstream product backlog (not the modernization source of truth; mine opportunistically only when an item aligns with current modernization goals).
@@ -575,37 +645,39 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 
 6. **braft patches are all non-droppable** as of Mar 2026 — upstream braft is dormant (last real release 2021). Don't waste time trying to drop them; just maintain them.
 
-7. **`max-indexing-concurrency` is hardware-sensitive.** Benchmark wins at 16 do not automatically justify a strict global default of 16. Keep conservative defaults for broad deployability (4), and document CPU-tier tuning guidance for production overrides. A future adaptive startup heuristic (CPU+memory aware) is a better long-term path than a single aggressive default.
+7. **NuRaft is the only serious in-process replacement candidate found so far, but it is not a drop-in swap.** Its docs and examples confirm that a real migration would require Typesense-owned persistent `state_mgr`/`log_store` implementations plus new transport/snapshot integration. Treat it as a subsystem rewrite with benchmark gates, not a quick dependency refresh.
 
-8. **Import API `batch_size` must stay wired to actual indexing batches.** The request parameter is now passed through to `Collection::add_many(...)` and controls import-side batch flushing; avoid regressing this by reintroducing a hardcoded internal batch size in the API path.
+8. **`max-indexing-concurrency` is hardware-sensitive.** Benchmark wins at 16 do not automatically justify a strict global default of 16. Keep conservative defaults for broad deployability (4), and document CPU-tier tuning guidance for production overrides. A future adaptive startup heuristic (CPU+memory aware) is a better long-term path than a single aggressive default.
 
-9. **Import `batch_size` is a secondary throughput knob on this dataset.** A/B checks (`40` vs `1000`) showed only marginal import delta (~0.2% in current runs). Keep default `40` for mixed workloads; use larger values only as deliberate ingest-window overrides.
+9. **Import API `batch_size` must stay wired to actual indexing batches.** The request parameter is now passed through to `Collection::add_many(...)` and controls import-side batch flushing; avoid regressing this by reintroducing a hardcoded internal batch size in the API path.
 
-10. **Dockerized API harness should force IPv4 localhost.** Inside the API Bun container, `localhost` health checks can miss servers that are listening on IPv4 only. Set `TYPESENSE_API_HOST=127.0.0.1` in the wrapper to keep Dockerized API runs reliable.
+10. **Import `batch_size` is a secondary throughput knob on this dataset.** A/B checks (`40` vs `1000`) showed only marginal import delta (~0.2% in current runs). Keep default `40` for mixed workloads; use larger values only as deliberate ingest-window overrides.
 
-11. **Upstream ships self-contained core CPU artifacts, and this fork now matches that on the promoted local target.** Keep checking with `ldd` after future ORT/build-graph changes so the repo does not silently regress back to a `libonnxruntime.so.1` runtime dependency.
+11. **Dockerized API harness should force IPv4 localhost.** Inside the API Bun container, `localhost` health checks can miss servers that are listening on IPv4 only. Set `TYPESENSE_API_HOST=127.0.0.1` in the wrapper to keep Dockerized API runs reliable.
 
-12. **Static ONNX Runtime probes hit multiple false-front blockers before the real protobuf conflict.** Modern CMake 3.31 first rejects ONNX Runtime Extensions' export set and build-tree include metadata, then the static vision build trips an upstream zlib-1.3 guard. Patch through those only far enough to reach the final link result; they are not the core reason this repo needs the shared `libonnxruntime.so.1` boundary.
+12. **Upstream ships self-contained core CPU artifacts, and this fork now matches that on the promoted local target.** Keep checking with `ldd` after future ORT/build-graph changes so the repo does not silently regress back to a `libonnxruntime.so.1` runtime dependency.
 
-13. **The real static-link blocker is duplicate protobuf runtimes in one binary.** After adding ONNX Runtime's bundled Protobuf 21.12 archives to the static probe, `ld.lld` reports duplicate `google::protobuf` symbols against the repo's Protobuf 33 runtime. That is the concrete evidence that a self-contained upstream-style binary needs a one-Protobuf strategy, not just more archive copying.
+13. **Static ONNX Runtime probes hit multiple false-front blockers before the real protobuf conflict.** Modern CMake 3.31 first rejects ONNX Runtime Extensions' export set and build-tree include metadata, then the static vision build trips an upstream zlib-1.3 guard. Patch through those only far enough to reach the final link result; they are not the core reason this repo needs the shared `libonnxruntime.so.1` boundary.
 
-14. **ORT already has an external protobuf hook; our Bazel plumbing is what blocks it.** `onnxruntime_external_deps.cmake` already supports `find_package`/pre-existing protobuf targets, but `bazel/onnxruntime.BUILD` forces `FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER`. Future work should focus on feeding ORT one protobuf from Bazel/foreign_cc rather than assuming ORT itself must be fundamentally redesigned.
+14. **The real static-link blocker is duplicate protobuf runtimes in one binary.** After adding ONNX Runtime's bundled Protobuf 21.12 archives to the static probe, `ld.lld` reports duplicate `google::protobuf` symbols against the repo's Protobuf 33 runtime. That is the concrete evidence that a self-contained upstream-style binary needs a one-Protobuf strategy, not just more archive copying.
 
-15. **`rules_foreign_cc` exposes raw Bazel protobuf artifacts more naturally than CMake packages.** Inside foreign_cc, this repo already has a working pattern in `bazel/sentencepiece.BUILD`: pass `libprotobuf.a`, `libprotobuf_lite.a`, `protoc`, and include paths directly. There is no ready-made protobuf CMake package in this repo's foreign_cc flow today, so the fastest prototype path is imported targets or a tiny synthetic package, not waiting for a full upstream-style protobuf install tree.
+15. **ORT already has an external protobuf hook; our Bazel plumbing is what blocks it.** `onnxruntime_external_deps.cmake` already supports `find_package`/pre-existing protobuf targets, but `bazel/onnxruntime.BUILD` forces `FETCHCONTENT_TRY_FIND_PACKAGE_MODE=NEVER`. Future work should focus on feeding ORT one protobuf from Bazel/foreign_cc rather than assuming ORT itself must be fundamentally redesigned.
 
-16. **ORT 1.24 static builds now include `libonnxruntime_lora.a`.** If Bazel static targets do not expose that archive, final linking fails with unresolved `onnxruntime::adapters::utils::*` symbols from `lora_adapters.cc`, even after the protobuf collision itself is fixed.
+16. **`rules_foreign_cc` exposes raw Bazel protobuf artifacts more naturally than CMake packages.** Inside foreign_cc, this repo already has a working pattern in `bazel/sentencepiece.BUILD`: pass `libprotobuf.a`, `libprotobuf_lite.a`, `protoc`, and include paths directly. There is no ready-made protobuf CMake package in this repo's foreign_cc flow today, so the fastest prototype path is imported targets or a tiny synthetic package, not waiting for a full upstream-style protobuf install tree.
 
-17. **Check the produced binary with `ldd` before claiming packaging parity.** A successful static-probe build is not enough; confirm whether the final executable still depends on `libonnxruntime.so.1` so release-workflow decisions are based on the binary shape, not just the archive list.
+17. **ORT 1.24 static builds now include `libonnxruntime_lora.a`.** If Bazel static targets do not expose that archive, final linking fails with unresolved `onnxruntime::adapters::utils::*` symbols from `lora_adapters.cc`, even after the protobuf collision itself is fixed.
 
-18. **Hermetic static macOS builds need explicit dependency opt-outs and Apple framework linkopts.** `rules_foreign_cc` static outputs can silently pick up host features (for example curl auto-enabling Brotli) or drop upstream CMake framework link directives (for example ONNX Runtime Extensions' ImageIO/CoreGraphics/CoreServices linkage). Prefer explicit `CURL_*` feature toggles and mirror upstream Apple framework linkopts in Bazel wrappers instead of relying on host discovery.
+18. **Check the produced binary with `ldd` before claiming packaging parity.** A successful static-probe build is not enough; confirm whether the final executable still depends on `libonnxruntime.so.1` so release-workflow decisions are based on the binary shape, not just the archive list.
 
-19. **Runtime-bundle prep must follow the tested binary's actual dependency shape.** Do not hardcode `libonnxruntime.so.1` into API/release bundle prep for every artifact; detect whether the selected binary needs that shared library, or self-contained probes will fail validation for the wrong reason.
+19. **Hermetic static macOS builds need explicit dependency opt-outs and Apple framework linkopts.** `rules_foreign_cc` static outputs can silently pick up host features (for example curl auto-enabling Brotli) or drop upstream CMake framework link directives (for example ONNX Runtime Extensions' ImageIO/CoreGraphics/CoreServices linkage). Prefer explicit `CURL_*` feature toggles and mirror upstream Apple framework linkopts in Bazel wrappers instead of relying on host discovery.
 
-20. **CI artifact upload paths must not require optional runtime libs.** Once `typesense-server` is self-contained, workflows like `.github/workflows/tests.yml` should upload the binary itself and treat `libonnxruntime.so*` as conditional, not mandatory.
+20. **Runtime-bundle prep must follow the tested binary's actual dependency shape.** Do not hardcode `libonnxruntime.so.1` into API/release bundle prep for every artifact; detect whether the selected binary needs that shared library, or self-contained probes will fail validation for the wrong reason.
 
-21. **Release tarballs need checksum metadata inside and outside the archive.** `debian-pkg/generate_deb_rpm.sh` expects `typesense-server.md5.txt` inside the extracted tarball, and release automation benefits from a tarball-level SHA256 sidecar. Keep both when changing artifact assembly.
+21. **CI artifact upload paths must not require optional runtime libs.** Once `typesense-server` is self-contained, workflows like `.github/workflows/tests.yml` should upload the binary itself and treat `libonnxruntime.so*` as conditional, not mandatory.
 
-22. **Downstream packaging helpers should resolve both draft and legacy artifact locations.** During workflow migration, scripts like `debian-pkg/generate_deb_rpm.sh` and `publish_release.sh` should prefer the new `artifacts/` layout but keep a legacy fallback until the older release path is fully retired.
+22. **Release tarballs need checksum metadata inside and outside the archive.** `debian-pkg/generate_deb_rpm.sh` expects `typesense-server.md5.txt` inside the extracted tarball, and release automation benefits from a tarball-level SHA256 sidecar. Keep both when changing artifact assembly.
+
+23. **Downstream packaging helpers should resolve both draft and legacy artifact locations.** During workflow migration, scripts like `debian-pkg/generate_deb_rpm.sh` and `publish_release.sh` should prefer the new `artifacts/` layout but keep a legacy fallback until the older release path is fully retired.
 
 23. **Alien-derived RPM layouts are not stable enough for hardcoded spec/buildroot paths.** `generate_deb_rpm.sh` should discover the generated `.spec`, use a clean copied buildroot, and avoid assuming the output directory name exactly matches the package version string.
 
