@@ -13,6 +13,7 @@ struct NuRaftStateLayout {
     std::string identity_file;
     std::string bootstrap_config_file;
     std::string replay_progress_file;
+    std::string applied_requests_file;
     std::string active_log_segment_file;
     std::string server_state_file;
     std::string cluster_config_file;

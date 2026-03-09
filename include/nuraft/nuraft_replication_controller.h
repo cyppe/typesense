@@ -3,6 +3,7 @@
 #include <iosfwd>
 #include <string>
 
+#include "nuraft_prototype_state_machine.h"
 #include "nuraft_request_journal.h"
 #include "nuraft_state_initializer.h"
 
@@ -10,6 +11,7 @@ struct NuRaftPrototypeRunOptions {
     NuRaftPrototypeOptions startup_options;
     std::string append_request_json;
     bool replay_log = false;
+    bool apply_pending = false;
 };
 
 class NuRaftReplicationController {

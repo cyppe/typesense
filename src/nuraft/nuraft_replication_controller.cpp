@@ -19,6 +19,7 @@ std::string prototype_usage(const char* program_name) {
            "  --nodes <list>            Comma-separated host:peer_port:api_port list\n"
            "  --append-request-json <json>  Append one request envelope after startup preflight\n"
            "  --replay-log              Print the persisted request journal after startup preflight\n"
+           "  --apply-pending           Apply pending replay entries into the prototype state-machine sink\n"
            "  --api-uses-ssl            Use HTTPS when deriving leader URLs\n"
            "  --help                    Print this message\n";
 }
@@ -65,6 +66,11 @@ bool parse_options(int argc,
 
         if (argument == "--replay-log") {
             run_options.replay_log = true;
+            continue;
+        }
+
+        if (argument == "--apply-pending") {
+            run_options.apply_pending = true;
             continue;
         }
 
@@ -171,6 +177,12 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
         return 1;
     }
 
+    NuRaftPrototypeStateMachine state_machine(layout);
+    if (!state_machine.initialize(error)) {
+        err << "Failed to initialize NuRaft prototype state machine: " << error << "\n";
+        return 1;
+    }
+
     out << "NuRaft prototype startup preflight initialized under '" << layout.root_dir << "'.\n"
         << "server_id=" << identity.server_id << " peer_endpoint=" << identity.peer_endpoint
         << " leader_url=" << bootstrap_config.self.leader_url(bootstrap_config.api_uses_ssl)
@@ -197,6 +209,20 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
         out << "replay_count=" << entries.size() << "\n";
         for (const auto& entry : entries) {
             out << "replay index=" << entry.index
+                << " request_json=" << entry.envelope.request_json() << "\n";
+        }
+    }
+
+    if (options.apply_pending) {
+        std::vector<NuRaftLogEntry> applied_entries;
+        if (!state_machine.apply_pending(applied_entries, error)) {
+            err << "Failed to apply pending prototype requests: " << error << "\n";
+            return 1;
+        }
+
+        out << "applied_count=" << applied_entries.size() << "\n";
+        for (const auto& entry : applied_entries) {
+            out << "applied index=" << entry.index
                 << " request_json=" << entry.envelope.request_json() << "\n";
         }
     }

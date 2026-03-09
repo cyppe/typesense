@@ -132,3 +132,35 @@ TEST_F(NuRaftReplicationControllerTest, AppendsAndReplaysRequestJournalThroughCl
     EXPECT_NE(replay_out.str().find("replay_count=1"), std::string::npos);
     EXPECT_NE(replay_out.str().find("request_json={\"route\":\"/collections\",\"method\":\"POST\"}"), std::string::npos);
 }
+
+TEST_F(NuRaftReplicationControllerTest, AppliesPendingEntriesThroughCli) {
+    NuRaftReplicationController controller;
+    std::vector<std::string> append_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--append-request-json={\"route\":\"/collections\",\"method\":\"POST\"}",
+    };
+    std::vector<char*> append_argv = make_argv(append_args);
+    std::ostringstream append_out;
+    std::ostringstream append_err;
+    ASSERT_EQ(controller.run(static_cast<int>(append_args.size()), append_argv.data(), append_out, append_err), 0);
+    EXPECT_TRUE(append_err.str().empty());
+
+    std::vector<std::string> apply_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--apply-pending",
+    };
+    std::vector<char*> apply_argv = make_argv(apply_args);
+    std::ostringstream apply_out;
+    std::ostringstream apply_err;
+    ASSERT_EQ(controller.run(static_cast<int>(apply_args.size()), apply_argv.data(), apply_out, apply_err), 0);
+    EXPECT_TRUE(apply_err.str().empty());
+    EXPECT_NE(apply_out.str().find("applied_count=1"), std::string::npos);
+
+    std::ostringstream second_apply_out;
+    std::ostringstream second_apply_err;
+    ASSERT_EQ(controller.run(static_cast<int>(apply_args.size()), apply_argv.data(), second_apply_out, second_apply_err), 0);
+    EXPECT_TRUE(second_apply_err.str().empty());
+    EXPECT_NE(second_apply_out.str().find("applied_count=0"), std::string::npos);
+}
