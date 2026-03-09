@@ -1,7 +1,11 @@
 #include "nuraft/nuraft_prototype_state_machine.h"
 
 NuRaftPrototypeStateMachine::NuRaftPrototypeStateMachine(NuRaftStateLayout layout)
-    : layout_(layout), applied_request_store_(layout), replay_coordinator_(layout) {}
+    : NuRaftPrototypeStateMachine(layout, std::make_unique<NuRaftFileBackedStateMachineSink>(layout)) {}
+
+NuRaftPrototypeStateMachine::NuRaftPrototypeStateMachine(NuRaftStateLayout layout,
+                                                         std::unique_ptr<NuRaftStateMachineSink> sink)
+    : layout_(std::move(layout)), sink_(std::move(sink)), replay_coordinator_(layout_) {}
 
 bool NuRaftPrototypeStateMachine::initialize(std::string& error) {
     return replay_coordinator_.initialize(error);
@@ -27,7 +31,7 @@ bool NuRaftPrototypeStateMachine::apply_pending(std::vector<NuRaftLogEntry>& app
         applied_requests.push_back(std::move(applied_request));
     }
 
-    if (!applied_request_store_.append_all(applied_requests, error)) {
+    if (!sink_->apply_all(applied_requests, error)) {
         return false;
     }
 
@@ -36,5 +40,5 @@ bool NuRaftPrototypeStateMachine::apply_pending(std::vector<NuRaftLogEntry>& app
 
 bool NuRaftPrototypeStateMachine::read_applied_requests(std::vector<NuRaftAppliedRequest>& requests,
                                                         std::string& error) const {
-    return applied_request_store_.read_all(requests, error);
+    return sink_->read_all(requests, error);
 }
