@@ -1,6 +1,7 @@
 #include "nuraft/nuraft_http_runtime.h"
 
 #include <exception>
+#include <set>
 #include <utility>
 
 #include "core_api.h"
@@ -18,6 +19,103 @@ namespace {
 
 constexpr const char* kCollectionPrefix = "state/collections/";
 constexpr const char* kDocumentPrefix = "state/documents/";
+
+nlohmann::json normalize_collection_field(const nlohmann::json& field) {
+    nlohmann::json normalized = field;
+    normalized["facet"] = normalized.value("facet", false);
+    normalized["index"] = normalized.value("index", true);
+    normalized["infix"] = normalized.value("infix", false);
+    normalized["locale"] = normalized.value("locale", "");
+    normalized["optional"] = normalized.value("optional", false);
+    normalized["sort"] = normalized.value("sort", true);
+    normalized["stem"] = normalized.value("stem", false);
+    normalized["stem_dictionary"] = normalized.value("stem_dictionary", "");
+    normalized["store"] = normalized.value("store", true);
+    return normalized;
+}
+
+bool normalize_collection_payload(const std::string& collection_name,
+                                  const std::string& encoded,
+                                  size_t num_documents,
+                                  nlohmann::json& normalized,
+                                  std::string& error) {
+    try {
+        normalized = nlohmann::json::parse(encoded);
+    } catch (const std::exception& e) {
+        error = std::string("Failed to parse NuRaft collection payload: ") + e.what();
+        return false;
+    }
+
+    if (!normalized.is_object()) {
+        error = "NuRaft collection payload must be a JSON object";
+        return false;
+    }
+
+    normalized["name"] = normalized.value("name", collection_name);
+    normalized["created_at"] = normalized.value("created_at", 0);
+    normalized["default_sorting_field"] = normalized.value("default_sorting_field", "");
+    normalized["enable_nested_fields"] = normalized.value("enable_nested_fields", false);
+    normalized["num_documents"] = num_documents;
+    normalized["symbols_to_index"] = normalized.value("symbols_to_index", nlohmann::json::array());
+    normalized["token_separators"] = normalized.value("token_separators", nlohmann::json::array());
+
+    nlohmann::json normalized_fields = nlohmann::json::array();
+    if (normalized.contains("fields") && normalized["fields"].is_array()) {
+        for (const auto& field : normalized["fields"]) {
+            if (!field.is_object()) {
+                error = "NuRaft collection fields must be JSON objects";
+                return false;
+            }
+            normalized_fields.push_back(normalize_collection_field(field));
+        }
+    }
+    normalized["fields"] = std::move(normalized_fields);
+
+    error.clear();
+    return true;
+}
+
+bool parse_json_if_present(const std::string& body, nlohmann::json& parsed) {
+    try {
+        parsed = nlohmann::json::parse(body);
+        return true;
+    } catch (const std::exception&) {
+        parsed = nlohmann::json();
+        return false;
+    }
+}
+
+std::string ascii_lower(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+bool contains_case_insensitive(const std::string& haystack, const std::string& needle) {
+    return ascii_lower(haystack).find(ascii_lower(needle)) != std::string::npos;
+}
+
+bool extract_document_id_from_json(const nlohmann::json& parsed, std::string& document_id) {
+    if (!parsed.is_object() || !parsed.contains("id")) {
+        return false;
+    }
+
+    if (parsed["id"].is_string()) {
+        document_id = parsed["id"].get<std::string>();
+        return true;
+    }
+    if (parsed["id"].is_number_integer()) {
+        document_id = std::to_string(parsed["id"].get<int64_t>());
+        return true;
+    }
+    if (parsed["id"].is_number_unsigned()) {
+        document_id = std::to_string(parsed["id"].get<uint64_t>());
+        return true;
+    }
+
+    return false;
+}
 
 NuRaftHttpRuntimeService* current_runtime_service() {
     return (server == nullptr) ? nullptr : dynamic_cast<NuRaftHttpRuntimeService*>(server->get_replication_state());
@@ -128,6 +226,30 @@ bool get_runtime_document(const std::shared_ptr<http_req>& request, const std::s
     }
 
     response->set_body(200, encoded);
+    return true;
+}
+
+bool search_runtime_documents(const std::shared_ptr<http_req>& request, const std::shared_ptr<http_res>& response) {
+    NuRaftHttpRuntimeService* runtime = current_runtime_service();
+    if (runtime == nullptr) {
+        response->set_500("NuRaft runtime service is not attached.");
+        return true;
+    }
+
+    const auto collection_it = request->params.find("collection");
+    if (collection_it == request->params.end() || collection_it->second.empty()) {
+        response->set_400("Missing collection path parameter.");
+        return true;
+    }
+
+    nlohmann::json body;
+    std::string error;
+    if (!runtime->search_documents(collection_it->second, request->params, body, error)) {
+        response->set_500(error);
+        return true;
+    }
+
+    response->set_body(200, body.dump());
     return true;
 }
 
@@ -288,6 +410,25 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         return;
     }
 
+    std::string previous_collection_body;
+    std::string previous_document_body;
+    if (route_kind == NuRaftRouteKind::kCollectionDrop) {
+        const auto collection_it = request->params.find("collection");
+        if (collection_it != request->params.end()) {
+            std::string ignored_error;
+            read_collection(collection_it->second, previous_collection_body, ignored_error);
+        }
+    } else if (route_kind == NuRaftRouteKind::kDocumentDelete) {
+        const auto collection_it = request->params.find("collection");
+        const auto id_it = request->params.find("id");
+        if (collection_it != request->params.end() && id_it != request->params.end()) {
+            std::string ignored_error;
+            read_document(collection_it->second, id_it->second, previous_document_body, ignored_error);
+        }
+    }
+
+    request->metadata = request->http_method;
+
     uint64_t appended_index = 0;
     bool forwarded_to_leader = false;
     int32_t target_server_id = identity_.server_id;
@@ -304,12 +445,83 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         {"target_server_id", target_server_id},
     };
 
+    nlohmann::json top_level_result;
+    bool has_top_level_result = false;
+    if (route_kind == NuRaftRouteKind::kCollectionCreate) {
+        if (!normalize_collection_payload("",
+                                          request->body,
+                                          0,
+                                          top_level_result,
+                                          error)) {
+            response->set_500(error);
+            send_response(request, response);
+            return;
+        }
+        has_top_level_result = true;
+    } else if (route_kind == NuRaftRouteKind::kCollectionDrop && !previous_collection_body.empty()) {
+        const auto collection_it = request->params.find("collection");
+        const std::string collection_name = collection_it == request->params.end() ? "" : collection_it->second;
+        if (!normalize_collection_payload(collection_name,
+                                          previous_collection_body,
+                                          0,
+                                          top_level_result,
+                                          error)) {
+            response->set_500(error);
+            send_response(request, response);
+            return;
+        }
+        has_top_level_result = true;
+    } else if (route_kind == NuRaftRouteKind::kDocumentWrite) {
+        auto collection_it = request->params.find("collection");
+        if (collection_it != request->params.end()) {
+            std::string document_id;
+            auto id_it = request->params.find("id");
+            if (id_it != request->params.end()) {
+                document_id = id_it->second;
+            } else {
+                nlohmann::json parsed_body;
+                if (parse_json_if_present(request->body, parsed_body)) {
+                    extract_document_id_from_json(parsed_body, document_id);
+                }
+            }
+
+            if (!document_id.empty()) {
+                std::string stored_document;
+                if (read_document(collection_it->second, document_id, stored_document, error)) {
+                    has_top_level_result = parse_json_if_present(stored_document, top_level_result) &&
+                                           top_level_result.is_object();
+                } else {
+                    response->set_500(error);
+                    send_response(request, response);
+                    return;
+                }
+            }
+        }
+    } else if (route_kind == NuRaftRouteKind::kDocumentImport &&
+               parse_json_if_present(request->body, top_level_result) && top_level_result.is_object()) {
+        has_top_level_result = true;
+    } else if (route_kind == NuRaftRouteKind::kDocumentDelete &&
+               parse_json_if_present(previous_document_body, top_level_result) && top_level_result.is_object()) {
+        has_top_level_result = true;
+    }
+
     if (request->http_method == "POST" && !request->body.empty()) {
         try {
             response_body["result"] = nlohmann::json::parse(request->body);
         } catch (const std::exception&) {
             response_body["result_raw"] = request->body;
         }
+    }
+
+    if (has_top_level_result) {
+        if (!response_body.contains("result")) {
+            response_body["result"] = top_level_result;
+        }
+        for (auto it = response_body.begin(); it != response_body.end(); ++it) {
+            top_level_result[it.key()] = it.value();
+        }
+        response->set_body(request->http_method == "POST" ? 201 : 200, top_level_result.dump());
+    } else if (request->http_method == "POST" && !request->body.empty()) {
         response->set_body(201, response_body.dump());
     } else {
         response->set_body(200, response_body.dump());
@@ -438,7 +650,17 @@ bool NuRaftHttpRuntimeService::list_collections(nlohmann::json& result, std::str
         if (entry.first.rfind(kCollectionPrefix, 0) != 0) {
             continue;
         }
-        result.push_back(nlohmann::json::parse(entry.second));
+        const std::string collection_name = entry.first.substr(std::string(kCollectionPrefix).size());
+        size_t num_documents = 0;
+        if (!count_collection_documents(collection_name, num_documents, error)) {
+            return false;
+        }
+
+        nlohmann::json normalized_collection;
+        if (!normalize_collection_payload(collection_name, entry.second, num_documents, normalized_collection, error)) {
+            return false;
+        }
+        result.push_back(std::move(normalized_collection));
     }
 
     error.clear();
@@ -460,6 +682,19 @@ bool NuRaftHttpRuntimeService::read_collection(const std::string& collection,
             encoded = entry.second;
             break;
         }
+    }
+
+    if (!encoded.empty()) {
+        size_t num_documents = 0;
+        if (!count_collection_documents(collection, num_documents, error)) {
+            return false;
+        }
+
+        nlohmann::json normalized_collection;
+        if (!normalize_collection_payload(collection, encoded, num_documents, normalized_collection, error)) {
+            return false;
+        }
+        encoded = normalized_collection.dump();
     }
 
     error.clear();
@@ -488,6 +723,102 @@ bool NuRaftHttpRuntimeService::read_document(const std::string& collection,
     return true;
 }
 
+bool NuRaftHttpRuntimeService::count_collection_documents(const std::string& collection,
+                                                          size_t& count,
+                                                          std::string& error) const {
+    count = 0;
+    std::vector<std::pair<std::string, std::string>> entries;
+    if (!read_materialized_entries(entries, error)) {
+        return false;
+    }
+
+    const std::string prefix = std::string(kDocumentPrefix) + collection + "/";
+    for (const auto& entry : entries) {
+        if (entry.first.rfind(prefix, 0) == 0) {
+            ++count;
+        }
+    }
+
+    error.clear();
+    return true;
+}
+
+bool NuRaftHttpRuntimeService::search_documents(const std::string& collection,
+                                                const std::map<std::string, std::string>& params,
+                                                nlohmann::json& result,
+                                                std::string& error) const {
+    const auto q_it = params.find("q");
+    const auto query_by_it = params.find("query_by");
+    if (q_it == params.end() || query_by_it == params.end() ||
+        q_it->second.empty() || query_by_it->second.empty()) {
+        error = "NuRaft runtime search requires q and query_by parameters";
+        return false;
+    }
+
+    std::set<std::string> query_fields;
+    std::vector<std::string> fields;
+    StringUtils::split(query_by_it->second, fields, ",");
+    for (const auto& field : fields) {
+        if (!field.empty()) {
+            query_fields.insert(field);
+        }
+    }
+
+    std::vector<std::pair<std::string, std::string>> entries;
+    if (!read_materialized_entries(entries, error)) {
+        return false;
+    }
+
+    const std::string prefix = std::string(kDocumentPrefix) + collection + "/";
+    nlohmann::json hits = nlohmann::json::array();
+    for (const auto& entry : entries) {
+        if (entry.first.rfind(prefix, 0) != 0) {
+            continue;
+        }
+
+        nlohmann::json document;
+        if (!parse_json_if_present(entry.second, document) || !document.is_object()) {
+            continue;
+        }
+
+        bool matches = false;
+        for (const auto& field : query_fields) {
+            if (!document.contains(field)) {
+                continue;
+            }
+
+            std::string field_value;
+            if (document[field].is_string()) {
+                field_value = document[field].get<std::string>();
+            } else {
+                field_value = document[field].dump();
+            }
+
+            if (contains_case_insensitive(field_value, q_it->second)) {
+                matches = true;
+                break;
+            }
+        }
+
+        if (!matches) {
+            continue;
+        }
+
+        hits.push_back({
+            {"document", document},
+        });
+    }
+
+    result = {
+        {"found", hits.size()},
+        {"facet_counts", nlohmann::json::array()},
+        {"hits", std::move(hits)},
+    };
+
+    error.clear();
+    return true;
+}
+
 bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
                               std::vector<nlohmann::json>& embedded_params_vec,
                               const std::string& body,
@@ -511,11 +842,14 @@ void register_nuraft_http_runtime_routes(HttpServer* server) {
 
     server->get("/collections", get_runtime_collections);
     server->get("/collections/:collection", get_runtime_collection);
+    server->get("/collections/:collection/documents/search", search_runtime_documents);
     server->get("/collections/:collection/documents/:id", get_runtime_document);
 
     server->post("/collections", write_placeholder);
     server->del("/collections/:collection", write_placeholder);
     server->post("/collections/:collection/documents", write_placeholder);
+    server->patch("/collections/:collection/documents/:id", write_placeholder);
+    server->del("/collections/:collection/documents/:id", write_placeholder);
     server->post("/collections/:collection/documents/import", write_placeholder, true, true);
 
     server->post("/operations/snapshot", create_snapshot_response, false, true);

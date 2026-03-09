@@ -426,7 +426,32 @@ bool apply_materialized_mutation(rocksdb::DB* db,
                 !resolve_document_id(request, document_id, error)) {
                 return false;
             }
-            batch.Put(document_key(collection, document_id), request.body);
+            if (request.metadata == "PATCH") {
+                std::string existing_document;
+                bool found = false;
+                if (!read_db_value(db, document_key(collection, document_id), existing_document, found, error)) {
+                    return false;
+                }
+
+                nlohmann::json patch_document;
+                if (!parse_json_body(request.body, patch_document, error) || !patch_document.is_object()) {
+                    error = "NuRaft materialized sink needs PATCH bodies to be JSON objects";
+                    return false;
+                }
+
+                nlohmann::json merged_document = found ? nlohmann::json::parse(existing_document) : nlohmann::json::object();
+                if (!merged_document.is_object()) {
+                    error = "NuRaft materialized sink can only PATCH JSON object documents";
+                    return false;
+                }
+
+                for (auto it = patch_document.begin(); it != patch_document.end(); ++it) {
+                    merged_document[it.key()] = it.value();
+                }
+                batch.Put(document_key(collection, document_id), merged_document.dump());
+            } else {
+                batch.Put(document_key(collection, document_id), request.body);
+            }
             break;
         case NuRaftRouteKind::kDocumentDelete:
             if (!resolve_collection_name(request, collection, error)) {

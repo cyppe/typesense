@@ -52,6 +52,11 @@ public:
                        const std::string& document_id,
                        std::string& encoded,
                        std::string& error) const;
+    bool count_collection_documents(const std::string& collection, size_t& count, std::string& error) const;
+    bool search_documents(const std::string& collection,
+                          const std::map<std::string, std::string>& params,
+                          nlohmann::json& result,
+                          std::string& error) const;
 
 private:
     bool append_and_apply(const std::string& request_json,
