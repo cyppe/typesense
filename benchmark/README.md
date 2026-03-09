@@ -128,6 +128,8 @@ scripts/benchmark_vs_upstream.sh --build --profile raft-recovery
 
 This profile does not benchmark upstream releases. Instead it:
 - stages a runtime bundle for the current fork's `typesense-server`,
+- runs a simple steady single-node write case against `braft`,
+- runs `//:nuraft-prototype-benchmark --mode=append-apply` with the same initial write count,
 - runs a real 3-node follower-outage/rejoin scenario against `braft`,
 - runs `//:nuraft-prototype-benchmark --mode=snapshot-policy-compare` with the same write/outage counts,
 - prints a simple side-by-side summary, and

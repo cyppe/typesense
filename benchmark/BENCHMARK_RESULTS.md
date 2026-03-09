@@ -16,6 +16,13 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ### Aggregated Results
 
+| Measure | NuRaft prototype steady write | `braft` runtime steady write |
+|---|---:|---:|
+| Write time (`docs=200`) | `0.87 ms` append + `16.09 ms` apply | `177.81 ms` |
+| Write throughput | `231,997.99` append entries/s, `12,494.09` apply entries/s | `1,125.57` docs/s |
+| Process CPU | `20.15 ms` | `60.00 ms` |
+| Peak RSS | `26,776 KB` | `519,988 KB` |
+
 | Measure | NuRaft prototype | `braft` runtime |
 |---|---:|---:|
 | Recovery time after latest snapshot / restart | `0.58 ms` | `3263.73 ms` |
@@ -33,6 +40,7 @@ Tool: k6 via benchmark CLI, 30s per scenario
 - The current fork's `braft` path is fixed for the unhealthy-peer timed-snapshot deadlock class: the leader did create timed snapshots while a follower was down, and the snapshot stayed fresh to within `2` entries of the final committed index.
 - That fix does **not** make `braft` look like the NuRaft prototype on recovery behavior. In both runtime repeats, the follower still restarted around log index `202` and replayed roughly the whole outage window (`152-153` entries) instead of obviously taking a snapshot-install path.
 - The NuRaft prototype remains materially stronger on this narrow disaster-recovery shape when the leader is allowed to keep snapshotting locally. If NuRaft blocks snapshots on peer health, it immediately loses that advantage and also replays the whole outage window.
+- The new steady-write rows point the same way as the recovery rows: the isolated NuRaft prototype path is materially lighter and faster on this narrow write benchmark. But it is still not a full HTTP/runtime comparison, so treat it as justification to continue the feasibility sprint, not as permission to rip out `braft` immediately.
 - The new CPU/RSS rows are useful only as directional signals. They compare a full live `braft` HTTP server against an isolated NuRaft prototype benchmark process, so they are not a valid “NuRaft uses 17x less memory” conclusion by themselves.
 
 ### Decision

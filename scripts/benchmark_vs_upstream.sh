@@ -275,6 +275,7 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
     data = json.load(handle)
 
 summary = data["summary"]
+steady = summary["steady_write"]
 nuraft = summary["nuraft"]
 braft = summary["braft"]
 
@@ -283,6 +284,13 @@ def fmt_path_counts(counts):
 
 print(f"Run root: {data['run_root']}")
 print(f"JSON:     {sys.argv[1]}")
+print("")
+print("| Measure | NuRaft steady write | braft steady write |")
+print("|---|---:|---:|")
+print(f"| Write time | {steady['nuraft_append_ms']['mean']:.2f} ms append + {steady['nuraft_apply_ms']['mean']:.2f} ms apply | {steady['braft_write_ms']['mean']:.2f} ms |")
+print(f"| Write throughput | {steady['nuraft_append_entries_per_sec']['mean']:.2f} append entries/s, {steady['nuraft_apply_entries_per_sec']['mean']:.2f} apply entries/s | {steady['braft_writes_per_sec']['mean']:.2f} docs/s |")
+print(f"| Process CPU | {steady['nuraft_process_total_cpu_ms']['mean']:.2f} ms | {steady['braft_process_cpu_ms']['mean']:.2f} ms |")
+print(f"| Peak RSS | {steady['nuraft_process_peak_rss_kb']['mean']:.0f} KB | {steady['braft_process_peak_rss_kb']['mean']:.0f} KB |")
 print("")
 print("| Measure | NuRaft | braft |")
 print("|---|---:|---:|")
@@ -295,6 +303,9 @@ print(f"| Timed snapshots during outage | leader-only policy keeps creating them
 print(f"| Process CPU cost | {nuraft['process_total_cpu_ms']['mean']:.2f} ms total benchmark CPU | leader {braft['leader_cpu_ms_during_outage']['mean']:.2f} ms during outage, follower {braft['follower_cpu_ms_during_recovery']['mean']:.2f} ms during recovery |")
 print(f"| Peak RSS | {nuraft['process_peak_max_rss_kb']['mean']:.0f} KB | leader {braft['leader_peak_rss_kb_during_outage']['mean']:.0f} KB during outage, follower {braft['follower_peak_rss_kb_during_recovery']['mean']:.0f} KB during recovery |")
 print("")
+print(f"NuRaft steady append/apply: {steady['nuraft_append_ms']['mean']:.2f} ms append, {steady['nuraft_apply_ms']['mean']:.2f} ms apply")
+print(f"NuRaft steady throughput / CPU / peak RSS: {steady['nuraft_append_entries_per_sec']['mean']:.2f} append entries/s, {steady['nuraft_apply_entries_per_sec']['mean']:.2f} apply entries/s / {steady['nuraft_process_total_cpu_ms']['mean']:.2f} ms / {steady['nuraft_process_peak_rss_kb']['mean']:.0f} KB")
+print(f"braft steady write / CPU / peak RSS: {steady['braft_write_ms']['mean']:.2f} ms / {steady['braft_process_cpu_ms']['mean']:.2f} ms / {steady['braft_process_peak_rss_kb']['mean']:.0f} KB")
 print(f"NuRaft leader-only recovery: {nuraft['leader_only_recovery_ms']['mean']:.2f} ms")
 print(f"NuRaft require-healthy recovery: {nuraft['require_healthy_recovery_ms']['mean']:.2f} ms")
 print(f"NuRaft extra replay when policy is wrong: {nuraft['delta_replayed_entries']['mean']:.2f} entries")

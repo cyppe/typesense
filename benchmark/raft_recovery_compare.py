@@ -237,6 +237,17 @@ def run_nuraft_policy_compare(repo_root: Path,
     return json.loads(completed.stdout)
 
 
+def run_nuraft_append_apply(repo_root: Path, docs: int) -> dict[str, Any]:
+    benchmark_binary = repo_root / "bazel-bin" / "nuraft-prototype-benchmark"
+    command = [
+        str(benchmark_binary),
+        "--mode=append-apply",
+        f"--docs={docs}",
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=True, cwd=repo_root)
+    return json.loads(completed.stdout)
+
+
 @dataclass
 class ManagedNode:
     name: str
@@ -255,7 +266,7 @@ class ManagedNode:
 
     def start(self,
               binary_path: Path,
-              nodes_file: Path,
+              nodes_file: Path | None,
               api_key: str,
               runtime_lib_dir: Path,
               extra_args: list[str]) -> None:
@@ -270,7 +281,6 @@ class ManagedNode:
 
         args = [
             str(binary_path),
-            f"--nodes={nodes_file}",
             "--peering-address=127.0.0.1",
             f"--data-dir={self.data_dir}",
             f"--api-key={api_key}",
@@ -284,6 +294,8 @@ class ManagedNode:
             "--healthy-write-lag=10",
             *extra_args,
         ]
+        if nodes_file is not None:
+            args.insert(1, f"--nodes={nodes_file}")
 
         self.log_handle = self.log_path.open("ab")
         self.process = subprocess.Popen(
@@ -312,7 +324,6 @@ def create_collection(api_port: int, api_key: str) -> None:
     body = {
         "name": "books",
         "fields": [
-            {"name": "id", "type": "string"},
             {"name": "title", "type": "string"},
         ],
     }
@@ -332,6 +343,68 @@ def write_documents(api_port: int, api_key: str, start_id: int, count: int) -> f
         )
     end = time.monotonic()
     return (end - start) * 1000.0
+
+
+def run_braft_single_node_write_scenario(binary_path: Path,
+                                         runtime_lib_dir: Path,
+                                         run_dir: Path,
+                                         docs: int,
+                                         api_key: str,
+                                         health_timeout_seconds: float,
+                                         extra_server_args: list[str]) -> dict[str, Any]:
+    api_port, peer_port = find_free_ports(2)
+    node = ManagedNode(
+        name="typesense-single",
+        api_port=api_port,
+        peer_port=peer_port,
+        data_dir=run_dir / "typesense-data",
+        log_dir=run_dir / "logs" / "typesense-single",
+        analytics_dir=run_dir / "analytics-db",
+        log_path=run_dir / "logs" / "typesense-single.log",
+    )
+
+    try:
+        node.start(binary_path, None, api_key, runtime_lib_dir, extra_server_args)
+        wait_for_health(node.api_port, health_timeout_seconds, node.process)
+        create_collection(node.api_port, api_key)
+
+        before_proc = read_proc_snapshot(node.process.pid)
+        before_metrics = json_request(
+            f"http://127.0.0.1:{node.api_port}/metrics.json",
+            api_key=api_key,
+            timeout=5.0,
+        )
+        write_ms = write_documents(node.api_port, api_key, 1, docs)
+        after_proc = read_proc_snapshot(node.process.pid)
+        after_metrics = json_request(
+            f"http://127.0.0.1:{node.api_port}/metrics.json",
+            api_key=api_key,
+            timeout=5.0,
+        )
+
+        return {
+            "mode": "braft-single-node-write",
+            "docs": docs,
+            "write_ms": write_ms,
+            "writes_per_sec": (1000.0 * float(docs) / write_ms) if write_ms > 0 else 0.0,
+            "process": {
+                "before": before_proc,
+                "after": after_proc,
+                "cpu_ms": proc_delta(before_proc, after_proc)["cpu_ms"],
+                "rss_kb_before": before_proc["rss_kb"],
+                "rss_kb_after": after_proc["rss_kb"],
+                "peak_rss_kb": max(before_proc["rss_kb"], after_proc["rss_kb"]),
+            },
+            "metrics": {
+                "typesense_memory_active_bytes_before": parse_int(before_metrics.get("typesense_memory_active_bytes")),
+                "typesense_memory_active_bytes_after": parse_int(after_metrics.get("typesense_memory_active_bytes")),
+                "typesense_memory_resident_bytes_before": parse_int(before_metrics.get("typesense_memory_resident_bytes")),
+                "typesense_memory_resident_bytes_after": parse_int(after_metrics.get("typesense_memory_resident_bytes")),
+            },
+            "data_dir": str(run_dir),
+        }
+    finally:
+        node.stop()
 
 
 def run_braft_recovery_scenario(binary_path: Path,
@@ -530,6 +603,18 @@ def run_braft_recovery_scenario(binary_path: Path,
 
 
 def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    nuraft_append_ms = [float(run["nuraft_append_apply"]["append_apply"]["append_ms"]) for run in results]
+    nuraft_apply_ms = [float(run["nuraft_append_apply"]["append_apply"]["apply_ms"]) for run in results]
+    nuraft_append_eps = [float(run["nuraft_append_apply"]["append_apply"]["append_entries_per_sec"]) for run in results]
+    nuraft_apply_eps = [float(run["nuraft_append_apply"]["append_apply"]["apply_entries_per_sec"]) for run in results]
+    nuraft_append_cpu = [float(run["nuraft_append_apply"]["process"]["total_cpu_ms"]) for run in results]
+    nuraft_append_peak_rss = [float(run["nuraft_append_apply"]["process"]["peak_max_rss_kb"]) for run in results]
+
+    braft_single_write_ms = [float(run["braft_single_node"]["write_ms"]) for run in results]
+    braft_single_write_eps = [float(run["braft_single_node"]["writes_per_sec"]) for run in results]
+    braft_single_write_cpu = [float(run["braft_single_node"]["process"]["cpu_ms"]) for run in results]
+    braft_single_peak_rss = [float(run["braft_single_node"]["process"]["peak_rss_kb"]) for run in results]
+
     nuraft_deltas = [float(run["nuraft"]["snapshot_policy_compare"]["delta_recovery_ms"]) for run in results]
     nuraft_replay_deltas = [
         float(run["nuraft"]["snapshot_policy_compare"]["delta_replayed_entries"]) for run in results
@@ -565,6 +650,58 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     nuraft_process_peak_rss = [float(run["nuraft"]["process"]["peak_max_rss_kb"]) for run in results]
 
     return {
+        "steady_write": {
+            "nuraft_append_ms": {
+                "mean": mean(nuraft_append_ms),
+                "min": min(nuraft_append_ms),
+                "max": max(nuraft_append_ms),
+            },
+            "nuraft_apply_ms": {
+                "mean": mean(nuraft_apply_ms),
+                "min": min(nuraft_apply_ms),
+                "max": max(nuraft_apply_ms),
+            },
+            "nuraft_append_entries_per_sec": {
+                "mean": mean(nuraft_append_eps),
+                "min": min(nuraft_append_eps),
+                "max": max(nuraft_append_eps),
+            },
+            "nuraft_apply_entries_per_sec": {
+                "mean": mean(nuraft_apply_eps),
+                "min": min(nuraft_apply_eps),
+                "max": max(nuraft_apply_eps),
+            },
+            "nuraft_process_total_cpu_ms": {
+                "mean": mean(nuraft_append_cpu),
+                "min": min(nuraft_append_cpu),
+                "max": max(nuraft_append_cpu),
+            },
+            "nuraft_process_peak_rss_kb": {
+                "mean": mean(nuraft_append_peak_rss),
+                "min": min(nuraft_append_peak_rss),
+                "max": max(nuraft_append_peak_rss),
+            },
+            "braft_write_ms": {
+                "mean": mean(braft_single_write_ms),
+                "min": min(braft_single_write_ms),
+                "max": max(braft_single_write_ms),
+            },
+            "braft_writes_per_sec": {
+                "mean": mean(braft_single_write_eps),
+                "min": min(braft_single_write_eps),
+                "max": max(braft_single_write_eps),
+            },
+            "braft_process_cpu_ms": {
+                "mean": mean(braft_single_write_cpu),
+                "min": min(braft_single_write_cpu),
+                "max": max(braft_single_write_cpu),
+            },
+            "braft_process_peak_rss_kb": {
+                "mean": mean(braft_single_peak_rss),
+                "min": min(braft_single_peak_rss),
+                "max": max(braft_single_peak_rss),
+            },
+        },
         "nuraft": {
             "leader_only_recovery_ms": {
                 "mean": mean(nuraft_leader_only),
@@ -678,6 +815,16 @@ def main() -> int:
     for repeat in range(1, args.repeats + 1):
         repeat_dir = run_root / f"repeat-{repeat}"
         repeat_dir.mkdir(parents=True, exist_ok=True)
+        nuraft_append_apply = run_nuraft_append_apply(repo_root, args.docs)
+        braft_single_node = run_braft_single_node_write_scenario(
+            binary_path=binary_path,
+            runtime_lib_dir=runtime_lib_dir,
+            run_dir=repeat_dir / "braft-single-node",
+            docs=args.docs,
+            api_key=args.api_key,
+            health_timeout_seconds=args.health_timeout_seconds,
+            extra_server_args=args.server_arg,
+        )
         nuraft_result = run_nuraft_policy_compare(repo_root, args.docs, args.post_snapshot_docs, args.snapshot_rounds)
         braft_result = run_braft_recovery_scenario(
             binary_path=binary_path,
@@ -694,6 +841,8 @@ def main() -> int:
         )
         results.append({
             "repeat": repeat,
+            "nuraft_append_apply": nuraft_append_apply,
+            "braft_single_node": braft_single_node,
             "nuraft": nuraft_result,
             "braft": braft_result,
         })
