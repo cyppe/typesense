@@ -343,6 +343,19 @@ cc_test(
 )
 
 cc_test(
+    name = "nuraft-replication-controller-test",
+    srcs = [
+        "test/nuraft_replication_controller_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "nuraft-request-envelope-test",
     srcs = [
         "test/nuraft_request_envelope_test.cpp",
