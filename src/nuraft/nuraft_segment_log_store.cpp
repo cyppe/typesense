@@ -16,6 +16,12 @@ namespace {
 
 constexpr size_t kRecordHeaderSize = sizeof(uint64_t) + sizeof(uint64_t);
 
+enum class LogScanFailureKind {
+    kNone,
+    kTruncatedTail,
+    kInvalid,
+};
+
 template <typename T>
 void append_le(std::string& out, T value) {
     for (size_t i = 0; i < sizeof(T); ++i) {
@@ -59,31 +65,39 @@ bool fsync_directory(const std::filesystem::path& directory, std::string& error)
 bool scan_log_bytes(std::string_view bytes,
                     std::vector<NuRaftLogEntry>* entries,
                     uint64_t& next_index,
+                    size_t& valid_prefix,
+                    LogScanFailureKind& failure_kind,
                     std::string& error) {
     size_t offset = 0;
     uint64_t expected_index = 1;
+    valid_prefix = 0;
+    failure_kind = LogScanFailureKind::kNone;
     while (offset < bytes.size()) {
         uint64_t index = 0;
         uint64_t payload_size = 0;
         if (!read_le<uint64_t>(bytes, offset, index) ||
             !read_le<uint64_t>(bytes, offset + sizeof(uint64_t), payload_size)) {
+            failure_kind = LogScanFailureKind::kTruncatedTail;
             error = "NuRaft segment log is truncated before a record header is complete";
             return false;
         }
         offset += kRecordHeaderSize;
 
         if (payload_size > bytes.size() - offset) {
+            failure_kind = LogScanFailureKind::kTruncatedTail;
             error = "NuRaft segment log contains a truncated record payload";
             return false;
         }
 
         if (index != expected_index) {
+            failure_kind = LogScanFailureKind::kInvalid;
             error = "NuRaft segment log contains a non-contiguous index";
             return false;
         }
 
         NuRaftRequestEnvelope envelope;
         if (!NuRaftRequestEnvelope::deserialize(bytes.substr(offset, payload_size), envelope, error)) {
+            failure_kind = LogScanFailureKind::kInvalid;
             error = "NuRaft segment log contains an invalid request envelope: " + error;
             return false;
         }
@@ -93,6 +107,7 @@ bool scan_log_bytes(std::string_view bytes,
         }
 
         offset += static_cast<size_t>(payload_size);
+        valid_prefix = offset;
         expected_index = index + 1;
     }
 
@@ -138,7 +153,54 @@ bool NuRaftSegmentLogStore::initialize(std::string& error) {
         return false;
     }
 
-    return scan_log_bytes(bytes, nullptr, next_index_, error);
+    size_t valid_prefix = 0;
+    LogScanFailureKind failure_kind = LogScanFailureKind::kNone;
+    return scan_log_bytes(bytes, nullptr, next_index_, valid_prefix, failure_kind, error);
+}
+
+bool NuRaftSegmentLogStore::recover_truncated_tail(std::string& error) {
+    if (!std::filesystem::exists(layout_.active_log_segment_file)) {
+        next_index_ = 1;
+        error.clear();
+        return true;
+    }
+
+    std::string bytes;
+    if (!NuRaftFileStore::read_file(layout_.active_log_segment_file, bytes, error)) {
+        return false;
+    }
+
+    uint64_t recovered_next_index = 1;
+    size_t valid_prefix = 0;
+    LogScanFailureKind failure_kind = LogScanFailureKind::kNone;
+    if (scan_log_bytes(bytes, nullptr, recovered_next_index, valid_prefix, failure_kind, error)) {
+        next_index_ = recovered_next_index;
+        return true;
+    }
+
+    if (failure_kind != LogScanFailureKind::kTruncatedTail) {
+        return false;
+    }
+
+    if (!NuRaftFileStore::write_file_atomically(layout_.active_log_segment_file,
+                                                std::string_view(bytes.data(), valid_prefix),
+                                                error)) {
+        return false;
+    }
+
+    std::string recovered_bytes;
+    if (!NuRaftFileStore::read_file(layout_.active_log_segment_file, recovered_bytes, error)) {
+        return false;
+    }
+
+    valid_prefix = 0;
+    failure_kind = LogScanFailureKind::kNone;
+    if (!scan_log_bytes(recovered_bytes, nullptr, next_index_, valid_prefix, failure_kind, error)) {
+        return false;
+    }
+
+    error.clear();
+    return true;
 }
 
 bool NuRaftSegmentLogStore::append(const NuRaftRequestEnvelope& envelope,
@@ -214,5 +276,7 @@ bool NuRaftSegmentLogStore::read_all(std::vector<NuRaftLogEntry>& entries, std::
     }
 
     uint64_t ignored_next_index = 1;
-    return scan_log_bytes(bytes, &entries, ignored_next_index, error);
+    size_t valid_prefix = 0;
+    LogScanFailureKind failure_kind = LogScanFailureKind::kNone;
+    return scan_log_bytes(bytes, &entries, ignored_next_index, valid_prefix, failure_kind, error);
 }

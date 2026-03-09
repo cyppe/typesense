@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <unistd.h>
 
@@ -80,4 +81,33 @@ TEST_F(NuRaftSegmentLogStoreTest, RejectsTruncatedTailRecordOnInitialize) {
     NuRaftSegmentLogStore store(layout);
     ASSERT_FALSE(store.initialize(error));
     EXPECT_EQ(error, "NuRaft segment log is truncated before a record header is complete");
+}
+
+TEST_F(NuRaftSegmentLogStoreTest, RecoversTruncatedTailRecord) {
+    const NuRaftStateLayout layout = NuRaftStateLayout::from_data_dir(temp_dir_);
+    std::string error;
+
+    NuRaftSegmentLogStore writer(layout);
+    ASSERT_TRUE(writer.initialize(error)) << error;
+    uint64_t index = 0;
+    ASSERT_TRUE(writer.append(NuRaftRequestEnvelope("{\"id\":1}"), index, error)) << error;
+
+    {
+        std::ofstream output(layout.active_log_segment_file, std::ios::binary | std::ios::app);
+        ASSERT_TRUE(output.is_open());
+        output.write("\x02\x00\x00", 3);
+    }
+
+    NuRaftSegmentLogStore recovered(layout);
+    ASSERT_FALSE(recovered.initialize(error));
+    EXPECT_EQ(error, "NuRaft segment log is truncated before a record header is complete");
+
+    ASSERT_TRUE(recovered.recover_truncated_tail(error)) << error;
+    EXPECT_EQ(recovered.next_index(), 2u);
+
+    std::vector<NuRaftLogEntry> entries;
+    ASSERT_TRUE(recovered.read_all(entries, error)) << error;
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].index, 1u);
+    EXPECT_EQ(entries[0].envelope.request_json(), "{\"id\":1}");
 }

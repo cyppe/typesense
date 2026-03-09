@@ -22,6 +22,7 @@ public:
     uint64_t next_index() const;
 
     bool initialize(std::string& error);
+    bool recover_truncated_tail(std::string& error);
     bool append(const NuRaftRequestEnvelope& envelope, uint64_t& index, std::string& error);
     bool read_all(std::vector<NuRaftLogEntry>& entries, std::string& error) const;
 
