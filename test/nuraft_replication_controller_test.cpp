@@ -104,3 +104,31 @@ TEST_F(NuRaftReplicationControllerTest, ReportsMissingRequiredDataDir) {
     EXPECT_TRUE(out.str().empty());
     EXPECT_NE(err.str().find("need option: --data-dir"), std::string::npos);
 }
+
+TEST_F(NuRaftReplicationControllerTest, AppendsAndReplaysRequestJournalThroughCli) {
+    NuRaftReplicationController controller;
+    std::vector<std::string> append_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--append-request-json={\"route\":\"/collections\",\"method\":\"POST\"}",
+    };
+    std::vector<char*> append_argv = make_argv(append_args);
+    std::ostringstream append_out;
+    std::ostringstream append_err;
+    ASSERT_EQ(controller.run(static_cast<int>(append_args.size()), append_argv.data(), append_out, append_err), 0);
+    EXPECT_TRUE(append_err.str().empty());
+    EXPECT_NE(append_out.str().find("appended_index=1"), std::string::npos);
+
+    std::vector<std::string> replay_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--replay-log",
+    };
+    std::vector<char*> replay_argv = make_argv(replay_args);
+    std::ostringstream replay_out;
+    std::ostringstream replay_err;
+    ASSERT_EQ(controller.run(static_cast<int>(replay_args.size()), replay_argv.data(), replay_out, replay_err), 0);
+    EXPECT_TRUE(replay_err.str().empty());
+    EXPECT_NE(replay_out.str().find("replay_count=1"), std::string::npos);
+    EXPECT_NE(replay_out.str().find("request_json={\"route\":\"/collections\",\"method\":\"POST\"}"), std::string::npos);
+}

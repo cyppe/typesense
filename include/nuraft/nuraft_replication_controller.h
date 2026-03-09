@@ -1,8 +1,16 @@
 #pragma once
 
 #include <iosfwd>
+#include <string>
 
+#include "nuraft_request_journal.h"
 #include "nuraft_state_initializer.h"
+
+struct NuRaftPrototypeRunOptions {
+    NuRaftPrototypeOptions startup_options;
+    std::string append_request_json;
+    bool replay_log = false;
+};
 
 class NuRaftReplicationController {
 public:
@@ -11,4 +19,5 @@ public:
     int run(int argc, char** argv) const;
     int run(int argc, char** argv, std::ostream& out, std::ostream& err) const;
     int run(const NuRaftPrototypeOptions& options, std::ostream& out, std::ostream& err) const;
+    int run(const NuRaftPrototypeRunOptions& options, std::ostream& out, std::ostream& err) const;
 };

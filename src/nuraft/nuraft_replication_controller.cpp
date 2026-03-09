@@ -17,6 +17,8 @@ std::string prototype_usage(const char* program_name) {
            "  --api-port <port>         API identity port (default: 8108)\n"
            "  --peering-port <port>     Peer identity port (default: 8107)\n"
            "  --nodes <list>            Comma-separated host:peer_port:api_port list\n"
+           "  --append-request-json <json>  Append one request envelope after startup preflight\n"
+           "  --replay-log              Print the persisted request journal after startup preflight\n"
            "  --api-uses-ssl            Use HTTPS when deriving leader URLs\n"
            "  --help                    Print this message\n";
 }
@@ -38,14 +40,14 @@ bool parse_uint32(const std::string& value, uint32_t& parsed, std::string& error
 
 bool parse_options(int argc,
                    char** argv,
-                   NuRaftPrototypeOptions& prototype_options,
+                   NuRaftPrototypeRunOptions& run_options,
                    bool& help_requested,
                    std::string& error,
                    std::string& usage) {
-    prototype_options = NuRaftPrototypeOptions();
-    prototype_options.local_host = "127.0.0.1";
-    prototype_options.peer_port = 8107;
-    prototype_options.api_port = 8108;
+    run_options = NuRaftPrototypeRunOptions();
+    run_options.startup_options.local_host = "127.0.0.1";
+    run_options.startup_options.peer_port = 8107;
+    run_options.startup_options.api_port = 8108;
     help_requested = false;
     usage = prototype_usage(argc > 0 ? argv[0] : nullptr);
 
@@ -57,7 +59,12 @@ bool parse_options(int argc,
         }
 
         if (argument == "--api-uses-ssl") {
-            prototype_options.api_uses_ssl = true;
+            run_options.startup_options.api_uses_ssl = true;
+            continue;
+        }
+
+        if (argument == "--replay-log") {
+            run_options.replay_log = true;
             continue;
         }
 
@@ -82,18 +89,20 @@ bool parse_options(int argc,
         }
 
         if (option_name == "data-dir") {
-            prototype_options.data_dir = option_value;
+            run_options.startup_options.data_dir = option_value;
         } else if (option_name == "node-host") {
-            prototype_options.local_host = option_value;
+            run_options.startup_options.local_host = option_value;
         } else if (option_name == "nodes") {
-            prototype_options.nodes_config = option_value;
+            run_options.startup_options.nodes_config = option_value;
+        } else if (option_name == "append-request-json") {
+            run_options.append_request_json = option_value;
         } else if (option_name == "api-port") {
-            if (!parse_uint32(option_value, prototype_options.api_port, error)) {
+            if (!parse_uint32(option_value, run_options.startup_options.api_port, error)) {
                 error = "invalid value for --api-port: " + error;
                 return false;
             }
         } else if (option_name == "peering-port") {
-            if (!parse_uint32(option_value, prototype_options.peer_port, error)) {
+            if (!parse_uint32(option_value, run_options.startup_options.peer_port, error)) {
                 error = "invalid value for --peering-port: " + error;
                 return false;
             }
@@ -103,7 +112,7 @@ bool parse_options(int argc,
         }
     }
 
-    if (!help_requested && prototype_options.data_dir.empty()) {
+    if (!help_requested && run_options.startup_options.data_dir.empty()) {
         error = "need option: --data-dir";
         return false;
     }
@@ -119,11 +128,11 @@ int NuRaftReplicationController::run(int argc, char** argv) const {
 }
 
 int NuRaftReplicationController::run(int argc, char** argv, std::ostream& out, std::ostream& err) const {
-    NuRaftPrototypeOptions prototype_options;
+    NuRaftPrototypeRunOptions run_options;
     bool help_requested = false;
     std::string error;
     std::string usage;
-    if (!parse_options(argc, argv, prototype_options, help_requested, error, usage)) {
+    if (!parse_options(argc, argv, run_options, help_requested, error, usage)) {
         err << error << "\n" << usage;
         return 1;
     }
@@ -133,24 +142,64 @@ int NuRaftReplicationController::run(int argc, char** argv, std::ostream& out, s
         return 0;
     }
 
-    return run(prototype_options, out, err);
+    return run(run_options, out, err);
 }
 
 int NuRaftReplicationController::run(const NuRaftPrototypeOptions& options,
                                      std::ostream& out,
                                      std::ostream& err) const {
+    NuRaftPrototypeRunOptions run_options;
+    run_options.startup_options = options;
+    return run(run_options, out, err);
+}
+
+int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
+                                     std::ostream& out,
+                                     std::ostream& err) const {
     NuRaftIdentity identity;
     NuRaftBootstrapConfig bootstrap_config;
     std::string error;
-    if (!NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) {
+    if (!NuRaftStateInitializer::initialize(options.startup_options, identity, bootstrap_config, error)) {
         err << "Failed to initialize NuRaft prototype state: " << error << "\n";
         return 1;
     }
 
-    const NuRaftStateLayout layout = NuRaftStateLayout::from_data_dir(options.data_dir);
+    const NuRaftStateLayout layout = NuRaftStateLayout::from_data_dir(options.startup_options.data_dir);
+    NuRaftRequestJournal request_journal(layout);
+    if (!request_journal.initialize(error)) {
+        err << "Failed to initialize NuRaft request journal: " << error << "\n";
+        return 1;
+    }
+
     out << "NuRaft prototype startup preflight initialized under '" << layout.root_dir << "'.\n"
         << "server_id=" << identity.server_id << " peer_endpoint=" << identity.peer_endpoint
         << " leader_url=" << bootstrap_config.self.leader_url(bootstrap_config.api_uses_ssl)
         << " peers=" << bootstrap_config.peers.size() << "\n";
+
+    if (!options.append_request_json.empty()) {
+        uint64_t appended_index = 0;
+        if (!request_journal.append_request_json(options.append_request_json, appended_index, error)) {
+            err << "Failed to append prototype request: " << error << "\n";
+            return 1;
+        }
+
+        out << "appended_index=" << appended_index
+            << " request_bytes=" << options.append_request_json.size() << "\n";
+    }
+
+    if (options.replay_log) {
+        std::vector<NuRaftLogEntry> entries;
+        if (!request_journal.replay(entries, error)) {
+            err << "Failed to replay prototype request journal: " << error << "\n";
+            return 1;
+        }
+
+        out << "replay_count=" << entries.size() << "\n";
+        for (const auto& entry : entries) {
+            out << "replay index=" << entry.index
+                << " request_json=" << entry.envelope.request_json() << "\n";
+        }
+    }
+
     return 0;
 }
