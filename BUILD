@@ -298,6 +298,7 @@ cc_library(
         "src/nuraft/nuraft_request_journal.cpp",
         "src/nuraft/nuraft_request_envelope.cpp",
         "src/nuraft/nuraft_replay_coordinator.cpp",
+        "src/nuraft/nuraft_recovery_coordinator.cpp",
         "src/nuraft/nuraft_route_classifier.cpp",
         "src/nuraft/nuraft_snapshot_coordinator.cpp",
         "src/nuraft/nuraft_state_machine_sink.cpp",
@@ -397,6 +398,19 @@ cc_test(
     name = "nuraft-replay-coordinator-test",
     srcs = [
         "test/nuraft_replay_coordinator_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "nuraft-recovery-coordinator-test",
+    srcs = [
+        "test/nuraft_recovery_coordinator_test.cpp",
     ],
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
