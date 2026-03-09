@@ -69,6 +69,63 @@ TEST_F(NuRaftStateInitializerTest, UsesNodesConfigToSelectSelfIdentity) {
     EXPECT_EQ(bootstrap_config.self, (NuRaftPeerAddress{"127.0.0.2", 7109, 8110}));
 }
 
+TEST_F(NuRaftStateInitializerTest, RefreshesSingleNodeSelfAddressAcrossRestart) {
+    NuRaftPrototypeOptions options;
+    options.data_dir = temp_dir_;
+    options.local_host = "127.0.0.1";
+    options.peer_port = 7107;
+    options.api_port = 8108;
+
+    NuRaftIdentity identity;
+    NuRaftBootstrapConfig bootstrap_config;
+    std::string error;
+    ASSERT_TRUE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) << error;
+
+    options.local_host = "10.0.0.5";
+    options.peer_port = 7207;
+    ASSERT_TRUE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) << error;
+    EXPECT_EQ(identity.peer_endpoint, "10.0.0.5:7207");
+    EXPECT_EQ(bootstrap_config.self, (NuRaftPeerAddress{"10.0.0.5", 7207, 8108}));
+}
+
+TEST_F(NuRaftStateInitializerTest, RefreshesMultiNodePeerListWithoutRewritingSelfIdentity) {
+    NuRaftPrototypeOptions options;
+    options.data_dir = temp_dir_;
+    options.local_host = "127.0.0.1";
+    options.peer_port = 7107;
+    options.api_port = 8108;
+    options.nodes_config = "127.0.0.1:7107:8108,127.0.0.2:7109:8109";
+
+    NuRaftIdentity identity;
+    NuRaftBootstrapConfig bootstrap_config;
+    std::string error;
+    ASSERT_TRUE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) << error;
+
+    options.nodes_config = "127.0.0.1:7107:8108,127.0.0.3:7111:8109";
+    ASSERT_TRUE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) << error;
+    EXPECT_EQ(identity.peer_endpoint, "127.0.0.1:7107");
+    ASSERT_EQ(bootstrap_config.peers.size(), 2u);
+    EXPECT_EQ(bootstrap_config.peers[1], (NuRaftPeerAddress{"127.0.0.3", 7111, 8109}));
+}
+
+TEST_F(NuRaftStateInitializerTest, RejectsPersistedSelfAddressRewriteForMultiNodeBootstrap) {
+    NuRaftPrototypeOptions options;
+    options.data_dir = temp_dir_;
+    options.local_host = "127.0.0.1";
+    options.peer_port = 7107;
+    options.api_port = 8108;
+    options.nodes_config = "127.0.0.1:7107:8108,127.0.0.2:7109:8109";
+
+    NuRaftIdentity identity;
+    NuRaftBootstrapConfig bootstrap_config;
+    std::string error;
+    ASSERT_TRUE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) << error;
+
+    options.nodes_config = "10.0.0.5:7207:8108,127.0.0.2:7109:8109";
+    ASSERT_FALSE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error));
+    EXPECT_EQ(error, "NuRaft state initializer refuses to rewrite the persisted self peer address for a multi-node bootstrap");
+}
+
 TEST_F(NuRaftStateInitializerTest, RejectsMissingDataDir) {
     NuRaftPrototypeOptions options;
     options.local_host = "127.0.0.1";

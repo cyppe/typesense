@@ -97,7 +97,12 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsPrototypeSnapshotExport)
     EXPECT_EQ(persisted_descriptor, descriptor);
     EXPECT_TRUE(std::filesystem::is_directory(std::filesystem::path(source_layout.snapshot_dir) / descriptor.snapshot_id));
     EXPECT_TRUE(std::filesystem::is_directory(
-        std::filesystem::path(export_dir) / "state" / NuRaftStateLayout::kPrototypeRootName / "materialized_state"));
+        std::filesystem::path(export_dir) / "state" / NuRaftStateLayout::kPrototypeRootName / "meta"));
+    EXPECT_TRUE(std::filesystem::is_directory(
+        std::filesystem::path(export_dir) / "state" / NuRaftStateLayout::kPrototypeRootName /
+            "snapshot" / descriptor.snapshot_id / "materialized_state"));
+    EXPECT_FALSE(std::filesystem::exists(
+        std::filesystem::path(export_dir) / "state" / NuRaftStateLayout::kPrototypeRootName / "log"));
 
     NuRaftPrototypeOptions restored_options;
     restored_options.data_dir = restored_dir;
@@ -115,6 +120,8 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsPrototypeSnapshotExport)
     NuRaftSnapshotDescriptor restored_descriptor;
     ASSERT_TRUE(restore_coordinator.install_snapshot(export_dir, restored_descriptor, error)) << error;
     EXPECT_EQ(restored_descriptor, descriptor);
+    EXPECT_TRUE(std::filesystem::is_directory(
+        std::filesystem::path(NuRaftStateLayout::from_data_dir(restored_dir).snapshot_dir) / descriptor.snapshot_id));
 
     NuRaftMetadataStore restored_metadata(NuRaftStateLayout::from_data_dir(restored_dir));
     NuRaftIdentity restored_identity_after;
@@ -137,4 +144,56 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsPrototypeSnapshotExport)
     ASSERT_EQ(entries.size(), 2u);
     EXPECT_EQ(entries[0].first, "state/collections/books");
     EXPECT_EQ(entries[1].first, "state/documents/books/doc-1");
+}
+
+TEST_F(NuRaftSnapshotCoordinatorTest, InstallClearsStaleMaterializedStateWhenSourceSnapshotHasNone) {
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const std::string source_dir = (std::filesystem::path(temp_dir_) / "source-no-kv").string();
+    const std::string restored_dir = (std::filesystem::path(temp_dir_) / "restored-with-kv").string();
+    const std::string export_dir = (std::filesystem::path(temp_dir_) / "exported-no-kv").string();
+    initialize_node(source_dir);
+    initialize_node(restored_dir);
+
+    const NuRaftStateLayout source_layout = NuRaftStateLayout::from_data_dir(source_dir);
+    std::string error;
+    NuRaftRequestJournal source_journal(source_layout);
+    ASSERT_TRUE(source_journal.initialize(error)) << error;
+
+    uint64_t index = 0;
+    ASSERT_TRUE(source_journal.append_request_json(
+        std::string("{\"route_hash\":") + std::to_string(collection_create_hash) +
+            ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"books\\\"}\"}",
+        index,
+        error)) << error;
+
+    NuRaftSnapshotCoordinator source_coordinator(source_layout);
+    NuRaftSnapshotDescriptor source_descriptor;
+    ASSERT_TRUE(source_coordinator.create_snapshot(export_dir, nullptr, source_descriptor, error)) << error;
+
+    const NuRaftStateLayout restored_layout = NuRaftStateLayout::from_data_dir(restored_dir);
+    NuRaftRequestJournal restored_journal(restored_layout);
+    ASSERT_TRUE(restored_journal.initialize(error)) << error;
+    ASSERT_TRUE(restored_journal.append_request_json(
+        std::string("{\"route_hash\":") + std::to_string(collection_create_hash) +
+            ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"stale\\\"}\"}",
+        index,
+        error)) << error;
+
+    {
+        auto sink = std::make_unique<NuRaftKvStateMachineSink>(restored_layout);
+        NuRaftPrototypeStateMachine state_machine(restored_layout, std::move(sink));
+        ASSERT_TRUE(state_machine.initialize(error)) << error;
+
+        std::vector<NuRaftLogEntry> applied_entries;
+        ASSERT_TRUE(state_machine.apply_pending(applied_entries, error)) << error;
+        ASSERT_EQ(applied_entries.size(), 1u);
+    }
+
+    ASSERT_TRUE(std::filesystem::is_directory(restored_layout.materialized_state_dir));
+
+    NuRaftSnapshotCoordinator restored_coordinator(restored_layout);
+    NuRaftSnapshotDescriptor restored_descriptor;
+    ASSERT_TRUE(restored_coordinator.install_snapshot(export_dir, restored_descriptor, error)) << error;
+    EXPECT_EQ(restored_descriptor, source_descriptor);
+    EXPECT_FALSE(std::filesystem::exists(restored_layout.materialized_state_dir));
 }

@@ -105,6 +105,37 @@ TEST_F(NuRaftReplicationControllerTest, PersistsMultiNodeBootstrapSelection) {
     ASSERT_EQ(bootstrap_config.peers.size(), 3u);
 }
 
+TEST_F(NuRaftReplicationControllerTest, RejectsMultiNodeSelfAddressRewriteThroughCli) {
+    NuRaftReplicationController controller;
+    std::vector<std::string> init_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--node-host=127.0.0.1",
+        "--api-port=8108",
+        "--nodes=127.0.0.1:7107:8108,127.0.0.2:7109:8109",
+    };
+    std::vector<char*> init_argv = make_argv(init_args);
+    std::ostringstream init_out;
+    std::ostringstream init_err;
+    ASSERT_EQ(controller.run(static_cast<int>(init_args.size()), init_argv.data(), init_out, init_err), 0);
+    EXPECT_TRUE(init_err.str().empty());
+
+    std::vector<std::string> refresh_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--node-host=10.0.0.5",
+        "--api-port=8108",
+        "--nodes=10.0.0.5:7207:8108,127.0.0.2:7109:8109",
+    };
+    std::vector<char*> refresh_argv = make_argv(refresh_args);
+    std::ostringstream refresh_out;
+    std::ostringstream refresh_err;
+    ASSERT_EQ(controller.run(static_cast<int>(refresh_args.size()), refresh_argv.data(), refresh_out, refresh_err), 1);
+    EXPECT_TRUE(refresh_out.str().empty());
+    EXPECT_NE(refresh_err.str().find("refuses to rewrite the persisted self peer address for a multi-node bootstrap"),
+              std::string::npos);
+}
+
 TEST_F(NuRaftReplicationControllerTest, ReportsMissingRequiredDataDir) {
     NuRaftReplicationController controller;
     std::vector<std::string> args = {

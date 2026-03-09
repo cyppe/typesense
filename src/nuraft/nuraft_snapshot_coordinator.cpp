@@ -89,6 +89,18 @@ bool copy_tree(const std::filesystem::path& source,
     return true;
 }
 
+bool remove_tree(const std::filesystem::path& target, std::string& error) {
+    std::error_code ec;
+    std::filesystem::remove_all(target, ec);
+    if (ec) {
+        error = "Failed to remove NuRaft snapshot tree '" + target.string() + "': " + ec.message();
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
 bool replace_tree(const std::filesystem::path& source,
                   const std::filesystem::path& destination,
                   std::string& error) {
@@ -110,8 +122,8 @@ bool resolve_snapshot_root(const std::string& snapshot_path,
         root = direct;
     }
 
-    if (!std::filesystem::is_directory(root / "meta") || !std::filesystem::is_directory(root / "log")) {
-        error = "NuRaft snapshot path does not contain installable prototype state";
+    if (!std::filesystem::is_directory(root / "meta")) {
+        error = "NuRaft snapshot path does not contain installable prototype metadata";
         return false;
     }
 
@@ -186,6 +198,9 @@ bool NuRaftSnapshotCoordinator::create_snapshot(const std::string& export_path,
     }
 
     const std::filesystem::path local_root = std::filesystem::path(layout_.snapshot_dir) / descriptor.snapshot_id;
+    if (!remove_tree(local_root, error)) {
+        return false;
+    }
     if (!replace_tree(layout_.meta_dir, local_root / "meta", error) ||
         !replace_tree(layout_.log_dir, local_root / "log", error)) {
         return false;
@@ -204,13 +219,12 @@ bool NuRaftSnapshotCoordinator::create_snapshot(const std::string& export_path,
     if (!export_path.empty()) {
         const std::filesystem::path export_root = std::filesystem::path(export_path) / "state" /
                                                   NuRaftStateLayout::kPrototypeRootName;
-        if (!replace_tree(local_root / "meta", export_root / "meta", error) ||
-            !replace_tree(local_root / "log", export_root / "log", error)) {
+        if (!remove_tree(export_root, error)) {
             return false;
         }
 
-        if (std::filesystem::exists(local_root / "materialized_state") &&
-            !replace_tree(local_root / "materialized_state", export_root / "materialized_state", error)) {
+        if (!replace_tree(layout_.meta_dir, export_root / "meta", error) ||
+            !replace_tree(layout_.snapshot_dir, export_root / "snapshot", error)) {
             return false;
         }
     }
@@ -257,8 +271,22 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
         return false;
     }
 
+    std::filesystem::path snapshot_state_root;
+    const std::filesystem::path snapshot_archive_root = root / "snapshot";
+    if (std::filesystem::is_directory(snapshot_archive_root)) {
+        snapshot_state_root = snapshot_archive_root / descriptor.snapshot_id;
+    } else {
+        snapshot_state_root = root;
+    }
+
+    if (!std::filesystem::is_directory(snapshot_state_root / "meta") ||
+        !std::filesystem::is_directory(snapshot_state_root / "log")) {
+        error = "NuRaft snapshot path does not contain the descriptor-selected snapshot payload";
+        return false;
+    }
+
     if (!replace_tree(root / "meta", layout_.meta_dir, error) ||
-        !replace_tree(root / "log", layout_.log_dir, error)) {
+        !replace_tree(snapshot_state_root / "log", layout_.log_dir, error)) {
         return false;
     }
 
@@ -269,8 +297,21 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
         return false;
     }
 
-    if (std::filesystem::exists(root / "materialized_state") &&
-        !replace_tree(root / "materialized_state", layout_.materialized_state_dir, error)) {
+    if (std::filesystem::is_directory(snapshot_archive_root)) {
+        if (!replace_tree(snapshot_archive_root, layout_.snapshot_dir, error)) {
+            return false;
+        }
+    } else if (!replace_tree(snapshot_state_root,
+                             std::filesystem::path(layout_.snapshot_dir) / descriptor.snapshot_id,
+                             error)) {
+        return false;
+    }
+
+    if (std::filesystem::exists(snapshot_state_root / "materialized_state")) {
+        if (!replace_tree(snapshot_state_root / "materialized_state", layout_.materialized_state_dir, error)) {
+            return false;
+        }
+    } else if (!remove_tree(layout_.materialized_state_dir, error)) {
         return false;
     }
 
