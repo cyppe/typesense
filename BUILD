@@ -294,6 +294,7 @@ cc_library(
         "src/nuraft/nuraft_metadata_store.cpp",
         "src/nuraft/nuraft_peer_resolver.cpp",
         "src/nuraft/nuraft_request_envelope.cpp",
+        "src/nuraft/nuraft_state_initializer.cpp",
         "src/nuraft/nuraft_state_layout.cpp",
     ],
     copts = COPTS,
@@ -319,6 +320,19 @@ cc_test(
     name = "nuraft-bootstrap-builder-test",
     srcs = [
         "test/nuraft_bootstrap_builder_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "nuraft-state-initializer-test",
+    srcs = [
+        "test/nuraft_state_initializer_test.cpp",
     ],
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
