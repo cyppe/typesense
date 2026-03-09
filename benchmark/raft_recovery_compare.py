@@ -9,6 +9,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -208,6 +209,30 @@ def parse_last_index(log_text: str) -> int:
     return int(matches[-1]) if matches else 0
 
 
+def parse_first_index(log_text: str) -> int:
+    matches = re.findall(r"Node last_index:\s*(\d+)", log_text)
+    return int(matches[0]) if matches else 0
+
+
+def parse_snapshot_install_index(log_text: str) -> int:
+    latest = 0
+    for pattern in (
+        r"last_included_log_index=(\d+)",
+        r"last_included_index[:=]\s*(\d+)",
+    ):
+        matches = re.findall(pattern, log_text)
+        if matches:
+            latest = max(latest, int(matches[-1]))
+    return latest
+
+
+def effective_replay_gap(final_committed_index: int,
+                         restart_last_index: int,
+                         snapshot_install_index: int) -> int:
+    base_index = snapshot_install_index if snapshot_install_index > 0 else restart_last_index
+    return max(0, final_committed_index - base_index)
+
+
 def latest_snapshot_index(snapshot_root: Path) -> int:
     if not snapshot_root.exists():
         return 0
@@ -219,6 +244,47 @@ def latest_snapshot_index(snapshot_root: Path) -> int:
         if match:
             latest = max(latest, int(match.group(1)))
     return latest
+
+
+def wait_for_snapshot_index(snapshot_root: Path,
+                            minimum_index: int,
+                            timeout_seconds: float) -> int:
+    deadline = time.monotonic() + timeout_seconds
+    latest = 0
+    while time.monotonic() < deadline:
+        latest = latest_snapshot_index(snapshot_root)
+        if latest >= minimum_index:
+            return latest
+        time.sleep(0.25)
+    raise RuntimeError(
+        f"timed out waiting for snapshot index >= {minimum_index} under {snapshot_root}, latest={latest}"
+    )
+
+
+def wait_for_log_pattern(path: Path,
+                         offset: int,
+                         pattern: str,
+                         timeout_seconds: float,
+                         process: subprocess.Popen[bytes] | None = None) -> str:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if process is not None and process.poll() is not None:
+            raise RuntimeError(f"server exited early with code {process.returncode} while waiting for log pattern")
+        text = read_text_from_offset(path, offset)
+        if pattern in text:
+            return text
+        time.sleep(0.25)
+    raise RuntimeError(f"timed out waiting for log pattern '{pattern}' in {path}")
+
+
+def create_snapshot(api_port: int, api_key: str, snapshot_path: Path) -> Any:
+    encoded_path = urllib.parse.quote(str(snapshot_path))
+    return json_request(
+        f"http://127.0.0.1:{api_port}/operations/snapshot?snapshot_path={encoded_path}",
+        method="POST",
+        api_key=api_key,
+        timeout=120.0,
+    )
 
 
 def run_nuraft_policy_compare(repo_root: Path,
@@ -243,6 +309,18 @@ def run_nuraft_append_apply(repo_root: Path, docs: int) -> dict[str, Any]:
         str(benchmark_binary),
         "--mode=append-apply",
         f"--docs={docs}",
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=True, cwd=repo_root)
+    return json.loads(completed.stdout)
+
+
+def run_nuraft_delayed_join(repo_root: Path, docs: int, post_snapshot_docs: int) -> dict[str, Any]:
+    benchmark_binary = repo_root / "bazel-bin" / "nuraft-prototype-benchmark"
+    command = [
+        str(benchmark_binary),
+        "--mode=delayed-join",
+        f"--docs={docs}",
+        f"--post-snapshot-docs={post_snapshot_docs}",
     ]
     completed = subprocess.run(command, capture_output=True, text=True, check=True, cwd=repo_root)
     return json.loads(completed.stdout)
@@ -519,16 +597,19 @@ def run_braft_recovery_scenario(binary_path: Path,
         leader_log_delta = read_text_from_offset(nodes[0].file_log_path, leader_log_offset)
         follower_log_delta = read_text_from_offset(nodes[2].file_log_path, follower_log_offset)
         follower_restart_last_index = parse_last_index(follower_log_delta)
+        follower_snapshot_install_index = parse_snapshot_install_index(follower_log_delta)
         total_docs = docs + (post_snapshot_docs * snapshot_rounds)
         follower_install_snapshot_seen = (
             "on_snapshot_load" in follower_log_delta or
             "InstallSnapshotRequest" in follower_log_delta or
             "snapshot_load_done" in follower_log_delta
         )
-        recovery_path = classify_recovery_path(
-            follower_install_snapshot_seen,
-            max(0, leader_final_committed_index - follower_restart_last_index),
+        replay_gap_on_rejoin = effective_replay_gap(
+            leader_final_committed_index,
+            follower_restart_last_index,
+            follower_snapshot_install_index,
         )
+        recovery_path = classify_recovery_path(follower_install_snapshot_seen, replay_gap_on_rejoin)
 
         return {
             "mode": "braft-runtime-recovery",
@@ -544,7 +625,8 @@ def run_braft_recovery_scenario(binary_path: Path,
             "leader_snapshot_index_after_outage": leader_snapshot_index,
             "snapshot_gap_to_final": max(0, leader_final_committed_index - leader_snapshot_index),
             "follower_restart_last_index": follower_restart_last_index,
-            "replay_gap_on_rejoin": max(0, leader_final_committed_index - follower_restart_last_index),
+            "follower_snapshot_install_index": follower_snapshot_install_index,
+            "replay_gap_on_rejoin": replay_gap_on_rejoin,
             "follower_final_committed_index": int(follower_final_status.get("committed_index", 0)),
             "follower_install_snapshot_seen": follower_install_snapshot_seen,
             "recovery_path": recovery_path,
@@ -602,6 +684,178 @@ def run_braft_recovery_scenario(binary_path: Path,
             node.stop()
 
 
+def run_braft_delayed_join_scenario(binary_path: Path,
+                                    runtime_lib_dir: Path,
+                                    run_dir: Path,
+                                    docs: int,
+                                    post_snapshot_docs: int,
+                                    snapshot_rounds: int,
+                                    api_key: str,
+                                    health_timeout_seconds: float,
+                                    recovery_timeout_seconds: float,
+                                    extra_server_args: list[str]) -> dict[str, Any]:
+    ports = find_free_ports(6)
+    nodes = [
+        ManagedNode(
+            name=f"typesense-delayed-{index + 1}",
+            api_port=ports[index * 2],
+            peer_port=ports[index * 2 + 1],
+            data_dir=run_dir / f"typesense-data-{index + 1}",
+            log_dir=run_dir / "logs" / f"typesense-delayed-{index + 1}",
+            analytics_dir=run_dir / f"analytics-db-{index + 1}",
+            log_path=run_dir / "logs" / f"typesense-delayed-{index + 1}.log",
+        )
+        for index in range(3)
+    ]
+
+    nodes_file = run_dir / "nodes"
+    two_node_spec = ",".join(f"127.0.0.1:{node.peer_port}:{node.api_port}" for node in nodes[:2])
+    three_node_spec = ",".join(f"127.0.0.1:{node.peer_port}:{node.api_port}" for node in nodes)
+    nodes_file.parent.mkdir(parents=True, exist_ok=True)
+    nodes_file.write_text(two_node_spec)
+
+    total_tail_docs = post_snapshot_docs * snapshot_rounds
+
+    try:
+        for node in nodes[:2]:
+            node.start(binary_path, nodes_file, api_key, runtime_lib_dir, extra_server_args)
+        for node in nodes[:2]:
+            wait_for_health(node.api_port, health_timeout_seconds, node.process)
+
+        json_request(
+            f"http://127.0.0.1:{nodes[0].api_port}/operations/vote",
+            method="POST",
+            api_key=api_key,
+            body={},
+            timeout=10.0,
+        )
+        time.sleep(1.0)
+
+        create_collection(nodes[0].api_port, api_key)
+        initial_write_ms = write_documents(nodes[0].api_port, api_key, 1, docs)
+        leader_initial_status = json_request(f"http://127.0.0.1:{nodes[0].api_port}/status", api_key=api_key, timeout=5.0)
+        leader_initial_committed_index = int(leader_initial_status.get("committed_index", 0))
+
+        manual_snapshot_dir = run_dir / "manual-snapshot"
+        create_snapshot(nodes[0].api_port, api_key, manual_snapshot_dir)
+        leader_snapshot_index = wait_for_snapshot_index(
+            nodes[0].data_dir / "state" / "snapshot",
+            leader_initial_committed_index,
+            recovery_timeout_seconds,
+        )
+
+        tail_write_ms = write_documents(nodes[0].api_port, api_key, docs + 1, total_tail_docs)
+        leader_before_join_proc = read_proc_snapshot(nodes[0].process.pid)
+        leader_before_join_metrics = json_request(
+            f"http://127.0.0.1:{nodes[0].api_port}/metrics.json",
+            api_key=api_key,
+            timeout=5.0,
+        )
+        leader_final_status = json_request(f"http://127.0.0.1:{nodes[0].api_port}/status", api_key=api_key, timeout=5.0)
+        leader_final_committed_index = int(leader_final_status.get("committed_index", 0))
+
+        leader_log_offset = nodes[0].file_log_path.stat().st_size if nodes[0].file_log_path.exists() else 0
+        follower_log_offset = nodes[2].file_log_path.stat().st_size if nodes[2].file_log_path.exists() else 0
+        join_started = time.monotonic()
+        nodes_file.write_text(three_node_spec)
+        nodes[2].start(binary_path, nodes_file, api_key, runtime_lib_dir, extra_server_args)
+        wait_for_health(nodes[2].api_port, health_timeout_seconds, nodes[2].process)
+        joiner_recovery_start_proc = read_proc_snapshot(nodes[2].process.pid)
+        leader_join_peak_rss_kb = leader_before_join_proc["rss_kb"]
+        joiner_peak_rss_kb = joiner_recovery_start_proc["rss_kb"]
+
+        def observe_join(_status: dict[str, Any]) -> None:
+            nonlocal leader_join_peak_rss_kb
+            nonlocal joiner_peak_rss_kb
+            leader_join_peak_rss_kb = max(leader_join_peak_rss_kb, read_proc_snapshot(nodes[0].process.pid)["rss_kb"])
+            joiner_peak_rss_kb = max(joiner_peak_rss_kb, read_proc_snapshot(nodes[2].process.pid)["rss_kb"])
+
+        joiner_final_status, join_completed = wait_for_committed_index(
+            nodes[2].api_port,
+            api_key,
+            leader_final_committed_index,
+            recovery_timeout_seconds,
+            nodes[2].process,
+            observe_join,
+        )
+        leader_after_join_proc = read_proc_snapshot(nodes[0].process.pid)
+        joiner_after_proc = read_proc_snapshot(nodes[2].process.pid)
+        leader_after_join_metrics = json_request(
+            f"http://127.0.0.1:{nodes[0].api_port}/metrics.json",
+            api_key=api_key,
+            timeout=5.0,
+        )
+
+        leader_log_delta = read_text_from_offset(nodes[0].file_log_path, leader_log_offset)
+        joiner_log_delta = read_text_from_offset(nodes[2].file_log_path, follower_log_offset)
+        joiner_start_last_index = parse_first_index(joiner_log_delta)
+        joiner_snapshot_install_index = parse_snapshot_install_index(joiner_log_delta)
+        joiner_install_snapshot_seen = (
+            "on_snapshot_load" in joiner_log_delta or
+            "InstallSnapshotRequest" in joiner_log_delta or
+            "snapshot_load_done" in joiner_log_delta
+        )
+        join_replay_gap = effective_replay_gap(
+            leader_final_committed_index,
+            joiner_start_last_index,
+            joiner_snapshot_install_index,
+        )
+        join_recovery_path = classify_recovery_path(joiner_install_snapshot_seen, join_replay_gap)
+
+        return {
+            "mode": "braft-delayed-join",
+            "docs_before_join": docs,
+            "docs_after_snapshot_before_join": total_tail_docs,
+            "initial_write_ms": initial_write_ms,
+            "manual_snapshot_index": leader_snapshot_index,
+            "tail_write_ms": tail_write_ms,
+            "leader_final_committed_index": leader_final_committed_index,
+            "snapshot_gap_to_final": max(0, leader_final_committed_index - leader_snapshot_index),
+            "join_recovery_ms": (join_completed - join_started) * 1000.0,
+            "joiner_start_last_index": joiner_start_last_index,
+            "joiner_snapshot_install_index": joiner_snapshot_install_index,
+            "join_replay_gap": join_replay_gap,
+            "joiner_final_committed_index": int(joiner_final_status.get("committed_index", 0)),
+            "joiner_install_snapshot_seen": joiner_install_snapshot_seen,
+            "join_recovery_path": join_recovery_path,
+            "leader_peer_refresh_success_count": leader_log_delta.count("Peer refresh succeeded!"),
+            "leader_continue_unhealthy_snapshot_count": leader_log_delta.count("Continuing timed snapshot on leader despite"),
+            "leader_process": {
+                "before_join": leader_before_join_proc,
+                "after_join": leader_after_join_proc,
+                "cpu_ms_during_join": proc_delta(leader_before_join_proc, leader_after_join_proc)["cpu_ms"],
+                "rss_kb_before_join": leader_before_join_proc["rss_kb"],
+                "rss_kb_after_join": leader_after_join_proc["rss_kb"],
+                "peak_rss_kb_during_join": leader_join_peak_rss_kb,
+            },
+            "joiner_process": {
+                "start": joiner_recovery_start_proc,
+                "after_join": joiner_after_proc,
+                "cpu_ms_during_join": proc_delta(joiner_recovery_start_proc, joiner_after_proc)["cpu_ms"],
+                "rss_kb_after_join": joiner_after_proc["rss_kb"],
+                "peak_rss_kb_during_join": joiner_peak_rss_kb,
+            },
+            "leader_metrics": {
+                "typesense_memory_active_bytes_before_join": parse_int(
+                    leader_before_join_metrics.get("typesense_memory_active_bytes")
+                ),
+                "typesense_memory_active_bytes_after_join": parse_int(
+                    leader_after_join_metrics.get("typesense_memory_active_bytes")
+                ),
+                "typesense_memory_resident_bytes_before_join": parse_int(
+                    leader_before_join_metrics.get("typesense_memory_resident_bytes")
+                ),
+                "typesense_memory_resident_bytes_after_join": parse_int(
+                    leader_after_join_metrics.get("typesense_memory_resident_bytes")
+                ),
+            },
+            "data_dir": str(run_dir),
+        }
+    finally:
+        for node in nodes:
+            node.stop()
+
+
 def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     nuraft_append_ms = [float(run["nuraft_append_apply"]["append_apply"]["append_ms"]) for run in results]
     nuraft_apply_ms = [float(run["nuraft_append_apply"]["append_apply"]["apply_ms"]) for run in results]
@@ -614,6 +868,30 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     braft_single_write_eps = [float(run["braft_single_node"]["writes_per_sec"]) for run in results]
     braft_single_write_cpu = [float(run["braft_single_node"]["process"]["cpu_ms"]) for run in results]
     braft_single_peak_rss = [float(run["braft_single_node"]["process"]["peak_rss_kb"]) for run in results]
+
+    nuraft_delayed_join_ms = [float(run["nuraft_delayed_join"]["delayed_join"]["join_recovery_ms"]) for run in results]
+    nuraft_delayed_join_replay = [
+        float(run["nuraft_delayed_join"]["delayed_join"]["replayed_entries_after_install"]) for run in results
+    ]
+    nuraft_delayed_join_cpu = [float(run["nuraft_delayed_join"]["process"]["total_cpu_ms"]) for run in results]
+    nuraft_delayed_join_rss = [float(run["nuraft_delayed_join"]["process"]["peak_max_rss_kb"]) for run in results]
+    nuraft_delayed_join_paths = [
+        str(run["nuraft_delayed_join"]["delayed_join"]["recovery_path"]) for run in results
+    ]
+
+    braft_delayed_join_ms = [float(run["braft_delayed_join"]["join_recovery_ms"]) for run in results]
+    braft_delayed_join_replay = [float(run["braft_delayed_join"]["join_replay_gap"]) for run in results]
+    braft_delayed_join_snapshot_gap = [float(run["braft_delayed_join"]["snapshot_gap_to_final"]) for run in results]
+    braft_delayed_join_cpu = [float(run["braft_delayed_join"]["leader_process"]["cpu_ms_during_join"]) for run in results]
+    braft_delayed_join_joiner_cpu = [float(run["braft_delayed_join"]["joiner_process"]["cpu_ms_during_join"]) for run in results]
+    braft_delayed_join_rss = [float(run["braft_delayed_join"]["leader_process"]["peak_rss_kb_during_join"]) for run in results]
+    braft_delayed_join_joiner_rss = [
+        float(run["braft_delayed_join"]["joiner_process"]["peak_rss_kb_during_join"]) for run in results
+    ]
+    braft_delayed_join_paths = [str(run["braft_delayed_join"]["join_recovery_path"]) for run in results]
+    braft_delayed_join_snapshot_installs = [
+        1.0 if run["braft_delayed_join"]["joiner_install_snapshot_seen"] else 0.0 for run in results
+    ]
 
     nuraft_deltas = [float(run["nuraft"]["snapshot_policy_compare"]["delta_recovery_ms"]) for run in results]
     nuraft_replay_deltas = [
@@ -735,6 +1013,27 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
             },
             "leader_only_recovery_paths": summarize_recovery_paths(nuraft_leader_only_paths),
             "require_healthy_recovery_paths": summarize_recovery_paths(nuraft_require_healthy_paths),
+            "delayed_join_recovery_ms": {
+                "mean": mean(nuraft_delayed_join_ms),
+                "min": min(nuraft_delayed_join_ms),
+                "max": max(nuraft_delayed_join_ms),
+            },
+            "delayed_join_replayed_entries": {
+                "mean": mean(nuraft_delayed_join_replay),
+                "min": min(nuraft_delayed_join_replay),
+                "max": max(nuraft_delayed_join_replay),
+            },
+            "delayed_join_process_total_cpu_ms": {
+                "mean": mean(nuraft_delayed_join_cpu),
+                "min": min(nuraft_delayed_join_cpu),
+                "max": max(nuraft_delayed_join_cpu),
+            },
+            "delayed_join_process_peak_rss_kb": {
+                "mean": mean(nuraft_delayed_join_rss),
+                "min": min(nuraft_delayed_join_rss),
+                "max": max(nuraft_delayed_join_rss),
+            },
+            "delayed_join_recovery_paths": summarize_recovery_paths(nuraft_delayed_join_paths),
         },
         "braft": {
             "recovery_ms": {
@@ -789,6 +1088,43 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
             },
             "recovery_paths": summarize_recovery_paths(braft_recovery_paths),
             "follower_install_snapshot_seen_runs": int(sum(braft_snapshot_installs)),
+            "delayed_join_recovery_ms": {
+                "mean": mean(braft_delayed_join_ms),
+                "min": min(braft_delayed_join_ms),
+                "max": max(braft_delayed_join_ms),
+            },
+            "delayed_join_replay_gap": {
+                "mean": mean(braft_delayed_join_replay),
+                "min": min(braft_delayed_join_replay),
+                "max": max(braft_delayed_join_replay),
+            },
+            "delayed_join_snapshot_gap_to_final": {
+                "mean": mean(braft_delayed_join_snapshot_gap),
+                "min": min(braft_delayed_join_snapshot_gap),
+                "max": max(braft_delayed_join_snapshot_gap),
+            },
+            "delayed_join_leader_cpu_ms": {
+                "mean": mean(braft_delayed_join_cpu),
+                "min": min(braft_delayed_join_cpu),
+                "max": max(braft_delayed_join_cpu),
+            },
+            "delayed_join_joiner_cpu_ms": {
+                "mean": mean(braft_delayed_join_joiner_cpu),
+                "min": min(braft_delayed_join_joiner_cpu),
+                "max": max(braft_delayed_join_joiner_cpu),
+            },
+            "delayed_join_leader_peak_rss_kb": {
+                "mean": mean(braft_delayed_join_rss),
+                "min": min(braft_delayed_join_rss),
+                "max": max(braft_delayed_join_rss),
+            },
+            "delayed_join_joiner_peak_rss_kb": {
+                "mean": mean(braft_delayed_join_joiner_rss),
+                "min": min(braft_delayed_join_joiner_rss),
+                "max": max(braft_delayed_join_joiner_rss),
+            },
+            "delayed_join_recovery_paths": summarize_recovery_paths(braft_delayed_join_paths),
+            "delayed_join_snapshot_install_seen_runs": int(sum(braft_delayed_join_snapshot_installs)),
             "run_count": len(results),
         },
     }
@@ -816,6 +1152,7 @@ def main() -> int:
         repeat_dir = run_root / f"repeat-{repeat}"
         repeat_dir.mkdir(parents=True, exist_ok=True)
         nuraft_append_apply = run_nuraft_append_apply(repo_root, args.docs)
+        nuraft_delayed_join = run_nuraft_delayed_join(repo_root, args.docs, args.post_snapshot_docs)
         braft_single_node = run_braft_single_node_write_scenario(
             binary_path=binary_path,
             runtime_lib_dir=runtime_lib_dir,
@@ -839,12 +1176,26 @@ def main() -> int:
             recovery_timeout_seconds=args.recovery_timeout_seconds,
             extra_server_args=args.server_arg,
         )
+        braft_delayed_join = run_braft_delayed_join_scenario(
+            binary_path=binary_path,
+            runtime_lib_dir=runtime_lib_dir,
+            run_dir=repeat_dir / "braft-delayed-join",
+            docs=args.docs,
+            post_snapshot_docs=args.post_snapshot_docs,
+            snapshot_rounds=args.snapshot_rounds,
+            api_key=args.api_key,
+            health_timeout_seconds=args.health_timeout_seconds,
+            recovery_timeout_seconds=args.recovery_timeout_seconds,
+            extra_server_args=args.server_arg,
+        )
         results.append({
             "repeat": repeat,
             "nuraft_append_apply": nuraft_append_apply,
+            "nuraft_delayed_join": nuraft_delayed_join,
             "braft_single_node": braft_single_node,
             "nuraft": nuraft_result,
             "braft": braft_result,
+            "braft_delayed_join": braft_delayed_join,
         })
 
     payload = {

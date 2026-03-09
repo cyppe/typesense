@@ -132,6 +132,8 @@ This profile does not benchmark upstream releases. Instead it:
 - runs `//:nuraft-prototype-benchmark --mode=append-apply` with the same initial write count,
 - runs a real 3-node follower-outage/rejoin scenario against `braft`,
 - runs `//:nuraft-prototype-benchmark --mode=snapshot-policy-compare` with the same write/outage counts,
+- runs a late-third-node join scenario against `braft`,
+- runs `//:nuraft-prototype-benchmark --mode=delayed-join` with the same pre-join and post-snapshot write counts,
 - prints a simple side-by-side summary, and
 - writes the full JSON payload to `~/.cache/typesense/benchmark/raft-recovery-summary.json`.
 

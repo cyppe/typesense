@@ -7,6 +7,55 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 15: Raft Recovery + Delayed Join Comparison (`braft` runtime vs NuRaft prototype, 2026-03-09)
+
+**Commit:** `HEAD` at run time  
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-recovery`  
+**Scenario:** steady write `docs=200`; outage/rejoin `200` writes before outage plus `3 x 50` writes while one follower is down with `22s` sleeps; delayed join `200` writes, manual leader snapshot, then `150` more writes before a late third node joins; `2` repeats.  
+**Artifacts:** `~/.cache/typesense/benchmark/raft-recovery-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-recovery-runs/20260309-211903`
+
+### Aggregated Results
+
+| Measure | NuRaft prototype steady write | `braft` runtime steady write |
+|---|---:|---:|
+| Write time (`docs=200`) | `0.88 ms` append + `17.39 ms` apply | `175.63 ms` |
+| Write throughput | `229,256.90` append entries/s, `11,612.91` apply entries/s | `1,139.62` docs/s |
+| Process CPU | `21.92 ms` | `70.00 ms` |
+| Peak RSS | `26,190 KB` | `631,662 KB` |
+
+| Measure | NuRaft outage recovery | `braft` outage recovery |
+|---|---:|---:|
+| Recovery time after latest snapshot / restart | `0.55 ms` | `3264.31 ms` |
+| Extra recovery penalty from blocking snapshots on unhealthy peers | `+11.36 ms` | n/a |
+| Replay after rejoin | `0` entries with leader-only snapshots, `150` with `require-healthy-peers` | `153` entries |
+| Recovery path | `snapshot-install-only` with leader-only policy, `snapshot-install-plus-log-replay` with `require-healthy-peers` | `log-replay-only` in `2/2` runs |
+| Snapshot freshness gap at end of outage | `0` entries after leader-only install | `2` entries |
+| Timed snapshots created during outage | `3` per run in leader-only policy | `1` per run |
+| Follower snapshot install observed on rejoin | `yes` (prototype install path) | `no` in `2/2` runs |
+
+| Measure | NuRaft delayed join | `braft` delayed join |
+|---|---:|---:|
+| Join recovery time | `14.63 ms` | `9284.94 ms` |
+| Replay after join | `50` entries | `352` entries |
+| Join recovery path | `snapshot-install-plus-log-replay` in `2/2` runs | `log-replay-only` in `2/2` runs |
+| Snapshot gap before join | fresh snapshot install plus `50` tail entries | `151` entries behind final leader index |
+| Joiner snapshot install observed | `yes` (prototype install path) | `no` in `2/2` runs |
+
+### Interpretation
+
+- The current fork's `braft` path stays fixed for the unhealthy-peer timed-snapshot deadlock class: the leader kept snapshotting during follower outage and stayed within `2` entries of the final committed index.
+- That does **not** translate into snapshot-based recovery in the live runtime. Across both outage repeats, `braft` still recovered by replaying roughly the whole missing window (`153` entries) and showed no follower snapshot install.
+- The new delayed-join lane is the stronger signal. With a fresh leader snapshot already available, the NuRaft prototype installed that snapshot and replayed only the `50` post-snapshot tail, while `braft` replayed the full `352` committed entries for the late third node and again showed no snapshot install.
+- On the current integration surfaces, NuRaft is materially better on both disaster recovery and add-back / late-join recovery shapes. But the comparison is still prototype-vs-runtime, not production-vs-production.
+
+### Decision
+
+- Do **not** remove `braft` yet. The full server/runtime path is still only implemented there.
+- Do continue the NuRaft feasibility sprint. The late-join result strengthens the case that NuRaft is worth carrying forward.
+- The next deciding data is broader runtime parity and contention behavior, not whether NuRaft recovery is promising enough to keep exploring.
+
+---
+
 ## Run 14: Raft Recovery Comparison (`braft` runtime vs NuRaft prototype, 2026-03-09)
 
 **Commit:** `HEAD` at run time  

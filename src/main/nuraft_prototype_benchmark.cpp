@@ -31,6 +31,7 @@ enum class BenchmarkMode {
     kSnapshotRecovery,
     kSnapshotPressure,
     kSnapshotPolicyCompare,
+    kDelayedJoin,
 };
 
 struct BenchmarkOptions {
@@ -122,7 +123,7 @@ std::string benchmark_usage(const char* program_name) {
                                     std::string(program_name);
     return "usage: " + binary_name + " [options]\n"
            "options:\n"
-           "  --mode <all|append-apply|snapshot-recovery|snapshot-pressure|snapshot-policy-compare>  Benchmark scenario set (default: all)\n"
+           "  --mode <all|append-apply|snapshot-recovery|snapshot-pressure|snapshot-policy-compare|delayed-join>  Benchmark scenario set (default: all)\n"
            "  --data-dir <dir>         Working directory root for benchmark state\n"
            "  --docs <count>           Number of document writes before snapshot (default: 1000)\n"
            "  --post-snapshot-docs <count>  Number of writes after snapshot in recovery benchmark (default: 100)\n"
@@ -157,6 +158,8 @@ bool parse_mode(const std::string& value, BenchmarkMode& mode, std::string& erro
         mode = BenchmarkMode::kSnapshotPressure;
     } else if (value == "snapshot-policy-compare") {
         mode = BenchmarkMode::kSnapshotPolicyCompare;
+    } else if (value == "delayed-join") {
+        mode = BenchmarkMode::kDelayedJoin;
     } else {
         error = "unsupported mode: " + value;
         return false;
@@ -260,6 +263,13 @@ bool initialize_node(const std::string& data_dir,
     NuRaftIdentity identity;
     NuRaftBootstrapConfig bootstrap_config;
     return NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error);
+}
+
+bool read_bootstrap_config(const std::string& data_dir,
+                           NuRaftBootstrapConfig& bootstrap_config,
+                           std::string& error) {
+    NuRaftMetadataStore metadata_store(NuRaftStateLayout::from_data_dir(data_dir));
+    return metadata_store.read_bootstrap_config(bootstrap_config, error);
 }
 
 std::string collection_create_request(uint64_t route_hash) {
@@ -620,6 +630,208 @@ nlohmann::json run_snapshot_recovery_benchmark(const BenchmarkOptions& options, 
     };
 }
 
+nlohmann::json run_delayed_join_benchmark(const BenchmarkOptions& options,
+                                          const std::string& root_dir,
+                                          std::string& error) {
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const uint64_t document_write_hash = make_route_hash("POST", "collections/:collection/documents");
+    const std::string node1 = (std::filesystem::path(root_dir) / "delayed-join-node1").string();
+    const std::string node2 = (std::filesystem::path(root_dir) / "delayed-join-node2").string();
+    const std::string node3 = (std::filesystem::path(root_dir) / "delayed-join-node3").string();
+    const std::string nodes_config_two = "127.0.0.1:7107:8108,127.0.0.1:7109:8109";
+    const std::string nodes_config_three = "127.0.0.1:7107:8108,127.0.0.1:7109:8109,127.0.0.1:7111:8110";
+
+    if (!initialize_node(node1, 7107, 8108, nodes_config_two, error) ||
+        !initialize_node(node2, 7109, 8109, nodes_config_two, error)) {
+        return {};
+    }
+
+    NuRaftBootstrapConfig bootstrap_config;
+    if (!read_bootstrap_config(node1, bootstrap_config, error)) {
+        return {};
+    }
+
+    const std::map<int32_t, std::string> initial_data_dirs = {
+        {8108, node1},
+        {8109, node2},
+    };
+
+    uint64_t last_index = 0;
+    bool forwarded_to_leader = false;
+    int32_t target_server_id = 0;
+    if (!NuRaftStaticCluster::append_request(bootstrap_config,
+                                             initial_data_dirs,
+                                             8108,
+                                             8109,
+                                             collection_create_request(collection_create_hash),
+                                             last_index,
+                                             forwarded_to_leader,
+                                             target_server_id,
+                                             error)) {
+        return {};
+    }
+
+    if (!append_cluster_requests(bootstrap_config,
+                                 initial_data_dirs,
+                                 1,
+                                 options.docs,
+                                 document_write_hash,
+                                 last_index,
+                                 error)) {
+        return {};
+    }
+
+    std::vector<NuRaftStaticClusterNodeStatus> initial_statuses;
+    if (!NuRaftStaticCluster::replicate_and_apply(bootstrap_config,
+                                                  initial_data_dirs,
+                                                  8108,
+                                                  "kv",
+                                                  initial_statuses,
+                                                  error)) {
+        return {};
+    }
+
+    std::map<int32_t, bool> healthy_peers = {
+        {8108, true},
+        {8109, true},
+    };
+    int64_t last_snapshot_time = 0;
+    NuRaftTimedSnapshotResult snapshot_result;
+    double snapshot_ms = 0.0;
+    if (!measure_ms([&](std::string& run_error) {
+            return NuRaftRecoveryCoordinator::run_timed_snapshot(bootstrap_config,
+                                                                 initial_data_dirs,
+                                                                 8108,
+                                                                 healthy_peers,
+                                                                 NuRaftTimedSnapshotPolicy::kLeaderOnly,
+                                                                 100,
+                                                                 60,
+                                                                 last_snapshot_time,
+                                                                 snapshot_result,
+                                                                 run_error);
+        }, snapshot_ms, error)) {
+        return {};
+    }
+
+    double membership_refresh_ms = 0.0;
+    if (!measure_ms([&](std::string& run_error) {
+            return initialize_node(node1, 7107, 8108, nodes_config_three, run_error) &&
+                   initialize_node(node2, 7109, 8109, nodes_config_three, run_error) &&
+                   initialize_node(node3, 7111, 8110, nodes_config_three, run_error);
+        }, membership_refresh_ms, error)) {
+        return {};
+    }
+
+    if (!read_bootstrap_config(node1, bootstrap_config, error)) {
+        return {};
+    }
+
+    const std::map<int32_t, std::string> expanded_data_dirs = {
+        {8108, node1},
+        {8109, node2},
+        {8110, node3},
+    };
+
+    double tail_append_ms = 0.0;
+    if (!measure_ms([&](std::string& run_error) {
+            return append_cluster_requests(bootstrap_config,
+                                           expanded_data_dirs,
+                                           options.docs + 1,
+                                           options.post_snapshot_docs,
+                                           document_write_hash,
+                                           last_index,
+                                           run_error);
+        }, tail_append_ms, error)) {
+        return {};
+    }
+
+    uint64_t follower2_replayed_entries = 0;
+    if (!replicate_missing_entries(node1, node2, follower2_replayed_entries, error)) {
+        return {};
+    }
+
+    uint64_t follower2_applied_entries = 0;
+    if (!apply_pending_kv(node2, follower2_applied_entries, error)) {
+        return {};
+    }
+
+    NuRaftSnapshotDescriptor installed_descriptor;
+    double install_ms = 0.0;
+    if (!measure_ms([&](std::string& run_error) {
+            return NuRaftRecoveryCoordinator::install_latest_snapshot(node1, node3, installed_descriptor, run_error);
+        }, install_ms, error)) {
+        return {};
+    }
+
+    uint64_t replayed_entries = 0;
+    double replay_ms = 0.0;
+    if (!measure_ms([&](std::string& run_error) {
+            return replicate_missing_entries(node1, node3, replayed_entries, run_error);
+        }, replay_ms, error)) {
+        return {};
+    }
+
+    uint64_t applied_entries = 0;
+    double apply_ms = 0.0;
+    if (!measure_ms([&](std::string& run_error) {
+            return apply_pending_kv(node3, applied_entries, run_error);
+        }, apply_ms, error)) {
+        return {};
+    }
+
+    uint64_t recovered_materialized_count = 0;
+    if (!read_materialized_count(node3, recovered_materialized_count, error)) {
+        return {};
+    }
+
+    std::vector<NuRaftStaticClusterNodeStatus> final_statuses;
+    if (!NuRaftStaticCluster::collect_status(bootstrap_config,
+                                             expanded_data_dirs,
+                                             8108,
+                                             final_statuses,
+                                             error)) {
+        return {};
+    }
+
+    nlohmann::json final_statuses_json = nlohmann::json::array();
+    for (const auto& status : final_statuses) {
+        final_statuses_json.push_back({
+            {"server_id", status.server_id},
+            {"data_dir", status.data_dir},
+            {"is_leader", status.is_leader},
+            {"last_log_index", status.last_log_index},
+            {"last_applied_index", status.last_applied_index},
+            {"applied_request_count", status.applied_request_count},
+        });
+    }
+
+    const double join_recovery_ms = install_ms + replay_ms + apply_ms;
+
+    return {
+        {"mode", "delayed-join"},
+        {"root_dir", root_dir},
+        {"docs_before_join", options.docs},
+        {"docs_after_snapshot_before_join", options.post_snapshot_docs},
+        {"membership_refresh_ms", membership_refresh_ms},
+        {"snapshot_ms", snapshot_ms},
+        {"snapshot_created", snapshot_result.created_snapshot},
+        {"snapshot_last_applied_index", snapshot_result.descriptor.last_applied_index},
+        {"tail_append_ms", tail_append_ms},
+        {"tail_replayed_to_existing_follower", follower2_replayed_entries},
+        {"tail_applied_on_existing_follower", follower2_applied_entries},
+        {"install_ms", install_ms},
+        {"installed_snapshot_last_applied_index", installed_descriptor.last_applied_index},
+        {"replay_ms", replay_ms},
+        {"replayed_entries_after_install", replayed_entries},
+        {"recovery_path", classify_recovery_path(installed_descriptor.last_applied_index, replayed_entries)},
+        {"apply_ms", apply_ms},
+        {"applied_entries_after_install", applied_entries},
+        {"join_recovery_ms", join_recovery_ms},
+        {"recovered_materialized_entries", recovered_materialized_count},
+        {"final_statuses", final_statuses_json},
+    };
+}
+
 nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options, const std::string& root_dir, std::string& error) {
     return run_snapshot_pressure_benchmark(options,
                                            root_dir,
@@ -948,6 +1160,15 @@ int main(int argc, char** argv) {
             ok = false;
         } else {
             result["snapshot_policy_compare"] = snapshot_policy_compare;
+        }
+    }
+
+    if (ok && (options.mode == BenchmarkMode::kAll || options.mode == BenchmarkMode::kDelayedJoin)) {
+        const nlohmann::json delayed_join = run_delayed_join_benchmark(options, root_dir, error);
+        if (delayed_join.is_null() || delayed_join.empty()) {
+            ok = false;
+        } else {
+            result["delayed_join"] = delayed_join;
         }
     }
 
