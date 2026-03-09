@@ -84,7 +84,7 @@ If you add new first-party code, fix any warnings before committing. Third-party
 - [x] No known flaky tests after stress validation (`--runs_per_test=20`) on targeted suites. *(Flake-detection and nightly-extended lanes run on schedule; P0 items 1–5 eliminated all known flake sources.)*
 - [x] Tests are parallel-safe (no shared writable paths, no port collisions, no hidden global state). *(P0 items 1–4: temp dirs, dynamic ports, no globals — all done and stress-validated.)*
 - [x] Bazel 9 migration is complete and stable. *(P1.6 done; `.bazelversion` = 9.0.0, CI green.)*
-- [x] Dependency set is current, with patch debt minimized and documented exceptions only. *(12 active patches with justifications in `bazel/PATCH_DEBT.md`. Protobuf 34 blocked on brpc upstream — documented exception.)*
+- [x] Dependency set is current, with patch debt minimized and documented exceptions only. *(13 active patches with justifications in `bazel/PATCH_DEBT.md`. Protobuf 34 blocked on brpc upstream — documented exception.)*
 - [x] Warning policy is enforced (no uncontrolled warning growth). *(GCC + Clang guardrails at zero; CI enforces via guardrail scripts.)*
 
 ## Priority 0 - Test Reliability And Parallel Safety (Do First)
@@ -132,21 +132,25 @@ Done. Repo default is Bazel 9.0.0. CI and local Docker lanes are green. Platform
 - [x] `whisper.patch` debug noise cleaned (`6cf44457`).
 - [x] `whisper.patch` reduced from 11 hunks to 8 — dropped compiler warning flags, whitespace noise, backtrace removal. Non-speech token expansion kept (test-verified: voice query expects punctuation-free output).
 - [x] `quicly/0001.patch` dropped — bumped quicly to `c9167711` (fix commit).
-- [ ] Replace patch-only forks with released upstream versions where possible (12 active patches documented with next actions in `bazel/PATCH_DEBT.md`).
+- [ ] Replace patch-only forks with released upstream versions where possible (13 active patches documented with next actions in `bazel/PATCH_DEBT.md`).
 - [x] Move brpc inline `patch_cmds` to proper patch file `bazel/brpc/0001_dynamic_annotations_guards.patch`.
 - [x] Switch ICU from Typesense fork (`github.com/typesense/icu`) to upstream release tarball (ICU 71.1). Fork carried zero source mods. Patch content unchanged.
 - [x] **ICU version upgrade (71.1 → 78.2):** Upgraded to ICU 78.2 (Unicode 14→17, CLDR 48). Same 6 upstream BUILD.bazel files still ship; patch regenerated from 78.2 tarball. AR fix still needed. Zero Typesense code changes required — only stable APIs used.
 
-**Braft patch audit (all 6 confirmed non-droppable):**
+**Braft patch audit (all 7 active braft patches confirmed non-droppable):**
 - `0001` — fixes build against modern protobuf/abseil; upstream dormant (last real release 2021).
 - `0002_ipv6_braft`, `0002_ipv6_brpc`, `0002_ipv6_butil` — Typesense IPv6 support; no upstream equivalent.
 - `0004_util_namespace` — namespace fix required by modern abseil; upstream has not adopted.
 - `0005_bazel9_string_view` — Bazel 9 / C++20 string_view compat; upstream has not adopted.
+- `0006_cxx20_shuffle` — replaces removed `std::random_shuffle`; upstream has not adopted a modern-toolchain equivalent.
+
+Separate patch-debt note:
 - `quicly/0001.patch` — dropped (quicly bumped to `c9167711`).
 
 **Gotchas for patch work:**
 - Patch droppability must be verified with a full `bazel build //:typesense-server` inside Docker — header-only changes can appear to succeed in isolation but fail at link time.
 - `bazel/whisper.patch` is the largest remaining patch and highest maintenance risk (CUDA/shared-loading paths). ICU patch (`bazel/icu/icu.patch`) was reduced by switching from the Typesense fork to the official ICU 71.1 release tarball — patch content unchanged (BUILD deletions + AR fix) but fork dependency eliminated.
+- `bazel/onnxruntime.patch` was re-audited after the ORT `1.24.3` bump and is still required for extensions path export, zlib 1.3.x/static image-codec handling, and the one-protobuf imported-target path.
 - See `bazel/PATCH_DEBT.md` for the full classified inventory with upstream references and next actions.
 
 ### 7b) Coordinated h2o / picotls / quicly bump
@@ -370,7 +374,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
-| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now at `3.8.5`; `snappy` is now at `1.2.2`; ONNX Runtime is now at `1.24.3` with the one-protobuf/self-contained checks still green; `tests/` now uses `typesense-js 3.0.2`; next work should bias toward patch-debt reduction or the next deliberate dep candidate, while Protobuf 34 stays blocked on `brpc`. |
+| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now at `3.8.5`; `snappy` is now at `1.2.2`; ONNX Runtime is now at `1.24.3` with the one-protobuf/self-contained checks still green; `tests/` now uses `typesense-js 3.0.2`; the latest patch-debt audit also confirmed `bazel/onnxruntime.patch` is still non-droppable on `1.24.3`, so the next work should bias toward `whisper`/`icu` reduction or the next deliberate dep candidate, while Protobuf 34 stays blocked on `brpc`. |
 
 ### Backlog map (active / later / archival)
 
