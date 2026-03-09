@@ -258,9 +258,19 @@ Determine whether replacing `braft`/`brpc` with NuRaft would be a net improvemen
 
 **Story A - Capture the current replication contract**
 
-- [ ] Inventory all current `braft`/`brpc` touchpoints in first-party code and classify them as: Raft core, transport, snapshotting, membership, leader discovery, or operational workaround.
-- [ ] Write down the non-negotiable behaviors the replacement must preserve: leader redirect/proxy behavior, streaming import handling, follower health/catch-up checks, snapshot export/restore, restart replay, IPv6 peer parsing, and single-node recovery after peer/IP drift.
-- [ ] Document which current behaviors are true product requirements vs temporary `braft` workarounds (especially `reset_peers()` and the periodic peer-refresh loop).
+- [x] Inventory all current `braft`/`brpc` touchpoints in first-party code and classify them as: Raft core, transport, snapshotting, membership, leader discovery, or operational workaround.
+- [x] Write down the non-negotiable behaviors the replacement must preserve: leader redirect/proxy behavior, streaming import handling, follower health/catch-up checks, snapshot export/restore, restart replay, IPv6 peer parsing, and single-node recovery after peer/IP drift.
+- [x] Document which current behaviors are true product requirements vs temporary `braft` workarounds (especially `reset_peers()` and the periodic peer-refresh loop).
+
+**Story A findings (Mar 2026):**
+
+- **Raft core:** first-party coupling is centered in `ReplicationState` (`include/raft_server.h`, `src/raft_server.cpp`), which subclasses `braft::StateMachine`, submits writes as `braft::Task`, and applies committed entries by replaying serialized request payloads through the batched indexer.
+- **Transport:** the peering plane currently depends on `brpc::Server` + `braft::add_service(...)` (`src/typesense_server_utils.cpp`), while leader-aware write forwarding is implemented separately as HTTP proxying to the leader URL, including streaming import passthrough.
+- **Snapshotting:** the current contract is larger than plain Raft snapshots. Save/load must cover main RocksDB, analytics RocksDB, and in-flight batched-indexer state; manual snapshot export also copies the raft `snapshot/` and `meta/` trees into an external artifact.
+- **Membership / addressing:** Typesense expects `host:peer_port:api_port` membership inputs, hostname resolution, IPv6-safe parsing, and dynamic node-file refresh. The exact `PeerId.idx == api_port` encoding is braft-specific, but the ability to derive leader/follower HTTP endpoints from the peering membership is a real product need.
+- **Leader discovery / readiness:** current behavior is "write on any node, proxy to leader server-side, gate reads/writes on catch-up status, and expose `/status` committed-index visibility for tests and operators." A replacement must preserve those observable semantics even if the internal Raft API changes.
+- **Likely product requirements:** deterministic request-level replication, restart replay of accepted writes, follower lag gating for reads/writes, leader URL discovery for internal subsystems (`proxy`, `proxy_sse`, analytics, conversation, remote embedder flows), snapshot export/restore, and single-node recovery after peer/IP drift.
+- **Likely braft-era workarounds:** the unsafe `reset_peers()` escape hatch outside single-node recovery, the 10-second peer-refresh polling loop, the `known_applied_index` catch-up heuristic, disabling automatic snapshots in favor of a Typesense-managed timer, and the post-snapshot dummy write used only to re-arm braft snapshot triggering.
 
 **Story B - Design a Typesense-specific NuRaft adapter**
 
@@ -445,13 +455,13 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
 | 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now at `3.8.5`; `snappy` is now at `1.2.2`; ONNX Runtime is now at `1.24.3` with the one-protobuf/self-contained checks still green; `tests/` now uses `typesense-js 3.0.2`; the latest patch-debt audits confirmed `bazel/onnxruntime.patch` is still non-droppable on `1.24.3`, trimmed `bazel/whisper.patch` to 7 hunks, reduced `bazel/icu/icu.patch` to the AR fix only, and added upstream-tracker links for the active brpc/braft upstream-candidate patches, so the next work should bias toward the remaining `whisper`/upstream-candidate patch debt or the next deliberate dep candidate, while Protobuf 34 stays blocked on `brpc`. |
-| 19 | NuRaft replacement feasibility sprint | P1.7d | **planned** | Investigation says NuRaft is the only serious in-process replacement candidate, but it is a real subsystem rewrite, not a dependency bump. The sprint section now captures the required prototype, parity checks, and benchmark gates before any go/no-go decision. |
+| 19 | NuRaft replacement feasibility sprint | P1.7d | **in progress** | Investigation says NuRaft is the only serious in-process replacement candidate, but it is a real subsystem rewrite, not a dependency bump. Story A is now complete: current `braft`/`brpc` touchpoints and the must-preserve replication contract are documented; next step is Story B adapter design. |
 
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now (execution lane):** item **18** (`Dependency refresh audit`) is still the live modernization lane. Item **19** (`NuRaft replacement feasibility sprint`) is now defined as a separate follow-on sprint, but should not displace dependency/patch-debt work until explicitly prioritized for execution.
+- **Active now (execution lane):** item **18** (`Dependency refresh audit`) remains the primary modernization lane. Item **19** (`NuRaft replacement feasibility sprint`) is now in progress by explicit user request; Story A is complete, and any further work should stay bounded to the sprint plan rather than turning into an unscoped rewrite.
 - **Recently finished:** item **17** (`Release packaging / multi-arch workflow hardening`) validated the draft workflow end-to-end across both Linux and macOS architectures.
 - **Later (blocked or dependency-coupled):** item **9** (`Protobuf 34`), section **6b** (`brpc`/rule compatibility work), section **7** patch-debt follow-up (`replace patch-only forks`) when dependency updates are available, and item **19** (`NuRaft replacement feasibility sprint`) when/if the repo is ready to spend a full replication-focused spike.
 - **Archival/reference (not immediate execution lanes):**
