@@ -10,6 +10,7 @@
 #include "json.hpp"
 #include "nuraft/nuraft_metadata_store.h"
 #include "nuraft/nuraft_replication_controller.h"
+#include "nuraft/nuraft_state_machine_sink.h"
 #include "string_utils.h"
 
 namespace {
@@ -352,4 +353,224 @@ TEST_F(NuRaftReplicationControllerTest, ReplaysChunkedImportThroughKvSinkAndDump
     EXPECT_NE(apply_out.str().find("materialized key=state/imports/books/00000000000000000042"), std::string::npos);
     EXPECT_NE(apply_out.str().find("\"document_count\":2"), std::string::npos);
     EXPECT_EQ(apply_out.str().find("state/import_buffers/books/00000000000000000042"), std::string::npos);
+}
+
+TEST_F(NuRaftReplicationControllerTest, SimulatesThreeNodeCatchUpThroughStaticClusterOptions) {
+    NuRaftReplicationController controller;
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const uint64_t document_write_hash = make_route_hash("POST", "collections/:collection/documents");
+    const std::string nodes = "127.0.0.1:7107:8108,127.0.0.1:7109:8109,127.0.0.1:7111:8110";
+    const std::string node1_dir = (std::filesystem::path(temp_dir_) / "node1").string();
+    const std::string node2_dir = (std::filesystem::path(temp_dir_) / "node2").string();
+    const std::string node3_dir = (std::filesystem::path(temp_dir_) / "node3").string();
+    const std::string cluster_dirs = "8108=" + node1_dir + ",8109=" + node2_dir + ",8110=" + node3_dir;
+
+    auto run_node = [&](const std::string& data_dir,
+                        uint32_t peering_port,
+                        uint32_t api_port,
+                        const std::vector<std::string>& extra_args,
+                        std::ostringstream& out,
+                        std::ostringstream& err) {
+        std::vector<std::string> args = {
+            "./typesense-server-nuraft-prototype",
+            "--data-dir=" + data_dir,
+            "--node-host=127.0.0.1",
+            "--peering-port=" + std::to_string(peering_port),
+            "--api-port=" + std::to_string(api_port),
+            "--nodes=" + nodes,
+        };
+        args.insert(args.end(), extra_args.begin(), extra_args.end());
+        std::vector<char*> argv = make_argv(args);
+        return controller.run(static_cast<int>(args.size()), argv.data(), out, err);
+    };
+
+    std::ostringstream init1_out;
+    std::ostringstream init1_err;
+    ASSERT_EQ(run_node(node1_dir, 7107, 8108, {}, init1_out, init1_err), 0);
+    EXPECT_TRUE(init1_err.str().empty());
+
+    std::ostringstream init2_out;
+    std::ostringstream init2_err;
+    ASSERT_EQ(run_node(node2_dir, 7109, 8109, {}, init2_out, init2_err), 0);
+    EXPECT_TRUE(init2_err.str().empty());
+
+    std::ostringstream init3_out;
+    std::ostringstream init3_err;
+    ASSERT_EQ(run_node(node3_dir, 7111, 8110, {}, init3_out, init3_err), 0);
+    EXPECT_TRUE(init3_err.str().empty());
+
+    std::ostringstream append_collection_out;
+    std::ostringstream append_collection_err;
+    ASSERT_EQ(run_node(node2_dir,
+                       7109,
+                       8109,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           append_request_arg({
+                               {"route_hash", collection_create_hash},
+                               {"params", nlohmann::json::object()},
+                               {"body", "{\"name\":\"books\"}"},
+                           }),
+                       },
+                       append_collection_out,
+                       append_collection_err),
+              0);
+    EXPECT_TRUE(append_collection_err.str().empty());
+    EXPECT_NE(append_collection_out.str().find("leader_url=http://127.0.0.1:8108/"), std::string::npos);
+    EXPECT_NE(append_collection_out.str().find("cluster_role=follower leader_server_id=8108"), std::string::npos);
+    EXPECT_NE(append_collection_out.str().find("forwarded_to_leader=1"), std::string::npos);
+
+    std::ostringstream append_document_out;
+    std::ostringstream append_document_err;
+    ASSERT_EQ(run_node(node3_dir,
+                       7111,
+                       8110,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           append_request_arg({
+                               {"route_hash", document_write_hash},
+                               {"params", {{"collection", "books"}, {"id", "doc-1"}}},
+                               {"body", "{\"id\":\"doc-1\",\"title\":\"Dune\"}"},
+                           }),
+                       },
+                       append_document_out,
+                       append_document_err),
+              0);
+    EXPECT_TRUE(append_document_err.str().empty());
+    EXPECT_NE(append_document_out.str().find("forwarded_to_leader=1"), std::string::npos);
+
+    std::ostringstream replicate_out;
+    std::ostringstream replicate_err;
+    ASSERT_EQ(run_node(node1_dir,
+                       7107,
+                       8108,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           "--state-machine-sink=kv",
+                           "--replicate-cluster",
+                           "--dump-cluster-status",
+                       },
+                       replicate_out,
+                       replicate_err),
+              0);
+    EXPECT_TRUE(replicate_err.str().empty());
+    EXPECT_NE(replicate_out.str().find("cluster_replicated_nodes=3"), std::string::npos);
+    EXPECT_NE(replicate_out.str().find("cluster node_server_id=8108 role=leader last_log_index=2 last_applied_index=2"), std::string::npos);
+    EXPECT_NE(replicate_out.str().find("cluster node_server_id=8109 role=follower last_log_index=2 last_applied_index=2"), std::string::npos);
+    EXPECT_NE(replicate_out.str().find("cluster node_server_id=8110 role=follower last_log_index=2 last_applied_index=2"), std::string::npos);
+
+    NuRaftKvStateMachineSink follower_sink(NuRaftStateLayout::from_data_dir(node3_dir));
+    std::string error;
+    std::vector<std::pair<std::string, std::string>> entries;
+    ASSERT_TRUE(follower_sink.read_materialized_entries(entries, error)) << error;
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].first, "state/collections/books");
+    EXPECT_EQ(entries[1].first, "state/documents/books/doc-1");
+}
+
+TEST_F(NuRaftReplicationControllerTest, CreatesAndInstallsSnapshotThroughCli) {
+    NuRaftReplicationController controller;
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const uint64_t document_write_hash = make_route_hash("POST", "collections/:collection/documents");
+    const std::string source_dir = (std::filesystem::path(temp_dir_) / "snapshot-source").string();
+    const std::string restored_dir = (std::filesystem::path(temp_dir_) / "snapshot-restored").string();
+    const std::string export_dir = (std::filesystem::path(temp_dir_) / "snapshot-export").string();
+
+    auto run_node = [&](const std::string& data_dir,
+                        uint32_t peering_port,
+                        uint32_t api_port,
+                        const std::vector<std::string>& extra_args,
+                        std::ostringstream& out,
+                        std::ostringstream& err) {
+        std::vector<std::string> args = {
+            "./typesense-server-nuraft-prototype",
+            "--data-dir=" + data_dir,
+            "--node-host=127.0.0.1",
+            "--peering-port=" + std::to_string(peering_port),
+            "--api-port=" + std::to_string(api_port),
+        };
+        args.insert(args.end(), extra_args.begin(), extra_args.end());
+        std::vector<char*> argv = make_argv(args);
+        return controller.run(static_cast<int>(args.size()), argv.data(), out, err);
+    };
+
+    std::ostringstream init_source_out;
+    std::ostringstream init_source_err;
+    ASSERT_EQ(run_node(source_dir, 7107, 8108, {}, init_source_out, init_source_err), 0);
+    EXPECT_TRUE(init_source_err.str().empty());
+
+    std::ostringstream append_collection_out;
+    std::ostringstream append_collection_err;
+    ASSERT_EQ(run_node(source_dir,
+                       7107,
+                       8108,
+                       {append_request_arg({
+                           {"route_hash", collection_create_hash},
+                           {"params", nlohmann::json::object()},
+                           {"body", "{\"name\":\"books\"}"},
+                       })},
+                       append_collection_out,
+                       append_collection_err),
+              0);
+    EXPECT_TRUE(append_collection_err.str().empty());
+
+    std::ostringstream append_document_out;
+    std::ostringstream append_document_err;
+    ASSERT_EQ(run_node(source_dir,
+                       7107,
+                       8108,
+                       {append_request_arg({
+                           {"route_hash", document_write_hash},
+                           {"params", {{"collection", "books"}, {"id", "doc-1"}}},
+                           {"body", "{\"id\":\"doc-1\",\"title\":\"Dune\"}"},
+                       })},
+                       append_document_out,
+                       append_document_err),
+              0);
+    EXPECT_TRUE(append_document_err.str().empty());
+
+    std::ostringstream snapshot_out;
+    std::ostringstream snapshot_err;
+    ASSERT_EQ(run_node(source_dir,
+                       7107,
+                       8108,
+                       {
+                           "--state-machine-sink=kv",
+                           "--apply-pending",
+                           "--create-snapshot=" + export_dir,
+                       },
+                       snapshot_out,
+                       snapshot_err),
+              0);
+    EXPECT_TRUE(snapshot_err.str().empty());
+    EXPECT_NE(snapshot_out.str().find("snapshot_id=snapshot-00000000000000000002-00000000000000000002"), std::string::npos);
+
+    std::ostringstream init_restored_out;
+    std::ostringstream init_restored_err;
+    ASSERT_EQ(run_node(restored_dir, 7207, 8208, {}, init_restored_out, init_restored_err), 0);
+    EXPECT_TRUE(init_restored_err.str().empty());
+
+    std::ostringstream restore_out;
+    std::ostringstream restore_err;
+    ASSERT_EQ(run_node(restored_dir,
+                       7207,
+                       8208,
+                       {
+                           "--state-machine-sink=kv",
+                           "--install-snapshot=" + export_dir,
+                           "--dump-materialized-state",
+                           "--dump-snapshot-descriptor",
+                       },
+                       restore_out,
+                       restore_err),
+              0);
+    EXPECT_TRUE(restore_err.str().empty());
+    EXPECT_NE(restore_out.str().find("server_id=8208"), std::string::npos);
+    EXPECT_NE(restore_out.str().find("installed_snapshot=snapshot-00000000000000000002-00000000000000000002"), std::string::npos);
+    EXPECT_NE(restore_out.str().find("materialized key=state/collections/books"), std::string::npos);
+    EXPECT_NE(restore_out.str().find("materialized key=state/documents/books/doc-1"), std::string::npos);
+    EXPECT_NE(restore_out.str().find("snapshot_last_applied_index=2"), std::string::npos);
 }

@@ -299,7 +299,9 @@ cc_library(
         "src/nuraft/nuraft_request_envelope.cpp",
         "src/nuraft/nuraft_replay_coordinator.cpp",
         "src/nuraft/nuraft_route_classifier.cpp",
+        "src/nuraft/nuraft_snapshot_coordinator.cpp",
         "src/nuraft/nuraft_state_machine_sink.cpp",
+        "src/nuraft/nuraft_static_cluster.cpp",
         "src/nuraft/nuraft_segment_log_store.cpp",
         "src/nuraft/nuraft_state_initializer.cpp",
         "src/nuraft/nuraft_state_layout.cpp",
@@ -447,6 +449,32 @@ cc_test(
     name = "nuraft-state-machine-sink-test",
     srcs = [
         "test/nuraft_state_machine_sink_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "nuraft-snapshot-coordinator-test",
+    srcs = [
+        "test/nuraft_snapshot_coordinator_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "nuraft-static-cluster-test",
+    srcs = [
+        "test/nuraft_static_cluster_test.cpp",
     ],
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
