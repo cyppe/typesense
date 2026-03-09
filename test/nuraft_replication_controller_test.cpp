@@ -136,6 +136,154 @@ TEST_F(NuRaftReplicationControllerTest, RejectsMultiNodeSelfAddressRewriteThroug
               std::string::npos);
 }
 
+TEST_F(NuRaftReplicationControllerTest, RefreshesExpandedPeerSetAndCatchesUpNewFollowerThroughCli) {
+    NuRaftReplicationController controller;
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const uint64_t document_write_hash = make_route_hash("POST", "collections/:collection/documents");
+    const std::string nodes_two = "127.0.0.1:7107:8108,127.0.0.1:7109:8109";
+    const std::string nodes_three = "127.0.0.1:7107:8108,127.0.0.1:7109:8109,127.0.0.1:7111:8110";
+    const std::string node1_dir = (std::filesystem::path(temp_dir_) / "expand-node1").string();
+    const std::string node2_dir = (std::filesystem::path(temp_dir_) / "expand-node2").string();
+    const std::string node3_dir = (std::filesystem::path(temp_dir_) / "expand-node3").string();
+    const std::string cluster_dirs = "8108=" + node1_dir + ",8109=" + node2_dir + ",8110=" + node3_dir;
+
+    auto run_node = [&](const std::string& data_dir,
+                        uint32_t peering_port,
+                        uint32_t api_port,
+                        const std::string& nodes,
+                        const std::vector<std::string>& extra_args,
+                        std::ostringstream& out,
+                        std::ostringstream& err) {
+        std::vector<std::string> args = {
+            "./typesense-server-nuraft-prototype",
+            "--data-dir=" + data_dir,
+            "--node-host=127.0.0.1",
+            "--peering-port=" + std::to_string(peering_port),
+            "--api-port=" + std::to_string(api_port),
+            "--nodes=" + nodes,
+        };
+        args.insert(args.end(), extra_args.begin(), extra_args.end());
+        std::vector<char*> argv = make_argv(args);
+        return controller.run(static_cast<int>(args.size()), argv.data(), out, err);
+    };
+
+    std::ostringstream init1_out;
+    std::ostringstream init1_err;
+    ASSERT_EQ(run_node(node1_dir, 7107, 8108, nodes_two, {}, init1_out, init1_err), 0);
+    EXPECT_TRUE(init1_err.str().empty());
+
+    std::ostringstream init2_out;
+    std::ostringstream init2_err;
+    ASSERT_EQ(run_node(node2_dir, 7109, 8109, nodes_two, {}, init2_out, init2_err), 0);
+    EXPECT_TRUE(init2_err.str().empty());
+
+    std::ostringstream append_collection_out;
+    std::ostringstream append_collection_err;
+    ASSERT_EQ(run_node(node2_dir,
+                       7109,
+                       8109,
+                       nodes_two,
+                       {
+                           "--cluster-data-dirs=8108=" + node1_dir + ",8109=" + node2_dir,
+                           "--cluster-leader-api-port=8108",
+                           append_request_arg({
+                               {"route_hash", collection_create_hash},
+                               {"params", nlohmann::json::object()},
+                               {"body", "{\"name\":\"books\"}"},
+                           }),
+                       },
+                       append_collection_out,
+                       append_collection_err),
+              0);
+    EXPECT_TRUE(append_collection_err.str().empty());
+
+    std::ostringstream replicate_two_out;
+    std::ostringstream replicate_two_err;
+    ASSERT_EQ(run_node(node1_dir,
+                       7107,
+                       8108,
+                       nodes_two,
+                       {
+                           "--cluster-data-dirs=8108=" + node1_dir + ",8109=" + node2_dir,
+                           "--cluster-leader-api-port=8108",
+                           "--state-machine-sink=kv",
+                           "--replicate-cluster",
+                       },
+                       replicate_two_out,
+                       replicate_two_err),
+              0);
+    EXPECT_TRUE(replicate_two_err.str().empty());
+
+    std::ostringstream refresh1_out;
+    std::ostringstream refresh1_err;
+    ASSERT_EQ(run_node(node1_dir, 7107, 8108, nodes_three, {}, refresh1_out, refresh1_err), 0);
+    EXPECT_TRUE(refresh1_err.str().empty());
+    EXPECT_NE(refresh1_out.str().find("peers=3"), std::string::npos);
+
+    std::ostringstream refresh2_out;
+    std::ostringstream refresh2_err;
+    ASSERT_EQ(run_node(node2_dir, 7109, 8109, nodes_three, {}, refresh2_out, refresh2_err), 0);
+    EXPECT_TRUE(refresh2_err.str().empty());
+    EXPECT_NE(refresh2_out.str().find("peers=3"), std::string::npos);
+
+    std::ostringstream init3_out;
+    std::ostringstream init3_err;
+    ASSERT_EQ(run_node(node3_dir, 7111, 8110, nodes_three, {}, init3_out, init3_err), 0);
+    EXPECT_TRUE(init3_err.str().empty());
+    EXPECT_NE(init3_out.str().find("peers=3"), std::string::npos);
+
+    std::ostringstream append_document_out;
+    std::ostringstream append_document_err;
+    ASSERT_EQ(run_node(node3_dir,
+                       7111,
+                       8110,
+                       nodes_three,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           append_request_arg({
+                               {"route_hash", document_write_hash},
+                               {"params", {{"collection", "books"}, {"id", "doc-1"}}},
+                               {"body", "{\"id\":\"doc-1\",\"title\":\"Dune\"}"},
+                           }),
+                       },
+                       append_document_out,
+                       append_document_err),
+              0);
+    EXPECT_TRUE(append_document_err.str().empty());
+    EXPECT_NE(append_document_out.str().find("target_server_id=8108"), std::string::npos);
+    EXPECT_NE(append_document_out.str().find("forwarded_to_leader=1"), std::string::npos);
+
+    std::ostringstream replicate_three_out;
+    std::ostringstream replicate_three_err;
+    ASSERT_EQ(run_node(node1_dir,
+                       7107,
+                       8108,
+                       nodes_three,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           "--state-machine-sink=kv",
+                           "--replicate-cluster",
+                           "--dump-cluster-status",
+                       },
+                       replicate_three_out,
+                       replicate_three_err),
+              0);
+    EXPECT_TRUE(replicate_three_err.str().empty());
+    EXPECT_NE(replicate_three_out.str().find("cluster_replicated_nodes=3"), std::string::npos);
+    EXPECT_NE(replicate_three_out.str().find("cluster node_server_id=8110 role=follower last_log_index=2 last_applied_index=2"),
+              std::string::npos);
+
+    NuRaftKvStateMachineSink new_follower_sink(NuRaftStateLayout::from_data_dir(node3_dir));
+    std::string error;
+    std::vector<std::pair<std::string, std::string>> entries;
+    ASSERT_TRUE(new_follower_sink.read_materialized_entries(entries, error)) << error;
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].first, "state/collections/books");
+    EXPECT_EQ(entries[1].first, "state/documents/books/doc-1");
+}
+
 TEST_F(NuRaftReplicationControllerTest, ReportsMissingRequiredDataDir) {
     NuRaftReplicationController controller;
     std::vector<std::string> args = {
