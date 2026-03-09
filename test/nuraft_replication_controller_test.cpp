@@ -523,6 +523,224 @@ TEST_F(NuRaftReplicationControllerTest, SimulatesThreeNodeCatchUpThroughStaticCl
     EXPECT_EQ(entries[1].first, "state/documents/books/doc-1");
 }
 
+TEST_F(NuRaftReplicationControllerTest, ForwardsChunkedImportsAcrossLeaderSwitchThroughStaticClusterOptions) {
+    NuRaftReplicationController controller;
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const uint64_t document_import_hash = make_route_hash("POST", "collections/:collection/documents/import");
+    const std::string nodes = "127.0.0.1:7107:8108,127.0.0.1:7109:8109,127.0.0.1:7111:8110";
+    const std::string node1_dir = (std::filesystem::path(temp_dir_) / "import-node1").string();
+    const std::string node2_dir = (std::filesystem::path(temp_dir_) / "import-node2").string();
+    const std::string node3_dir = (std::filesystem::path(temp_dir_) / "import-node3").string();
+    const std::string cluster_dirs = "8108=" + node1_dir + ",8109=" + node2_dir + ",8110=" + node3_dir;
+
+    auto run_node = [&](const std::string& data_dir,
+                        uint32_t peering_port,
+                        uint32_t api_port,
+                        const std::vector<std::string>& extra_args,
+                        std::ostringstream& out,
+                        std::ostringstream& err) {
+        std::vector<std::string> args = {
+            "./typesense-server-nuraft-prototype",
+            "--data-dir=" + data_dir,
+            "--node-host=127.0.0.1",
+            "--peering-port=" + std::to_string(peering_port),
+            "--api-port=" + std::to_string(api_port),
+            "--nodes=" + nodes,
+        };
+        args.insert(args.end(), extra_args.begin(), extra_args.end());
+        std::vector<char*> argv = make_argv(args);
+        return controller.run(static_cast<int>(args.size()), argv.data(), out, err);
+    };
+
+    std::ostringstream init1_out;
+    std::ostringstream init1_err;
+    ASSERT_EQ(run_node(node1_dir, 7107, 8108, {}, init1_out, init1_err), 0);
+    EXPECT_TRUE(init1_err.str().empty());
+
+    std::ostringstream init2_out;
+    std::ostringstream init2_err;
+    ASSERT_EQ(run_node(node2_dir, 7109, 8109, {}, init2_out, init2_err), 0);
+    EXPECT_TRUE(init2_err.str().empty());
+
+    std::ostringstream init3_out;
+    std::ostringstream init3_err;
+    ASSERT_EQ(run_node(node3_dir, 7111, 8110, {}, init3_out, init3_err), 0);
+    EXPECT_TRUE(init3_err.str().empty());
+
+    std::ostringstream append_collection_out;
+    std::ostringstream append_collection_err;
+    ASSERT_EQ(run_node(node2_dir,
+                       7109,
+                       8109,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           append_request_arg({
+                               {"route_hash", collection_create_hash},
+                               {"params", nlohmann::json::object()},
+                               {"body", "{\"name\":\"books\"}"},
+                           }),
+                       },
+                       append_collection_out,
+                       append_collection_err),
+              0);
+    EXPECT_TRUE(append_collection_err.str().empty());
+
+    std::ostringstream replicate_collection_out;
+    std::ostringstream replicate_collection_err;
+    ASSERT_EQ(run_node(node1_dir,
+                       7107,
+                       8108,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           "--state-machine-sink=kv",
+                           "--replicate-cluster",
+                       },
+                       replicate_collection_out,
+                       replicate_collection_err),
+              0);
+    EXPECT_TRUE(replicate_collection_err.str().empty());
+
+    std::ostringstream import_chunk_one_out;
+    std::ostringstream import_chunk_one_err;
+    ASSERT_EQ(run_node(node3_dir,
+                       7111,
+                       8110,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           append_request_arg({
+                               {"route_hash", document_import_hash},
+                               {"params", {{"collection", "books"}}},
+                               {"first_chunk_aggregate", true},
+                               {"last_chunk_aggregate", false},
+                               {"start_ts", 42},
+                               {"body", "{\"id\":\"doc-1\",\"title\":\"Dune\"}\n{\"id\":\"doc"},
+                           }),
+                       },
+                       import_chunk_one_out,
+                       import_chunk_one_err),
+              0);
+    EXPECT_TRUE(import_chunk_one_err.str().empty());
+    EXPECT_NE(import_chunk_one_out.str().find("forwarded_to_leader=1"), std::string::npos);
+
+    std::ostringstream import_chunk_two_out;
+    std::ostringstream import_chunk_two_err;
+    ASSERT_EQ(run_node(node3_dir,
+                       7111,
+                       8110,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           append_request_arg({
+                               {"route_hash", document_import_hash},
+                               {"params", {{"collection", "books"}}},
+                               {"first_chunk_aggregate", false},
+                               {"last_chunk_aggregate", true},
+                               {"start_ts", 42},
+                               {"body", "-2\",\"title\":\"Foundation\"}\n"},
+                           }),
+                       },
+                       import_chunk_two_out,
+                       import_chunk_two_err),
+              0);
+    EXPECT_TRUE(import_chunk_two_err.str().empty());
+    EXPECT_NE(import_chunk_two_out.str().find("forwarded_to_leader=1"), std::string::npos);
+
+    std::ostringstream replicate_import_one_out;
+    std::ostringstream replicate_import_one_err;
+    ASSERT_EQ(run_node(node1_dir,
+                       7107,
+                       8108,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           "--state-machine-sink=kv",
+                           "--replicate-cluster",
+                       },
+                       replicate_import_one_out,
+                       replicate_import_one_err),
+              0);
+    EXPECT_TRUE(replicate_import_one_err.str().empty());
+
+    std::ostringstream import_two_chunk_one_out;
+    std::ostringstream import_two_chunk_one_err;
+    ASSERT_EQ(run_node(node1_dir,
+                       7107,
+                       8108,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8109",
+                           append_request_arg({
+                               {"route_hash", document_import_hash},
+                               {"params", {{"collection", "books"}}},
+                               {"first_chunk_aggregate", true},
+                               {"last_chunk_aggregate", false},
+                               {"start_ts", 84},
+                               {"body", "{\"id\":\"doc-3\",\"title\":\"Hyperion\"}\n{\"id\":\"doc"},
+                           }),
+                       },
+                       import_two_chunk_one_out,
+                       import_two_chunk_one_err),
+              0);
+    EXPECT_TRUE(import_two_chunk_one_err.str().empty());
+    EXPECT_NE(import_two_chunk_one_out.str().find("target_server_id=8109"), std::string::npos);
+    EXPECT_NE(import_two_chunk_one_out.str().find("forwarded_to_leader=1"), std::string::npos);
+
+    std::ostringstream import_two_chunk_two_out;
+    std::ostringstream import_two_chunk_two_err;
+    ASSERT_EQ(run_node(node1_dir,
+                       7107,
+                       8108,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8109",
+                           append_request_arg({
+                               {"route_hash", document_import_hash},
+                               {"params", {{"collection", "books"}}},
+                               {"first_chunk_aggregate", false},
+                               {"last_chunk_aggregate", true},
+                               {"start_ts", 84},
+                               {"body", "-4\",\"title\":\"Snow Crash\"}\n"},
+                           }),
+                       },
+                       import_two_chunk_two_out,
+                       import_two_chunk_two_err),
+              0);
+    EXPECT_TRUE(import_two_chunk_two_err.str().empty());
+    EXPECT_NE(import_two_chunk_two_out.str().find("target_server_id=8109"), std::string::npos);
+
+    std::ostringstream replicate_import_two_out;
+    std::ostringstream replicate_import_two_err;
+    ASSERT_EQ(run_node(node2_dir,
+                       7109,
+                       8109,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8109",
+                           "--state-machine-sink=kv",
+                           "--replicate-cluster",
+                       },
+                       replicate_import_two_out,
+                       replicate_import_two_err),
+              0);
+    EXPECT_TRUE(replicate_import_two_err.str().empty());
+
+    NuRaftKvStateMachineSink follower_sink(NuRaftStateLayout::from_data_dir(node3_dir));
+    std::string error;
+    std::vector<std::pair<std::string, std::string>> entries;
+    ASSERT_TRUE(follower_sink.read_materialized_entries(entries, error)) << error;
+    ASSERT_EQ(entries.size(), 7u);
+    EXPECT_EQ(entries[0].first, "state/collections/books");
+    EXPECT_EQ(entries[1].first, "state/documents/books/doc-1");
+    EXPECT_EQ(entries[2].first, "state/documents/books/doc-2");
+    EXPECT_EQ(entries[3].first, "state/documents/books/doc-3");
+    EXPECT_EQ(entries[4].first, "state/documents/books/doc-4");
+    EXPECT_EQ(entries[5].first, "state/imports/books/00000000000000000042");
+    EXPECT_EQ(entries[6].first, "state/imports/books/00000000000000000084");
+}
+
 TEST_F(NuRaftReplicationControllerTest, CreatesAndInstallsSnapshotThroughCli) {
     NuRaftReplicationController controller;
     const uint64_t collection_create_hash = make_route_hash("POST", "collections");
