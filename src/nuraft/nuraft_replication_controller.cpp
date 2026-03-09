@@ -259,6 +259,7 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
 
             out << "replay index=" << applied_request.index
                 << " route_hash=" << applied_request.route_hash
+                << " route_kind=" << NuRaftRouteClassifier::kind_name(applied_request.route_kind)
                 << " body=" << applied_request.body << "\n";
         }
     }
@@ -279,6 +280,7 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
         for (const auto& request : applied_requests) {
             out << "applied index=" << request.index
                 << " route_hash=" << request.route_hash
+                << " route_kind=" << NuRaftRouteClassifier::kind_name(request.route_kind)
                 << " body_bytes=" << request.body.size() << "\n";
         }
     }

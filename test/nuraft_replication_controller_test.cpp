@@ -132,6 +132,7 @@ TEST_F(NuRaftReplicationControllerTest, AppendsAndReplaysRequestJournalThroughCl
     EXPECT_TRUE(replay_err.str().empty());
     EXPECT_NE(replay_out.str().find("replay_count=1"), std::string::npos);
     EXPECT_NE(replay_out.str().find("route_hash=0"), std::string::npos);
+    EXPECT_NE(replay_out.str().find("route_kind=unknown"), std::string::npos);
     EXPECT_NE(replay_out.str().find("body={\"route\":\"/collections\",\"method\":\"POST\"}"), std::string::npos);
 }
 
@@ -160,6 +161,7 @@ TEST_F(NuRaftReplicationControllerTest, AppliesPendingEntriesThroughCli) {
     EXPECT_TRUE(apply_err.str().empty());
     EXPECT_NE(apply_out.str().find("applied_count=1"), std::string::npos);
     EXPECT_NE(apply_out.str().find("route_hash="), std::string::npos);
+    EXPECT_NE(apply_out.str().find("route_kind=unknown"), std::string::npos);
     EXPECT_NE(apply_out.str().find("body_bytes="), std::string::npos);
 
     std::ostringstream second_apply_out;

@@ -35,6 +35,7 @@ TEST_F(NuRaftAppliedRequestStoreTest, DecodesLogEntryIntoStructuredRequest) {
     ASSERT_TRUE(NuRaftAppliedRequest::from_log_entry(entry, applied_request, error)) << error;
     EXPECT_EQ(applied_request.index, 7u);
     EXPECT_EQ(applied_request.route_hash, 1234u);
+    EXPECT_EQ(applied_request.route_kind, NuRaftRouteKind::kUnknown);
     EXPECT_EQ(applied_request.params.at("collection"), "books");
     EXPECT_EQ(applied_request.metadata, "meta");
     EXPECT_EQ(applied_request.body, "{\"id\":\"1\"}");
@@ -49,6 +50,7 @@ TEST_F(NuRaftAppliedRequestStoreTest, AppendsAndReadsStructuredRequests) {
     NuRaftAppliedRequest expected;
     expected.index = 1;
     expected.route_hash = 1234;
+    expected.route_kind = NuRaftRouteKind::kUnknown;
     expected.params = {{"collection", "books"}};
     expected.body = "{\"id\":\"1\"}";
     expected.metadata = "meta";

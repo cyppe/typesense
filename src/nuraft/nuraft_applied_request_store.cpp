@@ -9,6 +9,7 @@
 bool NuRaftAppliedRequest::operator==(const NuRaftAppliedRequest& other) const {
     return index == other.index &&
            route_hash == other.route_hash &&
+           route_kind == other.route_kind &&
            params == other.params &&
            metadata == other.metadata &&
            body == other.body &&
@@ -33,6 +34,7 @@ bool NuRaftAppliedRequest::from_log_entry(const NuRaftLogEntry& entry,
 
         applied_request.index = entry.index;
         applied_request.route_hash = request["route_hash"].get<uint64_t>();
+        applied_request.route_kind = NuRaftRouteClassifier::classify(applied_request.route_hash);
         applied_request.params = request["params"].get<std::map<std::string, std::string>>();
         applied_request.metadata = request.contains("metadata") ? request["metadata"].get<std::string>() : "";
         applied_request.body = request["body"].get<std::string>();
@@ -58,6 +60,7 @@ nlohmann::json encode_request(const NuRaftAppliedRequest& request) {
     return {
         {"index", request.index},
         {"route_hash", request.route_hash},
+        {"route_kind", NuRaftRouteClassifier::kind_name(request.route_kind)},
         {"params", request.params},
         {"metadata", request.metadata},
         {"body", request.body},
@@ -75,6 +78,7 @@ bool decode_request(const nlohmann::json& encoded,
     if (!encoded.is_object() ||
         !encoded.contains("index") || !encoded["index"].is_number_unsigned() ||
         !encoded.contains("route_hash") || !encoded["route_hash"].is_number_unsigned() ||
+        !encoded.contains("route_kind") || !encoded["route_kind"].is_string() ||
         !encoded.contains("params") || !encoded["params"].is_object() ||
         !encoded.contains("metadata") || !encoded["metadata"].is_string() ||
         !encoded.contains("body") || !encoded["body"].is_string() ||
@@ -89,6 +93,7 @@ bool decode_request(const nlohmann::json& encoded,
 
     request.index = encoded["index"].get<uint64_t>();
     request.route_hash = encoded["route_hash"].get<uint64_t>();
+    request.route_kind = NuRaftRouteClassifier::classify(request.route_hash);
     request.params = encoded["params"].get<std::map<std::string, std::string>>();
     request.metadata = encoded["metadata"].get<std::string>();
     request.body = encoded["body"].get<std::string>();

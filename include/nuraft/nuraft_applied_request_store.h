@@ -5,11 +5,13 @@
 #include <string>
 #include <vector>
 
+#include "nuraft_route_classifier.h"
 #include "nuraft_segment_log_store.h"
 
 struct NuRaftAppliedRequest {
     uint64_t index = 0;
     uint64_t route_hash = 0;
+    NuRaftRouteKind route_kind = NuRaftRouteKind::kUnknown;
     std::map<std::string, std::string> params;
     std::string metadata;
     std::string body;
