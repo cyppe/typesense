@@ -291,6 +291,7 @@ cc_library(
         "src/nuraft/nuraft_bootstrap_builder.cpp",
         "src/nuraft/nuraft_replication_controller.cpp",
         "src/nuraft/nuraft_file_store.cpp",
+        "src/nuraft/nuraft_applied_request_store.cpp",
         "src/nuraft/nuraft_metadata_store.cpp",
         "src/nuraft/nuraft_peer_resolver.cpp",
         "src/nuraft/nuraft_prototype_state_machine.cpp",
@@ -402,6 +403,19 @@ cc_test(
     name = "nuraft-prototype-state-machine-test",
     srcs = [
         "test/nuraft_prototype_state_machine_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "nuraft-applied-request-store-test",
+    srcs = [
+        "test/nuraft_applied_request_store_test.cpp",
     ],
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [

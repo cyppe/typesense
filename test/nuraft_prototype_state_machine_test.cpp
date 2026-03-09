@@ -39,11 +39,13 @@ TEST_F(NuRaftPrototypeStateMachineTest, AppliesPendingEntriesOnlyOnce) {
     ASSERT_TRUE(state_machine.apply_pending(applied_entries, error)) << error;
     ASSERT_EQ(applied_entries.size(), 2u);
 
-    std::vector<std::string> applied_requests;
+    std::vector<NuRaftAppliedRequest> applied_requests;
     ASSERT_TRUE(state_machine.read_applied_requests(applied_requests, error)) << error;
     ASSERT_EQ(applied_requests.size(), 2u);
-    EXPECT_EQ(applied_requests[0], "{\"id\":1}");
-    EXPECT_EQ(applied_requests[1], "{\"id\":2}");
+    EXPECT_EQ(applied_requests[0].body, "{\"id\":1}");
+    EXPECT_EQ(applied_requests[1].body, "{\"id\":2}");
+    EXPECT_EQ(applied_requests[0].index, 1u);
+    EXPECT_EQ(applied_requests[1].index, 2u);
 
     ASSERT_TRUE(state_machine.apply_pending(applied_entries, error)) << error;
     EXPECT_TRUE(applied_entries.empty());
@@ -74,8 +76,8 @@ TEST_F(NuRaftPrototypeStateMachineTest, AppliesOnlyNewEntriesAfterRestart) {
     ASSERT_EQ(applied_entries.size(), 1u);
     EXPECT_EQ(applied_entries[0].index, 2u);
 
-    std::vector<std::string> applied_requests;
+    std::vector<NuRaftAppliedRequest> applied_requests;
     ASSERT_TRUE(restarted_state_machine.read_applied_requests(applied_requests, error)) << error;
     ASSERT_EQ(applied_requests.size(), 2u);
-    EXPECT_EQ(applied_requests[1], "{\"id\":2}");
+    EXPECT_EQ(applied_requests[1].body, "{\"id\":2}");
 }

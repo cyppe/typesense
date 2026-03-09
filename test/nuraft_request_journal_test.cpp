@@ -4,6 +4,7 @@
 #include <string>
 #include <unistd.h>
 
+#include "nuraft/nuraft_applied_request_store.h"
 #include "nuraft/nuraft_request_journal.h"
 
 class NuRaftRequestJournalTest : public ::testing::Test {
@@ -35,7 +36,11 @@ TEST_F(NuRaftRequestJournalTest, AppendsAndReplaysRequestJson) {
     ASSERT_TRUE(journal.replay(entries, error)) << error;
     ASSERT_EQ(entries.size(), 1u);
     EXPECT_EQ(entries[0].index, 1u);
-    EXPECT_EQ(entries[0].envelope.request_json(), "{\"route\":\"/collections\"}");
+
+    NuRaftAppliedRequest applied_request;
+    ASSERT_TRUE(NuRaftAppliedRequest::from_log_entry(entries[0], applied_request, error)) << error;
+    EXPECT_EQ(applied_request.body, "{\"route\":\"/collections\"}");
+    EXPECT_EQ(applied_request.route_hash, 0u);
 }
 
 TEST_F(NuRaftRequestJournalTest, RejectsEmptyRequestJson) {

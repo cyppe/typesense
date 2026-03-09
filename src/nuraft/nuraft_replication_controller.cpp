@@ -208,8 +208,15 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
 
         out << "replay_count=" << entries.size() << "\n";
         for (const auto& entry : entries) {
-            out << "replay index=" << entry.index
-                << " request_json=" << entry.envelope.request_json() << "\n";
+            NuRaftAppliedRequest applied_request;
+            if (!NuRaftAppliedRequest::from_log_entry(entry, applied_request, error)) {
+                err << "Failed to decode replayed prototype request: " << error << "\n";
+                return 1;
+            }
+
+            out << "replay index=" << applied_request.index
+                << " route_hash=" << applied_request.route_hash
+                << " body=" << applied_request.body << "\n";
         }
     }
 
@@ -221,9 +228,15 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
         }
 
         out << "applied_count=" << applied_entries.size() << "\n";
-        for (const auto& entry : applied_entries) {
-            out << "applied index=" << entry.index
-                << " request_json=" << entry.envelope.request_json() << "\n";
+        std::vector<NuRaftAppliedRequest> applied_requests;
+        if (!state_machine.read_applied_requests(applied_requests, error)) {
+            err << "Failed to read applied prototype requests: " << error << "\n";
+            return 1;
+        }
+        for (const auto& request : applied_requests) {
+            out << "applied index=" << request.index
+                << " route_hash=" << request.route_hash
+                << " body_bytes=" << request.body.size() << "\n";
         }
     }
 

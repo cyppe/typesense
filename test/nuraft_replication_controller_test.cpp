@@ -130,7 +130,8 @@ TEST_F(NuRaftReplicationControllerTest, AppendsAndReplaysRequestJournalThroughCl
     ASSERT_EQ(controller.run(static_cast<int>(replay_args.size()), replay_argv.data(), replay_out, replay_err), 0);
     EXPECT_TRUE(replay_err.str().empty());
     EXPECT_NE(replay_out.str().find("replay_count=1"), std::string::npos);
-    EXPECT_NE(replay_out.str().find("request_json={\"route\":\"/collections\",\"method\":\"POST\"}"), std::string::npos);
+    EXPECT_NE(replay_out.str().find("route_hash=0"), std::string::npos);
+    EXPECT_NE(replay_out.str().find("body={\"route\":\"/collections\",\"method\":\"POST\"}"), std::string::npos);
 }
 
 TEST_F(NuRaftReplicationControllerTest, AppliesPendingEntriesThroughCli) {
@@ -157,6 +158,8 @@ TEST_F(NuRaftReplicationControllerTest, AppliesPendingEntriesThroughCli) {
     ASSERT_EQ(controller.run(static_cast<int>(apply_args.size()), apply_argv.data(), apply_out, apply_err), 0);
     EXPECT_TRUE(apply_err.str().empty());
     EXPECT_NE(apply_out.str().find("applied_count=1"), std::string::npos);
+    EXPECT_NE(apply_out.str().find("route_hash="), std::string::npos);
+    EXPECT_NE(apply_out.str().find("body_bytes="), std::string::npos);
 
     std::ostringstream second_apply_out;
     std::ostringstream second_apply_err;
