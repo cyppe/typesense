@@ -15,6 +15,11 @@ FORK_BINARY_OVERRIDE=""
 FORK_LABEL_OVERRIDE=""
 BASELINE_BINARY_OVERRIDE=""
 BASELINE_LABEL_OVERRIDE=""
+DOCS="200"
+POST_SNAPSHOT_DOCS="50"
+SNAPSHOT_ROUNDS="3"
+OUTAGE_SLEEP_SECONDS="22"
+REPEATS="2"
 
 usage() {
 	cat <<'EOF'
@@ -30,6 +35,7 @@ Profiles:
   standard      default mixed import/search comparison
   write-stress  heavier concurrent read/write validation
   full          longer run with preserved history support
+  raft-recovery compare the live braft recovery path against the NuRaft prototype
 
 Options:
   --build                  Build the fork binary first via bazel_in_docker.sh
@@ -42,7 +48,12 @@ Options:
   --port PORT              Base HTTP port for Typesense (default: 12108)
   --work-dir DIR           Working directory for binaries and data
   --clean                  Remove work dir and InfluxDB data before running
-  --profile NAME           quick, standard, write-stress, full (default: standard)
+  --profile NAME           quick, standard, write-stress, full, raft-recovery (default: standard)
+  --docs COUNT             Initial writes before follower outage for raft-recovery (default: 200)
+  --post-snapshot-docs N   Writes per outage round for raft-recovery (default: 50)
+  --snapshot-rounds N      Outage rounds / snapshot attempts for raft-recovery (default: 3)
+  --outage-sleep SEC       Seconds to sleep between raft-recovery rounds (default: 22)
+  --repeats N              Number of raft-recovery repeats (default: 2)
   --no-flush               Keep existing InfluxDB data for trend analysis
   --server-args ...        Extra args passed through to typesense-server
   -h, --help               Show this help
@@ -54,6 +65,7 @@ Environment:
 Examples:
   scripts/benchmark_vs_upstream.sh --build --profile standard
   scripts/benchmark_vs_upstream.sh --profile write-stress --server-args --max-indexing-concurrency=16
+  scripts/benchmark_vs_upstream.sh --build --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3
   scripts/benchmark_vs_upstream.sh --baseline-binary ./base/typesense-server --baseline-label abc123 \
     --fork-binary ./head/typesense-server --fork-label def456 --duration 1m --no-flush
 EOF
@@ -109,9 +121,29 @@ while [[ $# -gt 0 ]]; do
 		PROFILE="$2"
 		shift 2
 		;;
+	--docs)
+		DOCS="$2"
+		shift 2
+		;;
+	--post-snapshot-docs)
+		POST_SNAPSHOT_DOCS="$2"
+		shift 2
+		;;
+	--snapshot-rounds)
+		SNAPSHOT_ROUNDS="$2"
+		shift 2
+		;;
+	--outage-sleep)
+		OUTAGE_SLEEP_SECONDS="$2"
+		shift 2
+		;;
+	--repeats)
+		REPEATS="$2"
+		shift 2
+		;;
 	--server-args)
 		shift
-		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "-h" && "$1" != "--help" ]]; do
+		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "--docs" && "$1" != "--post-snapshot-docs" && "$1" != "--snapshot-rounds" && "$1" != "--outage-sleep" && "$1" != "--repeats" && "$1" != "-h" && "$1" != "--help" ]]; do
 			SERVER_ARGS+=("$1")
 			shift
 		done
@@ -146,8 +178,11 @@ full)
 		DURATION="60s"
 	fi
 	;;
+raft-recovery)
+	:
+	;;
 *)
-	echo "Unknown profile: ${PROFILE}. Use: quick, standard, write-stress, full" >&2
+	echo "Unknown profile: ${PROFILE}. Use: quick, standard, write-stress, full, raft-recovery" >&2
 	exit 1
 	;;
 esac
@@ -189,8 +224,80 @@ fi
 mkdir -p "${WORK_DIR}"
 
 if [[ "${BUILD}" == "true" ]]; then
-	echo "=== Building fork binary ==="
-	"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server
+	if [[ "${PROFILE}" == "raft-recovery" ]]; then
+		echo "=== Building raft recovery targets ==="
+		"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server //:nuraft-prototype-benchmark
+	else
+		echo "=== Building fork binary ==="
+		"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server
+	fi
+fi
+
+if [[ "${PROFILE}" == "raft-recovery" ]]; then
+	echo "=== Preparing typesense runtime bundle ==="
+	RUNTIME_BUNDLE_DIR="${WORK_DIR}/raft-recovery-runtime-bundle"
+	bash "${REPO_DIR}/api_tests/scripts/prepare_runtime_bundle.sh" "${RUNTIME_BUNDLE_DIR}"
+
+	RESULT_PATH="${WORK_DIR}/raft-recovery-summary.json"
+	COMPARE_CMD=(
+		python3
+		"${REPO_DIR}/benchmark/raft_recovery_compare.py"
+		--repo-root "${REPO_DIR}"
+		--work-dir "${WORK_DIR}"
+		--runtime-bundle "${RUNTIME_BUNDLE_DIR}"
+		--docs "${DOCS}"
+		--post-snapshot-docs "${POST_SNAPSHOT_DOCS}"
+		--snapshot-rounds "${SNAPSHOT_ROUNDS}"
+		--outage-sleep-seconds "${OUTAGE_SLEEP_SECONDS}"
+		--repeats "${REPEATS}"
+		--output "${RESULT_PATH}"
+	)
+
+	for arg in "${SERVER_ARGS[@]}"; do
+		COMPARE_CMD+=(--server-arg "$arg")
+	done
+
+	echo "=== Running raft recovery comparison ==="
+	printf 'Command:'
+	printf ' %q' "${COMPARE_CMD[@]}"
+	echo
+	"${COMPARE_CMD[@]}"
+
+	echo ""
+	echo "========================================="
+	echo "  Raft Recovery Summary"
+	echo "========================================="
+	python3 - "${RESULT_PATH}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+summary = data["summary"]
+nuraft = summary["nuraft"]
+braft = summary["braft"]
+
+print(f"Run root: {data['run_root']}")
+print(f"JSON:     {sys.argv[1]}")
+print("")
+print("| Measure | NuRaft | braft |")
+print("|---|---:|---:|")
+print(f"| Recovery time | {nuraft['leader_only_recovery_ms']['mean']:.2f} ms (leader-only) | {braft['recovery_ms']['mean']:.2f} ms |")
+print(f"| Policy penalty | {nuraft['delta_recovery_ms']['mean']:.2f} ms slower when snapshots require healthy peers | n/a |")
+print(f"| Replay after rejoin | {nuraft['delta_replayed_entries']['mean']:.2f} extra entries when snapshots require healthy peers | {braft['replay_gap_on_rejoin']['mean']:.2f} entries |")
+print(f"| Snapshot freshness gap | 0.00 entries after latest leader-only install | {braft['snapshot_gap_to_final']['mean']:.2f} entries |")
+print(f"| Timed snapshots during outage | leader-only policy keeps creating them | {braft['leader_timed_snapshot_success_count']['mean']:.2f} success(es) per run |")
+print("")
+print(f"NuRaft leader-only recovery: {nuraft['leader_only_recovery_ms']['mean']:.2f} ms")
+print(f"NuRaft require-healthy recovery: {nuraft['require_healthy_recovery_ms']['mean']:.2f} ms")
+print(f"NuRaft extra replay when policy is wrong: {nuraft['delta_replayed_entries']['mean']:.2f} entries")
+print(f"braft recovery: {braft['recovery_ms']['mean']:.2f} ms")
+print(f"braft replay gap on follower restart: {braft['replay_gap_on_rejoin']['mean']:.2f} entries")
+print(f"braft timed snapshot successes while follower down: {braft['leader_timed_snapshot_success_count']['mean']:.2f}")
+print(f"braft follower snapshot installs observed: {braft['follower_install_snapshot_seen_runs']} / {braft['run_count']}")
+PY
+	exit 0
 fi
 
 resolve_fork_binary() {

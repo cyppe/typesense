@@ -7,6 +7,38 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 14: Raft Recovery Comparison (`braft` runtime vs NuRaft prototype, 2026-03-09)
+
+**Commit:** `HEAD` at run time  
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-recovery`  
+**Scenario:** `200` writes before follower outage, `3 x 50` writes while one follower is down, `22s` sleeps between outage rounds, `2` repeats.  
+**Artifacts:** `~/.cache/typesense/benchmark/raft-recovery-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-recovery-runs/20260309-200011`
+
+### Aggregated Results
+
+| Measure | NuRaft prototype | `braft` runtime |
+|---|---:|---:|
+| Recovery time after latest snapshot / restart | `0.52 ms` | `3261.10 ms` |
+| Extra recovery penalty from blocking snapshots on unhealthy peers | `+10.94 ms` | n/a |
+| Replay after rejoin | `0` entries with leader-only snapshots, `150` with `require-healthy-peers` | `152.5` entries |
+| Snapshot freshness gap at end of outage | `0` entries after leader-only install | `2` entries |
+| Timed snapshots created during outage | `3` per run in leader-only policy | `1` per run |
+| Follower snapshot install observed on rejoin | `yes` (prototype install path) | `no` in `2/2` runs |
+
+### Interpretation
+
+- The current fork's `braft` path is fixed for the unhealthy-peer timed-snapshot deadlock class: the leader did create timed snapshots while a follower was down, and the snapshot stayed fresh to within `2` entries of the final committed index.
+- That fix does **not** make `braft` look like the NuRaft prototype on recovery behavior. In both runtime repeats, the follower still restarted around log index `202` and replayed roughly the whole outage window (`152-153` entries) instead of obviously taking a snapshot-install path.
+- The NuRaft prototype remains materially stronger on this narrow disaster-recovery shape when the leader is allowed to keep snapshotting locally. If NuRaft blocks snapshots on peer health, it immediately loses that advantage and also replays the whole outage window.
+
+### Decision
+
+- Do **not** remove `braft` yet. The live server/runtime path is still only implemented there.
+- Do continue the NuRaft feasibility sprint. Recovery behavior is now strong enough to justify the remaining Story E work.
+- The next deciding data is not more outage-policy evidence. It is steady-state CPU/memory plus broader runtime-parity and contention measurements.
+
+---
+
 ## Run 11: `write-stress` Baseline Repeats (2026-03-05)
 
 **Commit:** `fe451638`  

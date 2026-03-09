@@ -117,3 +117,24 @@ scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-
 ```
 
 This target measures the isolated prototype's append/apply path, snapshot-install/recovery path, repeated timed-snapshot pressure during follower outage, and direct comparison between leader-only and `require-healthy-peers` timed-snapshot policy. It is intentionally separate from `scripts/benchmark_vs_upstream.sh`, which still benchmarks the normal HTTP server binaries.
+
+## Raft Recovery Comparison
+
+The root wrapper now also owns the canonical recovery comparison between the live `braft` runtime path and the isolated NuRaft prototype:
+
+```bash
+scripts/benchmark_vs_upstream.sh --build --profile raft-recovery
+```
+
+This profile does not benchmark upstream releases. Instead it:
+- stages a runtime bundle for the current fork's `typesense-server`,
+- runs a real 3-node follower-outage/rejoin scenario against `braft`,
+- runs `//:nuraft-prototype-benchmark --mode=snapshot-policy-compare` with the same write/outage counts,
+- prints a simple side-by-side summary, and
+- writes the full JSON payload to `~/.cache/typesense/benchmark/raft-recovery-summary.json`.
+
+Useful knobs:
+
+```bash
+scripts/benchmark_vs_upstream.sh --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3 --repeats 2
+```

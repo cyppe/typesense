@@ -118,3 +118,19 @@ scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-
 ```
 
 The binary emits JSON for append/apply throughput, snapshot-recovery timing, repeated timed-snapshot pressure while a follower stays unhealthy, and direct leader-only vs `require-healthy-peers` outage comparison, so Story E can measure the prototype without pretending the normal HTTP benchmark lane already covers NuRaft.
+
+## 10) Raft recovery comparison
+
+Use this when you need one canonical command that compares the current fork's live `braft` runtime recovery path against the isolated NuRaft prototype on the same follower-outage shape.
+
+```bash
+scripts/benchmark_vs_upstream.sh --build --profile raft-recovery
+```
+
+Optional knobs:
+
+```bash
+scripts/benchmark_vs_upstream.sh --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3 --repeats 2
+```
+
+This mode stages a runtime bundle for `//:typesense-server`, runs a real 3-node follower-outage/rejoin scenario on the current `braft` path, runs the NuRaft `snapshot-policy-compare` benchmark with the same write/outage counts, and writes a JSON summary to `~/.cache/typesense/benchmark/raft-recovery-summary.json`.
