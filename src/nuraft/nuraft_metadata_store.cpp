@@ -20,6 +20,11 @@ bool NuRaftBootstrapConfig::operator==(const NuRaftBootstrapConfig& other) const
            api_uses_ssl == other.api_uses_ssl;
 }
 
+bool NuRaftReplayProgress::operator==(const NuRaftReplayProgress& other) const {
+    return format_version == other.format_version &&
+           last_applied_index == other.last_applied_index;
+}
+
 namespace {
 
 nlohmann::json encode_peer(const NuRaftPeerAddress& peer) {
@@ -207,6 +212,40 @@ bool NuRaftMetadataStore::read_bootstrap_config(NuRaftBootstrapConfig& config, s
     }
 
     config = std::move(loaded);
+    error.clear();
+    return true;
+}
+
+bool NuRaftMetadataStore::write_replay_progress(const NuRaftReplayProgress& progress, std::string& error) const {
+    nlohmann::json encoded = {
+        {"format_version", progress.format_version},
+        {"last_applied_index", progress.last_applied_index},
+    };
+    return NuRaftFileStore::write_file_atomically(layout_.replay_progress_file, encoded.dump(), error);
+}
+
+bool NuRaftMetadataStore::read_replay_progress(NuRaftReplayProgress& progress, std::string& error) const {
+    std::string encoded;
+    if (!NuRaftFileStore::read_file(layout_.replay_progress_file, encoded, error)) {
+        return false;
+    }
+
+    nlohmann::json parsed;
+    try {
+        parsed = nlohmann::json::parse(encoded);
+    } catch (const std::exception& e) {
+        error = std::string("Failed to parse NuRaft replay progress metadata: ") + e.what();
+        return false;
+    }
+
+    if (!parsed.contains("format_version") || !parsed["format_version"].is_number_unsigned() ||
+        !parsed.contains("last_applied_index") || !parsed["last_applied_index"].is_number_unsigned()) {
+        error = "NuRaft replay progress metadata is missing required fields";
+        return false;
+    }
+
+    progress.format_version = parsed["format_version"].get<uint32_t>();
+    progress.last_applied_index = parsed["last_applied_index"].get<uint64_t>();
     error.clear();
     return true;
 }

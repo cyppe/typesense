@@ -49,3 +49,17 @@ TEST_F(NuRaftMetadataStoreTest, RejectsMalformedIdentityJson) {
     ASSERT_FALSE(store.read_identity(identity, error));
     EXPECT_EQ(error, "NuRaft identity metadata is missing required fields");
 }
+
+TEST_F(NuRaftMetadataStoreTest, WritesAndReadsReplayProgress) {
+    NuRaftMetadataStore store(NuRaftStateLayout::from_data_dir(temp_dir_));
+    std::string error;
+    ASSERT_TRUE(store.initialize(error)) << error;
+
+    NuRaftReplayProgress expected;
+    expected.last_applied_index = 42;
+    ASSERT_TRUE(store.write_replay_progress(expected, error)) << error;
+
+    NuRaftReplayProgress actual;
+    ASSERT_TRUE(store.read_replay_progress(actual, error)) << error;
+    EXPECT_EQ(actual, expected);
+}
