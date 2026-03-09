@@ -329,6 +329,18 @@ cc_binary(
     ],
 )
 
+cc_binary(
+    name = "nuraft-prototype-benchmark",
+    srcs = [
+        "src/main/nuraft_prototype_benchmark.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+    ],
+)
+
 cc_test(
     name = "nuraft-bootstrap-builder-test",
     srcs = [

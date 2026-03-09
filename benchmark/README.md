@@ -104,3 +104,14 @@ Key files:
 ```bash
 bun test
 ```
+
+## NuRaft Prototype Benchmark
+
+The NuRaft feasibility sprint uses a separate Bazel target instead of this HTTP benchmark CLI:
+
+```bash
+scripts/bazel_in_docker.sh build //:nuraft-prototype-benchmark
+scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=all --docs=1000 --post-snapshot-docs=100
+```
+
+This target measures the isolated prototype's append/apply and snapshot-recovery paths directly. It is intentionally separate from `scripts/benchmark_vs_upstream.sh`, which still benchmarks the normal HTTP server binaries.

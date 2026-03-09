@@ -105,3 +105,14 @@ You can still append extra Bazel test options after the filter when needed, for 
 ```bash
 test/scripts/replay_typesense_test.sh FilterTest.FilterTreeIteratorTimeout --runs_per_test=20
 ```
+
+## 9) NuRaft prototype microbenchmark
+
+Use this only for the isolated NuRaft feasibility sprint. It does not replace the normal HTTP benchmark wrapper in `scripts/benchmark_vs_upstream.sh`.
+
+```bash
+scripts/bazel_in_docker.sh build //:nuraft-prototype-benchmark
+scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=all --docs=1000 --post-snapshot-docs=100
+```
+
+The binary emits JSON with append/apply and snapshot-recovery timings so Story E can measure the prototype without pretending the normal HTTP benchmark lane already covers NuRaft.
