@@ -137,3 +137,132 @@ TEST_F(NuRaftStaticClusterTest, ReplicatesLeaderLogAndAppliesFollowers) {
     EXPECT_EQ(entries[0].first, "state/collections/books");
     EXPECT_EQ(entries[1].first, "state/documents/books/doc-1");
 }
+
+TEST_F(NuRaftStaticClusterTest, CollectsLaggingFollowerStatusBeforeReplication) {
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const std::string nodes_config = "127.0.0.1:7107:8108,127.0.0.1:7109:8109,127.0.0.1:7111:8110";
+    const std::string node1 = node_dir("lag-node1");
+    const std::string node2 = node_dir("lag-node2");
+    const std::string node3 = node_dir("lag-node3");
+
+    initialize_node(node1, "127.0.0.1", 7107, 8108, nodes_config);
+    initialize_node(node2, "127.0.0.1", 7109, 8109, nodes_config);
+    initialize_node(node3, "127.0.0.1", 7111, 8110, nodes_config);
+
+    NuRaftMetadataStore metadata_store(NuRaftStateLayout::from_data_dir(node1));
+    NuRaftBootstrapConfig bootstrap_config;
+    std::string error;
+    ASSERT_TRUE(metadata_store.read_bootstrap_config(bootstrap_config, error)) << error;
+
+    const std::map<int32_t, std::string> data_dirs = {
+        {8108, node1},
+        {8109, node2},
+        {8110, node3},
+    };
+
+    uint64_t appended_index = 0;
+    bool forwarded_to_leader = false;
+    int32_t target_server_id = 0;
+    ASSERT_TRUE(NuRaftStaticCluster::append_request(bootstrap_config,
+                                                    data_dirs,
+                                                    8108,
+                                                    8109,
+                                                    "{\"route_hash\":" + std::to_string(collection_create_hash) +
+                                                        ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"books\\\"}\"}",
+                                                    appended_index,
+                                                    forwarded_to_leader,
+                                                    target_server_id,
+                                                    error)) << error;
+    EXPECT_EQ(appended_index, 1u);
+    EXPECT_TRUE(forwarded_to_leader);
+
+    std::vector<NuRaftStaticClusterNodeStatus> statuses;
+    ASSERT_TRUE(NuRaftStaticCluster::collect_status(bootstrap_config, data_dirs, 8108, statuses, error)) << error;
+    ASSERT_EQ(statuses.size(), 3u);
+    EXPECT_EQ(statuses[0].server_id, 8108);
+    EXPECT_TRUE(statuses[0].is_leader);
+    EXPECT_EQ(statuses[0].last_log_index, 1u);
+    EXPECT_EQ(statuses[0].last_applied_index, 0u);
+    EXPECT_EQ(statuses[1].last_log_index, 0u);
+    EXPECT_EQ(statuses[1].last_applied_index, 0u);
+    EXPECT_EQ(statuses[2].last_log_index, 0u);
+    EXPECT_EQ(statuses[2].last_applied_index, 0u);
+}
+
+TEST_F(NuRaftStaticClusterTest, SupportsLeaderSwitchAfterCatchUp) {
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const uint64_t document_write_hash = make_route_hash("POST", "collections/:collection/documents");
+    const std::string nodes_config = "127.0.0.1:7107:8108,127.0.0.1:7109:8109,127.0.0.1:7111:8110";
+    const std::string node1 = node_dir("switch-node1");
+    const std::string node2 = node_dir("switch-node2");
+    const std::string node3 = node_dir("switch-node3");
+
+    initialize_node(node1, "127.0.0.1", 7107, 8108, nodes_config);
+    initialize_node(node2, "127.0.0.1", 7109, 8109, nodes_config);
+    initialize_node(node3, "127.0.0.1", 7111, 8110, nodes_config);
+
+    NuRaftMetadataStore metadata_store(NuRaftStateLayout::from_data_dir(node2));
+    NuRaftBootstrapConfig bootstrap_config;
+    std::string error;
+    ASSERT_TRUE(metadata_store.read_bootstrap_config(bootstrap_config, error)) << error;
+
+    const std::map<int32_t, std::string> data_dirs = {
+        {8108, node1},
+        {8109, node2},
+        {8110, node3},
+    };
+
+    uint64_t appended_index = 0;
+    bool forwarded_to_leader = false;
+    int32_t target_server_id = 0;
+    ASSERT_TRUE(NuRaftStaticCluster::append_request(bootstrap_config,
+                                                    data_dirs,
+                                                    8108,
+                                                    8109,
+                                                    "{\"route_hash\":" + std::to_string(collection_create_hash) +
+                                                        ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"books\\\"}\"}",
+                                                    appended_index,
+                                                    forwarded_to_leader,
+                                                    target_server_id,
+                                                    error)) << error;
+    EXPECT_EQ(target_server_id, 8108);
+
+    std::vector<NuRaftStaticClusterNodeStatus> statuses;
+    ASSERT_TRUE(NuRaftStaticCluster::replicate_and_apply(bootstrap_config,
+                                                         data_dirs,
+                                                         8108,
+                                                         "kv",
+                                                         statuses,
+                                                         error)) << error;
+    ASSERT_EQ(statuses.size(), 3u);
+
+    ASSERT_TRUE(NuRaftStaticCluster::append_request(bootstrap_config,
+                                                    data_dirs,
+                                                    8109,
+                                                    8110,
+                                                    "{\"route_hash\":" + std::to_string(document_write_hash) +
+                                                        ",\"params\":{\"collection\":\"books\",\"id\":\"doc-1\"},\"body\":\"{\\\"id\\\":\\\"doc-1\\\",\\\"title\\\":\\\"Dune\\\"}\"}",
+                                                    appended_index,
+                                                    forwarded_to_leader,
+                                                    target_server_id,
+                                                    error)) << error;
+    EXPECT_EQ(appended_index, 2u);
+    EXPECT_TRUE(forwarded_to_leader);
+    EXPECT_EQ(target_server_id, 8109);
+
+    ASSERT_TRUE(NuRaftStaticCluster::replicate_and_apply(bootstrap_config,
+                                                         data_dirs,
+                                                         8109,
+                                                         "kv",
+                                                         statuses,
+                                                         error)) << error;
+    ASSERT_EQ(statuses.size(), 3u);
+    EXPECT_FALSE(statuses[0].is_leader);
+    EXPECT_EQ(statuses[0].last_log_index, 2u);
+    EXPECT_TRUE(statuses[1].is_leader);
+    EXPECT_EQ(statuses[1].last_log_index, 2u);
+    EXPECT_EQ(statuses[1].last_applied_index, 2u);
+    EXPECT_FALSE(statuses[2].is_leader);
+    EXPECT_EQ(statuses[2].last_log_index, 2u);
+    EXPECT_EQ(statuses[2].last_applied_index, 2u);
+}

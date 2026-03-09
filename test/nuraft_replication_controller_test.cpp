@@ -472,6 +472,27 @@ TEST_F(NuRaftReplicationControllerTest, SimulatesThreeNodeCatchUpThroughStaticCl
     EXPECT_TRUE(append_document_err.str().empty());
     EXPECT_NE(append_document_out.str().find("forwarded_to_leader=1"), std::string::npos);
 
+    std::ostringstream lag_status_out;
+    std::ostringstream lag_status_err;
+    ASSERT_EQ(run_node(node1_dir,
+                       7107,
+                       8108,
+                       {
+                           "--cluster-data-dirs=" + cluster_dirs,
+                           "--cluster-leader-api-port=8108",
+                           "--dump-cluster-status",
+                       },
+                       lag_status_out,
+                       lag_status_err),
+              0);
+    EXPECT_TRUE(lag_status_err.str().empty());
+    EXPECT_NE(lag_status_out.str().find("cluster node_server_id=8108 role=leader last_log_index=2 last_applied_index=0"),
+              std::string::npos);
+    EXPECT_NE(lag_status_out.str().find("cluster node_server_id=8109 role=follower last_log_index=0 last_applied_index=0"),
+              std::string::npos);
+    EXPECT_NE(lag_status_out.str().find("cluster node_server_id=8110 role=follower last_log_index=0 last_applied_index=0"),
+              std::string::npos);
+
     std::ostringstream replicate_out;
     std::ostringstream replicate_err;
     ASSERT_EQ(run_node(node1_dir,
