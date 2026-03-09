@@ -122,3 +122,19 @@ TEST(Hostname2IPStrTest, PublicHostnames) {
             << "ipv4.test-ipv6.com did not resolve to IPv4: " << ipv4_result;
     }
 }
+
+TEST(RaftServerTest, TimedSnapshotPolicyAllowsLeaderSnapshotWithUnhealthyFollower) {
+    const ReplicationState::TimedSnapshotDecision decision =
+        ReplicationState::evaluate_timed_snapshot_policy(true, {true, false, true});
+
+    EXPECT_TRUE(decision.should_trigger);
+    EXPECT_EQ(1u, decision.unhealthy_peer_count);
+}
+
+TEST(RaftServerTest, TimedSnapshotPolicyReportsHealthyPeerSet) {
+    const ReplicationState::TimedSnapshotDecision decision =
+        ReplicationState::evaluate_timed_snapshot_policy(true, {true, true});
+
+    EXPECT_TRUE(decision.should_trigger);
+    EXPECT_EQ(0u, decision.unhealthy_peer_count);
+}

@@ -21,6 +21,7 @@
 #pragma GCC diagnostic pop
 #endif
 #include <rocksdb/db.h>
+#include <cstddef>
 #include <future>
 
 #include "http_data.h"
@@ -167,6 +168,10 @@ private:
     butil::EndPoint peering_endpoint;
 
 public:
+    struct TimedSnapshotDecision {
+        bool should_trigger = true;
+        size_t unhealthy_peer_count = 0;
+    };
 
     static constexpr const char* log_dir_name = "log";
     static constexpr const char* meta_dir_name = "meta";
@@ -234,6 +239,8 @@ public:
 
     // for timed snapshots
     void do_snapshot(const std::string& nodes);
+    static TimedSnapshotDecision evaluate_timed_snapshot_policy(bool is_leader,
+                                                                const std::vector<bool>& peer_health);
 
     void persist_applying_index();
 

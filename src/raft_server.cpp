@@ -1122,6 +1122,25 @@ nlohmann::json ReplicationState::get_status() {
     return status;
 }
 
+ReplicationState::TimedSnapshotDecision ReplicationState::evaluate_timed_snapshot_policy(
+    bool is_leader,
+    const std::vector<bool>& peer_health) {
+    TimedSnapshotDecision decision;
+    decision.should_trigger = true;
+
+    if (!is_leader) {
+        return decision;
+    }
+
+    for (const bool is_peer_healthy : peer_health) {
+        if (!is_peer_healthy) {
+            ++decision.unhealthy_peer_count;
+        }
+    }
+
+    return decision;
+}
+
 void ReplicationState::do_snapshot(const std::string& nodes) {
     auto current_ts = std::time(nullptr);
     if(current_ts - last_snapshot_ts < snapshot_interval_s) {
@@ -1143,7 +1162,7 @@ void ReplicationState::do_snapshot(const std::string& nodes) {
         lock.unlock();
 
         //TS_LOG(INFO) << "my_addr: " << my_addr;
-        bool all_peers_healthy = true;
+        std::vector<bool> peer_health;
 
         // iterate peers and check health status
         for(const auto& peer: peers) {
@@ -1169,12 +1188,19 @@ void ReplicationState::do_snapshot(const std::string& nodes) {
                 TS_LOG(WARNING) << "Peer " << peer_addr << " reported unhealthy during snapshot pre-check.";
             }
 
-            all_peers_healthy = all_peers_healthy && peer_healthy;
+            peer_health.push_back(peer_healthy);
         }
 
-        if(!all_peers_healthy) {
-            TS_LOG(WARNING) << "Unable to trigger snapshot as one or more of the peers reported unhealthy.";
-            return ;
+        const TimedSnapshotDecision decision = evaluate_timed_snapshot_policy(true, peer_health);
+        if (decision.unhealthy_peer_count > 0) {
+            TS_LOG(WARNING) << "Continuing timed snapshot on leader despite "
+                            << decision.unhealthy_peer_count
+                            << " unhealthy peer(s); lagging followers may need a fresher snapshot to recover.";
+        }
+
+        if (!decision.should_trigger) {
+            TS_LOG(WARNING) << "Unable to trigger snapshot due to timed snapshot policy.";
+            return;
         }
     }
 

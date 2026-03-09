@@ -626,6 +626,29 @@ config_setting(
 )
 
 cc_test(
+    name = "raft-server-test",
+    srcs = [
+        ":src_files",
+        "test/raft_server_test.cpp",
+    ],
+    copts = TEST_COPTS + ["-O0"],
+    deps = [
+        ":common_deps",
+        "@com_google_googletest//:gtest_main",
+    ],
+    defines = [
+        "ROOT_DIR=",
+    ],
+    linkopts = select({
+       ":asan_mode": ["-fsanitize=address", "-fuse-ld=lld"],
+       "//conditions:default": []
+    }) + select({
+       "@platforms//os:linux": ["-fuse-ld=lld"],
+       "//conditions:default": [],
+   }),
+)
+
+cc_test(
     name = "typesense-test",
     size = "large",
     srcs = [
