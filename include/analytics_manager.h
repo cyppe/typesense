@@ -2,6 +2,7 @@
 
 #include "doc_analytics.h"
 #include "search_analytics.h"
+#include <condition_variable>
 #include <vector>
 #include <string>
 #include <shared_mutex>
@@ -22,7 +23,8 @@
 #elif defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
-#include "raft_server.h"
+#include "replication/replication_service.h"
+#include "store.h"
 
 struct external_event_cache_t {
     uint64_t last_update_time;
@@ -73,8 +75,8 @@ public:
     AnalyticsManager(AnalyticsManager const&) = delete;
     void operator=(AnalyticsManager const&) = delete;
 
-    void persist_db_events(ReplicationState *raft_server, uint64_t prev_persistence_s, bool triggered);
-    void persist_analytics_db_events(ReplicationState *raft_server, uint64_t prev_persistence_s, bool triggered);
+    void persist_db_events(ReplicationService *raft_server, uint64_t prev_persistence_s, bool triggered);
+    void persist_analytics_db_events(ReplicationService *raft_server, uint64_t prev_persistence_s, bool triggered);
     
     Option<bool> add_external_event(const std::string& client_ip, const nlohmann::json& event_data);
     Option<bool> add_internal_event(const search_internal_event_t& event_data);
@@ -93,7 +95,7 @@ public:
     void resetToggleRateLimit(bool toggle);
     bool write_to_db(const nlohmann::json& payload);
 
-    void run(ReplicationState* raft_server);
+    void run(ReplicationService* raft_server);
     void init(Store* store, Store* analytics_store, uint32_t analytics_minute_rate_limit);
     Option<nlohmann::json> process_create_rule_request(nlohmann::json& payload, bool is_live_req);
     Option<nlohmann::json> get_status();

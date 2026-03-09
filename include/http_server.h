@@ -14,9 +14,9 @@ extern "C" {
 #include <cstdio>
 #include "http_data.h"
 #include "option.h"
+#include "replication/replication_service.h"
 #include "threadpool.h"
 
-class ReplicationState;
 class HttpServer;
 
 struct h2o_custom_req_handler_t {
@@ -134,7 +134,7 @@ private:
 
     http_message_dispatcher* message_dispatcher;
 
-    ReplicationState* replication_state;
+    ReplicationService* replication_state;
 
     std::atomic<bool> exit_loop;
 
@@ -216,7 +216,7 @@ public:
 
     http_message_dispatcher* get_message_dispatcher() const;
 
-    ReplicationState* get_replication_state() const;
+    ReplicationService* get_replication_state() const;
 
     bool is_alive() const;
 
@@ -251,7 +251,7 @@ public:
 
     bool get_route(uint64_t hash, route_path** found_rpath);
 
-    int run(ReplicationState* replication_state);
+    int run(ReplicationService* replication_state);
 
     void stop();
 

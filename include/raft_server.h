@@ -29,6 +29,7 @@
 #include "batched_indexer.h"
 #include "cached_resource_stat.h"
 #include "logger.h"
+#include "replication/replication_service.h"
 
 class Store;
 class ReplicationState;
@@ -115,7 +116,7 @@ public:
 };
 
 // Implements braft::StateMachine.
-class ReplicationState : public braft::StateMachine {
+class ReplicationState : public braft::StateMachine, public ReplicationService {
 private:
     static constexpr const char* db_snapshot_name = "db_snapshot";
     static constexpr const char* analytics_db_snapshot_name = "analytics_db_snapshot";

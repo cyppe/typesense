@@ -7,6 +7,7 @@
 #include <mutex>
 #include <json.hpp>
 #include "option.h"
+#include "replication/replication_service.h"
 #include "store.h"
 #include "sole.hpp"
 #include "collection_manager.h"
@@ -31,7 +32,7 @@ class ConversationManager {
         Option<bool> check_conversation_exists(const std::string& conversation_id, Collection* collection);
         Option<std::unordered_set<std::string>> get_conversation_ids();
         static constexpr size_t MAX_TOKENS = 3000;
-        Option<bool> init(ReplicationState* raft_server);
+        Option<bool> init(ReplicationService* raft_server);
         void clear_expired_conversations();
         void run();
         void stop();
@@ -47,7 +48,7 @@ class ConversationManager {
         ConversationManager() {}
         std::mutex conversations_mutex;
         
-        ReplicationState* raft_server;
+        ReplicationService* raft_server;
         size_t TTL_OFFSET = 0;
 
         std::atomic<bool> quit = false;

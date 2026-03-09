@@ -1,6 +1,7 @@
 #include "embedder_manager.h"
 #include "logger.h"
 #include "system_metrics.h"
+#include <butil/file_util.h>
 
 
 EmbedderManager& EmbedderManager::get_instance() {

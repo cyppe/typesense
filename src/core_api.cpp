@@ -22,6 +22,7 @@
 #include "conversation_manager.h"
 #include "conversation_model_manager.h"
 #include "conversation_model.h"
+#include "cached_resource_stat.h"
 #include "personalization_model_manager.h"
 #include "sole.hpp"
 #include "natural_language_search_model_manager.h"

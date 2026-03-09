@@ -8,7 +8,6 @@
 #include <iostream>
 #include <auth_manager.h>
 #include <app_metrics.h>
-#include "raft_server.h"
 #include "logger.h"
 #include "ratelimit_manager.h"
 #include "sole.hpp"
@@ -229,7 +228,7 @@ int HttpServer::create_listener() {
     return 0;
 }
 
-int HttpServer::run(ReplicationState* replication_state) {
+int HttpServer::run(ReplicationService* replication_state) {
     this->replication_state = replication_state;
 
     metrics_refresh_timer = h2o_custom_timer_t(this);
@@ -1086,7 +1085,7 @@ http_message_dispatcher* HttpServer::get_message_dispatcher() const {
     return message_dispatcher;
 }
 
-ReplicationState* HttpServer::get_replication_state() const {
+ReplicationService* HttpServer::get_replication_state() const {
     return replication_state;
 }
 
