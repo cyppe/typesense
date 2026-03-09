@@ -20,6 +20,8 @@ cmake(
         'WHISPER_BUILD_EXAMPLES': 'OFF',
         'WHISPER_BUILD_TESTS': 'OFF',
         'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
+        'CMAKE_C_FLAGS': '-DGGML_USE_CUBLAS',
+        'CMAKE_CXX_FLAGS': '-DGGML_USE_CUBLAS',
     }, 
     build_args = [
         "--", "-j8"

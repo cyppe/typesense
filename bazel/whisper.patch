@@ -1,28 +1,3 @@
-diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 567a58d..349cc4d 100644
---- a/CMakeLists.txt
-+++ b/CMakeLists.txt
-@@ -203,6 +203,9 @@ if (WHISPER_BLAS)
-     endif ()
- endif ()
-
-+
-+add_compile_definitions(GGML_USE_CUBLAS)
-+
- if (WHISPER_CUBLAS)
-     cmake_minimum_required(VERSION 3.17)
-
-@@ -214,9 +217,7 @@ if (WHISPER_CUBLAS)
-         enable_language(CUDA)
-
-         set(GGML_SOURCES_CUDA ggml-cuda.cu ggml-cuda.h)
--
--        add_compile_definitions(GGML_USE_CUBLAS)
--
-+
-         if (WHISPER_STATIC)
-             if (WIN32)
-                 # As of 12.3.1 CUDA Tookit for Windows does not offer a static cublas library
 diff --git a/ggml-backend.c b/ggml-backend.c
 index 53e741c..4756a85 100644
 --- a/ggml-backend.c

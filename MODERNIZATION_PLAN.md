@@ -130,7 +130,7 @@ Done. Repo default is Bazel 9.0.0. CI and local Docker lanes are green. Platform
 - [x] Inventory complete with per-patch justification in `bazel/PATCH_DEBT.md`.
 - [x] Removed stale patches (`onnx.patch`, `picotls_openssl/0001.patch`).
 - [x] `whisper.patch` debug noise cleaned (`6cf44457`).
-- [x] `whisper.patch` reduced from 11 hunks to 8 — dropped compiler warning flags, whitespace noise, backtrace removal. Non-speech token expansion kept (test-verified: voice query expects punctuation-free output).
+- [x] `whisper.patch` reduced from 11 hunks to 7 — dropped compiler warning flags, whitespace noise, backtrace removal, and the CMake compile-definition hunk by moving `GGML_USE_CUBLAS` into `bazel/whisper.BUILD`. Non-speech token expansion kept (test-verified: voice query expects punctuation-free output).
 - [x] `quicly/0001.patch` dropped — bumped quicly to `c9167711` (fix commit).
 - [ ] Replace patch-only forks with released upstream versions where possible (13 active patches documented with next actions in `bazel/PATCH_DEBT.md`).
 - [x] Move brpc inline `patch_cmds` to proper patch file `bazel/brpc/0001_dynamic_annotations_guards.patch`.
@@ -374,7 +374,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
-| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now at `3.8.5`; `snappy` is now at `1.2.2`; ONNX Runtime is now at `1.24.3` with the one-protobuf/self-contained checks still green; `tests/` now uses `typesense-js 3.0.2`; the latest patch-debt audit also confirmed `bazel/onnxruntime.patch` is still non-droppable on `1.24.3`, so the next work should bias toward `whisper`/`icu` reduction or the next deliberate dep candidate, while Protobuf 34 stays blocked on `brpc`. |
+| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now at `3.8.5`; `snappy` is now at `1.2.2`; ONNX Runtime is now at `1.24.3` with the one-protobuf/self-contained checks still green; `tests/` now uses `typesense-js 3.0.2`; the latest patch-debt audit confirmed `bazel/onnxruntime.patch` is still non-droppable on `1.24.3`, and `bazel/whisper.patch` has now been trimmed to 7 hunks, so the next work should bias toward the remaining `whisper`/`icu` reduction or the next deliberate dep candidate, while Protobuf 34 stays blocked on `brpc`. |
 
 ### Backlog map (active / later / archival)
 
