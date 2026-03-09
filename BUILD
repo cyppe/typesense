@@ -290,6 +290,7 @@ cc_library(
     srcs = [
         "src/nuraft/nuraft_replication_controller.cpp",
         "src/nuraft/nuraft_file_store.cpp",
+        "src/nuraft/nuraft_metadata_store.cpp",
         "src/nuraft/nuraft_request_envelope.cpp",
         "src/nuraft/nuraft_state_layout.cpp",
     ],
@@ -332,6 +333,19 @@ cc_test(
     ],
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     includes = ["test"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "nuraft-metadata-store-test",
+    srcs = [
+        "test/nuraft_metadata_store_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
         ":nuraft_prototype_lib",
