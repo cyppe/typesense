@@ -285,6 +285,30 @@ cc_binary(
     deps = [":common_deps"],
 )
 
+cc_library(
+    name = "nuraft_prototype_lib",
+    srcs = [
+        "src/nuraft/nuraft_replication_controller.cpp",
+    ],
+    copts = COPTS,
+    deps = [":headers"],
+)
+
+cc_binary(
+    name = "typesense-server-nuraft-prototype",
+    srcs = [
+        "src/main/typesense_nuraft_prototype.cpp",
+    ],
+    local_defines = [
+        "TYPESENSE_VERSION=\"$(TYPESENSE_VERSION)\"",
+    ],
+    copts = COPTS,
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+    ],
+)
+
 filegroup(
     name = "test_src_files",
     srcs = glob(["test/*.cpp"]) + [
