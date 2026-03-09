@@ -27,6 +27,7 @@ enum class BenchmarkMode {
     kAppendApply,
     kSnapshotRecovery,
     kSnapshotPressure,
+    kSnapshotPolicyCompare,
 };
 
 struct BenchmarkOptions {
@@ -37,6 +38,13 @@ struct BenchmarkOptions {
     uint32_t snapshot_rounds = 3;
     bool keep_data = false;
 };
+
+nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options,
+                                               const std::string& root_dir,
+                                               const std::string& scenario_prefix,
+                                               NuRaftTimedSnapshotPolicy policy,
+                                               bool seed_initial_snapshot,
+                                               std::string& error);
 
 uint64_t make_route_hash(const std::string& method, const std::string& path) {
     const std::string method_path = method + path;
@@ -50,7 +58,7 @@ std::string benchmark_usage(const char* program_name) {
                                     std::string(program_name);
     return "usage: " + binary_name + " [options]\n"
            "options:\n"
-           "  --mode <all|append-apply|snapshot-recovery|snapshot-pressure>  Benchmark scenario set (default: all)\n"
+           "  --mode <all|append-apply|snapshot-recovery|snapshot-pressure|snapshot-policy-compare>  Benchmark scenario set (default: all)\n"
            "  --data-dir <dir>         Working directory root for benchmark state\n"
            "  --docs <count>           Number of document writes before snapshot (default: 1000)\n"
            "  --post-snapshot-docs <count>  Number of writes after snapshot in recovery benchmark (default: 100)\n"
@@ -83,6 +91,8 @@ bool parse_mode(const std::string& value, BenchmarkMode& mode, std::string& erro
         mode = BenchmarkMode::kSnapshotRecovery;
     } else if (value == "snapshot-pressure") {
         mode = BenchmarkMode::kSnapshotPressure;
+    } else if (value == "snapshot-policy-compare") {
+        mode = BenchmarkMode::kSnapshotPolicyCompare;
     } else {
         error = "unsupported mode: " + value;
         return false;
@@ -546,11 +556,25 @@ nlohmann::json run_snapshot_recovery_benchmark(const BenchmarkOptions& options, 
 }
 
 nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options, const std::string& root_dir, std::string& error) {
+    return run_snapshot_pressure_benchmark(options,
+                                           root_dir,
+                                           "pressure",
+                                           NuRaftTimedSnapshotPolicy::kLeaderOnly,
+                                           false,
+                                           error);
+}
+
+nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options,
+                                               const std::string& root_dir,
+                                               const std::string& scenario_prefix,
+                                               NuRaftTimedSnapshotPolicy policy,
+                                               bool seed_initial_snapshot,
+                                               std::string& error) {
     const uint64_t collection_create_hash = make_route_hash("POST", "collections");
     const uint64_t document_write_hash = make_route_hash("POST", "collections/:collection/documents");
-    const std::string node1 = (std::filesystem::path(root_dir) / "pressure-node1").string();
-    const std::string node2 = (std::filesystem::path(root_dir) / "pressure-node2").string();
-    const std::string node3 = (std::filesystem::path(root_dir) / "pressure-node3").string();
+    const std::string node1 = (std::filesystem::path(root_dir) / (scenario_prefix + "-node1")).string();
+    const std::string node2 = (std::filesystem::path(root_dir) / (scenario_prefix + "-node2")).string();
+    const std::string node3 = (std::filesystem::path(root_dir) / (scenario_prefix + "-node3")).string();
     const std::string nodes_config = "127.0.0.1:7107:8108,127.0.0.1:7109:8109,127.0.0.1:7111:8110";
 
     if (!initialize_node(node1, 7107, 8108, nodes_config, error) ||
@@ -607,11 +631,37 @@ nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options, 
         {8110, false},
     };
     int64_t last_snapshot_time = 0;
+    NuRaftTimedSnapshotResult seeded_snapshot_result;
+    double seeded_snapshot_ms = 0.0;
+    if (seed_initial_snapshot) {
+        const std::map<int32_t, bool> healthy_peers = {
+            {8108, true},
+            {8109, true},
+            {8110, true},
+        };
+        if (!measure_ms([&](std::string& run_error) {
+                return NuRaftRecoveryCoordinator::run_timed_snapshot(bootstrap_config,
+                                                                     data_dirs,
+                                                                     8108,
+                                                                     healthy_peers,
+                                                                     policy,
+                                                                     100,
+                                                                     60,
+                                                                     last_snapshot_time,
+                                                                     seeded_snapshot_result,
+                                                                     run_error);
+            }, seeded_snapshot_ms, error)) {
+            return {};
+        }
+    }
+
     uint32_t next_doc_id = options.docs + 1;
     double total_append_ms = 0.0;
     double total_snapshot_ms = 0.0;
     nlohmann::json rounds = nlohmann::json::array();
     NuRaftTimedSnapshotResult last_snapshot_result;
+    uint32_t blocked_rounds = 0;
+    uint32_t created_snapshot_rounds = 0;
 
     for (uint32_t round = 1; round <= options.snapshot_rounds; ++round) {
         double append_ms = 0.0;
@@ -636,8 +686,9 @@ nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options, 
                                                                      data_dirs,
                                                                      8108,
                                                                      peer_health,
-                                                                     NuRaftTimedSnapshotPolicy::kLeaderOnly,
-                                                                     100 + static_cast<int64_t>(round * 60),
+                                                                     policy,
+                                                                     100 + static_cast<int64_t>((seed_initial_snapshot ? 1 : 0) * 60) +
+                                                                         static_cast<int64_t>(round * 60),
                                                                      60,
                                                                      last_snapshot_time,
                                                                      snapshot_result,
@@ -647,6 +698,12 @@ nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options, 
         }
         total_snapshot_ms += snapshot_ms;
         last_snapshot_result = snapshot_result;
+        if (snapshot_result.blocked_by_unhealthy_peer) {
+            ++blocked_rounds;
+        }
+        if (snapshot_result.created_snapshot) {
+            ++created_snapshot_rounds;
+        }
 
         rounds.push_back({
             {"round", round},
@@ -694,11 +751,17 @@ nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options, 
 
     return {
         {"mode", "snapshot-pressure"},
+        {"policy", policy == NuRaftTimedSnapshotPolicy::kLeaderOnly ? "leader-only" : "require-healthy-peers"},
         {"root_dir", root_dir},
         {"initial_docs", options.docs},
         {"outage_docs", outage_docs},
         {"snapshot_rounds", options.snapshot_rounds},
+        {"seeded_initial_snapshot", seed_initial_snapshot},
+        {"seeded_snapshot_ms", seeded_snapshot_ms},
+        {"seeded_snapshot_last_applied_index", seeded_snapshot_result.descriptor.last_applied_index},
         {"rounds", rounds},
+        {"blocked_rounds", blocked_rounds},
+        {"created_snapshot_rounds", created_snapshot_rounds},
         {"total_append_ms", total_append_ms},
         {"total_snapshot_ms", total_snapshot_ms},
         {"install_ms", install_ms},
@@ -711,6 +774,48 @@ nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options, 
         {"final_snapshot_last_log_index", last_snapshot_result.descriptor.last_log_index},
         {"installed_snapshot_last_applied_index", installed_descriptor.last_applied_index},
         {"recovered_materialized_entries", recovered_materialized_count},
+    };
+}
+
+nlohmann::json run_snapshot_policy_compare_benchmark(const BenchmarkOptions& options,
+                                                     const std::string& root_dir,
+                                                     std::string& error) {
+    const nlohmann::json leader_only = run_snapshot_pressure_benchmark(options,
+                                                                       root_dir,
+                                                                       "policy-compare-leader-only",
+                                                                       NuRaftTimedSnapshotPolicy::kLeaderOnly,
+                                                                       true,
+                                                                       error);
+    if (leader_only.is_null() || leader_only.empty()) {
+        return {};
+    }
+
+    const nlohmann::json require_healthy = run_snapshot_pressure_benchmark(options,
+                                                                           root_dir,
+                                                                           "policy-compare-require-healthy",
+                                                                           NuRaftTimedSnapshotPolicy::kRequireHealthyPeers,
+                                                                           true,
+                                                                           error);
+    if (require_healthy.is_null() || require_healthy.empty()) {
+        return {};
+    }
+
+    const uint64_t leader_replayed_entries = leader_only.value("replayed_entries_after_install", uint64_t{0});
+    const uint64_t require_replayed_entries = require_healthy.value("replayed_entries_after_install", uint64_t{0});
+    const double leader_recovery_ms = leader_only.value("recovery_total_ms", 0.0);
+    const double require_recovery_ms = require_healthy.value("recovery_total_ms", 0.0);
+    const uint64_t leader_snapshot_index = leader_only.value("final_snapshot_last_applied_index", uint64_t{0});
+    const uint64_t require_snapshot_index = require_healthy.value("final_snapshot_last_applied_index", uint64_t{0});
+
+    return {
+        {"mode", "snapshot-policy-compare"},
+        {"leader_only", leader_only},
+        {"require_healthy_peers", require_healthy},
+        {"delta_replayed_entries", static_cast<int64_t>(require_replayed_entries) -
+                                       static_cast<int64_t>(leader_replayed_entries)},
+        {"delta_recovery_ms", require_recovery_ms - leader_recovery_ms},
+        {"delta_snapshot_applied_index", static_cast<int64_t>(leader_snapshot_index) -
+                                             static_cast<int64_t>(require_snapshot_index)},
     };
 }
 
@@ -767,6 +872,15 @@ int main(int argc, char** argv) {
             ok = false;
         } else {
             result["snapshot_pressure"] = snapshot_pressure;
+        }
+    }
+
+    if (ok && (options.mode == BenchmarkMode::kAll || options.mode == BenchmarkMode::kSnapshotPolicyCompare)) {
+        const nlohmann::json snapshot_policy_compare = run_snapshot_policy_compare_benchmark(options, root_dir, error);
+        if (snapshot_policy_compare.is_null() || snapshot_policy_compare.empty()) {
+            ok = false;
+        } else {
+            result["snapshot_policy_compare"] = snapshot_policy_compare;
         }
     }
 

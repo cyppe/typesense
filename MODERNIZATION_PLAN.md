@@ -364,7 +364,7 @@ Determine whether replacing `braft`/`brpc` with NuRaft would be a net improvemen
 
 **Story E progress (Mar 2026):**
 
-- **Prototype benchmark harness landed:** `//:nuraft-prototype-benchmark` now provides a dedicated Story E measurement lane for the isolated NuRaft prototype, emitting JSON for single-node append/apply throughput, snapshot-install/replay recovery timings after additional post-snapshot writes, and repeated leader-only timed snapshots while a follower stays unhealthy. This keeps prototype benchmarking separate from the existing HTTP benchmark wrapper instead of pretending `scripts/benchmark_vs_upstream.sh` already answers the NuRaft question.
+- **Prototype benchmark harness landed:** `//:nuraft-prototype-benchmark` now provides a dedicated Story E measurement lane for the isolated NuRaft prototype, emitting JSON for single-node append/apply throughput, snapshot-install/replay recovery timings after additional post-snapshot writes, repeated leader-only timed snapshots while a follower stays unhealthy, and a direct leader-only vs `require-healthy-peers` outage comparison. This keeps prototype benchmarking separate from the existing HTTP benchmark wrapper instead of pretending `scripts/benchmark_vs_upstream.sh` already answers the NuRaft question.
 - **Benchmark gap is now narrower but not closed:** the new harness gives the prototype a repeatable measurement surface, but it still does not benchmark the full HTTP runtime, compare directly against the live `braft` server in one wrapper, or capture steady-state CPU/memory cost under long-running contention. Those remain open before Story F can make a real recommendation.
 
 **Story F - Make the decision**

@@ -113,6 +113,7 @@ The NuRaft feasibility sprint uses a separate Bazel target instead of this HTTP 
 scripts/bazel_in_docker.sh build //:nuraft-prototype-benchmark
 scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=all --docs=1000 --post-snapshot-docs=100
 scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-pressure --docs=1000 --post-snapshot-docs=200 --snapshot-rounds=3
+scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-policy-compare --docs=1000 --post-snapshot-docs=200 --snapshot-rounds=3
 ```
 
-This target measures the isolated prototype's append/apply path, snapshot-install/recovery path, and repeated timed-snapshot pressure during follower outage directly. It is intentionally separate from `scripts/benchmark_vs_upstream.sh`, which still benchmarks the normal HTTP server binaries.
+This target measures the isolated prototype's append/apply path, snapshot-install/recovery path, repeated timed-snapshot pressure during follower outage, and direct comparison between leader-only and `require-healthy-peers` timed-snapshot policy. It is intentionally separate from `scripts/benchmark_vs_upstream.sh`, which still benchmarks the normal HTTP server binaries.
