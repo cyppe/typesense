@@ -96,9 +96,6 @@ elif [[ ! -x "${RUNTIME_BUNDLE_DIR}/typesense-server" ]]; then
 fi
 
 API_TEST_ARGS=("$@")
-if [[ "${SERVER_BINARY_FLAVOR}" == "nuraft-runtime" ]]; then
-	API_TEST_ARGS=("--single-node-only" "${API_TEST_ARGS[@]}")
-fi
 
 ENV_VARS=(
 	"TYPESENSE_BINARY_PATH=${RUNTIME_BUNDLE_DIR}/typesense-server"

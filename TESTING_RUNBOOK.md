@@ -88,9 +88,14 @@ To replay the bounded NuRaft HTTP runtime lane through the same wrapper:
 scripts/bazel_in_docker.sh build //:typesense-server-nuraft-runtime
 scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_smoke.test.ts
 scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/health.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_cluster.test.ts
 ```
 
-`run_api_tests.sh` auto-applies `--single-node-only` for `typesense-server-nuraft-runtime`, so existing files can reuse their single-node phases without tripping the still-unimplemented multi-node runtime path.
+If you intentionally want to reuse only the single-node phases of a file, the API runner now supports:
+
+```bash
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --single-node-only --no-secrets tests/health.test.ts
+```
 
 If you intentionally want to bypass the Dockerized Bun image and use host Bun:
 
@@ -145,6 +150,7 @@ The same bounded runtime now also passes the real `api_tests` wrapper for the fo
 ```bash
 scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_smoke.test.ts
 scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/health.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_cluster.test.ts
 ```
 
 ## 11) Raft recovery comparison

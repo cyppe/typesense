@@ -269,32 +269,49 @@ export class TypesenseProcessManager {
   }
 
   async startMultiNode() {
-    if (this.serverFlavor === "nuraft-runtime") {
-      throw new Error("NuRaft runtime API replay currently supports only single-node phases.");
-    }
-
     const configs = await this.resolveMultiNodeConfigs();
-
-    const clusterStr = configs
+    const clusterNodes = configs
       .map((node) => `${this.ipAddress}:${node.peerPort}:${node.port}`)
       .join(",");
 
-    writeFileSync(this.nodesFile, clusterStr);
+    if (this.serverFlavor === "nuraft-runtime") {
+      const clusterDataDirs = configs
+        .map((node) => `${node.port}=${join(this.baseDir, node.dataDir)}`)
+        .join(",");
+      const leaderPort = configs[0]!.port;
 
-    for (const node of configs) {
-      const args = [
-        `--nodes=${this.nodesFile}`,
-        `--peering-address=${this.ipAddress}`,
-        `--data-dir=${join(this.baseDir, node.dataDir)}`,
-        `--api-key=${this.apiKey}`,
-        `--api-port=${node.port}`,
-        "--api-address=0.0.0.0",
-        `--peering-port=${node.peerPort}`,
-        `--log-dir=${join(this.baseDir, "logs", node.logDir)}`,
-        `--analytics-dir=${join(this.baseDir, node.analyticsDir)}`,
-        ...TypesenseProcessManager.additionalConfigs,
-      ];
-      this.spawnServer(node.name, args, node.port);
+      for (const node of configs) {
+        const args = [
+          `--nodes=${clusterNodes}`,
+          `--cluster-data-dirs=${clusterDataDirs}`,
+          `--cluster-leader-api-port=${leaderPort}`,
+          `--data-dir=${join(this.baseDir, node.dataDir)}`,
+          `--api-key=${this.apiKey}`,
+          `--api-port=${node.port}`,
+          "--listen-address=0.0.0.0",
+          `--node-host=${this.ipAddress}`,
+          `--peering-port=${node.peerPort}`,
+        ];
+        this.spawnServer(node.name, args, node.port);
+      }
+    } else {
+      writeFileSync(this.nodesFile, clusterNodes);
+
+      for (const node of configs) {
+        const args = [
+          `--nodes=${this.nodesFile}`,
+          `--peering-address=${this.ipAddress}`,
+          `--data-dir=${join(this.baseDir, node.dataDir)}`,
+          `--api-key=${this.apiKey}`,
+          `--api-port=${node.port}`,
+          "--api-address=0.0.0.0",
+          `--peering-port=${node.peerPort}`,
+          `--log-dir=${join(this.baseDir, "logs", node.logDir)}`,
+          `--analytics-dir=${join(this.baseDir, node.analyticsDir)}`,
+          ...TypesenseProcessManager.additionalConfigs,
+        ];
+        this.spawnServer(node.name, args, node.port);
+      }
     }
 
     for (const node of configs) {
