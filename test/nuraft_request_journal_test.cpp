@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <unistd.h>
 
@@ -51,4 +52,30 @@ TEST_F(NuRaftRequestJournalTest, RejectsEmptyRequestJson) {
     uint64_t index = 0;
     ASSERT_FALSE(journal.append_request_json("", index, error));
     EXPECT_EQ(error, "NuRaft request journal cannot append an empty request payload");
+}
+
+TEST_F(NuRaftRequestJournalTest, RecoversTruncatedTail) {
+    const NuRaftStateLayout layout = NuRaftStateLayout::from_data_dir(temp_dir_);
+    NuRaftRequestJournal journal(layout);
+    std::string error;
+    ASSERT_TRUE(journal.initialize(error)) << error;
+
+    uint64_t index = 0;
+    ASSERT_TRUE(journal.append_request_json("{\"route\":\"/collections\"}", index, error)) << error;
+
+    {
+        std::ofstream output(layout.active_log_segment_file, std::ios::binary | std::ios::app);
+        ASSERT_TRUE(output.is_open());
+        output.write("\x02\x00\x00", 3);
+    }
+
+    NuRaftRequestJournal broken(layout);
+    ASSERT_FALSE(broken.initialize(error));
+    EXPECT_EQ(error, "NuRaft segment log is truncated before a record header is complete");
+    ASSERT_TRUE(broken.recover_truncated_tail(error)) << error;
+    ASSERT_TRUE(broken.initialize(error)) << error;
+
+    std::vector<NuRaftLogEntry> entries;
+    ASSERT_TRUE(broken.replay(entries, error)) << error;
+    ASSERT_EQ(entries.size(), 1u);
 }

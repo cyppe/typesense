@@ -12,6 +12,8 @@ struct NuRaftPrototypeRunOptions {
     std::string append_request_json;
     bool replay_log = false;
     bool apply_pending = false;
+    bool recover_truncated_tail = false;
+    bool auto_apply_pending = false;
 };
 
 class NuRaftReplicationController {

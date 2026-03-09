@@ -43,6 +43,10 @@ bool NuRaftRequestJournal::initialize(std::string& error) {
     return log_store_.initialize(error);
 }
 
+bool NuRaftRequestJournal::recover_truncated_tail(std::string& error) {
+    return log_store_.recover_truncated_tail(error);
+}
+
 bool NuRaftRequestJournal::append_request_json(const std::string& request_json,
                                               uint64_t& index,
                                               std::string& error) {

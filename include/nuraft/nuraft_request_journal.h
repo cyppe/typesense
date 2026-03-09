@@ -13,6 +13,7 @@ public:
     const NuRaftStateLayout& layout() const;
 
     bool initialize(std::string& error);
+    bool recover_truncated_tail(std::string& error);
     bool append_request_json(const std::string& request_json, uint64_t& index, std::string& error);
     bool replay(std::vector<NuRaftLogEntry>& entries, std::string& error) const;
 

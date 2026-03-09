@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <string>
 #include <unistd.h>
@@ -166,4 +167,38 @@ TEST_F(NuRaftReplicationControllerTest, AppliesPendingEntriesThroughCli) {
     ASSERT_EQ(controller.run(static_cast<int>(apply_args.size()), apply_argv.data(), second_apply_out, second_apply_err), 0);
     EXPECT_TRUE(second_apply_err.str().empty());
     EXPECT_NE(second_apply_out.str().find("applied_count=0"), std::string::npos);
+}
+
+TEST_F(NuRaftReplicationControllerTest, RecoversTruncatedTailAndAutoAppliesThroughCli) {
+    NuRaftReplicationController controller;
+    std::vector<std::string> append_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--append-request-json={\"route\":\"/collections\",\"method\":\"POST\"}",
+    };
+    std::vector<char*> append_argv = make_argv(append_args);
+    std::ostringstream append_out;
+    std::ostringstream append_err;
+    ASSERT_EQ(controller.run(static_cast<int>(append_args.size()), append_argv.data(), append_out, append_err), 0);
+    EXPECT_TRUE(append_err.str().empty());
+
+    const NuRaftStateLayout layout = NuRaftStateLayout::from_data_dir(temp_dir_);
+    {
+        std::ofstream output(layout.active_log_segment_file, std::ios::binary | std::ios::app);
+        ASSERT_TRUE(output.is_open());
+        output.write("\x02\x00\x00", 3);
+    }
+
+    std::vector<std::string> recover_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--recover-truncated-tail",
+        "--auto-apply-pending",
+    };
+    std::vector<char*> recover_argv = make_argv(recover_args);
+    std::ostringstream recover_out;
+    std::ostringstream recover_err;
+    ASSERT_EQ(controller.run(static_cast<int>(recover_args.size()), recover_argv.data(), recover_out, recover_err), 0);
+    EXPECT_NE(recover_err.str().find("Recovered truncated NuRaft request journal tail"), std::string::npos);
+    EXPECT_NE(recover_out.str().find("applied_count=1"), std::string::npos);
 }

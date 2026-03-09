@@ -20,8 +20,39 @@ std::string prototype_usage(const char* program_name) {
            "  --append-request-json <json>  Append one request envelope after startup preflight\n"
            "  --replay-log              Print the persisted request journal after startup preflight\n"
            "  --apply-pending           Apply pending replay entries into the prototype state-machine sink\n"
+           "  --auto-apply-pending      Apply pending replay entries during startup after optional append\n"
+           "  --recover-truncated-tail  Explicitly trim truncated EOF log garbage before continuing\n"
            "  --api-uses-ssl            Use HTTPS when deriving leader URLs\n"
            "  --help                    Print this message\n";
+}
+
+bool initialize_request_journal(NuRaftRequestJournal& request_journal,
+                                bool recover_truncated_tail,
+                                std::ostream& err,
+                                std::string& error) {
+    if (request_journal.initialize(error)) {
+        return true;
+    }
+
+    if (!recover_truncated_tail) {
+        return false;
+    }
+
+    const std::string original_error = error;
+    if (!request_journal.recover_truncated_tail(error)) {
+        err << "Failed to recover truncated NuRaft request journal tail after initialization error '"
+            << original_error << "': " << error << "\n";
+        return false;
+    }
+
+    if (!request_journal.initialize(error)) {
+        err << "NuRaft request journal still fails after truncated-tail recovery: " << error << "\n";
+        return false;
+    }
+
+    err << "Recovered truncated NuRaft request journal tail after initialization error: "
+        << original_error << "\n";
+    return true;
 }
 
 bool parse_uint32(const std::string& value, uint32_t& parsed, std::string& error) {
@@ -71,6 +102,16 @@ bool parse_options(int argc,
 
         if (argument == "--apply-pending") {
             run_options.apply_pending = true;
+            continue;
+        }
+
+        if (argument == "--auto-apply-pending") {
+            run_options.auto_apply_pending = true;
+            continue;
+        }
+
+        if (argument == "--recover-truncated-tail") {
+            run_options.recover_truncated_tail = true;
             continue;
         }
 
@@ -172,7 +213,7 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
 
     const NuRaftStateLayout layout = NuRaftStateLayout::from_data_dir(options.startup_options.data_dir);
     NuRaftRequestJournal request_journal(layout);
-    if (!request_journal.initialize(error)) {
+    if (!initialize_request_journal(request_journal, options.recover_truncated_tail, err, error)) {
         err << "Failed to initialize NuRaft request journal: " << error << "\n";
         return 1;
     }
@@ -199,6 +240,8 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
             << " request_bytes=" << options.append_request_json.size() << "\n";
     }
 
+    const bool should_apply_pending = options.apply_pending || options.auto_apply_pending;
+
     if (options.replay_log) {
         std::vector<NuRaftLogEntry> entries;
         if (!request_journal.replay(entries, error)) {
@@ -220,7 +263,7 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
         }
     }
 
-    if (options.apply_pending) {
+    if (should_apply_pending) {
         std::vector<NuRaftLogEntry> applied_entries;
         if (!state_machine.apply_pending(applied_entries, error)) {
             err << "Failed to apply pending prototype requests: " << error << "\n";
