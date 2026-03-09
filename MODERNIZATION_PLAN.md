@@ -299,6 +299,21 @@ Determine whether replacing `braft`/`brpc` with NuRaft would be a net improvemen
 - [ ] Implement snapshot create/install using the current RocksDB checkpoint model, plus external snapshot export compatibility expected by the API/runtime harness.
 - [ ] Implement membership changes and define the replacement behavior for today's peer refresh / IP-change handling.
 
+**Story C implementation outline (Mar 2026):**
+
+- **Isolation boundary:** do not fork the whole server binary in-place and do not mutate `ReplicationState`. Add a small runtime-facing replication interface first, let the current `braft` path implement it unchanged, and keep all NuRaft code under dedicated `include/nuraft/` and `src/nuraft/` paths.
+- **Recommended new files/classes:** add a tiny `include/replication/replication_service.h` interface, then implement a prototype-specific `nuraft_replication_controller`, `nuraft_state_manager`, `nuraft_segment_log_store`, `nuraft_state_machine`, `nuraft_snapshot_coordinator`, `nuraft_peer_resolver`, and `nuraft_request_envelope` layer. Reuse `http_req`, `BatchedIndexer`, `Store`, route registration, and the existing HTTP proxy surface instead of rewriting product logic.
+- **Recommended target shape:** keep NuRaft prototype code out of `//:typesense-server`. Add separate prototype-only Bazel targets (for example a `replication_interface` library, a `nuraft_prototype_lib`, and a dedicated `typesense-server-nuraft-prototype` binary) so the production binary and test targets do not pick up NuRaft transitively.
+- **Recommended on-disk isolation:** for Story C, keep all prototype state under `state/nuraft-prototype/{meta,log,snapshot}`. Do not share `state/meta`, `state/log`, or `state/snapshot` with `braft` during the feasibility sprint.
+- **Milestone order:**
+  1. compile-only prototype shell and isolated target;
+  2. single-node boot/write/restart/replay;
+  3. crash-safe single-node recovery and tail-log recovery;
+  4. static three-node append/commit + leader proxy parity;
+  5. snapshot save/load/install + external snapshot export parity;
+  6. only then membership/IP-drift handling and optional NuRaft-specific features.
+- **Most dangerous traps to avoid:** do not execute writes before NuRaft commit, do not replace HTTP leader proxying with NuRaft auto-forwarding, do not store the Raft log in a second RocksDB, do not share state dirs with the `braft` path, and do not reintroduce a generalized `reset_peers()` escape hatch before the bounded single-node recovery story is understood.
+
 **Story D - Verify correctness and operational parity**
 
 - [ ] Replay a focused API subset against the prototype: health, restart, snapshot, and multi-node write/read phases before attempting the full suite.
@@ -467,7 +482,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
 | 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **in progress** | Ranked shortlist exists now. `magic_enum` has already been refreshed to `0.9.7`; `libarchive` is now at `3.8.5`; `snappy` is now at `1.2.2`; ONNX Runtime is now at `1.24.3` with the one-protobuf/self-contained checks still green; `tests/` now uses `typesense-js 3.0.2`; the latest patch-debt audits confirmed `bazel/onnxruntime.patch` is still non-droppable on `1.24.3`, trimmed `bazel/whisper.patch` to 7 hunks, reduced `bazel/icu/icu.patch` to the AR fix only, and added upstream-tracker links for the active brpc/braft upstream-candidate patches, so the next work should bias toward the remaining `whisper`/upstream-candidate patch debt or the next deliberate dep candidate, while Protobuf 34 stays blocked on `brpc`. |
-| 19 | NuRaft replacement feasibility sprint | P1.7d | **in progress** | Investigation says NuRaft is the only serious in-process replacement candidate, but it is a real subsystem rewrite, not a dependency bump. Stories A and B are now complete: the current contract is documented and the recommended adapter shape is file-backed `state_mgr`, segment-file `log_store`, versioned request-envelope payloads, and NuRaft Asio transport. Next step is Story C prototype planning/implementation behind an isolated target. |
+| 19 | NuRaft replacement feasibility sprint | P1.7d | **in progress** | Investigation says NuRaft is the only serious in-process replacement candidate, but it is a real subsystem rewrite, not a dependency bump. Stories A and B are complete, and Story C now has an explicit prototype implementation outline: isolated replication interface, dedicated `src/nuraft/` code, prototype-only Bazel targets, and a milestone order that starts with single-node durability before any cluster/snapshot work. |
 
 ### Backlog map (active / later / archival)
 
