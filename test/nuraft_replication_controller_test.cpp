@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "json.hpp"
 #include "nuraft/nuraft_metadata_store.h"
 #include "nuraft/nuraft_replication_controller.h"
 #include "string_utils.h"
@@ -27,6 +28,10 @@ uint64_t make_route_hash(const std::string& method, const std::string& path) {
     const std::string method_path = method + path;
     const uint64_t hash = StringUtils::hash_wy(method_path.c_str(), method_path.size());
     return (hash > 100) ? hash : (hash + 100);
+}
+
+std::string append_request_arg(const nlohmann::json& request) {
+    return "--append-request-json=" + request.dump();
 }
 
 }  // namespace
@@ -220,8 +225,11 @@ TEST_F(NuRaftReplicationControllerTest, AppliesThroughKvSinkAndDumpsMaterialized
     std::vector<std::string> append_collection_args = {
         "./typesense-server-nuraft-prototype",
         "--data-dir=" + temp_dir_,
-        "--append-request-json={\"route_hash\":" + std::to_string(collection_create_hash) +
-            ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"books\\\"}\"}",
+        append_request_arg({
+            {"route_hash", collection_create_hash},
+            {"params", nlohmann::json::object()},
+            {"body", "{\"name\":\"books\"}"},
+        }),
     };
     std::vector<char*> append_collection_argv = make_argv(append_collection_args);
     std::ostringstream append_collection_out;
@@ -263,4 +271,85 @@ TEST_F(NuRaftReplicationControllerTest, AppliesThroughKvSinkAndDumpsMaterialized
     EXPECT_NE(apply_out.str().find("materialized_count=2"), std::string::npos);
     EXPECT_NE(apply_out.str().find("materialized key=state/collections/books"), std::string::npos);
     EXPECT_NE(apply_out.str().find("materialized key=state/documents/books/doc-1"), std::string::npos);
+}
+
+TEST_F(NuRaftReplicationControllerTest, ReplaysChunkedImportThroughKvSinkAndDumpsDocuments) {
+    NuRaftReplicationController controller;
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const uint64_t document_import_hash = make_route_hash("POST", "collections/:collection/documents/import");
+
+    std::vector<std::string> append_collection_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--append-request-json={\"route_hash\":" + std::to_string(collection_create_hash) +
+            ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"books\\\"}\"}",
+    };
+    std::vector<char*> append_collection_argv = make_argv(append_collection_args);
+    std::ostringstream append_collection_out;
+    std::ostringstream append_collection_err;
+    ASSERT_EQ(controller.run(static_cast<int>(append_collection_args.size()),
+                             append_collection_argv.data(),
+                             append_collection_out,
+                             append_collection_err), 0);
+    EXPECT_TRUE(append_collection_err.str().empty());
+
+    std::vector<std::string> append_import_chunk_one_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        append_request_arg({
+            {"route_hash", document_import_hash},
+            {"params", {{"collection", "books"}}},
+            {"first_chunk_aggregate", true},
+            {"last_chunk_aggregate", false},
+            {"start_ts", 42},
+            {"body", "{\"id\":\"doc-1\",\"title\":\"Dune\"}\n{\"id\":\"doc"},
+        }),
+    };
+    std::vector<char*> append_import_chunk_one_argv = make_argv(append_import_chunk_one_args);
+    std::ostringstream append_import_chunk_one_out;
+    std::ostringstream append_import_chunk_one_err;
+    ASSERT_EQ(controller.run(static_cast<int>(append_import_chunk_one_args.size()),
+                             append_import_chunk_one_argv.data(),
+                             append_import_chunk_one_out,
+                             append_import_chunk_one_err), 0);
+    EXPECT_TRUE(append_import_chunk_one_err.str().empty());
+
+    std::vector<std::string> append_import_chunk_two_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        append_request_arg({
+            {"route_hash", document_import_hash},
+            {"params", {{"collection", "books"}}},
+            {"first_chunk_aggregate", false},
+            {"last_chunk_aggregate", true},
+            {"start_ts", 42},
+            {"body", "-2\",\"title\":\"Foundation\"}\n"},
+        }),
+    };
+    std::vector<char*> append_import_chunk_two_argv = make_argv(append_import_chunk_two_args);
+    std::ostringstream append_import_chunk_two_out;
+    std::ostringstream append_import_chunk_two_err;
+    ASSERT_EQ(controller.run(static_cast<int>(append_import_chunk_two_args.size()),
+                             append_import_chunk_two_argv.data(),
+                             append_import_chunk_two_out,
+                             append_import_chunk_two_err), 0);
+    EXPECT_TRUE(append_import_chunk_two_err.str().empty());
+
+    std::vector<std::string> apply_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--state-machine-sink=kv",
+        "--apply-pending",
+        "--dump-materialized-state",
+    };
+    std::vector<char*> apply_argv = make_argv(apply_args);
+    std::ostringstream apply_out;
+    std::ostringstream apply_err;
+    ASSERT_EQ(controller.run(static_cast<int>(apply_args.size()), apply_argv.data(), apply_out, apply_err), 0);
+    EXPECT_TRUE(apply_err.str().empty());
+    EXPECT_NE(apply_out.str().find("materialized key=state/documents/books/doc-1"), std::string::npos);
+    EXPECT_NE(apply_out.str().find("materialized key=state/documents/books/doc-2"), std::string::npos);
+    EXPECT_NE(apply_out.str().find("materialized key=state/imports/books/00000000000000000042"), std::string::npos);
+    EXPECT_NE(apply_out.str().find("\"document_count\":2"), std::string::npos);
+    EXPECT_EQ(apply_out.str().find("state/import_buffers/books/00000000000000000042"), std::string::npos);
 }
