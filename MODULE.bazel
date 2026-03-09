@@ -314,6 +314,7 @@ done
 exec "$(dirname "$0")/runConfigureICU" $PLATFORM $PREFIX $ARGS
 WEOF
 chmod +x source/configure_wrapper""",
+        "rm -f source/common/BUILD.bazel source/data/unidata/norm2/BUILD.bazel source/i18n/BUILD.bazel source/stubdata/BUILD.bazel source/tools/gennorm2/BUILD.bazel source/tools/toolutil/BUILD.bazel",
     ],
 )
 
