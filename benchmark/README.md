@@ -133,6 +133,8 @@ This profile does not benchmark upstream releases. Instead it:
 - prints a simple side-by-side summary, and
 - writes the full JSON payload to `~/.cache/typesense/benchmark/raft-recovery-summary.json`.
 
+The JSON also carries process-level CPU and RSS samples for the live `braft` leader/follower and the NuRaft benchmark process. Treat those as directional overhead signals only: the `braft` numbers come from the real HTTP server runtime, while the NuRaft numbers still come from the isolated prototype binary.
+
 Useful knobs:
 
 ```bash

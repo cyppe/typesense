@@ -6,9 +6,12 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
+#include <sys/resource.h>
 
 #include "json.hpp"
 #include "nuraft/nuraft_metadata_store.h"
@@ -50,6 +53,56 @@ uint64_t make_route_hash(const std::string& method, const std::string& path) {
     const std::string method_path = method + path;
     const uint64_t hash = StringUtils::hash_wy(method_path.c_str(), method_path.size());
     return (hash > 100) ? hash : (hash + 100);
+}
+
+struct ProcessStats {
+    double user_cpu_ms = 0.0;
+    double system_cpu_ms = 0.0;
+    uint64_t current_rss_kb = 0;
+    uint64_t max_rss_kb = 0;
+};
+
+ProcessStats capture_process_stats() {
+    ProcessStats stats;
+
+    struct rusage usage {};
+    if (getrusage(RUSAGE_SELF, &usage) == 0) {
+        stats.user_cpu_ms =
+            (static_cast<double>(usage.ru_utime.tv_sec) * 1000.0) +
+            (static_cast<double>(usage.ru_utime.tv_usec) / 1000.0);
+        stats.system_cpu_ms =
+            (static_cast<double>(usage.ru_stime.tv_sec) * 1000.0) +
+            (static_cast<double>(usage.ru_stime.tv_usec) / 1000.0);
+        stats.max_rss_kb = static_cast<uint64_t>(usage.ru_maxrss);
+    }
+
+#ifdef __linux__
+    std::ifstream status_file("/proc/self/status");
+    std::string line;
+    while (std::getline(status_file, line)) {
+        if (line.rfind("VmRSS:", 0) == 0) {
+            std::istringstream line_stream(line.substr(6));
+            line_stream >> stats.current_rss_kb;
+            break;
+        }
+    }
+#endif
+
+    if (stats.current_rss_kb > stats.max_rss_kb) {
+        stats.max_rss_kb = stats.current_rss_kb;
+    }
+
+    return stats;
+}
+
+nlohmann::json process_stats_delta(const ProcessStats& before, const ProcessStats& after) {
+    return {
+        {"user_cpu_ms", after.user_cpu_ms - before.user_cpu_ms},
+        {"system_cpu_ms", after.system_cpu_ms - before.system_cpu_ms},
+        {"total_cpu_ms", (after.user_cpu_ms + after.system_cpu_ms) - (before.user_cpu_ms + before.system_cpu_ms)},
+        {"current_rss_kb", after.current_rss_kb},
+        {"peak_max_rss_kb", after.max_rss_kb},
+    };
 }
 
 std::string benchmark_usage(const char* program_name) {
@@ -839,6 +892,7 @@ int main(int argc, char** argv) {
     const std::string root_dir = options.data_dir.empty() ? make_default_root() : options.data_dir;
     std::filesystem::remove_all(root_dir);
     std::filesystem::create_directories(root_dir);
+    const ProcessStats benchmark_process_start = capture_process_stats();
 
     nlohmann::json result = {
         {"root_dir", root_dir},
@@ -893,6 +947,8 @@ int main(int argc, char** argv) {
         std::cerr << error << "\n";
         return 1;
     }
+
+    result["process"] = process_stats_delta(benchmark_process_start, capture_process_stats());
 
     std::cout << result.dump(2) << "\n";
     return 0;

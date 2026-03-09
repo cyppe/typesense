@@ -12,24 +12,27 @@ Tool: k6 via benchmark CLI, 30s per scenario
 **Commit:** `HEAD` at run time  
 **Command:** `scripts/benchmark_vs_upstream.sh --profile raft-recovery`  
 **Scenario:** `200` writes before follower outage, `3 x 50` writes while one follower is down, `22s` sleeps between outage rounds, `2` repeats.  
-**Artifacts:** `~/.cache/typesense/benchmark/raft-recovery-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-recovery-runs/20260309-200011`
+**Artifacts:** `~/.cache/typesense/benchmark/raft-recovery-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-recovery-runs/20260309-202254`
 
 ### Aggregated Results
 
 | Measure | NuRaft prototype | `braft` runtime |
 |---|---:|---:|
-| Recovery time after latest snapshot / restart | `0.52 ms` | `3261.10 ms` |
-| Extra recovery penalty from blocking snapshots on unhealthy peers | `+10.94 ms` | n/a |
-| Replay after rejoin | `0` entries with leader-only snapshots, `150` with `require-healthy-peers` | `152.5` entries |
+| Recovery time after latest snapshot / restart | `0.58 ms` | `3263.73 ms` |
+| Extra recovery penalty from blocking snapshots on unhealthy peers | `+10.53 ms` | n/a |
+| Replay after rejoin | `0` entries with leader-only snapshots, `150` with `require-healthy-peers` | `152` entries |
 | Snapshot freshness gap at end of outage | `0` entries after leader-only install | `2` entries |
 | Timed snapshots created during outage | `3` per run in leader-only policy | `1` per run |
 | Follower snapshot install observed on rejoin | `yes` (prototype install path) | `no` in `2/2` runs |
+| Process CPU cost | `147.44 ms` total benchmark CPU | leader `315 ms` during outage |
+| Peak RSS | `25,410 KB` benchmark-process peak | leader `436,078 KB` during outage, follower `392,000 KB` during recovery |
 
 ### Interpretation
 
 - The current fork's `braft` path is fixed for the unhealthy-peer timed-snapshot deadlock class: the leader did create timed snapshots while a follower was down, and the snapshot stayed fresh to within `2` entries of the final committed index.
 - That fix does **not** make `braft` look like the NuRaft prototype on recovery behavior. In both runtime repeats, the follower still restarted around log index `202` and replayed roughly the whole outage window (`152-153` entries) instead of obviously taking a snapshot-install path.
 - The NuRaft prototype remains materially stronger on this narrow disaster-recovery shape when the leader is allowed to keep snapshotting locally. If NuRaft blocks snapshots on peer health, it immediately loses that advantage and also replays the whole outage window.
+- The new CPU/RSS rows are useful only as directional signals. They compare a full live `braft` HTTP server against an isolated NuRaft prototype benchmark process, so they are not a valid “NuRaft uses 17x less memory” conclusion by themselves.
 
 ### Decision
 

@@ -104,6 +104,39 @@ def json_request(url: str,
         return json.loads(payload) if payload else {}
 
 
+def parse_int(value: Any) -> int:
+    if value is None:
+        return 0
+    return int(str(value))
+
+
+def read_proc_snapshot(pid: int) -> dict[str, float]:
+    stat_path = Path(f"/proc/{pid}/stat")
+    status_path = Path(f"/proc/{pid}/status")
+    if not stat_path.exists():
+        return {"cpu_ms": 0.0, "rss_kb": 0.0}
+
+    stat_parts = stat_path.read_text().split()
+    clock_ticks = os.sysconf("SC_CLK_TCK")
+    cpu_ms = ((int(stat_parts[13]) + int(stat_parts[14])) * 1000.0) / float(clock_ticks)
+
+    rss_kb = 0.0
+    if status_path.exists():
+        for line in status_path.read_text().splitlines():
+            if line.startswith("VmRSS:"):
+                rss_kb = float(line.split()[1])
+                break
+
+    return {"cpu_ms": cpu_ms, "rss_kb": rss_kb}
+
+
+def proc_delta(before: dict[str, float], after: dict[str, float]) -> dict[str, float]:
+    return {
+        "cpu_ms": after["cpu_ms"] - before["cpu_ms"],
+        "rss_kb": after["rss_kb"],
+    }
+
+
 def wait_for_health(port: int,
                     timeout_seconds: float,
                     process: subprocess.Popen[bytes] | None = None) -> None:
@@ -126,7 +159,8 @@ def wait_for_committed_index(port: int,
                              api_key: str,
                              target_index: int,
                              timeout_seconds: float,
-                             process: subprocess.Popen[bytes] | None = None) -> tuple[dict[str, Any], float]:
+                             process: subprocess.Popen[bytes] | None = None,
+                             observer: Any | None = None) -> tuple[dict[str, Any], float]:
     deadline = time.monotonic() + timeout_seconds
     url = f"http://127.0.0.1:{port}/status"
     last_status: dict[str, Any] = {}
@@ -136,6 +170,8 @@ def wait_for_committed_index(port: int,
         try:
             status = json_request(url, api_key=api_key, timeout=2.0)
             last_status = status
+            if observer is not None:
+                observer(status)
             if int(status.get("committed_index", 0)) >= target_index and int(status.get("queued_writes", 0)) == 0:
                 return status, time.monotonic()
         except Exception:
@@ -330,6 +366,12 @@ def run_braft_recovery_scenario(binary_path: Path,
 
         create_collection(nodes[0].api_port, api_key)
         initial_write_ms = write_documents(nodes[0].api_port, api_key, 1, docs)
+        leader_before_outage_proc = read_proc_snapshot(nodes[0].process.pid)
+        leader_before_outage_metrics = json_request(
+            f"http://127.0.0.1:{nodes[0].api_port}/metrics.json",
+            api_key=api_key,
+            timeout=5.0,
+        )
 
         leader_log_offset = nodes[0].file_log_path.stat().st_size if nodes[0].file_log_path.exists() else 0
         follower_log_offset = nodes[2].file_log_path.stat().st_size if nodes[2].file_log_path.exists() else 0
@@ -338,26 +380,52 @@ def run_braft_recovery_scenario(binary_path: Path,
         outage_write_ms = 0.0
         next_doc_id = docs + 1
         outage_round_committed_indexes: list[int] = []
+        leader_outage_samples: list[dict[str, float]] = []
         for _ in range(snapshot_rounds):
             outage_write_ms += write_documents(nodes[0].api_port, api_key, next_doc_id, post_snapshot_docs)
             next_doc_id += post_snapshot_docs
             leader_status = json_request(f"http://127.0.0.1:{nodes[0].api_port}/status", api_key=api_key, timeout=5.0)
             outage_round_committed_indexes.append(int(leader_status.get("committed_index", 0)))
+            leader_outage_samples.append(read_proc_snapshot(nodes[0].process.pid))
             time.sleep(outage_sleep_seconds)
 
         leader_final_status = json_request(f"http://127.0.0.1:{nodes[0].api_port}/status", api_key=api_key, timeout=5.0)
+        leader_after_outage_proc = read_proc_snapshot(nodes[0].process.pid)
+        leader_after_outage_metrics = json_request(
+            f"http://127.0.0.1:{nodes[0].api_port}/metrics.json",
+            api_key=api_key,
+            timeout=5.0,
+        )
         leader_final_committed_index = int(leader_final_status.get("committed_index", 0))
         leader_snapshot_index = latest_snapshot_index(nodes[0].data_dir / "state" / "snapshot")
 
         restart_started = time.monotonic()
         nodes[2].start(binary_path, nodes_file, api_key, runtime_lib_dir, extra_server_args)
         wait_for_health(nodes[2].api_port, health_timeout_seconds, nodes[2].process)
+        follower_recovery_start_proc = read_proc_snapshot(nodes[2].process.pid)
+        leader_recovery_peak_rss_kb = leader_after_outage_proc["rss_kb"]
+        follower_recovery_peak_rss_kb = follower_recovery_start_proc["rss_kb"]
+
+        def observe_recovery(_status: dict[str, Any]) -> None:
+            nonlocal leader_recovery_peak_rss_kb
+            nonlocal follower_recovery_peak_rss_kb
+            leader_recovery_peak_rss_kb = max(leader_recovery_peak_rss_kb, read_proc_snapshot(nodes[0].process.pid)["rss_kb"])
+            follower_recovery_peak_rss_kb = max(follower_recovery_peak_rss_kb, read_proc_snapshot(nodes[2].process.pid)["rss_kb"])
+
         follower_final_status, restart_completed = wait_for_committed_index(
             nodes[2].api_port,
             api_key,
             leader_final_committed_index,
             recovery_timeout_seconds,
             nodes[2].process,
+            observe_recovery,
+        )
+        leader_after_recovery_proc = read_proc_snapshot(nodes[0].process.pid)
+        follower_after_recovery_proc = read_proc_snapshot(nodes[2].process.pid)
+        leader_after_recovery_metrics = json_request(
+            f"http://127.0.0.1:{nodes[0].api_port}/metrics.json",
+            api_key=api_key,
+            timeout=5.0,
         )
 
         leader_log_delta = read_text_from_offset(nodes[0].file_log_path, leader_log_offset)
@@ -391,6 +459,48 @@ def run_braft_recovery_scenario(binary_path: Path,
             "leader_continue_unhealthy_snapshot_count": leader_log_delta.count("Continuing timed snapshot on leader despite"),
             "recovery_ms": (restart_completed - restart_started) * 1000.0,
             "total_docs": total_docs,
+            "leader_process": {
+                "before_outage": leader_before_outage_proc,
+                "after_outage": leader_after_outage_proc,
+                "after_recovery": leader_after_recovery_proc,
+                "cpu_ms_during_outage": proc_delta(leader_before_outage_proc, leader_after_outage_proc)["cpu_ms"],
+                "cpu_ms_during_recovery": proc_delta(leader_after_outage_proc, leader_after_recovery_proc)["cpu_ms"],
+                "rss_kb_before_outage": leader_before_outage_proc["rss_kb"],
+                "rss_kb_after_outage": leader_after_outage_proc["rss_kb"],
+                "rss_kb_after_recovery": leader_after_recovery_proc["rss_kb"],
+                "peak_rss_kb_during_outage": max(
+                    [leader_before_outage_proc["rss_kb"], leader_after_outage_proc["rss_kb"]] +
+                    [sample["rss_kb"] for sample in leader_outage_samples]
+                ),
+                "peak_rss_kb_during_recovery": leader_recovery_peak_rss_kb,
+            },
+            "follower_recovery_process": {
+                "start": follower_recovery_start_proc,
+                "after_recovery": follower_after_recovery_proc,
+                "cpu_ms_during_recovery": proc_delta(follower_recovery_start_proc, follower_after_recovery_proc)["cpu_ms"],
+                "rss_kb_after_recovery": follower_after_recovery_proc["rss_kb"],
+                "peak_rss_kb_during_recovery": follower_recovery_peak_rss_kb,
+            },
+            "leader_metrics": {
+                "typesense_memory_active_bytes_before_outage": parse_int(
+                    leader_before_outage_metrics.get("typesense_memory_active_bytes")
+                ),
+                "typesense_memory_active_bytes_after_outage": parse_int(
+                    leader_after_outage_metrics.get("typesense_memory_active_bytes")
+                ),
+                "typesense_memory_active_bytes_after_recovery": parse_int(
+                    leader_after_recovery_metrics.get("typesense_memory_active_bytes")
+                ),
+                "typesense_memory_resident_bytes_before_outage": parse_int(
+                    leader_before_outage_metrics.get("typesense_memory_resident_bytes")
+                ),
+                "typesense_memory_resident_bytes_after_outage": parse_int(
+                    leader_after_outage_metrics.get("typesense_memory_resident_bytes")
+                ),
+                "typesense_memory_resident_bytes_after_recovery": parse_int(
+                    leader_after_recovery_metrics.get("typesense_memory_resident_bytes")
+                ),
+            },
             "data_dir": str(run_dir),
         }
     finally:
@@ -415,6 +525,16 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     braft_snapshot_gap = [float(run["braft"]["snapshot_gap_to_final"]) for run in results]
     braft_timed_snapshots = [float(run["braft"]["leader_timed_snapshot_success_count"]) for run in results]
     braft_snapshot_installs = [1.0 if run["braft"]["follower_install_snapshot_seen"] else 0.0 for run in results]
+    braft_leader_outage_cpu = [float(run["braft"]["leader_process"]["cpu_ms_during_outage"]) for run in results]
+    braft_leader_recovery_cpu = [float(run["braft"]["leader_process"]["cpu_ms_during_recovery"]) for run in results]
+    braft_leader_peak_outage_rss = [float(run["braft"]["leader_process"]["peak_rss_kb_during_outage"]) for run in results]
+    braft_leader_peak_recovery_rss = [float(run["braft"]["leader_process"]["peak_rss_kb_during_recovery"]) for run in results]
+    braft_follower_recovery_cpu = [float(run["braft"]["follower_recovery_process"]["cpu_ms_during_recovery"]) for run in results]
+    braft_follower_recovery_peak_rss = [
+        float(run["braft"]["follower_recovery_process"]["peak_rss_kb_during_recovery"]) for run in results
+    ]
+    nuraft_process_cpu = [float(run["nuraft"]["process"]["total_cpu_ms"]) for run in results]
+    nuraft_process_peak_rss = [float(run["nuraft"]["process"]["peak_max_rss_kb"]) for run in results]
 
     return {
         "nuraft": {
@@ -438,6 +558,16 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
                 "min": min(nuraft_replay_deltas),
                 "max": max(nuraft_replay_deltas),
             },
+            "process_total_cpu_ms": {
+                "mean": mean(nuraft_process_cpu),
+                "min": min(nuraft_process_cpu),
+                "max": max(nuraft_process_cpu),
+            },
+            "process_peak_max_rss_kb": {
+                "mean": mean(nuraft_process_peak_rss),
+                "min": min(nuraft_process_peak_rss),
+                "max": max(nuraft_process_peak_rss),
+            },
         },
         "braft": {
             "recovery_ms": {
@@ -459,6 +589,36 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
                 "mean": mean(braft_timed_snapshots),
                 "min": min(braft_timed_snapshots),
                 "max": max(braft_timed_snapshots),
+            },
+            "leader_cpu_ms_during_outage": {
+                "mean": mean(braft_leader_outage_cpu),
+                "min": min(braft_leader_outage_cpu),
+                "max": max(braft_leader_outage_cpu),
+            },
+            "leader_cpu_ms_during_recovery": {
+                "mean": mean(braft_leader_recovery_cpu),
+                "min": min(braft_leader_recovery_cpu),
+                "max": max(braft_leader_recovery_cpu),
+            },
+            "leader_peak_rss_kb_during_outage": {
+                "mean": mean(braft_leader_peak_outage_rss),
+                "min": min(braft_leader_peak_outage_rss),
+                "max": max(braft_leader_peak_outage_rss),
+            },
+            "leader_peak_rss_kb_during_recovery": {
+                "mean": mean(braft_leader_peak_recovery_rss),
+                "min": min(braft_leader_peak_recovery_rss),
+                "max": max(braft_leader_peak_recovery_rss),
+            },
+            "follower_cpu_ms_during_recovery": {
+                "mean": mean(braft_follower_recovery_cpu),
+                "min": min(braft_follower_recovery_cpu),
+                "max": max(braft_follower_recovery_cpu),
+            },
+            "follower_peak_rss_kb_during_recovery": {
+                "mean": mean(braft_follower_recovery_peak_rss),
+                "min": min(braft_follower_recovery_peak_rss),
+                "max": max(braft_follower_recovery_peak_rss),
             },
             "follower_install_snapshot_seen_runs": int(sum(braft_snapshot_installs)),
             "run_count": len(results),

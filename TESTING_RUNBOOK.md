@@ -133,4 +133,4 @@ Optional knobs:
 scripts/benchmark_vs_upstream.sh --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3 --repeats 2
 ```
 
-This mode stages a runtime bundle for `//:typesense-server`, runs a real 3-node follower-outage/rejoin scenario on the current `braft` path, runs the NuRaft `snapshot-policy-compare` benchmark with the same write/outage counts, and writes a JSON summary to `~/.cache/typesense/benchmark/raft-recovery-summary.json`.
+This mode stages a runtime bundle for `//:typesense-server`, runs a real 3-node follower-outage/rejoin scenario on the current `braft` path, runs the NuRaft `snapshot-policy-compare` benchmark with the same write/outage counts, and writes a JSON summary to `~/.cache/typesense/benchmark/raft-recovery-summary.json`. The JSON also includes process-level CPU/RSS samples for the live `braft` leader/follower and the NuRaft benchmark process, with the caveat that this is still prototype-vs-runtime evidence rather than a drop-in server comparison.
