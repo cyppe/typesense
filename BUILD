@@ -305,7 +305,10 @@ cc_library(
         "src/nuraft/nuraft_state_layout.cpp",
     ],
     copts = COPTS,
-    deps = [":headers"],
+    deps = [
+        ":headers",
+        "@rocksdb",
+    ],
 )
 
 cc_binary(

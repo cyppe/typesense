@@ -6,6 +6,15 @@
 #include "nuraft/nuraft_file_store.h"
 #include "string_utils.h"
 
+namespace {
+
+nlohmann::json encode_request(const NuRaftAppliedRequest& request);
+bool decode_request(const nlohmann::json& encoded,
+                    NuRaftAppliedRequest& request,
+                    std::string& error);
+
+}  // namespace
+
 bool NuRaftAppliedRequest::operator==(const NuRaftAppliedRequest& other) const {
     return index == other.index &&
            route_hash == other.route_hash &&
@@ -18,6 +27,10 @@ bool NuRaftAppliedRequest::operator==(const NuRaftAppliedRequest& other) const {
            start_ts == other.start_ts &&
            log_index == other.log_index &&
            is_binary_body == other.is_binary_body;
+}
+
+std::string NuRaftAppliedRequest::encode() const {
+    return encode_request(*this).dump();
 }
 
 bool NuRaftAppliedRequest::from_log_entry(const NuRaftLogEntry& entry,
@@ -52,6 +65,20 @@ bool NuRaftAppliedRequest::from_log_entry(const NuRaftLogEntry& entry,
         error = std::string("Failed to decode NuRaft applied request: ") + e.what();
         return false;
     }
+}
+
+bool NuRaftAppliedRequest::decode(const std::string& encoded,
+                                  NuRaftAppliedRequest& applied_request,
+                                  std::string& error) {
+    nlohmann::json parsed;
+    try {
+        parsed = nlohmann::json::parse(encoded);
+    } catch (const std::exception& e) {
+        error = std::string("Failed to parse NuRaft applied request record: ") + e.what();
+        return false;
+    }
+
+    return decode_request(parsed, applied_request, error);
 }
 
 namespace {
@@ -120,7 +147,7 @@ bool NuRaftAppliedRequestStore::append_all(const std::vector<NuRaftAppliedReques
     }
 
     for (const auto& request : requests) {
-        existing_encoded.append(encode_request(request).dump());
+        existing_encoded.append(request.encode());
         existing_encoded.push_back('\n');
     }
 
@@ -142,16 +169,8 @@ bool NuRaftAppliedRequestStore::read_all(std::vector<NuRaftAppliedRequest>& requ
     std::vector<std::string> lines;
     StringUtils::split(encoded, lines, "\n");
     for (const auto& line : lines) {
-        nlohmann::json parsed;
-        try {
-            parsed = nlohmann::json::parse(line);
-        } catch (const std::exception& e) {
-            error = std::string("Failed to parse NuRaft applied request record: ") + e.what();
-            return false;
-        }
-
         NuRaftAppliedRequest request;
-        if (!decode_request(parsed, request, error)) {
+        if (!NuRaftAppliedRequest::decode(line, request, error)) {
             return false;
         }
         requests.push_back(std::move(request));

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <string>
 
 namespace {
@@ -18,9 +19,11 @@ std::string prototype_usage(const char* program_name) {
            "  --peering-port <port>     Peer identity port (default: 8107)\n"
            "  --nodes <list>            Comma-separated host:peer_port:api_port list\n"
            "  --append-request-json <json>  Append one request envelope after startup preflight\n"
+           "  --state-machine-sink <kind>   Apply sink: file (default) or kv\n"
            "  --replay-log              Print the persisted request journal after startup preflight\n"
            "  --apply-pending           Apply pending replay entries into the prototype state-machine sink\n"
            "  --auto-apply-pending      Apply pending replay entries during startup after optional append\n"
+           "  --dump-materialized-state Print materialized KV state after startup/apply (kv sink only)\n"
            "  --recover-truncated-tail  Explicitly trim truncated EOF log garbage before continuing\n"
            "  --api-uses-ssl            Use HTTPS when deriving leader URLs\n"
            "  --help                    Print this message\n";
@@ -115,6 +118,11 @@ bool parse_options(int argc,
             continue;
         }
 
+        if (argument == "--dump-materialized-state") {
+            run_options.dump_materialized_state = true;
+            continue;
+        }
+
         if (argument.rfind("--", 0) != 0) {
             error = "unexpected positional argument: " + argument;
             return false;
@@ -143,6 +151,8 @@ bool parse_options(int argc,
             run_options.startup_options.nodes_config = option_value;
         } else if (option_name == "append-request-json") {
             run_options.append_request_json = option_value;
+        } else if (option_name == "state-machine-sink") {
+            run_options.state_machine_sink = option_value;
         } else if (option_name == "api-port") {
             if (!parse_uint32(option_value, run_options.startup_options.api_port, error)) {
                 error = "invalid value for --api-port: " + error;
@@ -218,7 +228,20 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
         return 1;
     }
 
-    NuRaftPrototypeStateMachine state_machine(layout);
+    std::unique_ptr<NuRaftStateMachineSink> sink;
+    NuRaftKvStateMachineSink* kv_sink = nullptr;
+    if (options.state_machine_sink == "file") {
+        sink = std::make_unique<NuRaftFileBackedStateMachineSink>(layout);
+    } else if (options.state_machine_sink == "kv") {
+        auto kv_sink_instance = std::make_unique<NuRaftKvStateMachineSink>(layout);
+        kv_sink = kv_sink_instance.get();
+        sink = std::move(kv_sink_instance);
+    } else {
+        err << "Unsupported NuRaft state-machine sink: " << options.state_machine_sink << "\n";
+        return 1;
+    }
+
+    NuRaftPrototypeStateMachine state_machine(layout, std::move(sink));
     if (!state_machine.initialize(error)) {
         err << "Failed to initialize NuRaft prototype state machine: " << error << "\n";
         return 1;
@@ -282,6 +305,24 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
                 << " route_hash=" << request.route_hash
                 << " route_kind=" << NuRaftRouteClassifier::kind_name(request.route_kind)
                 << " body_bytes=" << request.body.size() << "\n";
+        }
+    }
+
+    if (options.dump_materialized_state) {
+        if (kv_sink == nullptr) {
+            err << "Materialized state dump requires --state-machine-sink=kv\n";
+            return 1;
+        }
+
+        std::vector<std::pair<std::string, std::string>> materialized_entries;
+        if (!kv_sink->read_materialized_entries(materialized_entries, error)) {
+            err << "Failed to read NuRaft materialized state: " << error << "\n";
+            return 1;
+        }
+
+        out << "materialized_count=" << materialized_entries.size() << "\n";
+        for (const auto& entry : materialized_entries) {
+            out << "materialized key=" << entry.first << " value=" << entry.second << "\n";
         }
     }
 

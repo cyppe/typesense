@@ -9,6 +9,7 @@
 
 #include "nuraft/nuraft_metadata_store.h"
 #include "nuraft/nuraft_replication_controller.h"
+#include "string_utils.h"
 
 namespace {
 
@@ -20,6 +21,12 @@ std::vector<char*> make_argv(std::vector<std::string>& args) {
     }
     argv.push_back(nullptr);
     return argv;
+}
+
+uint64_t make_route_hash(const std::string& method, const std::string& path) {
+    const std::string method_path = method + path;
+    const uint64_t hash = StringUtils::hash_wy(method_path.c_str(), method_path.size());
+    return (hash > 100) ? hash : (hash + 100);
 }
 
 }  // namespace
@@ -203,4 +210,57 @@ TEST_F(NuRaftReplicationControllerTest, RecoversTruncatedTailAndAutoAppliesThrou
     ASSERT_EQ(controller.run(static_cast<int>(recover_args.size()), recover_argv.data(), recover_out, recover_err), 0);
     EXPECT_NE(recover_err.str().find("Recovered truncated NuRaft request journal tail"), std::string::npos);
     EXPECT_NE(recover_out.str().find("applied_count=1"), std::string::npos);
+}
+
+TEST_F(NuRaftReplicationControllerTest, AppliesThroughKvSinkAndDumpsMaterializedState) {
+    NuRaftReplicationController controller;
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const uint64_t document_write_hash = make_route_hash("POST", "collections/:collection/documents");
+
+    std::vector<std::string> append_collection_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--append-request-json={\"route_hash\":" + std::to_string(collection_create_hash) +
+            ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"books\\\"}\"}",
+    };
+    std::vector<char*> append_collection_argv = make_argv(append_collection_args);
+    std::ostringstream append_collection_out;
+    std::ostringstream append_collection_err;
+    ASSERT_EQ(controller.run(static_cast<int>(append_collection_args.size()),
+                             append_collection_argv.data(),
+                             append_collection_out,
+                             append_collection_err), 0);
+    EXPECT_TRUE(append_collection_err.str().empty());
+
+    std::vector<std::string> append_document_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--append-request-json={\"route_hash\":" + std::to_string(document_write_hash) +
+            ",\"params\":{\"collection\":\"books\",\"id\":\"doc-1\"},"
+            "\"body\":\"{\\\"id\\\":\\\"doc-1\\\",\\\"title\\\":\\\"Dune\\\"}\"}",
+    };
+    std::vector<char*> append_document_argv = make_argv(append_document_args);
+    std::ostringstream append_document_out;
+    std::ostringstream append_document_err;
+    ASSERT_EQ(controller.run(static_cast<int>(append_document_args.size()),
+                             append_document_argv.data(),
+                             append_document_out,
+                             append_document_err), 0);
+    EXPECT_TRUE(append_document_err.str().empty());
+
+    std::vector<std::string> apply_args = {
+        "./typesense-server-nuraft-prototype",
+        "--data-dir=" + temp_dir_,
+        "--state-machine-sink=kv",
+        "--apply-pending",
+        "--dump-materialized-state",
+    };
+    std::vector<char*> apply_argv = make_argv(apply_args);
+    std::ostringstream apply_out;
+    std::ostringstream apply_err;
+    ASSERT_EQ(controller.run(static_cast<int>(apply_args.size()), apply_argv.data(), apply_out, apply_err), 0);
+    EXPECT_TRUE(apply_err.str().empty());
+    EXPECT_NE(apply_out.str().find("materialized_count=2"), std::string::npos);
+    EXPECT_NE(apply_out.str().find("materialized key=state/collections/books"), std::string::npos);
+    EXPECT_NE(apply_out.str().find("materialized key=state/documents/books/doc-1"), std::string::npos);
 }

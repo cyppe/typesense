@@ -22,10 +22,14 @@ struct NuRaftAppliedRequest {
     bool is_binary_body = false;
 
     bool operator==(const NuRaftAppliedRequest& other) const;
+    std::string encode() const;
 
     static bool from_log_entry(const NuRaftLogEntry& entry,
                                NuRaftAppliedRequest& applied_request,
                                std::string& error);
+    static bool decode(const std::string& encoded,
+                       NuRaftAppliedRequest& applied_request,
+                       std::string& error);
 };
 
 class NuRaftAppliedRequestStore {

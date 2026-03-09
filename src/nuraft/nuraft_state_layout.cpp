@@ -26,6 +26,7 @@ NuRaftStateLayout NuRaftStateLayout::from_state_dir(const std::string& state_dir
     layout.meta_dir = join_path(layout.root_dir, "meta");
     layout.log_dir = join_path(layout.root_dir, "log");
     layout.snapshot_dir = join_path(layout.root_dir, "snapshot");
+    layout.materialized_state_dir = join_path(layout.root_dir, "materialized_state");
     layout.identity_file = join_path(layout.meta_dir, "identity.json");
     layout.bootstrap_config_file = join_path(layout.meta_dir, "bootstrap_config.json");
     layout.replay_progress_file = join_path(layout.meta_dir, "replay_progress.json");

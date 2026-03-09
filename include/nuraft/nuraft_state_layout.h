@@ -9,6 +9,7 @@ struct NuRaftStateLayout {
     std::string meta_dir;
     std::string log_dir;
     std::string snapshot_dir;
+    std::string materialized_state_dir;
 
     std::string identity_file;
     std::string bootstrap_config_file;
