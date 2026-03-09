@@ -119,7 +119,18 @@ scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-
 
 The binary emits JSON for append/apply throughput, snapshot-recovery timing, repeated timed-snapshot pressure while a follower stays unhealthy, and direct leader-only vs `require-healthy-peers` outage comparison, so Story E can measure the prototype without pretending the normal HTTP benchmark lane already covers NuRaft.
 
-## 10) Raft recovery comparison
+## 10) NuRaft HTTP runtime smoke
+
+Use this when you need the bounded HTTP-facing NuRaft lane rather than the CLI-only prototype controller.
+
+```bash
+scripts/bazel_in_docker.sh build //:typesense-server-nuraft-runtime
+scripts/bazel_in_docker.sh test //:nuraft-http-runtime-test
+```
+
+The current runtime smoke covers a real subprocess-backed HTTP binary with health/status, collection/document writes, restart persistence, snapshot export, and snapshot install into a fresh node. It is intentionally narrower than the full `api_tests` harness and currently keeps the NuRaft write/snapshot response path on a simplified synchronous model until broader async/import/streaming parity is revisited.
+
+## 11) Raft recovery comparison
 
 Use this when you need one canonical command that compares the current fork's live `braft` runtime recovery path against the isolated NuRaft prototype on the same follower-outage shape.
 

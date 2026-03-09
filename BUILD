@@ -341,6 +341,34 @@ cc_binary(
     ],
 )
 
+cc_library(
+    name = "nuraft_runtime_lib",
+    srcs = [
+        "src/nuraft/nuraft_http_runtime.cpp",
+    ],
+    copts = COPTS,
+    deps = [
+        ":common_deps",
+        ":nuraft_prototype_lib",
+    ],
+)
+
+cc_binary(
+    name = "typesense-server-nuraft-runtime",
+    srcs = [
+        ":src_files",
+        "src/main/typesense_nuraft_runtime.cpp",
+    ],
+    local_defines = [
+        "TYPESENSE_VERSION=\"$(TYPESENSE_VERSION)\"",
+    ],
+    copts = COPTS,
+    deps = [
+        ":common_deps",
+        ":nuraft_runtime_lib",
+    ],
+)
+
 cc_test(
     name = "nuraft-bootstrap-builder-test",
     srcs = [
@@ -350,6 +378,25 @@ cc_test(
     deps = [
         ":headers",
         ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "nuraft-http-runtime-test",
+    srcs = [
+        "test/nuraft_http_runtime_test.cpp",
+        "test/temp_dir_utils.h",
+        "test/runfiles_utils.h",
+        ":src_files",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    data = [
+        ":typesense-server-nuraft-runtime",
+    ],
+    deps = [
+        ":common_deps",
+        ":nuraft_runtime_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
