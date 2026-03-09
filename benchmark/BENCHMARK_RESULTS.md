@@ -21,6 +21,7 @@ Tool: k6 via benchmark CLI, 30s per scenario
 | Recovery time after latest snapshot / restart | `0.58 ms` | `3263.73 ms` |
 | Extra recovery penalty from blocking snapshots on unhealthy peers | `+10.53 ms` | n/a |
 | Replay after rejoin | `0` entries with leader-only snapshots, `150` with `require-healthy-peers` | `152` entries |
+| Recovery path | `snapshot-install-only` with leader-only policy, `snapshot-install-plus-log-replay` with `require-healthy-peers` | `log-replay-only` in `2/2` runs |
 | Snapshot freshness gap at end of outage | `0` entries after leader-only install | `2` entries |
 | Timed snapshots created during outage | `3` per run in leader-only policy | `1` per run |
 | Follower snapshot install observed on rejoin | `yes` (prototype install path) | `no` in `2/2` runs |

@@ -278,6 +278,9 @@ summary = data["summary"]
 nuraft = summary["nuraft"]
 braft = summary["braft"]
 
+def fmt_path_counts(counts):
+    return ", ".join(f"{key} x{value}" for key, value in sorted(counts.items()))
+
 print(f"Run root: {data['run_root']}")
 print(f"JSON:     {sys.argv[1]}")
 print("")
@@ -286,6 +289,7 @@ print("|---|---:|---:|")
 print(f"| Recovery time | {nuraft['leader_only_recovery_ms']['mean']:.2f} ms (leader-only) | {braft['recovery_ms']['mean']:.2f} ms |")
 print(f"| Policy penalty | {nuraft['delta_recovery_ms']['mean']:.2f} ms slower when snapshots require healthy peers | n/a |")
 print(f"| Replay after rejoin | {nuraft['delta_replayed_entries']['mean']:.2f} extra entries when snapshots require healthy peers | {braft['replay_gap_on_rejoin']['mean']:.2f} entries |")
+print(f"| Recovery path | {fmt_path_counts(nuraft['leader_only_recovery_paths'])} | {fmt_path_counts(braft['recovery_paths'])} |")
 print(f"| Snapshot freshness gap | 0.00 entries after latest leader-only install | {braft['snapshot_gap_to_final']['mean']:.2f} entries |")
 print(f"| Timed snapshots during outage | leader-only policy keeps creating them | {braft['leader_timed_snapshot_success_count']['mean']:.2f} success(es) per run |")
 print(f"| Process CPU cost | {nuraft['process_total_cpu_ms']['mean']:.2f} ms total benchmark CPU | leader {braft['leader_cpu_ms_during_outage']['mean']:.2f} ms during outage, follower {braft['follower_cpu_ms_during_recovery']['mean']:.2f} ms during recovery |")
@@ -294,10 +298,12 @@ print("")
 print(f"NuRaft leader-only recovery: {nuraft['leader_only_recovery_ms']['mean']:.2f} ms")
 print(f"NuRaft require-healthy recovery: {nuraft['require_healthy_recovery_ms']['mean']:.2f} ms")
 print(f"NuRaft extra replay when policy is wrong: {nuraft['delta_replayed_entries']['mean']:.2f} entries")
+print(f"NuRaft recovery paths: leader-only {fmt_path_counts(nuraft['leader_only_recovery_paths'])}; require-healthy {fmt_path_counts(nuraft['require_healthy_recovery_paths'])}")
 print(f"NuRaft process CPU / peak RSS: {nuraft['process_total_cpu_ms']['mean']:.2f} ms / {nuraft['process_peak_max_rss_kb']['mean']:.0f} KB")
 print(f"braft recovery: {braft['recovery_ms']['mean']:.2f} ms")
 print(f"braft replay gap on follower restart: {braft['replay_gap_on_rejoin']['mean']:.2f} entries")
 print(f"braft timed snapshot successes while follower down: {braft['leader_timed_snapshot_success_count']['mean']:.2f}")
+print(f"braft recovery paths: {fmt_path_counts(braft['recovery_paths'])}")
 print(f"braft leader CPU during outage / peak RSS: {braft['leader_cpu_ms_during_outage']['mean']:.2f} ms / {braft['leader_peak_rss_kb_during_outage']['mean']:.0f} KB")
 print(f"braft follower CPU during recovery / peak RSS: {braft['follower_cpu_ms_during_recovery']['mean']:.2f} ms / {braft['follower_peak_rss_kb_during_recovery']['mean']:.0f} KB")
 print(f"braft follower snapshot installs observed: {braft['follower_install_snapshot_seen_runs']} / {braft['run_count']}")

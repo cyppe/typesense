@@ -105,6 +105,17 @@ nlohmann::json process_stats_delta(const ProcessStats& before, const ProcessStat
     };
 }
 
+std::string classify_recovery_path(uint64_t installed_snapshot_last_applied_index,
+                                   uint64_t replayed_entries_after_install) {
+    if (installed_snapshot_last_applied_index == 0) {
+        return "log-replay-only";
+    }
+    if (replayed_entries_after_install == 0) {
+        return "snapshot-install-only";
+    }
+    return "snapshot-install-plus-log-replay";
+}
+
 std::string benchmark_usage(const char* program_name) {
     const std::string binary_name = (program_name == nullptr || std::string(program_name).empty()) ?
                                     "nuraft-prototype-benchmark" :
@@ -599,6 +610,7 @@ nlohmann::json run_snapshot_recovery_benchmark(const BenchmarkOptions& options, 
         {"installed_snapshot_last_applied_index", installed_descriptor.last_applied_index},
         {"replay_ms", replay_ms},
         {"replayed_entries_after_install", replayed_entries},
+        {"recovery_path", classify_recovery_path(installed_descriptor.last_applied_index, replayed_entries)},
         {"replayed_entries_per_sec", replay_ms > 0.0 ? (1000.0 * static_cast<double>(replayed_entries) / replay_ms) : 0.0},
         {"delta_apply_ms", delta_apply_ms},
         {"delta_applied_entries", delta_applied_entries},
@@ -820,6 +832,7 @@ nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options,
         {"install_ms", install_ms},
         {"replay_ms", replay_ms},
         {"replayed_entries_after_install", replayed_entries},
+        {"recovery_path", classify_recovery_path(installed_descriptor.last_applied_index, replayed_entries)},
         {"apply_ms", apply_ms},
         {"applied_entries_after_install", applied_entries},
         {"recovery_total_ms", recovery_total_ms},

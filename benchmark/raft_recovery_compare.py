@@ -137,6 +137,21 @@ def proc_delta(before: dict[str, float], after: dict[str, float]) -> dict[str, f
     }
 
 
+def classify_recovery_path(snapshot_install_seen: bool, replay_gap_on_rejoin: int) -> str:
+    if snapshot_install_seen:
+        if replay_gap_on_rejoin == 0:
+            return "snapshot-install-only"
+        return "snapshot-install-plus-log-replay"
+    return "log-replay-only"
+
+
+def summarize_recovery_paths(paths: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for path in paths:
+        counts[path] = counts.get(path, 0) + 1
+    return counts
+
+
 def wait_for_health(port: int,
                     timeout_seconds: float,
                     process: subprocess.Popen[bytes] | None = None) -> None:
@@ -432,6 +447,15 @@ def run_braft_recovery_scenario(binary_path: Path,
         follower_log_delta = read_text_from_offset(nodes[2].file_log_path, follower_log_offset)
         follower_restart_last_index = parse_last_index(follower_log_delta)
         total_docs = docs + (post_snapshot_docs * snapshot_rounds)
+        follower_install_snapshot_seen = (
+            "on_snapshot_load" in follower_log_delta or
+            "InstallSnapshotRequest" in follower_log_delta or
+            "snapshot_load_done" in follower_log_delta
+        )
+        recovery_path = classify_recovery_path(
+            follower_install_snapshot_seen,
+            max(0, leader_final_committed_index - follower_restart_last_index),
+        )
 
         return {
             "mode": "braft-runtime-recovery",
@@ -449,11 +473,8 @@ def run_braft_recovery_scenario(binary_path: Path,
             "follower_restart_last_index": follower_restart_last_index,
             "replay_gap_on_rejoin": max(0, leader_final_committed_index - follower_restart_last_index),
             "follower_final_committed_index": int(follower_final_status.get("committed_index", 0)),
-            "follower_install_snapshot_seen": (
-                "on_snapshot_load" in follower_log_delta or
-                "InstallSnapshotRequest" in follower_log_delta or
-                "snapshot_load_done" in follower_log_delta
-            ),
+            "follower_install_snapshot_seen": follower_install_snapshot_seen,
+            "recovery_path": recovery_path,
             "leader_timed_snapshot_success_count": leader_log_delta.count("Timed snapshot succeeded!"),
             "leader_unhealthy_peer_warning_count": leader_log_delta.count("reported unhealthy during snapshot pre-check"),
             "leader_continue_unhealthy_snapshot_count": leader_log_delta.count("Continuing timed snapshot on leader despite"),
@@ -525,6 +546,13 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
     braft_snapshot_gap = [float(run["braft"]["snapshot_gap_to_final"]) for run in results]
     braft_timed_snapshots = [float(run["braft"]["leader_timed_snapshot_success_count"]) for run in results]
     braft_snapshot_installs = [1.0 if run["braft"]["follower_install_snapshot_seen"] else 0.0 for run in results]
+    braft_recovery_paths = [str(run["braft"]["recovery_path"]) for run in results]
+    nuraft_leader_only_paths = [
+        str(run["nuraft"]["snapshot_policy_compare"]["leader_only"]["recovery_path"]) for run in results
+    ]
+    nuraft_require_healthy_paths = [
+        str(run["nuraft"]["snapshot_policy_compare"]["require_healthy_peers"]["recovery_path"]) for run in results
+    ]
     braft_leader_outage_cpu = [float(run["braft"]["leader_process"]["cpu_ms_during_outage"]) for run in results]
     braft_leader_recovery_cpu = [float(run["braft"]["leader_process"]["cpu_ms_during_recovery"]) for run in results]
     braft_leader_peak_outage_rss = [float(run["braft"]["leader_process"]["peak_rss_kb_during_outage"]) for run in results]
@@ -568,6 +596,8 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
                 "min": min(nuraft_process_peak_rss),
                 "max": max(nuraft_process_peak_rss),
             },
+            "leader_only_recovery_paths": summarize_recovery_paths(nuraft_leader_only_paths),
+            "require_healthy_recovery_paths": summarize_recovery_paths(nuraft_require_healthy_paths),
         },
         "braft": {
             "recovery_ms": {
@@ -620,6 +650,7 @@ def build_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
                 "min": min(braft_follower_recovery_peak_rss),
                 "max": max(braft_follower_recovery_peak_rss),
             },
+            "recovery_paths": summarize_recovery_paths(braft_recovery_paths),
             "follower_install_snapshot_seen_runs": int(sum(braft_snapshot_installs)),
             "run_count": len(results),
         },
