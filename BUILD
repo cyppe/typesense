@@ -289,6 +289,7 @@ cc_library(
     name = "nuraft_prototype_lib",
     srcs = [
         "src/nuraft/nuraft_replication_controller.cpp",
+        "src/nuraft/nuraft_request_envelope.cpp",
     ],
     copts = COPTS,
     deps = [":headers"],
@@ -306,6 +307,19 @@ cc_binary(
     deps = [
         ":headers",
         ":nuraft_prototype_lib",
+    ],
+)
+
+cc_test(
+    name = "nuraft-request-envelope-test",
+    srcs = [
+        "test/nuraft_request_envelope_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
