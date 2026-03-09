@@ -113,6 +113,7 @@ Use this only for the isolated NuRaft feasibility sprint. It does not replace th
 ```bash
 scripts/bazel_in_docker.sh build //:nuraft-prototype-benchmark
 scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=all --docs=1000 --post-snapshot-docs=100
+scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-pressure --docs=1000 --post-snapshot-docs=200 --snapshot-rounds=3
 ```
 
-The binary emits JSON with append/apply and snapshot-recovery timings so Story E can measure the prototype without pretending the normal HTTP benchmark lane already covers NuRaft.
+The binary emits JSON for append/apply throughput, snapshot-recovery timing, and repeated timed-snapshot pressure while a follower stays unhealthy, so Story E can measure the prototype without pretending the normal HTTP benchmark lane already covers NuRaft.

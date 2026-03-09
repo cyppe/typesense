@@ -26,6 +26,7 @@ enum class BenchmarkMode {
     kAll,
     kAppendApply,
     kSnapshotRecovery,
+    kSnapshotPressure,
 };
 
 struct BenchmarkOptions {
@@ -33,6 +34,7 @@ struct BenchmarkOptions {
     std::string data_dir;
     uint32_t docs = 1000;
     uint32_t post_snapshot_docs = 100;
+    uint32_t snapshot_rounds = 3;
     bool keep_data = false;
 };
 
@@ -48,10 +50,11 @@ std::string benchmark_usage(const char* program_name) {
                                     std::string(program_name);
     return "usage: " + binary_name + " [options]\n"
            "options:\n"
-           "  --mode <all|append-apply|snapshot-recovery>  Benchmark scenario set (default: all)\n"
+           "  --mode <all|append-apply|snapshot-recovery|snapshot-pressure>  Benchmark scenario set (default: all)\n"
            "  --data-dir <dir>         Working directory root for benchmark state\n"
            "  --docs <count>           Number of document writes before snapshot (default: 1000)\n"
            "  --post-snapshot-docs <count>  Number of writes after snapshot in recovery benchmark (default: 100)\n"
+           "  --snapshot-rounds <count>  Number of outage-pressure snapshot rounds (default: 3)\n"
            "  --keep-data              Keep benchmark state directories after completion\n"
            "  --help                   Print this message\n";
 }
@@ -78,6 +81,8 @@ bool parse_mode(const std::string& value, BenchmarkMode& mode, std::string& erro
         mode = BenchmarkMode::kAppendApply;
     } else if (value == "snapshot-recovery") {
         mode = BenchmarkMode::kSnapshotRecovery;
+    } else if (value == "snapshot-pressure") {
+        mode = BenchmarkMode::kSnapshotPressure;
     } else {
         error = "unsupported mode: " + value;
         return false;
@@ -142,6 +147,11 @@ bool parse_options(int argc,
         } else if (option_name == "post-snapshot-docs") {
             if (!parse_uint32(option_value, options.post_snapshot_docs, error)) {
                 error = "invalid value for --post-snapshot-docs: " + error;
+                return false;
+            }
+        } else if (option_name == "snapshot-rounds") {
+            if (!parse_uint32(option_value, options.snapshot_rounds, error)) {
+                error = "invalid value for --snapshot-rounds: " + error;
                 return false;
             }
         } else {
@@ -535,6 +545,175 @@ nlohmann::json run_snapshot_recovery_benchmark(const BenchmarkOptions& options, 
     };
 }
 
+nlohmann::json run_snapshot_pressure_benchmark(const BenchmarkOptions& options, const std::string& root_dir, std::string& error) {
+    const uint64_t collection_create_hash = make_route_hash("POST", "collections");
+    const uint64_t document_write_hash = make_route_hash("POST", "collections/:collection/documents");
+    const std::string node1 = (std::filesystem::path(root_dir) / "pressure-node1").string();
+    const std::string node2 = (std::filesystem::path(root_dir) / "pressure-node2").string();
+    const std::string node3 = (std::filesystem::path(root_dir) / "pressure-node3").string();
+    const std::string nodes_config = "127.0.0.1:7107:8108,127.0.0.1:7109:8109,127.0.0.1:7111:8110";
+
+    if (!initialize_node(node1, 7107, 8108, nodes_config, error) ||
+        !initialize_node(node2, 7109, 8109, nodes_config, error) ||
+        !initialize_node(node3, 7111, 8110, nodes_config, error)) {
+        return {};
+    }
+
+    NuRaftMetadataStore metadata_store(NuRaftStateLayout::from_data_dir(node1));
+    NuRaftBootstrapConfig bootstrap_config;
+    if (!metadata_store.read_bootstrap_config(bootstrap_config, error)) {
+        return {};
+    }
+
+    const std::map<int32_t, std::string> data_dirs = {
+        {8108, node1},
+        {8109, node2},
+        {8110, node3},
+    };
+
+    uint64_t last_index = 0;
+    bool forwarded_to_leader = false;
+    int32_t target_server_id = 0;
+    if (!NuRaftStaticCluster::append_request(bootstrap_config,
+                                             data_dirs,
+                                             8108,
+                                             8109,
+                                             collection_create_request(collection_create_hash),
+                                             last_index,
+                                             forwarded_to_leader,
+                                             target_server_id,
+                                             error)) {
+        return {};
+    }
+
+    if (!append_cluster_requests(bootstrap_config,
+                                 data_dirs,
+                                 1,
+                                 options.docs,
+                                 document_write_hash,
+                                 last_index,
+                                 error)) {
+        return {};
+    }
+
+    std::vector<NuRaftStaticClusterNodeStatus> statuses;
+    if (!NuRaftStaticCluster::replicate_and_apply(bootstrap_config, data_dirs, 8108, "kv", statuses, error)) {
+        return {};
+    }
+
+    std::map<int32_t, bool> peer_health = {
+        {8108, true},
+        {8109, true},
+        {8110, false},
+    };
+    int64_t last_snapshot_time = 0;
+    uint32_t next_doc_id = options.docs + 1;
+    double total_append_ms = 0.0;
+    double total_snapshot_ms = 0.0;
+    nlohmann::json rounds = nlohmann::json::array();
+    NuRaftTimedSnapshotResult last_snapshot_result;
+
+    for (uint32_t round = 1; round <= options.snapshot_rounds; ++round) {
+        double append_ms = 0.0;
+        if (!measure_ms([&](std::string& run_error) {
+                return append_cluster_requests(bootstrap_config,
+                                               data_dirs,
+                                               next_doc_id,
+                                               options.post_snapshot_docs,
+                                               document_write_hash,
+                                               last_index,
+                                               run_error);
+            }, append_ms, error)) {
+            return {};
+        }
+        total_append_ms += append_ms;
+        next_doc_id += options.post_snapshot_docs;
+
+        NuRaftTimedSnapshotResult snapshot_result;
+        double snapshot_ms = 0.0;
+        if (!measure_ms([&](std::string& run_error) {
+                return NuRaftRecoveryCoordinator::run_timed_snapshot(bootstrap_config,
+                                                                     data_dirs,
+                                                                     8108,
+                                                                     peer_health,
+                                                                     NuRaftTimedSnapshotPolicy::kLeaderOnly,
+                                                                     100 + static_cast<int64_t>(round * 60),
+                                                                     60,
+                                                                     last_snapshot_time,
+                                                                     snapshot_result,
+                                                                     run_error);
+            }, snapshot_ms, error)) {
+            return {};
+        }
+        total_snapshot_ms += snapshot_ms;
+        last_snapshot_result = snapshot_result;
+
+        rounds.push_back({
+            {"round", round},
+            {"append_ms", append_ms},
+            {"snapshot_ms", snapshot_ms},
+            {"snapshot_created", snapshot_result.created_snapshot},
+            {"snapshot_last_applied_index", snapshot_result.descriptor.last_applied_index},
+            {"snapshot_last_log_index", snapshot_result.descriptor.last_log_index},
+            {"blocked_by_unhealthy_peer", snapshot_result.blocked_by_unhealthy_peer},
+        });
+    }
+
+    NuRaftSnapshotDescriptor installed_descriptor;
+    double install_ms = 0.0;
+    if (!measure_ms([&](std::string& run_error) {
+            return NuRaftRecoveryCoordinator::install_latest_snapshot(node1, node3, installed_descriptor, run_error);
+        }, install_ms, error)) {
+        return {};
+    }
+
+    uint64_t replayed_entries = 0;
+    double replay_ms = 0.0;
+    if (!measure_ms([&](std::string& run_error) {
+            return replicate_missing_entries(node1, node3, replayed_entries, run_error);
+        }, replay_ms, error)) {
+        return {};
+    }
+
+    uint64_t applied_entries = 0;
+    double apply_ms = 0.0;
+    if (!measure_ms([&](std::string& run_error) {
+            return apply_pending_kv(node3, applied_entries, run_error);
+        }, apply_ms, error)) {
+        return {};
+    }
+
+    uint64_t recovered_materialized_count = 0;
+    if (!read_materialized_count(node3, recovered_materialized_count, error)) {
+        return {};
+    }
+
+    const uint64_t outage_docs = static_cast<uint64_t>(options.snapshot_rounds) *
+                                 static_cast<uint64_t>(options.post_snapshot_docs);
+    const double recovery_total_ms = install_ms + replay_ms + apply_ms;
+
+    return {
+        {"mode", "snapshot-pressure"},
+        {"root_dir", root_dir},
+        {"initial_docs", options.docs},
+        {"outage_docs", outage_docs},
+        {"snapshot_rounds", options.snapshot_rounds},
+        {"rounds", rounds},
+        {"total_append_ms", total_append_ms},
+        {"total_snapshot_ms", total_snapshot_ms},
+        {"install_ms", install_ms},
+        {"replay_ms", replay_ms},
+        {"replayed_entries_after_install", replayed_entries},
+        {"apply_ms", apply_ms},
+        {"applied_entries_after_install", applied_entries},
+        {"recovery_total_ms", recovery_total_ms},
+        {"final_snapshot_last_applied_index", last_snapshot_result.descriptor.last_applied_index},
+        {"final_snapshot_last_log_index", last_snapshot_result.descriptor.last_log_index},
+        {"installed_snapshot_last_applied_index", installed_descriptor.last_applied_index},
+        {"recovered_materialized_entries", recovered_materialized_count},
+    };
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -560,6 +739,7 @@ int main(int argc, char** argv) {
         {"root_dir", root_dir},
         {"docs", options.docs},
         {"post_snapshot_docs", options.post_snapshot_docs},
+        {"snapshot_rounds", options.snapshot_rounds},
     };
 
     bool ok = true;
@@ -578,6 +758,15 @@ int main(int argc, char** argv) {
             ok = false;
         } else {
             result["snapshot_recovery"] = snapshot_recovery;
+        }
+    }
+
+    if (ok && (options.mode == BenchmarkMode::kAll || options.mode == BenchmarkMode::kSnapshotPressure)) {
+        const nlohmann::json snapshot_pressure = run_snapshot_pressure_benchmark(options, root_dir, error);
+        if (snapshot_pressure.is_null() || snapshot_pressure.empty()) {
+            ok = false;
+        } else {
+            result["snapshot_pressure"] = snapshot_pressure;
         }
     }
 
