@@ -172,3 +172,13 @@ scripts/benchmark_vs_upstream.sh --profile raft-recovery --docs 200 --post-snaps
 ```
 
 This mode stages a runtime bundle for `//:typesense-server`, runs a simple steady single-node write case plus a real 3-node follower-outage/rejoin scenario and a late-third-node join scenario on the current `braft` path, runs the matching NuRaft prototype `append-apply`, `snapshot-policy-compare`, and `delayed-join` benchmarks, and writes a JSON summary to `~/.cache/typesense/benchmark/raft-recovery-summary.json`. The JSON also includes explicit recovery-path classification (`snapshot-install-only`, `snapshot-install-plus-log-replay`, or `log-replay-only`) plus process-level CPU/RSS samples for the live `braft` leader/follower and the NuRaft benchmark process, with the caveat that this is still prototype-vs-runtime evidence rather than a drop-in server comparison.
+
+## 12) Raft API replay comparison
+
+Use this when you need a focused runtime-vs-runtime comparison on the real API wrapper for the currently implemented NuRaft HTTP surface.
+
+```bash
+scripts/benchmark_vs_upstream.sh --build --profile raft-api-replay
+```
+
+This mode runs the same `scripts/run_api_tests.sh` replay files against `//:typesense-server` and `//:typesense-server-nuraft-runtime`, currently `tests/collections.test.ts` and `tests/documents.test.ts`, and writes a JSON summary to `~/.cache/typesense/benchmark/raft-api-replay-summary.json`.

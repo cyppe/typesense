@@ -36,6 +36,7 @@ Profiles:
   write-stress  heavier concurrent read/write validation
   full          longer run with preserved history support
   raft-recovery compare the live braft recovery path against the NuRaft prototype
+  raft-api-replay compare focused API replay suites on the live braft server vs the NuRaft runtime
 
 Options:
   --build                  Build the fork binary first via bazel_in_docker.sh
@@ -48,7 +49,7 @@ Options:
   --port PORT              Base HTTP port for Typesense (default: 12108)
   --work-dir DIR           Working directory for binaries and data
   --clean                  Remove work dir and InfluxDB data before running
-  --profile NAME           quick, standard, write-stress, full, raft-recovery (default: standard)
+  --profile NAME           quick, standard, write-stress, full, raft-recovery, raft-api-replay (default: standard)
   --docs COUNT             Initial writes before follower outage for raft-recovery (default: 200)
   --post-snapshot-docs N   Writes per outage round for raft-recovery (default: 50)
   --snapshot-rounds N      Outage rounds / snapshot attempts for raft-recovery (default: 3)
@@ -66,6 +67,7 @@ Examples:
   scripts/benchmark_vs_upstream.sh --build --profile standard
   scripts/benchmark_vs_upstream.sh --profile write-stress --server-args --max-indexing-concurrency=16
   scripts/benchmark_vs_upstream.sh --build --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3
+  scripts/benchmark_vs_upstream.sh --build --profile raft-api-replay
   scripts/benchmark_vs_upstream.sh --baseline-binary ./base/typesense-server --baseline-label abc123 \
     --fork-binary ./head/typesense-server --fork-label def456 --duration 1m --no-flush
 EOF
@@ -181,8 +183,11 @@ full)
 raft-recovery)
 	:
 	;;
+raft-api-replay)
+	:
+	;;
 *)
-	echo "Unknown profile: ${PROFILE}. Use: quick, standard, write-stress, full, raft-recovery" >&2
+	echo "Unknown profile: ${PROFILE}. Use: quick, standard, write-stress, full, raft-recovery, raft-api-replay" >&2
 	exit 1
 	;;
 esac
@@ -227,6 +232,9 @@ if [[ "${BUILD}" == "true" ]]; then
 	if [[ "${PROFILE}" == "raft-recovery" ]]; then
 		echo "=== Building raft recovery targets ==="
 		"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server //:nuraft-prototype-benchmark
+	elif [[ "${PROFILE}" == "raft-api-replay" ]]; then
+		echo "=== Building raft API replay targets ==="
+		"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server //:typesense-server-nuraft-runtime
 	else
 		echo "=== Building fork binary ==="
 		"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server
@@ -330,6 +338,50 @@ print(f"braft follower CPU during recovery / peak RSS: {braft['follower_cpu_ms_d
 print(f"braft follower snapshot installs observed: {braft['follower_install_snapshot_seen_runs']} / {braft['run_count']}")
 print(f"braft delayed join: {braft['delayed_join_recovery_ms']['mean']:.2f} ms, replay {braft['delayed_join_replay_gap']['mean']:.2f} entries, path {fmt_path_counts(braft['delayed_join_recovery_paths'])}")
 print(f"braft delayed join snapshot installs observed: {braft['delayed_join_snapshot_install_seen_runs']} / {braft['run_count']}")
+PY
+	exit 0
+fi
+
+if [[ "${PROFILE}" == "raft-api-replay" ]]; then
+	RESULT_PATH="${WORK_DIR}/raft-api-replay-summary.json"
+	COMPARE_CMD=(
+		python3
+		"${REPO_DIR}/benchmark/raft_api_replay_compare.py"
+		--repo-root "${REPO_DIR}"
+		--work-dir "${WORK_DIR}"
+		--braft-binary "${REPO_DIR}/bazel-bin/typesense-server"
+		--nuraft-binary "${REPO_DIR}/bazel-bin/typesense-server-nuraft-runtime"
+		--output "${RESULT_PATH}"
+	)
+
+	echo "=== Running raft API replay comparison ==="
+	printf 'Command:'
+	printf ' %q' "${COMPARE_CMD[@]}"
+	echo
+	"${COMPARE_CMD[@]}"
+
+	echo ""
+	echo "========================================="
+	echo "  Raft API Replay Summary"
+	echo "========================================="
+	python3 - "${RESULT_PATH}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+print(f"JSON: {sys.argv[1]}")
+print("")
+print("| Suite | braft runtime | NuRaft runtime | Delta | Speedup |")
+print("|---|---:|---:|---:|---:|")
+for suite, summary in data["summary"].items():
+    print(
+        f"| {suite} | {summary['braft_elapsed_ms']:.2f} ms | "
+        f"{summary['nuraft_elapsed_ms']:.2f} ms | "
+        f"{summary['delta_ms']:.2f} ms | "
+        f"{summary['speedup_ratio']:.2f}x |"
+    )
 PY
 	exit 0
 fi

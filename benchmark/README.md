@@ -144,3 +144,20 @@ Useful knobs:
 ```bash
 scripts/benchmark_vs_upstream.sh --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3 --repeats 2
 ```
+
+## Raft API Replay Comparison
+
+The root wrapper also owns a focused runtime-vs-runtime API replay profile for the currently implemented NuRaft HTTP surface:
+
+```bash
+scripts/benchmark_vs_upstream.sh --build --profile raft-api-replay
+```
+
+This profile does not use the normal benchmark CLI. Instead it:
+- runs the real `scripts/run_api_tests.sh` wrapper against `//:typesense-server`,
+- runs the same replay files against `//:typesense-server-nuraft-runtime`,
+- currently measures `tests/collections.test.ts` and `tests/documents.test.ts`,
+- prints a simple side-by-side summary, and
+- writes the full JSON payload to `~/.cache/typesense/benchmark/raft-api-replay-summary.json`.
+
+Treat this as focused runtime-parity timing on implemented surfaces, not as a replacement for the full benchmark dashboard profiles.

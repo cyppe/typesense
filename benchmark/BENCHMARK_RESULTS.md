@@ -7,6 +7,34 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 16: Focused Raft API Replay Comparison (`braft` runtime vs NuRaft runtime, 2026-03-09)
+
+**Commit:** `HEAD` at run time  
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-api-replay`  
+**Scenario:** time the same real `scripts/run_api_tests.sh` wrapper against `//:typesense-server` and `//:typesense-server-nuraft-runtime` for `tests/collections.test.ts` and `tests/documents.test.ts`.  
+**Artifacts:** `~/.cache/typesense/benchmark/raft-api-replay-summary.json`
+
+### Aggregated Results
+
+| Suite | `braft` runtime | NuRaft runtime | Delta | Speedup |
+|---|---:|---:|---:|---:|
+| `tests/collections.test.ts` | `59,263.88 ms` | `3,532.13 ms` | `55,731.75 ms` faster | `16.78x` |
+| `tests/documents.test.ts` | `57,196.37 ms` | `2,575.73 ms` | `54,620.64 ms` faster | `22.21x` |
+
+### Interpretation
+
+- This is the first focused runtime-vs-runtime timing lane on the real API harness rather than prototype-vs-runtime.
+- The result is materially in NuRaft's favor on the currently implemented API surface: health, collections, documents, bounded search, import, restart, snapshot, and static multi-node replay.
+- The biggest caveat is still scope. These files cover only the bounded surface that now exists on `//:typesense-server-nuraft-runtime`; they do not yet prove parity on the broader product API or mixed search/import contention profiles.
+
+### Decision
+
+- Do **not** remove `braft` yet.
+- Do continue the NuRaft implementation/evaluation path.
+- This run materially strengthens the case that the next deciding data should come from broader runtime parity and contention on the NuRaft runtime lane, not from more isolated prototype-only work.
+
+---
+
 ## Run 15: Raft Recovery + Delayed Join Comparison (`braft` runtime vs NuRaft prototype, 2026-03-09)
 
 **Commit:** `HEAD` at run time  
