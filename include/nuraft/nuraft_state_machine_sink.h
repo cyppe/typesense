@@ -36,6 +36,14 @@ public:
     bool apply_all(const std::vector<NuRaftAppliedRequest>& requests, std::string& error) override;
     bool read_all(std::vector<NuRaftAppliedRequest>& requests, std::string& error) const override;
     bool create_checkpoint(const std::string& checkpoint_path, std::string& error) const;
+    bool read_materialized_value(const std::string& key,
+                                 std::string& value,
+                                 bool& found,
+                                 std::string& error) const;
+    bool read_materialized_prefix(const std::string& prefix,
+                                  std::vector<std::pair<std::string, std::string>>& entries,
+                                  std::string& error) const;
+    bool count_materialized_prefix(const std::string& prefix, size_t& count, std::string& error) const;
     bool read_materialized_entries(std::vector<std::pair<std::string, std::string>>& entries,
                                    std::string& error) const;
 
@@ -43,5 +51,5 @@ private:
     bool initialize_db(std::string& error) const;
 
     NuRaftStateLayout layout_;
-    mutable std::unique_ptr<rocksdb::DB> db_;
+    mutable std::shared_ptr<rocksdb::DB> db_;
 };

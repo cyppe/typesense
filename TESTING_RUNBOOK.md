@@ -182,3 +182,15 @@ scripts/benchmark_vs_upstream.sh --build --profile raft-api-replay
 ```
 
 This mode runs the same `scripts/run_api_tests.sh` replay files against `//:typesense-server` and `//:typesense-server-nuraft-runtime`, currently `tests/collections.test.ts` and `tests/documents.test.ts`, and writes a JSON summary to `~/.cache/typesense/benchmark/raft-api-replay-summary.json`.
+
+## 13) Raft runtime contention comparison
+
+Use this when you need one canonical command for steady-state document read/write pressure on the currently implemented runtime surfaces.
+
+```bash
+scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --reader-threads 2
+```
+
+This mode runs the live `//:typesense-server` and `//:typesense-server-nuraft-runtime` binaries directly, preloads a bounded collection, then measures one writer plus configurable document readers against preloaded document ids. It writes a JSON summary to `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`.
+
+Treat this as bounded runtime contention on currently implemented document CRUD surfaces, not as full product parity. It intentionally does not use the temporary NuRaft search path, because that path is still a simplified compatibility shim rather than decision-grade search behavior.

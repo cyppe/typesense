@@ -7,6 +7,39 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 17: Focused Raft Runtime Contention Comparison (`braft` runtime vs NuRaft runtime, 2026-03-09)
+
+**Commit:** `HEAD` at run time  
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-runtime-contention --duration 5s --docs 100 --reader-threads 2`  
+**Scenario:** preload `100` documents, then compare one writer plus `2` document readers against the live `//:typesense-server` and `//:typesense-server-nuraft-runtime` binaries for `5s`.  
+**Artifacts:** `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260309-232312`
+
+### Aggregated Results
+
+| Measure | `braft` runtime | NuRaft runtime |
+|---|---:|---:|
+| Writes completed | `4,646` | `298` |
+| Reads completed | `25,949` | `438` |
+| Write p50 / p95 | `1.02 / 1.46 ms` | `16.23 / 19.51 ms` |
+| Read p50 / p95 | `0.27 / 0.87 ms` | `17.63 / 37.01 ms` |
+| Process CPU | `4,570 ms` | `3,430 ms` |
+| Peak RSS | `378,044 KB` | `131,032 KB` |
+
+### Interpretation
+
+- This is the first canonical runtime-vs-runtime contention lane that stays on a surface both binaries really implement today without relying on the temporary NuRaft search shim.
+- NuRaft no longer fails this lane: a real RocksDB self-lock bug surfaced during validation and was fixed by sharing one process-local materialized-state DB handle per path.
+- Even after that fix and direct RocksDB point-lookups / prefix counts for common reads, the current NuRaft runtime is still materially slower than the live `braft` runtime under bounded document read/write pressure.
+- That means the decision is no longer "NuRaft looks better everywhere we can measure." It does not. NuRaft is still winning recovery behavior and bounded API replay timing, but it is currently losing steady-state read/write contention on the implemented runtime surface.
+
+### Decision
+
+- Do **not** remove `braft` yet.
+- Do **not** treat the current NuRaft runtime as production-ready.
+- Do continue NuRaft only if the remaining work is explicitly aimed at closing the runtime integration gap: long-lived sink/state handles, less per-request reconstruction, and the sync/async follow-ups already called out in `MODERNIZATION_PLAN.md`.
+
+---
+
 ## Run 16: Focused Raft API Replay Comparison (`braft` runtime vs NuRaft runtime, 2026-03-09)
 
 **Commit:** `HEAD` at run time  

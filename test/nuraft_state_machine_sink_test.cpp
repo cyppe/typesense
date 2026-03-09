@@ -128,6 +128,45 @@ TEST_F(NuRaftStateMachineSinkTest, PersistsDeletesAcrossKvSinkRestart) {
     EXPECT_EQ(entries[0].first, "state/collections/books");
 }
 
+TEST_F(NuRaftStateMachineSinkTest, SharesMaterializedDbAcrossConcurrentKvSinkInstances) {
+    const NuRaftStateLayout layout = NuRaftStateLayout::from_data_dir(temp_dir_);
+    NuRaftKvStateMachineSink writer_sink(layout);
+    NuRaftKvStateMachineSink reader_sink(layout);
+    std::string error;
+
+    NuRaftAppliedRequest create_collection;
+    create_collection.index = 1;
+    create_collection.route_hash = 101;
+    create_collection.route_kind = NuRaftRouteKind::kCollectionCreate;
+    create_collection.body = "{\"name\":\"books\"}";
+
+    NuRaftAppliedRequest write_document;
+    write_document.index = 2;
+    write_document.route_hash = 102;
+    write_document.route_kind = NuRaftRouteKind::kDocumentWrite;
+    write_document.params = {{"collection", "books"}, {"id", "doc-1"}};
+    write_document.body = "{\"id\":\"doc-1\",\"title\":\"Dune\"}";
+
+    ASSERT_TRUE(writer_sink.apply_all({create_collection, write_document}, error)) << error;
+
+    std::vector<std::pair<std::string, std::string>> entries;
+    ASSERT_TRUE(reader_sink.read_materialized_entries(entries, error)) << error;
+    const auto entry_map = to_entry_map(entries);
+    ASSERT_EQ(entry_map.at("state/collections/books"), "{\"name\":\"books\"}");
+    ASSERT_EQ(entry_map.at("state/documents/books/doc-1"), "{\"id\":\"doc-1\",\"title\":\"Dune\"}");
+
+    std::string encoded_document;
+    bool found = false;
+    ASSERT_TRUE(reader_sink.read_materialized_value("state/documents/books/doc-1", encoded_document, found, error))
+        << error;
+    ASSERT_TRUE(found);
+    ASSERT_EQ(encoded_document, "{\"id\":\"doc-1\",\"title\":\"Dune\"}");
+
+    size_t document_count = 0;
+    ASSERT_TRUE(reader_sink.count_materialized_prefix("state/documents/books/", document_count, error)) << error;
+    ASSERT_EQ(document_count, 1u);
+}
+
 TEST_F(NuRaftStateMachineSinkTest, MaterializesChunkedImportReplayAcrossKvSinkRestart) {
     const NuRaftStateLayout layout = NuRaftStateLayout::from_data_dir(temp_dir_);
     const std::string request_id = "00000000000000000042";

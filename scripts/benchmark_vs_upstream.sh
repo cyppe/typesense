@@ -20,6 +20,7 @@ POST_SNAPSHOT_DOCS="50"
 SNAPSHOT_ROUNDS="3"
 OUTAGE_SLEEP_SECONDS="22"
 REPEATS="2"
+READER_THREADS="2"
 
 usage() {
 	cat <<'EOF'
@@ -37,6 +38,7 @@ Profiles:
   full          longer run with preserved history support
   raft-recovery compare the live braft recovery path against the NuRaft prototype
   raft-api-replay compare focused API replay suites on the live braft server vs the NuRaft runtime
+  raft-runtime-contention compare focused document read/write contention on the live braft server vs the NuRaft runtime
 
 Options:
   --build                  Build the fork binary first via bazel_in_docker.sh
@@ -49,12 +51,13 @@ Options:
   --port PORT              Base HTTP port for Typesense (default: 12108)
   --work-dir DIR           Working directory for binaries and data
   --clean                  Remove work dir and InfluxDB data before running
-  --profile NAME           quick, standard, write-stress, full, raft-recovery, raft-api-replay (default: standard)
+  --profile NAME           quick, standard, write-stress, full, raft-recovery, raft-api-replay, raft-runtime-contention (default: standard)
   --docs COUNT             Initial writes before follower outage for raft-recovery (default: 200)
   --post-snapshot-docs N   Writes per outage round for raft-recovery (default: 50)
   --snapshot-rounds N      Outage rounds / snapshot attempts for raft-recovery (default: 3)
   --outage-sleep SEC       Seconds to sleep between raft-recovery rounds (default: 22)
   --repeats N              Number of raft-recovery repeats (default: 2)
+  --reader-threads N       Concurrent document readers for raft-runtime-contention (default: 2)
   --no-flush               Keep existing InfluxDB data for trend analysis
   --server-args ...        Extra args passed through to typesense-server
   -h, --help               Show this help
@@ -68,6 +71,7 @@ Examples:
   scripts/benchmark_vs_upstream.sh --profile write-stress --server-args --max-indexing-concurrency=16
   scripts/benchmark_vs_upstream.sh --build --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3
   scripts/benchmark_vs_upstream.sh --build --profile raft-api-replay
+  scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 10s --docs 200 --reader-threads 2
   scripts/benchmark_vs_upstream.sh --baseline-binary ./base/typesense-server --baseline-label abc123 \
     --fork-binary ./head/typesense-server --fork-label def456 --duration 1m --no-flush
 EOF
@@ -143,9 +147,13 @@ while [[ $# -gt 0 ]]; do
 		REPEATS="$2"
 		shift 2
 		;;
+	--reader-threads)
+		READER_THREADS="$2"
+		shift 2
+		;;
 	--server-args)
 		shift
-		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "--docs" && "$1" != "--post-snapshot-docs" && "$1" != "--snapshot-rounds" && "$1" != "--outage-sleep" && "$1" != "--repeats" && "$1" != "-h" && "$1" != "--help" ]]; do
+		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "--docs" && "$1" != "--post-snapshot-docs" && "$1" != "--snapshot-rounds" && "$1" != "--outage-sleep" && "$1" != "--repeats" && "$1" != "--reader-threads" && "$1" != "-h" && "$1" != "--help" ]]; do
 			SERVER_ARGS+=("$1")
 			shift
 		done
@@ -186,8 +194,11 @@ raft-recovery)
 raft-api-replay)
 	:
 	;;
+raft-runtime-contention)
+	:
+	;;
 *)
-	echo "Unknown profile: ${PROFILE}. Use: quick, standard, write-stress, full, raft-recovery, raft-api-replay" >&2
+	echo "Unknown profile: ${PROFILE}. Use: quick, standard, write-stress, full, raft-recovery, raft-api-replay, raft-runtime-contention" >&2
 	exit 1
 	;;
 esac
@@ -234,6 +245,9 @@ if [[ "${BUILD}" == "true" ]]; then
 		"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server //:nuraft-prototype-benchmark
 	elif [[ "${PROFILE}" == "raft-api-replay" ]]; then
 		echo "=== Building raft API replay targets ==="
+		"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server //:typesense-server-nuraft-runtime
+	elif [[ "${PROFILE}" == "raft-runtime-contention" ]]; then
+		echo "=== Building raft runtime contention targets ==="
 		"${SCRIPT_DIR}/bazel_in_docker.sh" build //:typesense-server //:typesense-server-nuraft-runtime
 	else
 		echo "=== Building fork binary ==="
@@ -382,6 +396,60 @@ for suite, summary in data["summary"].items():
         f"{summary['delta_ms']:.2f} ms | "
         f"{summary['speedup_ratio']:.2f}x |"
     )
+PY
+	exit 0
+fi
+
+if [[ "${PROFILE}" == "raft-runtime-contention" ]]; then
+	RESULT_PATH="${WORK_DIR}/raft-runtime-contention-summary.json"
+	COMPARE_CMD=(
+		python3
+		"${REPO_DIR}/benchmark/raft_runtime_contention_compare.py"
+		--repo-root "${REPO_DIR}"
+		--work-dir "${WORK_DIR}"
+		--braft-binary "${REPO_DIR}/bazel-bin/typesense-server"
+		--nuraft-binary "${REPO_DIR}/bazel-bin/typesense-server-nuraft-runtime"
+		--duration-seconds "${DURATION%s}"
+		--preload-docs "${DOCS}"
+		--reader-threads "${READER_THREADS}"
+		--output "${RESULT_PATH}"
+	)
+
+	echo "=== Running raft runtime contention comparison ==="
+	printf 'Command:'
+	printf ' %q' "${COMPARE_CMD[@]}"
+	echo
+	"${COMPARE_CMD[@]}"
+
+	echo ""
+	echo "========================================="
+	echo "  Raft Runtime Contention Summary"
+	echo "========================================="
+	python3 - "${RESULT_PATH}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+braft = data["braft"]
+nuraft = data["nuraft"]
+summary = data["summary"]
+
+print(f"Run root: {data['run_root']}")
+print(f"JSON:     {sys.argv[1]}")
+print("")
+print("| Measure | braft runtime | NuRaft runtime |")
+print("|---|---:|---:|")
+print(f"| Writes completed | {braft['writes_completed']} | {nuraft['writes_completed']} |")
+print(f"| Reads completed | {braft['reads_completed']} | {nuraft['reads_completed']} |")
+print(f"| Write p50 / p95 | {braft['write_p50_ms']:.2f} / {braft['write_p95_ms']:.2f} ms | {nuraft['write_p50_ms']:.2f} / {nuraft['write_p95_ms']:.2f} ms |")
+print(f"| Read p50 / p95 | {braft['read_p50_ms']:.2f} / {braft['read_p95_ms']:.2f} ms | {nuraft['read_p50_ms']:.2f} / {nuraft['read_p95_ms']:.2f} ms |")
+print(f"| Process CPU | {braft['process_cpu_ms']:.2f} ms | {nuraft['process_cpu_ms']:.2f} ms |")
+print(f"| Peak RSS | {braft['process_peak_rss_kb']:.0f} KB | {nuraft['process_peak_rss_kb']:.0f} KB |")
+print("")
+print(f"NuRaft/braft write throughput ratio: {summary['write_speedup_ratio']:.4f}")
+print(f"NuRaft/braft read throughput ratio: {summary['read_speedup_ratio']:.4f}")
 PY
 	exit 0
 fi

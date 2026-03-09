@@ -65,6 +65,14 @@ private:
                           int32_t& target_server_id,
                           std::string& error);
     bool apply_local_pending(uint64_t& applied_count, std::string& error);
+    bool read_materialized_value(const std::string& key,
+                                 std::string& value,
+                                 bool& found,
+                                 std::string& error) const;
+    bool read_materialized_prefix(const std::string& prefix,
+                                  std::vector<std::pair<std::string, std::string>>& entries,
+                                  std::string& error) const;
+    bool count_materialized_prefix(const std::string& prefix, size_t& count, std::string& error) const;
     bool read_materialized_entries(std::vector<std::pair<std::string, std::string>>& entries,
                                    std::string& error) const;
     void send_response(const std::shared_ptr<http_req>& request,

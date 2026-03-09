@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <utility>
 
 #include <rocksdb/options.h>
@@ -13,6 +15,16 @@
 #include "string_utils.h"
 
 namespace {
+
+std::mutex& materialized_db_registry_mutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+std::unordered_map<std::string, std::weak_ptr<rocksdb::DB>>& materialized_db_registry() {
+    static std::unordered_map<std::string, std::weak_ptr<rocksdb::DB>> registry;
+    return registry;
+}
 
 constexpr const char* kAppliedPrefix = "applied/";
 constexpr const char* kStatePrefix = "state/";
@@ -496,6 +508,27 @@ bool read_prefix_entries(rocksdb::DB* db,
     return true;
 }
 
+bool count_prefix_entries(rocksdb::DB* db,
+                          const std::string& prefix,
+                          size_t& count,
+                          std::string& error) {
+    count = 0;
+    rocksdb::ReadOptions read_options;
+    std::unique_ptr<rocksdb::Iterator> iterator(db->NewIterator(read_options));
+    for (iterator->Seek(prefix); iterator->Valid() && iterator->key().starts_with(prefix); iterator->Next()) {
+        ++count;
+    }
+
+    if (!iterator->status().ok()) {
+        error = std::string("Failed to count NuRaft materialized state prefix: ") +
+                iterator->status().ToString();
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
 }  // namespace
 
 NuRaftFileBackedStateMachineSink::NuRaftFileBackedStateMachineSink(NuRaftStateLayout layout)
@@ -522,11 +555,24 @@ bool NuRaftKvStateMachineSink::initialize_db(std::string& error) const {
         return true;
     }
 
+    std::lock_guard<std::mutex> lock(materialized_db_registry_mutex());
+    if (db_ != nullptr) {
+        error.clear();
+        return true;
+    }
+
     try {
         std::filesystem::create_directories(layout_.materialized_state_dir);
     } catch (const std::exception& e) {
         error = std::string("Failed to create NuRaft materialized state directory: ") + e.what();
         return false;
+    }
+
+    auto& registry = materialized_db_registry();
+    if (const auto existing = registry[layout_.materialized_state_dir].lock()) {
+        db_ = existing;
+        error.clear();
+        return true;
     }
 
     rocksdb::Options options;
@@ -538,7 +584,8 @@ bool NuRaftKvStateMachineSink::initialize_db(std::string& error) const {
         return false;
     }
 
-    db_.reset(db);
+    db_ = std::shared_ptr<rocksdb::DB>(db, [](rocksdb::DB* ptr) { delete ptr; });
+    registry[layout_.materialized_state_dir] = db_;
     error.clear();
     return true;
 }
@@ -623,6 +670,38 @@ bool NuRaftKvStateMachineSink::create_checkpoint(const std::string& checkpoint_p
 
     error.clear();
     return true;
+}
+
+bool NuRaftKvStateMachineSink::read_materialized_value(const std::string& key,
+                                                       std::string& value,
+                                                       bool& found,
+                                                       std::string& error) const {
+    if (!initialize_db(error)) {
+        return false;
+    }
+
+    return read_db_value(db_.get(), key, value, found, error);
+}
+
+bool NuRaftKvStateMachineSink::read_materialized_prefix(
+    const std::string& prefix,
+    std::vector<std::pair<std::string, std::string>>& entries,
+    std::string& error) const {
+    if (!initialize_db(error)) {
+        return false;
+    }
+
+    return read_prefix_entries(db_.get(), prefix, entries, error);
+}
+
+bool NuRaftKvStateMachineSink::count_materialized_prefix(const std::string& prefix,
+                                                         size_t& count,
+                                                         std::string& error) const {
+    if (!initialize_db(error)) {
+        return false;
+    }
+
+    return count_prefix_entries(db_.get(), prefix, count, error);
 }
 
 bool NuRaftKvStateMachineSink::read_materialized_entries(

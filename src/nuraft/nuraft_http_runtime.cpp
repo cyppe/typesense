@@ -382,6 +382,29 @@ bool NuRaftHttpRuntimeService::apply_local_pending(uint64_t& applied_count, std:
     return true;
 }
 
+bool NuRaftHttpRuntimeService::read_materialized_value(const std::string& key,
+                                                       std::string& value,
+                                                       bool& found,
+                                                       std::string& error) const {
+    NuRaftKvStateMachineSink sink(layout_);
+    return sink.read_materialized_value(key, value, found, error);
+}
+
+bool NuRaftHttpRuntimeService::read_materialized_prefix(
+    const std::string& prefix,
+    std::vector<std::pair<std::string, std::string>>& entries,
+    std::string& error) const {
+    NuRaftKvStateMachineSink sink(layout_);
+    return sink.read_materialized_prefix(prefix, entries, error);
+}
+
+bool NuRaftHttpRuntimeService::count_materialized_prefix(const std::string& prefix,
+                                                         size_t& count,
+                                                         std::string& error) const {
+    NuRaftKvStateMachineSink sink(layout_);
+    return sink.count_materialized_prefix(prefix, count, error);
+}
+
 bool NuRaftHttpRuntimeService::read_materialized_entries(
     std::vector<std::pair<std::string, std::string>>& entries,
     std::string& error) const {
@@ -641,7 +664,7 @@ void NuRaftHttpRuntimeService::decr_pending_writes() {}
 
 bool NuRaftHttpRuntimeService::list_collections(nlohmann::json& result, std::string& error) const {
     std::vector<std::pair<std::string, std::string>> entries;
-    if (!read_materialized_entries(entries, error)) {
+    if (!read_materialized_prefix(kCollectionPrefix, entries, error)) {
         return false;
     }
 
@@ -671,20 +694,13 @@ bool NuRaftHttpRuntimeService::read_collection(const std::string& collection,
                                                std::string& encoded,
                                                std::string& error) const {
     encoded.clear();
-    std::vector<std::pair<std::string, std::string>> entries;
-    if (!read_materialized_entries(entries, error)) {
+    const std::string key = std::string(kCollectionPrefix) + collection;
+    bool found = false;
+    if (!read_materialized_value(key, encoded, found, error)) {
         return false;
     }
 
-    const std::string key = std::string(kCollectionPrefix) + collection;
-    for (const auto& entry : entries) {
-        if (entry.first == key) {
-            encoded = entry.second;
-            break;
-        }
-    }
-
-    if (!encoded.empty()) {
+    if (found && !encoded.empty()) {
         size_t num_documents = 0;
         if (!count_collection_documents(collection, num_documents, error)) {
             return false;
@@ -706,17 +722,10 @@ bool NuRaftHttpRuntimeService::read_document(const std::string& collection,
                                              std::string& encoded,
                                              std::string& error) const {
     encoded.clear();
-    std::vector<std::pair<std::string, std::string>> entries;
-    if (!read_materialized_entries(entries, error)) {
-        return false;
-    }
-
     const std::string key = std::string(kDocumentPrefix) + collection + "/" + document_id;
-    for (const auto& entry : entries) {
-        if (entry.first == key) {
-            encoded = entry.second;
-            break;
-        }
+    bool found = false;
+    if (!read_materialized_value(key, encoded, found, error)) {
+        return false;
     }
 
     error.clear();
@@ -726,21 +735,8 @@ bool NuRaftHttpRuntimeService::read_document(const std::string& collection,
 bool NuRaftHttpRuntimeService::count_collection_documents(const std::string& collection,
                                                           size_t& count,
                                                           std::string& error) const {
-    count = 0;
-    std::vector<std::pair<std::string, std::string>> entries;
-    if (!read_materialized_entries(entries, error)) {
-        return false;
-    }
-
     const std::string prefix = std::string(kDocumentPrefix) + collection + "/";
-    for (const auto& entry : entries) {
-        if (entry.first.rfind(prefix, 0) == 0) {
-            ++count;
-        }
-    }
-
-    error.clear();
-    return true;
+    return count_materialized_prefix(prefix, count, error);
 }
 
 bool NuRaftHttpRuntimeService::search_documents(const std::string& collection,
@@ -765,7 +761,7 @@ bool NuRaftHttpRuntimeService::search_documents(const std::string& collection,
     }
 
     std::vector<std::pair<std::string, std::string>> entries;
-    if (!read_materialized_entries(entries, error)) {
+    if (!read_materialized_prefix(prefix, entries, error)) {
         return false;
     }
 

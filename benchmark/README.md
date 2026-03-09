@@ -161,3 +161,20 @@ This profile does not use the normal benchmark CLI. Instead it:
 - writes the full JSON payload to `~/.cache/typesense/benchmark/raft-api-replay-summary.json`.
 
 Treat this as focused runtime-parity timing on implemented surfaces, not as a replacement for the full benchmark dashboard profiles.
+
+## Raft Runtime Contention Comparison
+
+The root wrapper also owns a focused steady-state contention profile for the currently implemented document CRUD runtime surface:
+
+```bash
+scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --reader-threads 2
+```
+
+This profile does not use the normal benchmark CLI. Instead it:
+- runs the live `//:typesense-server` and `//:typesense-server-nuraft-runtime` binaries directly,
+- preloads a bounded collection with `--docs` documents,
+- applies one writer plus `--reader-threads` concurrent document readers against preloaded ids,
+- prints a side-by-side latency/throughput summary, and
+- writes the full JSON payload to `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`.
+
+Treat this as bounded read/write runtime contention on implemented document CRUD surfaces. It is useful because it avoids the temporary NuRaft search shim, so it says more about the current replication/runtime integration cost than about incomplete search parity.
