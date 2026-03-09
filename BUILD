@@ -288,6 +288,7 @@ cc_binary(
 cc_library(
     name = "nuraft_prototype_lib",
     srcs = [
+        "src/nuraft/nuraft_bootstrap_builder.cpp",
         "src/nuraft/nuraft_replication_controller.cpp",
         "src/nuraft/nuraft_file_store.cpp",
         "src/nuraft/nuraft_metadata_store.cpp",
@@ -311,6 +312,19 @@ cc_binary(
     deps = [
         ":headers",
         ":nuraft_prototype_lib",
+    ],
+)
+
+cc_test(
+    name = "nuraft-bootstrap-builder-test",
+    srcs = [
+        "test/nuraft_bootstrap_builder_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_prototype_lib",
+        "@com_google_googletest//:gtest_main",
     ],
 )
 
