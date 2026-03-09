@@ -7,6 +7,7 @@
 
 #include <rocksdb/options.h>
 #include <rocksdb/write_batch.h>
+#include <rocksdb/utilities/checkpoint.h>
 
 #include "json.hpp"
 #include "string_utils.h"
@@ -560,6 +561,39 @@ bool NuRaftKvStateMachineSink::read_all(std::vector<NuRaftAppliedRequest>& reque
             return false;
         }
         requests.push_back(std::move(request));
+    }
+
+    error.clear();
+    return true;
+}
+
+bool NuRaftKvStateMachineSink::create_checkpoint(const std::string& checkpoint_path,
+                                                 std::string& error) const {
+    if (!initialize_db(error)) {
+        return false;
+    }
+
+    std::error_code ec;
+    std::filesystem::remove_all(checkpoint_path, ec);
+    ec.clear();
+    std::filesystem::create_directories(std::filesystem::path(checkpoint_path).parent_path(), ec);
+    if (ec) {
+        error = std::string("Failed to prepare NuRaft checkpoint parent dir: ") + ec.message();
+        return false;
+    }
+
+    rocksdb::Checkpoint* checkpoint = nullptr;
+    rocksdb::Status status = rocksdb::Checkpoint::Create(db_.get(), &checkpoint);
+    std::unique_ptr<rocksdb::Checkpoint> checkpoint_guard(checkpoint);
+    if (!status.ok()) {
+        error = std::string("Failed to create NuRaft materialized-state checkpoint handle: ") + status.ToString();
+        return false;
+    }
+
+    status = checkpoint_guard->CreateCheckpoint(checkpoint_path);
+    if (!status.ok()) {
+        error = std::string("Failed to create NuRaft materialized-state checkpoint: ") + status.ToString();
+        return false;
     }
 
     error.clear();

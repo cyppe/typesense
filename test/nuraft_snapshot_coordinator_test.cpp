@@ -78,6 +78,7 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsPrototypeSnapshotExport)
         error)) << error;
 
     auto source_sink = std::make_unique<NuRaftKvStateMachineSink>(source_layout);
+    NuRaftKvStateMachineSink* source_sink_ptr = source_sink.get();
     NuRaftPrototypeStateMachine state_machine(source_layout, std::move(source_sink));
     ASSERT_TRUE(state_machine.initialize(error)) << error;
 
@@ -87,7 +88,7 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsPrototypeSnapshotExport)
 
     NuRaftSnapshotCoordinator coordinator(source_layout);
     NuRaftSnapshotDescriptor descriptor;
-    ASSERT_TRUE(coordinator.create_snapshot(export_dir, descriptor, error)) << error;
+    ASSERT_TRUE(coordinator.create_snapshot(export_dir, source_sink_ptr, descriptor, error)) << error;
     EXPECT_EQ(descriptor.last_log_index, 2u);
     EXPECT_EQ(descriptor.last_applied_index, 2u);
 

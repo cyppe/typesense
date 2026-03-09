@@ -486,7 +486,7 @@ int NuRaftReplicationController::run(const NuRaftPrototypeRunOptions& options,
 
     if (!options.create_snapshot_path.empty()) {
         NuRaftSnapshotDescriptor descriptor;
-        if (!snapshot_coordinator.create_snapshot(options.create_snapshot_path, descriptor, error)) {
+        if (!snapshot_coordinator.create_snapshot(options.create_snapshot_path, kv_sink, descriptor, error)) {
             err << "Failed to create NuRaft snapshot: " << error << "\n";
             return 1;
         }

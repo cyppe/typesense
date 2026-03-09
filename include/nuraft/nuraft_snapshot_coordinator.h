@@ -5,6 +5,8 @@
 
 #include "nuraft_metadata_store.h"
 
+class NuRaftKvStateMachineSink;
+
 struct NuRaftSnapshotDescriptor {
     static constexpr uint32_t kCurrentFormatVersion = 1;
 
@@ -21,6 +23,7 @@ public:
     explicit NuRaftSnapshotCoordinator(NuRaftStateLayout layout);
 
     bool create_snapshot(const std::string& export_path,
+                         const NuRaftKvStateMachineSink* kv_sink,
                          NuRaftSnapshotDescriptor& descriptor,
                          std::string& error) const;
     bool install_snapshot(const std::string& snapshot_path,

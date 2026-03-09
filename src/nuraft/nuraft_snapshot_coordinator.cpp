@@ -7,6 +7,7 @@
 #include "nuraft/nuraft_applied_request_store.h"
 #include "nuraft/nuraft_file_store.h"
 #include "nuraft/nuraft_request_journal.h"
+#include "nuraft/nuraft_state_machine_sink.h"
 
 namespace {
 
@@ -167,6 +168,7 @@ NuRaftSnapshotCoordinator::NuRaftSnapshotCoordinator(NuRaftStateLayout layout)
     : layout_(std::move(layout)) {}
 
 bool NuRaftSnapshotCoordinator::create_snapshot(const std::string& export_path,
+                                                const NuRaftKvStateMachineSink* kv_sink,
                                                 NuRaftSnapshotDescriptor& descriptor,
                                                 std::string& error) const {
     if (!NuRaftFileStore::ensure_layout(layout_, error)) {
@@ -189,9 +191,14 @@ bool NuRaftSnapshotCoordinator::create_snapshot(const std::string& export_path,
         return false;
     }
 
-    if (std::filesystem::exists(layout_.materialized_state_dir) &&
-        !replace_tree(layout_.materialized_state_dir, local_root / "materialized_state", error)) {
-        return false;
+    if (std::filesystem::exists(layout_.materialized_state_dir)) {
+        if (kv_sink != nullptr) {
+            if (!kv_sink->create_checkpoint((local_root / "materialized_state").string(), error)) {
+                return false;
+            }
+        } else if (!replace_tree(layout_.materialized_state_dir, local_root / "materialized_state", error)) {
+            return false;
+        }
     }
 
     if (!export_path.empty()) {

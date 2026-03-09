@@ -35,6 +35,7 @@ public:
 
     bool apply_all(const std::vector<NuRaftAppliedRequest>& requests, std::string& error) override;
     bool read_all(std::vector<NuRaftAppliedRequest>& requests, std::string& error) const override;
+    bool create_checkpoint(const std::string& checkpoint_path, std::string& error) const;
     bool read_materialized_entries(std::vector<std::pair<std::string, std::string>>& entries,
                                    std::string& error) const;
 
