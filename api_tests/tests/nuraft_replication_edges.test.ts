@@ -120,6 +120,34 @@ describe(Phases.MULTI_FRESH, () => {
     expect(body.title).toBe("Widget");
   });
 
+  // --- Import forwarding from follower ---
+
+  it("import documents from follower node 3", async () => {
+    const jsonl = [
+      JSON.stringify({ id: "edge-2", title: "Gadget", price: 19.99 }),
+      JSON.stringify({ id: "edge-3", title: "Gizmo", price: 29.99 }),
+    ].join("\n");
+
+    const res = await fetchMultiNode(3, "/collections/edge_products/documents/import?action=create", {
+      method: "POST",
+      body: jsonl,
+      headers: { "Content-Type": "text/plain" },
+    });
+    expect(res.ok).toBe(true);
+    const lines = (await res.text()).trim().split("\n");
+    for (const line of lines) {
+      const result = JSON.parse(line);
+      expect(result.success).toBe(true);
+    }
+  });
+
+  it("imported documents visible on leader node 1", async () => {
+    const res = await fetchMultiNode(1, "/collections/edge_products/documents/edge-2");
+    expect(res.ok).toBe(true);
+    const body: any = await res.json();
+    expect(body.title).toBe("Gadget");
+  });
+
   // --- Committed index convergence ---
 
   it("all nodes converge to the same committed index", async () => {

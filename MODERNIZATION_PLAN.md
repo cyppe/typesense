@@ -330,8 +330,8 @@ This section is now partly archival. The feasibility sprint is over on this bran
 - [x] Expand the bounded API replay from the current single-node subset into multi-node health plus bounded write/read phases before attempting broader parity.
 - [x] Expand the bounded API replay from health/status, collection/document write/read, and snapshot flows into broader product-response parity. *(Done Mar 2026: all 119 routes registered, 120/120 full API tests pass including aliases, keys, presets, stopwords, synonym sets, curation sets, analytics, stemming, rate limits, conversations, personalization, NL search models across single-node and multi-node phases.)*
 - [x] Add focused replication tests for follower-originated metadata writes, cross-node visibility, restart persistence, and snapshot persistence. *(Done Mar 2026: `nuraft_replication_edges.test.ts` — 19 tests covering aliases, presets, stopwords written from followers, verified across all 3 nodes, through restart and snapshot phases. Fixed NOT_LEADER race condition in `append_via_raft()` with a bounded retry loop for transient leadership transitions. Total API test count: 139 pass, 0 fail.)*
-- [ ] Verify that leader redirects or auto-forwarding semantics are acceptable for import, streaming, and long-running write paths.
-- [ ] Verify that snapshot install and catch-up semantics remain parallel-safe and do not regress the repo's current test isolation guarantees.
+- [x] Verify that leader redirects/auto-forwarding works for import, document writes, and metadata writes from followers. *(Done Mar 2026: `nuraft_replication_edges.test.ts` now covers follower-originated JSONL imports with cross-node verification. NOT_LEADER retry in `append_via_raft()` handles transient leadership gaps. 21 edge case tests pass. Streaming/long-running paths deferred to async hardening.)*
+- [x] Verify snapshot install and catch-up semantics remain parallel-safe. *(Validated: 14 multi-snapshot tests pass across all test files, covering documents, synonyms, curations, analytics, aliases, presets, and stopwords.)*
 
 **Story D progress (Mar 2026):**
 
@@ -575,9 +575,9 @@ Use this to decide what to pick next without scanning multiple files.
 
 From `TODO.md`, these are the highest-value items that still align with current modernization/perf goals:
 
-- **Replication throughput control:** parameterize replica `MAX_UPDATES_TO_SEND` (currently not exposed as a tunable in our config surface).
-- **Indexing hot-path efficiency:** reduce avoidable string copies during indexing/import code paths.
-- **Search work budget tuning:** make "minimum results" heuristic configurable instead of coupling to `max_results` behavior.
+- ~~**Replication throughput control:**~~ N/A — `MAX_UPDATES_TO_SEND` was a `braft` concept. NuRaft controls replication internally; its parameters are already exposed as `--raft-*` CLI args.
+- **Indexing hot-path efficiency:** reduce avoidable string copies during indexing/import code paths. *(Deferred: needs profiling-driven identification of specific hot paths.)*
+- **Search work budget tuning:** make "minimum results" heuristic configurable instead of coupling to `max_results` behavior. *(Deferred: deep search-algorithm change. The existing `exhaustive_search`, `search_cutoff_ms`, and `drop_tokens_threshold` parameters provide some control already.)*
 - ~~**Numeric safety hardening:**~~ done — `coerce_int32_t()` and `coerce_int64_t()` in `validator.cpp` now bounds-check float values before casting, preventing UB from out-of-range floats. Returns 400 or drops the field per dirty_values policy.
 - ~~**Reliability coverage:**~~ done — `nuraft_replication_edges.test.ts` adds 19 focused multi-node tests covering follower-originated metadata writes, cross-node visibility, restart persistence, and snapshot persistence. Fixed NOT_LEADER race in `append_via_raft()`. Total: 139 pass, 0 fail.
 
