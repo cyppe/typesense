@@ -27,6 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration-seconds", type=float, default=10.0, help="Benchmark duration per runtime")
     parser.add_argument("--preload-docs", type=int, default=200, help="Number of docs to pre-create")
     parser.add_argument("--writer-threads", type=int, default=1, help="Concurrent document writers")
+    parser.add_argument("--writer-interval-ms", type=float, default=0.0,
+                        help="Optional sleep between writer requests to compare reads under a fixed write rate")
     parser.add_argument("--reader-threads", type=int, default=2, help="Concurrent document-read threads")
     parser.add_argument("--repeats", type=int, default=1, help="Number of repeated contention runs to aggregate")
     parser.add_argument("--output", required=True, help="Path to write JSON results")
@@ -153,6 +155,7 @@ def run_contention(label: str,
                    duration_seconds: float,
                    preload_docs: int,
                    writer_threads: int,
+                   writer_interval_ms: float,
                    reader_threads: int) -> dict[str, Any]:
     data_dir = work_dir / f"{label}-data"
     shutil.rmtree(data_dir, ignore_errors=True)
@@ -207,6 +210,7 @@ def run_contention(label: str,
 
         def writer() -> None:
             nonlocal next_doc_id
+            writer_sleep_seconds = max(writer_interval_ms, 0.0) / 1000.0
             while not stop_event.is_set():
                 start = time.perf_counter()
                 try:
@@ -220,6 +224,8 @@ def run_contention(label: str,
                     with metrics_lock:
                         errors.append(f"writer:{exc}")
                     stop_event.set()
+                if writer_sleep_seconds > 0.0:
+                    time.sleep(writer_sleep_seconds)
 
         def reader() -> None:
             while not stop_event.is_set():
@@ -250,6 +256,7 @@ def run_contention(label: str,
             "duration_seconds": duration_seconds,
             "preload_docs": preload_docs,
             "writer_threads": writer_threads,
+            "writer_interval_ms": writer_interval_ms,
             "reader_threads": reader_threads,
             "writes_completed": len(writer_latencies),
             "reads_completed": len(reader_latencies),
@@ -284,6 +291,7 @@ def aggregate_results(label: str, runs: list[dict[str, Any]]) -> dict[str, Any]:
         "duration_seconds": runs[0]["duration_seconds"],
         "preload_docs": runs[0]["preload_docs"],
         "writer_threads": runs[0]["writer_threads"],
+        "writer_interval_ms": runs[0]["writer_interval_ms"],
         "reader_threads": runs[0]["reader_threads"],
         "writes_completed": int(round(med("writes_completed"))),
         "reads_completed": int(round(med("reads_completed"))),
@@ -313,9 +321,9 @@ def main() -> int:
         repeat_root = run_root / f"repeat-{repeat + 1}"
         repeat_root.mkdir(parents=True, exist_ok=True)
         braft = run_contention("braft", args.braft_binary, repeat_root, args.duration_seconds, args.preload_docs,
-                               args.writer_threads, args.reader_threads)
+                               args.writer_threads, args.writer_interval_ms, args.reader_threads)
         nuraft = run_contention("nuraft-runtime", args.nuraft_binary, repeat_root, args.duration_seconds,
-                                args.preload_docs, args.writer_threads, args.reader_threads)
+                                args.preload_docs, args.writer_threads, args.writer_interval_ms, args.reader_threads)
         braft_runs.append(braft)
         nuraft_runs.append(nuraft)
         repeats.append(

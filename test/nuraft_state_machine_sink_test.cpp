@@ -165,6 +165,10 @@ TEST_F(NuRaftStateMachineSinkTest, SharesMaterializedDbAcrossConcurrentKvSinkIns
     size_t document_count = 0;
     ASSERT_TRUE(reader_sink.count_materialized_prefix("state/documents/books/", document_count, error)) << error;
     ASSERT_EQ(document_count, 1u);
+
+    uint64_t last_applied_index = 0;
+    ASSERT_TRUE(reader_sink.read_last_applied_index(last_applied_index, error)) << error;
+    EXPECT_EQ(last_applied_index, 2u);
 }
 
 TEST_F(NuRaftStateMachineSinkTest, MaterializesChunkedImportReplayAcrossKvSinkRestart) {

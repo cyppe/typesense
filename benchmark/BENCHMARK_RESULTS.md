@@ -7,6 +7,70 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 26: Fixed-Rate Mixed Runtime Contention After Sink-Backed Local Replay Progress (`braft` runtime vs NuRaft runtime, 2026-03-10)
+
+**Commit:** `HEAD` at run time
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-runtime-contention --duration 10s --docs 100 --writer-threads 1 --writer-interval-ms 2 --reader-threads 2 --repeats 2`
+**Scenario:** same bounded runtime contention lane, but now with a fixed writer interval to compare read QoS under roughly equal write pressure after removing the single-node runtime's per-write replay-progress fsync from the hot path.
+**Artifacts:** `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260310-112717`
+
+### Aggregated Results
+
+| Measure | `braft` runtime | NuRaft runtime |
+|---|---:|---:|
+| Writes completed (median of 2) | `3,208` | `3,246` |
+| Reads completed (median of 2) | `94,042` | `85,642` |
+| Write p50 / p95 | `1.01 / 1.24 ms` | `0.97 / 1.15 ms` |
+| Read p50 / p95 | `0.19 / 0.36 ms` | `0.18 / 0.81 ms` |
+| Process CPU | `4,435 ms` | `2,195 ms` |
+| Peak RSS | `259,572 KB` | `71,314 KB` |
+| NuRaft / `braft` write ratio |  | `1.01x` |
+| NuRaft / `braft` read ratio |  | `0.91x` |
+
+### Interpretation
+
+- This is the first mixed contention run that holds write pressure approximately equal enough to compare read QoS fairly.
+- Under that controlled write rate, NuRaft is now effectively at write parity and keeps about `91%` of `braft` read throughput while using much less CPU and RSS.
+- That changes the decision posture materially. The old closed-loop mixed lane still shows a large read gap, but it is no longer a clean fairness signal once NuRaft can drive materially more writes in the same window.
+
+### Decision
+
+- Treat NuRaft as the benchmark winner for the current bounded runtime surface.
+- Do **not** delete `braft` yet, because broader API parity, async/import/streaming hardening, and a migration cut line still remain.
+- From here the question is no longer “is NuRaft viable enough to keep going?” It is “finish the runtime/product hardening without losing these signals.”
+
+---
+
+## Run 25: Pure-Write Runtime Contention After Sink-Backed Local Replay Progress (`braft` runtime vs NuRaft runtime, 2026-03-10)
+
+**Commit:** `HEAD` at run time
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 1 --reader-threads 0 --repeats 3`
+**Scenario:** isolate sustained document-write pressure after removing the single-node runtime's per-write replay-progress fsync from the hot path and deriving local replay progress from the materialized sink instead.
+**Artifacts:** `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260310-112055`
+
+### Aggregated Results
+
+| Measure | `braft` runtime | NuRaft runtime |
+|---|---:|---:|
+| Writes completed (median of 3) | `4,458` | `6,606` |
+| Write p50 / p95 | `0.94 / 1.24 ms` | `0.72 / 0.85 ms` |
+| Process CPU | `1,780 ms` | `1,180 ms` |
+| Peak RSS | `153,476 KB` | `74,068 KB` |
+| NuRaft / `braft` write ratio |  | `1.48x` |
+
+### Interpretation
+
+- The per-write replay-progress sync was a real bottleneck. Once the single-node runtime stopped treating the metadata replay-progress file as the hot-path source of truth, NuRaft moved from roughly `0.47x` of `braft` pure-write throughput to about `1.48x`.
+- Pure writes are no longer the steady-state blocker on the bounded runtime surface.
+- This also explains why the old closed-loop mixed lane became harder to interpret: NuRaft can now issue materially more writes in the same window, which naturally increases interference unless the benchmark controls write rate explicitly.
+
+### Decision
+
+- Do **not** treat raw write throughput as the reason to keep `braft`.
+- Keep the fixed-rate mixed lane alongside the pure-read and pure-write variants so future regressions stay attributable.
+
+---
+
 ## Run 24: Pure-Write Runtime Contention Isolation (`braft` runtime vs NuRaft runtime, 2026-03-10)
 
 **Commit:** `HEAD` at run time

@@ -376,31 +376,29 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     if (options_.cluster_data_dirs.empty()) {
         local_request_journal_ = std::make_unique<NuRaftRequestJournal>(layout_);
         materialized_state_sink_ = std::make_unique<NuRaftKvStateMachineSink>(layout_);
-        local_metadata_store_ = std::make_unique<NuRaftMetadataStore>(layout_);
-        local_state_machine_ = std::make_unique<NuRaftPrototypeStateMachine>(
-            layout_,
-            std::make_unique<NuRaftKvStateMachineSink>(layout_));
-        if (!local_request_journal_->initialize(error) ||
-            !local_metadata_store_->initialize(error) ||
-            !local_state_machine_->initialize(error)) {
+        if (!local_request_journal_->initialize(error)) {
             local_request_journal_.reset();
-            local_state_machine_.reset();
-            local_metadata_store_.reset();
             materialized_state_sink_.reset();
             return false;
         }
     } else {
         local_request_journal_.reset();
-        local_state_machine_.reset();
-        local_metadata_store_.reset();
         materialized_state_sink_.reset();
     }
     if (!apply_local_pending(applied_count, error)) {
         local_request_journal_.reset();
-        local_state_machine_.reset();
-        local_metadata_store_.reset();
         materialized_state_sink_.reset();
         return false;
+    }
+
+    if (options_.cluster_data_dirs.empty()) {
+        uint64_t last_applied_index = 0;
+        if (!read_last_local_applied_index(last_applied_index, error) ||
+            !sync_local_replay_progress(last_applied_index, error)) {
+            local_request_journal_.reset();
+            materialized_state_sink_.reset();
+            return false;
+        }
     }
 
     {
@@ -491,18 +489,8 @@ bool NuRaftHttpRuntimeService::apply_single_local_append(const NuRaftAppliedRequ
         error = "NuRaft runtime materialized state sink is not initialized.";
         return false;
     }
-    if (local_metadata_store_ == nullptr) {
-        error = "NuRaft runtime metadata store is not initialized.";
-        return false;
-    }
 
     if (!materialized_state_sink_->apply_all({applied_request}, error)) {
-        return false;
-    }
-
-    NuRaftReplayProgress progress;
-    progress.last_applied_index = applied_request.index;
-    if (!local_metadata_store_->write_replay_progress(progress, error)) {
         return false;
     }
 
@@ -511,28 +499,79 @@ bool NuRaftHttpRuntimeService::apply_single_local_append(const NuRaftAppliedRequ
 }
 
 bool NuRaftHttpRuntimeService::apply_local_pending(uint64_t& applied_count, std::string& error) {
-    std::vector<NuRaftLogEntry> applied_entries;
-    if (local_state_machine_ != nullptr) {
-        if (!local_state_machine_->apply_pending(applied_entries, error)) {
+    if (local_request_journal_ != nullptr && materialized_state_sink_ != nullptr) {
+        uint64_t last_applied_index = 0;
+        if (!read_last_local_applied_index(last_applied_index, error)) {
             return false;
         }
-    } else {
-        auto sink = std::make_unique<NuRaftKvStateMachineSink>(layout_);
-        NuRaftPrototypeStateMachine state_machine(layout_, std::move(sink));
-        if (!state_machine.initialize(error) || !state_machine.apply_pending(applied_entries, error)) {
-            return false;
-        }
-    }
 
-    if (applied_entries.empty()) {
-        applied_count = 0;
+        std::vector<NuRaftLogEntry> all_entries;
+        if (!local_request_journal_->replay(all_entries, error)) {
+            return false;
+        }
+
+        std::vector<NuRaftAppliedRequest> pending_requests;
+        pending_requests.reserve(all_entries.size());
+        for (const auto& entry : all_entries) {
+            if (entry.index <= last_applied_index) {
+                continue;
+            }
+
+            NuRaftAppliedRequest applied_request;
+            if (!NuRaftAppliedRequest::from_log_entry(entry, applied_request, error)) {
+                return false;
+            }
+            pending_requests.push_back(std::move(applied_request));
+        }
+
+        if (pending_requests.empty()) {
+            applied_count = 0;
+            error.clear();
+            return true;
+        }
+
+        if (!materialized_state_sink_->apply_all(pending_requests, error)) {
+            return false;
+        }
+
+        applied_count = pending_requests.size();
         error.clear();
         return true;
+    }
+
+    std::vector<NuRaftLogEntry> applied_entries;
+    auto sink = std::make_unique<NuRaftKvStateMachineSink>(layout_);
+    NuRaftPrototypeStateMachine state_machine(layout_, std::move(sink));
+    if (!state_machine.initialize(error) || !state_machine.apply_pending(applied_entries, error)) {
+        return false;
     }
 
     applied_count = applied_entries.size();
     error.clear();
     return true;
+}
+
+bool NuRaftHttpRuntimeService::read_last_local_applied_index(uint64_t& last_applied_index,
+                                                             std::string& error) const {
+    last_applied_index = 0;
+    if (materialized_state_sink_ == nullptr) {
+        error = "NuRaft runtime materialized state sink is not initialized.";
+        return false;
+    }
+
+    return materialized_state_sink_->read_last_applied_index(last_applied_index, error);
+}
+
+bool NuRaftHttpRuntimeService::sync_local_replay_progress(uint64_t last_applied_index,
+                                                          std::string& error) const {
+    NuRaftMetadataStore metadata_store(layout_);
+    if (!metadata_store.initialize(error)) {
+        return false;
+    }
+
+    NuRaftReplayProgress progress;
+    progress.last_applied_index = last_applied_index;
+    return metadata_store.write_replay_progress(progress, error);
 }
 
 bool NuRaftHttpRuntimeService::read_materialized_value(const std::string& key,
@@ -912,9 +951,19 @@ void NuRaftHttpRuntimeService::do_snapshot(const std::string& snapshot_path,
     std::lock_guard<std::mutex> lock(mutex_);
     std::string error;
     NuRaftKvStateMachineSink sink(layout_);
+    NuRaftKvStateMachineSink* snapshot_sink = materialized_state_sink_ != nullptr ? materialized_state_sink_.get() : &sink;
+    if (materialized_state_sink_ != nullptr) {
+        uint64_t last_applied_index = 0;
+        if (!read_last_local_applied_index(last_applied_index, error) ||
+            !sync_local_replay_progress(last_applied_index, error)) {
+            res->set_500(error);
+            send_response(req, res);
+            return;
+        }
+    }
     NuRaftSnapshotDescriptor descriptor;
     NuRaftSnapshotCoordinator coordinator(layout_);
-    if (!coordinator.create_snapshot(snapshot_path, &sink, descriptor, error)) {
+    if (!coordinator.create_snapshot(snapshot_path, snapshot_sink, descriptor, error)) {
         res->set_500(error);
         send_response(req, res);
         return;

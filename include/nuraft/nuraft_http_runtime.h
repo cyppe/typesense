@@ -12,11 +12,9 @@
 #include <vector>
 
 #include "http_server.h"
-#include "nuraft_prototype_state_machine.h"
 #include "nuraft_replication_controller.h"
 #include "nuraft_request_journal.h"
 #include "nuraft_state_machine_sink.h"
-#include "nuraft_metadata_store.h"
 #include "replication/replication_service.h"
 
 struct NuRaftHttpServerOptions {
@@ -76,6 +74,8 @@ private:
     bool apply_single_local_append(const NuRaftAppliedRequest& applied_request,
                                    std::string& error);
     bool apply_local_pending(uint64_t& applied_count, std::string& error);
+    bool read_last_local_applied_index(uint64_t& last_applied_index, std::string& error) const;
+    bool sync_local_replay_progress(uint64_t last_applied_index, std::string& error) const;
     bool read_materialized_value(const std::string& key,
                                  std::string& value,
                                  bool& found,
@@ -101,8 +101,6 @@ private:
     std::atomic<int32_t> preferred_leader_server_id_;
     std::atomic<bool> initialized_;
     std::unique_ptr<NuRaftRequestJournal> local_request_journal_;
-    std::unique_ptr<NuRaftPrototypeStateMachine> local_state_machine_;
-    std::unique_ptr<NuRaftMetadataStore> local_metadata_store_;
     mutable std::unique_ptr<NuRaftKvStateMachineSink> materialized_state_sink_;
     mutable std::shared_mutex document_cache_mutex_;
     mutable std::unordered_map<std::string, std::string> document_cache_;

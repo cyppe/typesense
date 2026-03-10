@@ -1,5 +1,6 @@
 #include "nuraft/nuraft_state_machine_sink.h"
 
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -614,6 +615,47 @@ bool NuRaftKvStateMachineSink::apply_all(const std::vector<NuRaftAppliedRequest>
     const rocksdb::Status status = db_->Write(rocksdb::WriteOptions(), &batch);
     if (!status.ok()) {
         error = std::string("Failed to write NuRaft materialized state batch: ") + status.ToString();
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
+bool NuRaftKvStateMachineSink::read_last_applied_index(uint64_t& last_applied_index,
+                                                       std::string& error) const {
+    last_applied_index = 0;
+    if (!initialize_db(error)) {
+        return false;
+    }
+
+    std::string upper_bound = kAppliedPrefix;
+    if (!upper_bound.empty()) {
+        upper_bound.back() = static_cast<char>(upper_bound.back() + 1);
+    }
+
+    std::unique_ptr<rocksdb::Iterator> iterator(db_->NewIterator(rocksdb::ReadOptions()));
+    iterator->SeekForPrev(upper_bound);
+    if (!iterator->status().ok()) {
+        error = std::string("Failed to seek NuRaft applied-request prefix: ") + iterator->status().ToString();
+        return false;
+    }
+
+    if (!iterator->Valid()) {
+        error.clear();
+        return true;
+    }
+
+    const std::string key = iterator->key().ToString();
+    if (key.rfind(kAppliedPrefix, 0) != 0) {
+        error.clear();
+        return true;
+    }
+
+    try {
+        last_applied_index = std::stoull(key.substr(std::strlen(kAppliedPrefix)));
+    } catch (const std::exception& e) {
+        error = std::string("Failed to parse NuRaft applied-request key '") + key + "': " + e.what();
         return false;
     }
 

@@ -185,4 +185,5 @@ Two useful isolation variants:
 ```bash
 scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 0 --reader-threads 2 --repeats 3
 scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 1 --reader-threads 0 --repeats 3
+scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 10s --docs 100 --writer-threads 1 --writer-interval-ms 2 --reader-threads 2 --repeats 2
 ```

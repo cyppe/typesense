@@ -36,6 +36,7 @@ public:
     bool apply_all(const std::vector<NuRaftAppliedRequest>& requests, std::string& error) override;
     bool read_all(std::vector<NuRaftAppliedRequest>& requests, std::string& error) const override;
     bool create_checkpoint(const std::string& checkpoint_path, std::string& error) const;
+    bool read_last_applied_index(uint64_t& last_applied_index, std::string& error) const;
     bool read_materialized_value(const std::string& key,
                                  std::string& value,
                                  bool& found,
