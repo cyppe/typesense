@@ -7,6 +7,10 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+Historical note: Runs 14-26 below are archival pre-cutover measurements from when this branch still carried both the old `braft` runtime and the new NuRaft runtime. They remain useful as migration evidence, but those comparison lanes are now retired because this branch is NuRaft-only. Any per-run recommendation to "keep" or "not remove" `braft` is superseded by the later cutover decision on this branch.
+
+---
+
 ## Run 26: Fixed-Rate Mixed Runtime Contention After Sink-Backed Local Replay Progress (`braft` runtime vs NuRaft runtime, 2026-03-10)
 
 **Commit:** `HEAD` at run time

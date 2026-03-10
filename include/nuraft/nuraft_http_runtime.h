@@ -63,6 +63,7 @@ public:
                           nlohmann::json& result,
                           std::string& error) const;
     bool is_single_node_mode() const;
+    bool sync_live_product_state(std::string& error);
 
 private:
     bool cache_enabled() const;
@@ -107,6 +108,7 @@ private:
     mutable std::unordered_map<std::string, std::string> document_cache_;
     mutable std::shared_mutex read_preference_mutex_;
     mutable std::unordered_set<std::string> materialized_read_preferred_collections_;
+    uint64_t live_product_state_applied_index_;
     mutable std::mutex mutex_;
 };
 

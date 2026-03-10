@@ -1,73 +1,27 @@
-#include <cstdlib>
-#include <curl/curl.h>
-#include <gflags/gflags.h>
-#include "absl/log/initialize.h"
-#include "absl/log/globals.h"
-#include "absl/log/log_sink_registry.h"
-#include "ts_log_sink.h"
-#include <dlfcn.h>
-#include <raft_server.h>
-#include <fstream>
-#include <execinfo.h>
-#include <http_client.h>
-
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <ifaddrs.h>
-#include <butil/files/file_enumerator.h>
-#include "analytics_manager.h"
-#include "housekeeper.h"
-
-#include "core_api.h"
-#include "ratelimit_manager.h"
-#include "embedder_manager.h"
 #include "typesense_server_utils.h"
-#include "threadpool.h"
-#include "stopwords_manager.h"
-#include "conversation_manager.h"
-#include "vq_model_manager.h"
-#include "stemmer_manager.h"
-#include "natural_language_search_model_manager.h"
-#include "conversation_model.h"
-#include "synonym_index_manager.h"
-#include "curation_index_manager.h"
-#include "api_acl.h"
+
+#include <chrono>
+#include <csignal>
+#include <iostream>
+#include <thread>
+
+#include "absl/log/globals.h"
+#include "absl/log/initialize.h"
+#include "absl/log/log_sink_registry.h"
+#include "file_utils.h"
 #include "logger.h"
+#include "ts_log_sink.h"
 
-#ifndef NO_JEMALLOC
-#include "jemalloc.h"
-#endif
-
-#include "stackprinter.h"
-
-HttpServer* server;
-std::atomic<bool> quit_raft_service;
-
-extern "C" {
-// weak symbol: resolved at runtime by the linker if we are using jemalloc, nullptr otherwise
-#ifdef __APPLE__
-    int je_mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) __attribute__((weak_import));
-#else
-    int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) __attribute__((weak));
-#endif
-}
-
-bool using_jemalloc() {
-    // On OSX, jemalloc API is prefixed with "je_"
-#ifdef __APPLE__
-    return (je_mallctl != nullptr);
-#else
-    return (mallctl != nullptr);
-#endif
-}
+HttpServer* server = nullptr;
+std::atomic<bool> quit_raft_service = false;
 
 void catch_interrupt(int sig) {
     TS_LOG(INFO) << "Stopping Typesense server...";
-    if(sig == SIGHUP) {
+    if (sig == SIGHUP && server != nullptr) {
         TS_LOG(INFO) << "shutdown is triggered.";
-        server->set_shutdown_triggered(); //inform http server
-        auto secs = Config::get_instance().get_shutdown_delay_seconds();
-        std::thread shutdown_thread([&]() {
+        server->set_shutdown_triggered();
+        const auto secs = Config::get_instance().get_shutdown_delay_seconds();
+        std::thread shutdown_thread([secs]() {
             std::this_thread::sleep_for(std::chrono::seconds(secs));
             quit_raft_service.store(true);
         });
@@ -76,10 +30,13 @@ void catch_interrupt(int sig) {
         quit_raft_service.store(true);
     }
 
-    signal(sig, SIG_IGN);  // ignore for now as we want to shut down elegantly
+    signal(sig, SIG_IGN);
 }
 
-void init_cmdline_options(cmdline::parser & options, int argc, char **argv) {
+void init_cmdline_options(cmdline::parser& options, int argc, char** argv) {
+    static_cast<void>(argc);
+    static_cast<void>(argv);
+
     options.set_program_name("./typesense-server");
 
     options.add<std::string>("data-dir", 'd', "Directory where data will be stored.", true);
@@ -119,7 +76,6 @@ void init_cmdline_options(cmdline::parser & options, int argc, char **argv) {
     options.add<uint32_t>("thread-pool-size", '\0', "Number of threads used for handling concurrent requests.", false, 4);
 
     options.add<std::string>("log-dir", '\0', "Path to the log directory.", false, "");
-
     options.add<std::string>("config", '\0', "Path to the configuration file.", false, "");
 
     options.add<bool>("enable-access-logging", '\0', "Enable access logging.", false, false);
@@ -130,7 +86,7 @@ void init_cmdline_options(cmdline::parser & options, int argc, char **argv) {
     options.add<bool>("skip-writes", '\0', "Skip all writes except config changes. Default: false.", false, false);
     options.add<bool>("reset-peers-on-error", '\0', "Reset node's peers on clustering error. Default: false.", false, false);
 
-    options.add<int>("log-slow-searches-time-ms", '\0', "When >= 0, searches that take longer than this duration are logged.", false, 30*1000);
+    options.add<int>("log-slow-searches-time-ms", '\0', "When >= 0, searches that take longer than this duration are logged.", false, 30 * 1000);
     options.add<uint32_t>("cache-num-entries", '\0', "Number of entries to cache.", false, 1000);
     options.add<uint32_t>("embedding-cache-num-entries", '\0', "Number of entries to cache for embeddings.", false, 100);
     options.add<uint32_t>("analytics-flush-interval", '\0', "Frequency of persisting analytics data to disk (in seconds).", false, 3600);
@@ -147,7 +103,6 @@ void init_cmdline_options(cmdline::parser & options, int argc, char **argv) {
     options.add<std::string>("proxy-disallowed-dest-cidrs", '\0', "Disallowed dest CIDRs for proxy.", false, "");
     options.add<bool>("proxy-allow-only-peer-src-ips", '\0', "Allow only peers as src IPs for proxy.", false, false);
 
-    //rocksdb options
     options.add<uint32_t>("db-write-buffer-size", '\0', "RocksDB write buffer size in bytes.", false);
     options.add<uint32_t>("db-max-write-buffer-number", '\0', "RocksDB max number of write buffers.", false);
     options.add<uint32_t>("db-max-log-file-size", '\0', "RocksDB max log file size in bytes.", false);
@@ -155,7 +110,7 @@ void init_cmdline_options(cmdline::parser & options, int argc, char **argv) {
     options.add<uint64_t>("db-block-cache-size", '\0', "RocksDB block cache size in bytes.", false);
     options.add<int64_t>("db-rate-limit-bytes-per-sec", '\0', "RocksDB rate limiter bytes per second (0 to disable).", false);
     options.add<bool>("db-level-compaction-dynamic-level-bytes", '\0', "RocksDB dynamic level sizing for compaction.", false, true);
-    options.add<uint32_t>("db-block-size", '\0', "RocksDB SST block size in bytes.", false, 16*1024);
+    options.add<uint32_t>("db-block-size", '\0', "RocksDB SST block size in bytes.", false, 16 * 1024);
     options.add<uint32_t>("db-format-version", '\0', "RocksDB SST format version (max 7).", false, 7);
     options.add<bool>("db-enable-statistics", '\0', "Enable RocksDB statistics counters.", false, true);
     options.add<uint32_t>("db-compression-parallel-threads", '\0', "RocksDB parallel compression threads.", false, 4);
@@ -172,670 +127,38 @@ void init_cmdline_options(cmdline::parser & options, int argc, char **argv) {
     options.add<bool>("db-optimize-filters-for-hits", '\0', "Optimize RocksDB filters for mostly-positive lookups.", false, false);
     options.add<bool>("db-paranoid-memory-checks", '\0', "Enable RocksDB paranoid memory checks.", false, true);
 
-    // DEPRECATED
     options.add<std::string>("listen-address", 'h', "[DEPRECATED: use `api-address`] Address to which Typesense API service binds.", false, "0.0.0.0");
     options.add<uint32_t>("listen-port", 'p', "[DEPRECATED: use `api-port`] Port on which Typesense API service listens.", false, 8108);
-    options.add<std::string>("master", 'm', "[DEPRECATED: use clustering via --nodes] Master's address in http(s)://<master_address>:<master_port> format "
-                                            "to start as read-only replica.", false, "");
+    options.add<std::string>("master", 'm', "[DEPRECATED: use clustering via --nodes] Master's address in http(s)://<master_address>:<master_port> format to start as read-only replica.", false, "");
 }
 
-// Persistent file sink — lives for the process lifetime (intentionally leaked).
 static TsFileSink* g_file_sink = nullptr;
 
-int init_root_logger(Config & config, const std::string & server_version) {
-    // --- glog: initialize minimally for brpc/braft, then silence ---
-    google::InitGoogleLogging("typesense");
-    // Suppress all glog stderr output (brpc/braft still log internally via glog).
-    FLAGS_stderrthreshold = google::NUM_SEVERITIES;
-    FLAGS_logtostdout = false;
-    // Disable glog file output.
-    google::SetLogDestination(google::INFO, "");
-    google::SetLogDestination(google::WARNING, "");
-    google::SetLogDestination(google::ERROR, "");
-    google::SetLogDestination(google::FATAL, "");
+int init_root_logger(Config& config, const std::string& server_version) {
+    static_cast<void>(server_version);
 
-    // --- Abseil: primary logging backend ---
     absl::InitializeLog();
 
-    std::string log_dir = config.get_log_dir();
-
-    if(log_dir.empty()) {
-        // Console mode: Abseil logs to stderr by default at INFO+.
+    const std::string log_dir = config.get_log_dir();
+    if (log_dir.empty()) {
         absl::SetStderrThreshold(absl::LogSeverityAtLeast::kInfo);
-    } else {
-        if(!directory_exists(log_dir)) {
-            std::cerr << "Typesense failed to start. " << "Log directory " << log_dir << " does not exist.";
-            return 1;
-        }
-
-        std::string log_path = log_dir + "/" + "typesense.log";
-
-        g_file_sink = new TsFileSink(log_path);
-        if(!g_file_sink->ok()) {
-            std::cerr << "Typesense failed to start. Could not open log file: " << log_path;
-            return 1;
-        }
-        absl::AddLogSink(g_file_sink);
-
-        // File mode: only WARNING+ to stderr, everything to file.
-        absl::SetStderrThreshold(absl::LogSeverityAtLeast::kWarning);
-
-        std::cout << "Log directory is configured as: " << log_dir << std::endl;
+        return 0;
     }
 
-    return 0;
-}
-
-bool is_private_ipv4(uint32_t ip) {
-    uint8_t b1, b2;
-    b1 = (uint8_t) (ip >> 24);
-    b2 = (uint8_t) ((ip >> 16) & 0x0ff);
-
-    // 10.x.y.z
-    if (b1 == 10) {
-        return true;
-    }
-
-    // 172.16.0.0 - 172.31.255.255
-    if ((b1 == 172) && (b2 >= 16) && (b2 <= 31)) {
-        return true;
-    }
-
-    // 192.168.0.0 - 192.168.255.255
-    if ((b1 == 192) && (b2 == 168)) {
-        return true;
-    }
-
-    return false;
-}
-
-// Returns true if IPv6 address is in private range (RFC4193/RFC4291)
-bool is_private_ipv6(const struct in6_addr* addr) {
-    // Check for fc00::/7 - Unique Local Address
-    return (addr->s6_addr[0] & 0xfe) == 0xfc;
-}
-
-// Compare first n bits of IPv6 addresses for subnet matching
-bool ipv6_prefix_match(const struct in6_addr* addr1, const struct in6_addr* addr2, uint32_t prefix_len) {
-    const uint8_t* a1 = addr1->s6_addr;
-    const uint8_t* a2 = addr2->s6_addr;
-    
-    // Compare whole bytes first
-    const size_t whole_bytes = prefix_len / 8;
-    for(size_t i = 0; i < whole_bytes && i < 16; i++) {
-        if(a1[i] != a2[i]) return false;
-    }
-    
-    // Then compare remaining bits if any
-    if(prefix_len % 8) {
-        const uint8_t mask = 0xff << (8 - (prefix_len % 8));
-        if((a1[whole_bytes] & mask) != (a2[whole_bytes] & mask)) {
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-butil::EndPoint get_internal_endpoint(const std::string& subnet_cidr, uint32_t peering_port) {
-    struct ifaddrs *ifap;
-    getifaddrs(&ifap);
-
-    butil::EndPoint subnet_endpoint;
-    uint32_t netbits = 0;
-    sa_family_t target_family = AF_UNSPEC;
-
-    if(!subnet_cidr.empty()) {
-        std::vector<std::string> subnet_parts;
-        StringUtils::split(subnet_cidr, subnet_parts, "/");
-        if(subnet_parts.size() == 2) {
-            // If a v6 address, wrap in []
-            auto subnet_addr = subnet_parts[0].find(':') != std::string::npos ? '[' + subnet_parts[0] + "]" : subnet_parts[0];
-            const int retCode = butil::str2endpoint(subnet_addr.c_str(), 0, &subnet_endpoint);
-            if(retCode == 0) {
-                try {
-                    netbits = std::stoul(subnet_parts[1]);
-                    if(netbits > 0) {
-                        target_family = butil::get_endpoint_type(subnet_endpoint);
-                    }
-                    TS_LOG(INFO) << "Using subnet with address family: " << (target_family == AF_INET ? "IPv4" : "IPv6");
-                } catch (const std::exception& e) {
-                    TS_LOG(ERROR) << "Failed to parse subnet prefix length: " << subnet_parts[1];
-                }
-            }
-        }
-    }
-
-    struct sockaddr_storage subnet_addr;
-    socklen_t subnet_size;
-    if(target_family != AF_UNSPEC) {
-        butil::endpoint2sockaddr(subnet_endpoint, &subnet_addr, &subnet_size);
-    }
-
-    butil::EndPoint ipv4_endpoint;
-    butil::EndPoint ipv6_endpoint;
-    bool found_ipv4 = false;
-    bool found_ipv6 = false;
-
-    for(auto ifa = ifap; ifa; ifa = ifa->ifa_next) {
-        if (!ifa->ifa_addr) {
-            continue;
-        }
-
-        // If subnet specified, only look at matching address family
-        if(target_family != AF_UNSPEC && ifa->ifa_addr->sa_family != target_family) {
-            continue;
-        }
-
-        if(ifa->ifa_addr->sa_family == AF_INET) {
-            auto sa = (struct sockaddr_in*) ifa->ifa_addr;
-            auto ipaddr = sa->sin_addr.s_addr;
-
-            if(is_private_ipv4(ntohl(ipaddr))) {
-                if(target_family == AF_INET) {
-                    // Check if matches subnet
-                    auto subnet_sa = (struct sockaddr_in*)&subnet_addr;
-                    uint32_t mask = 0xFFFFFFFF << (32 - netbits);
-                    if((ntohl(subnet_sa->sin_addr.s_addr) & mask) != (ntohl(ipaddr) & mask)) {
-                        TS_LOG(INFO) << "Skipping interface " << ifa->ifa_name << " as it does not match IPv4 subnet.";
-                        continue;
-                    }
-                }
-                
-                // Create endpoint directly from sockaddr
-                sa->sin_port = htons(peering_port);
-                struct sockaddr_storage ss;
-                memcpy(&ss, sa, sizeof(*sa));
-                if(butil::sockaddr2endpoint(&ss, sizeof(*sa), &ipv4_endpoint) == 0) {
-                    found_ipv4 = true;
-                    if(target_family == AF_INET) {
-                        break;  // Found match for specified subnet
-                    }
-                }
-            }
-        } else if(ifa->ifa_addr->sa_family == AF_INET6) {
-            auto sa6 = (struct sockaddr_in6*) ifa->ifa_addr;
-            
-            if(is_private_ipv6(&sa6->sin6_addr)) {
-                if(target_family == AF_INET6) {
-                    // Check if matches subnet
-                    auto subnet_sa6 = (struct sockaddr_in6*)&subnet_addr;
-                    if(!ipv6_prefix_match(&subnet_sa6->sin6_addr, &sa6->sin6_addr, netbits)) {
-                        TS_LOG(INFO) << "Skipping interface " << ifa->ifa_name << " as it does not match IPv6 subnet.";
-                        continue;
-                    }
-                }
-
-                // Create endpoint directly from sockaddr
-                sa6->sin6_port = htons(peering_port);
-                struct sockaddr_storage ss;
-                memcpy(&ss, sa6, sizeof(*sa6));
-                if(butil::sockaddr2endpoint(&ss, sizeof(*sa6), &ipv6_endpoint) == 0) {
-                    found_ipv6 = true;
-                    if(target_family == AF_INET6) {
-                        break;  // Found match for specified subnet
-                    }
-                }
-            }
-        }
-    }
-
-    freeifaddrs(ifap);
-
-    // Return results based on what we found
-    if(target_family == AF_INET6 && found_ipv6) {
-        return ipv6_endpoint;
-    } else if(target_family == AF_INET && found_ipv4) {
-        return ipv4_endpoint;
-    } else if(found_ipv4) {
-        return ipv4_endpoint;
-    } else if(found_ipv6) {
-        return ipv6_endpoint;
-    }
-
-    // Return endpoint with loopback address if nothing found
-    butil::EndPoint loopback;
-    auto loopbackAddr = target_family == AF_INET6 ? "[::1]" : "127.0.0.1";
-    butil::str2endpoint(loopbackAddr, peering_port, &loopback);
-    TS_LOG(WARNING) << "Found no matching interfaces, using loopback address.";
-    return loopback;
-}
-
-int start_raft_server(ReplicationState& replication_state, Store& store,
-                      const std::string& state_dir, const std::string& path_to_nodes,
-                      const std::string& peering_address, uint32_t peering_port, const std::string& peering_subnet,
-                      uint32_t api_port, int snapshot_interval_seconds, int snapshot_max_byte_count_per_rpc,
-                      const std::atomic<bool>& reset_peers_on_error) {
-
-    if(path_to_nodes.empty()) {
-        TS_LOG(INFO) << "Since no --nodes argument is provided, starting a single node Typesense cluster.";
-    }
-
-    const Option<std::string>& nodes_config_op = Config::fetch_nodes_config(path_to_nodes);
-
-    if(!nodes_config_op.ok()) {
-        TS_LOG(ERROR) << nodes_config_op.error();
-        return -1;
-    }
-
-    butil::EndPoint peering_endpoint;
-    int ip_conv_status = 0;
-
-    if(!peering_address.empty()) {
-        // If IPv6 address and not already wrapped in [], wrap it
-        std::string normalized_addr = peering_address;
-        if(peering_address.find(':') != std::string::npos &&
-           peering_address.front() != '[' && peering_address.back() != ']') {
-            normalized_addr = "[" + peering_address + "]";
-        }
-
-        ip_conv_status = butil::str2endpoint(normalized_addr.c_str(), peering_port, &peering_endpoint);
-
-        if(ip_conv_status != 0) {
-            TS_LOG(ERROR) << "Failed to parse peering address `" << normalized_addr << "`";
-            return -1;
-        }
-    } else {
-        peering_endpoint = get_internal_endpoint(peering_subnet, peering_port);
-    }
-
-    // start peering server
-    brpc::Server raft_server;
-
-    if (braft::add_service(&raft_server, peering_endpoint) != 0) {
-        TS_LOG(ERROR) << "Failed to add peering service";
-        exit(-1);
-    }
-
-    if (raft_server.Start(peering_endpoint, nullptr) != 0) {
-        TS_LOG(ERROR) << "Failed to start peering service";
-        exit(-1);
-    }
-
-    size_t election_timeout_ms = 5000;
-
-    if (replication_state.start(peering_endpoint, api_port, election_timeout_ms, snapshot_max_byte_count_per_rpc, state_dir,
-                                nodes_config_op.get(), quit_raft_service) != 0) {
-        TS_LOG(ERROR) << "Failed to start peering state";
-        exit(-1);
-    }
-
-    TS_LOG(INFO) << "Typesense peering service is running on " << raft_server.listen_address();
-    TS_LOG(INFO) << "Snapshot interval configured as: " << snapshot_interval_seconds << "s";
-    TS_LOG(INFO) << "Snapshot max byte count configured as: " << snapshot_max_byte_count_per_rpc;
-
-    // Wait until 'CTRL-C' is pressed. then Stop() and Join() the service
-    size_t raft_counter = 0;
-    while (!quit_raft_service.load()) {
-        if(raft_counter % 10 == 0) {
-            // reset peer configuration periodically to identify change in cluster membership
-            const Option<std::string> & refreshed_nodes_op = Config::fetch_nodes_config(path_to_nodes);
-            if(!refreshed_nodes_op.ok()) {
-                TS_LOG(WARNING) << "Error while refreshing peer configuration: " << refreshed_nodes_op.error();
-            } else {
-                const std::string& nodes_config = ReplicationState::to_nodes_config(peering_endpoint, api_port,
-                                                                                    refreshed_nodes_op.get());
-                if(nodes_config.empty()) {
-                    TS_LOG(WARNING) << "No nodes resolved from peer configuration.";
-                } else {
-                    if(Config::get_instance().get_proxy_allow_only_peer_src_ips()) {
-                        Config::get_instance().update_proxy_src_ips(nodes_config);
-                    }
-                    replication_state.refresh_nodes(nodes_config, raft_counter, reset_peers_on_error);
-                    if(raft_counter % 60 == 0) {
-                        replication_state.do_snapshot(nodes_config);
-                    }
-                }
-            }
-        }
-
-        if(raft_counter % 3 == 0) {
-            // update node catch up status periodically, take care of logging too verbosely
-            bool log_msg = (raft_counter % 9 == 0);
-            replication_state.refresh_catchup_status(log_msg);
-        }
-
-        raft_counter++;
-        sleep(1);
-    }
-
-    TS_LOG(INFO) << "Typesense peering service is going to quit.";
-
-    // Stop application before server
-    replication_state.shutdown();
-
-    TS_LOG(INFO) << "raft_server.stop()";
-    raft_server.Stop(0);
-
-    TS_LOG(INFO) << "raft_server.join()";
-    raft_server.Join();
-
-    TS_LOG(INFO) << "Typesense peering service has quit.";
-
-    return 0;
-}
-
-int run_server(const Config & config, const std::string & version, void (*master_server_routes)()) {
-    TS_LOG(INFO) << "Starting Typesense " << version << std::flush;
-#ifndef NO_JEMALLOC
-    if(using_jemalloc()) {
-        TS_LOG(INFO) << "Typesense is using jemalloc.";
-
-        // Due to time based decay depending on application not being idle-ish, set `background_thread`
-        // to help with releasing memory back to the OS and improve tail latency.
-        // See: https://github.com/jemalloc/jemalloc/issues/1398
-        bool background_thread = true;
-#ifdef __APPLE__
-        je_mallctl("background_thread", nullptr, nullptr, &background_thread, sizeof(bool));
-#elif __linux__
-        mallctl("background_thread", nullptr, nullptr, &background_thread, sizeof(bool));
-#endif
-    } else {
-        TS_LOG(WARNING) << "Typesense is NOT using jemalloc.";
-    }
-#endif
-
-    quit_raft_service = false;
-
-    if(!directory_exists(config.get_data_dir())) {
-        TS_LOG(ERROR) << "Typesense failed to start. " << "Data directory " << config.get_data_dir()
-                 << " does not exist.";
+    if (!directory_exists(log_dir)) {
+        std::cerr << "Typesense failed to start. Log directory " << log_dir << " does not exist.";
         return 1;
     }
 
-    if (config.get_enable_search_analytics() && !config.get_analytics_dir().empty() &&
-        !directory_exists(config.get_analytics_dir())) {
-        TS_LOG(INFO) << "Analytics directory " << config.get_analytics_dir() << " does not exist, will create it...";
-        if(!create_directory(config.get_analytics_dir())) {
-            TS_LOG(ERROR) << "Could not create analytics directory. Quitting.";
-            return 1;
-        }
-    }
-
-    if(!config.get_master().empty()) {
-        TS_LOG(ERROR) << "The --master option has been deprecated. Please use clustering for high availability. "
-                   << "Look for the --nodes configuration in the documentation.";
+    const std::string log_path = log_dir + "/typesense.log";
+    g_file_sink = new TsFileSink(log_path);
+    if (!g_file_sink->ok()) {
+        std::cerr << "Typesense failed to start. Could not open log file: " << log_path;
         return 1;
     }
 
-    if(!config.get_search_only_api_key().empty()) {
-        TS_LOG(WARNING) << "!!!! WARNING !!!!";
-        TS_LOG(WARNING) << "The --search-only-api-key has been deprecated. "
-                        "The API key generation end-point should be used for generating keys with specific ACL.";
-    }
-
-    std::string data_dir = config.get_data_dir();
-    std::string db_dir = config.get_data_dir() + "/db";
-    std::string state_dir = config.get_data_dir() + "/state";
-    std::string meta_dir = config.get_data_dir() + "/meta";
-    std::string analytics_dir = config.get_analytics_dir();
-    int32_t analytics_db_ttl = config.get_analytics_db_ttl();
-    uint32_t analytics_minute_rate_limit = config.get_analytics_minute_rate_limit();
-
-    size_t db_write_buffer_size = config.get_db_write_buffer_size();
-    size_t db_max_write_buffer_number = config.get_db_max_write_buffer_number();
-    size_t db_max_log_file_size = config.get_db_max_log_file_size();
-    size_t db_keep_log_file_num = config.get_db_keep_log_file_num();
-    size_t db_block_cache_size = config.get_db_block_cache_size();
-    int64_t db_rate_limit_bytes_per_sec = config.get_db_rate_limit_bytes_per_sec();
-    bool db_level_compaction_dynamic_level_bytes = config.get_db_level_compaction_dynamic_level_bytes();
-    uint32_t db_block_size = config.get_db_block_size();
-    uint32_t db_format_version = config.get_db_format_version();
-    bool db_enable_statistics = config.get_db_enable_statistics();
-    uint32_t db_compression_parallel_threads = config.get_db_compression_parallel_threads();
-    uint64_t db_bytes_per_sync = config.get_db_bytes_per_sync();
-    uint64_t db_max_manifest_file_size = config.get_db_max_manifest_file_size();
-    bool db_enable_async_io = config.get_db_enable_async_io();
-    std::string db_offpeak_time_utc = config.get_db_offpeak_time_utc();
-    bool db_unordered_write = config.get_db_unordered_write();
-    uint32_t db_max_subcompactions = config.get_db_max_subcompactions();
-    uint32_t db_max_background_jobs = config.get_db_max_background_jobs();
-    bool db_use_direct_reads = config.get_db_use_direct_reads();
-    bool db_use_direct_io_for_flush_and_compaction = config.get_db_use_direct_io_for_flush_and_compaction();
-    uint64_t db_compaction_readahead_size = config.get_db_compaction_readahead_size();
-    bool db_optimize_filters_for_hits = config.get_db_optimize_filters_for_hits();
-    bool db_paranoid_memory_checks = config.get_db_paranoid_memory_checks();
-
-    size_t thread_pool_size = config.get_thread_pool_size();
-
-    const size_t proc_count = std::max<size_t>(1, std::thread::hardware_concurrency());
-    const size_t num_threads = thread_pool_size == 0 ? (proc_count * 8) : thread_pool_size;
-
-    size_t num_collections_parallel_load = config.get_num_collections_parallel_load();
-    num_collections_parallel_load = (num_collections_parallel_load == 0) ?
-                                    (proc_count * 4) : num_collections_parallel_load;
-
-    TS_LOG(INFO) << "Thread pool size: " << num_threads;
-    ThreadPool app_thread_pool(num_threads);
-    ThreadPool server_thread_pool(num_threads);
-    ThreadPool replication_thread_pool(num_threads);
-
-    // primary DB used for storing the documents: we will not use WAL since Raft provides that
-    Store store(db_dir, 24*60*60, 1024, true, 0, db_write_buffer_size, db_max_write_buffer_number,
-                db_max_log_file_size, db_keep_log_file_num, db_block_cache_size,
-                db_rate_limit_bytes_per_sec, db_level_compaction_dynamic_level_bytes,
-                db_block_size, db_format_version, db_enable_statistics,
-                db_compression_parallel_threads, db_bytes_per_sync, db_max_manifest_file_size,
-                db_enable_async_io, db_offpeak_time_utc,
-                db_unordered_write, db_max_subcompactions,
-                db_max_background_jobs, db_use_direct_reads,
-                db_use_direct_io_for_flush_and_compaction, db_compaction_readahead_size,
-                db_optimize_filters_for_hits, db_paranoid_memory_checks);
-
-    // meta DB for storing house keeping things
-    Store meta_store(meta_dir, 24*60*60, 1024, false);
-
-    Store* analytics_store = nullptr;
-    if(!analytics_dir.empty()) {
-        // Analytics DB for storing analytics events
-
-        // We want to keep rocksdb files inside a `db` directory inside `analytics_dir`.
-        // Need to handle missing db subdir from older versions by creating and moving files inside
-        std::string analytics_db_dir = analytics_dir + "/db";
-        if(!directory_exists(analytics_db_dir)) {
-            create_directory(analytics_db_dir);
-            butil::FileEnumerator analytics_dir_enum(butil::FilePath(analytics_dir), false,
-                                                     butil::FileEnumerator::FILES);
-            for (butil::FilePath file = analytics_dir_enum.Next(); !file.empty(); file = analytics_dir_enum.Next()) {
-                butil::FilePath dest_path(analytics_db_dir + "/" + file.BaseName().value());
-                butil::Move(file, dest_path);
-            }
-        }
-
-        analytics_store = new Store(analytics_db_dir, 24*60*60, 1024, true, analytics_db_ttl);
-    }
-
-    AnalyticsManager::get_instance().init(&store, analytics_store, analytics_minute_rate_limit);
-    RemoteEmbedder::cache.capacity(config.get_embedding_cache_num_entries());
-
-    curl_global_init(CURL_GLOBAL_SSL);
-    HttpClient & httpClient = HttpClient::get_instance();
-    httpClient.init(config.get_api_key());
-
-    server = new HttpServer(
-        version,
-        config.get_api_address(),
-        config.get_api_port(),
-        config.get_ssl_cert(),
-        config.get_ssl_cert_key(),
-        config.get_ssl_refresh_interval_seconds() * 1000,
-        config.get_enable_cors(),
-        config.get_cors_domains(),
-        &server_thread_pool
-    );
-
-    server->set_auth_handler(handle_authentication);
-
-    server->on(HttpServer::STREAM_RESPONSE_MESSAGE, HttpServer::on_stream_response_message);
-    server->on(HttpServer::REQUEST_PROCEED_MESSAGE, HttpServer::on_request_proceed_message);
-    server->on(HttpServer::DEFER_PROCESSING_MESSAGE, HttpServer::on_deferred_processing_message);
-
-    bool ssl_enabled = (!config.get_ssl_cert().empty() && !config.get_ssl_cert_key().empty());
-
-    APIAcl::instance().set_disallowed_dest_cidrs(
-        Config::get_instance().get_proxy_disallowed_dest_cidrs());
-
-    APIAcl::instance().set_rate_limit_10s(Config::get_instance().get_proxy_rate_limit());
-
-    BatchedIndexer* batch_indexer = new BatchedIndexer(server, &store, &meta_store, num_threads,
-                                                       config, config.get_skip_writes());
-
-    CollectionManager & collectionManager = CollectionManager::get_instance();
-    collectionManager.init(&store, &app_thread_pool, config.get_max_memory_ratio(),
-                           config.get_api_key(), quit_raft_service, config.get_filter_by_max_ops());
-
-    StopwordsManager& stopwordsManager = StopwordsManager::get_instance();
-    stopwordsManager.init(&store);
-
-    StemmerManager& stemmerManager = StemmerManager::get_instance();
-    stemmerManager.init(&store);
-
-    RateLimitManager *rateLimitManager = RateLimitManager::getInstance();
-    auto rate_limit_manager_init = rateLimitManager->init(&meta_store);
-
-    if(!rate_limit_manager_init.ok()) {
-        TS_LOG(INFO) << "Failed to initialize rate limit manager: " << rate_limit_manager_init.error();
-    }
-
-    SynonymIndexManager& synonymIndexManager = SynonymIndexManager::get_instance();
-    synonymIndexManager.init_store(&store);
-
-    CurationIndexManager& CurationIndexManager = CurationIndexManager::get_instance();
-    CurationIndexManager.init_store(&store);
-
-    EmbedderManager::set_model_dir(config.get_data_dir() + "/models");
-
-    EmbedderManager::get_instance().migrate_public_models();
-
-    // first we start the peering service
-
-    ReplicationState replication_state(server, batch_indexer, &store, analytics_store,
-                                       &replication_thread_pool, server->get_message_dispatcher(),
-                                       ssl_enabled,
-                                       &config,
-                                       num_collections_parallel_load,
-                                       config.get_num_documents_parallel_load());
-
-    auto conversations_init = ConversationManager::get_instance().init(&replication_state);
-
-    if(!conversations_init.ok()) {
-        TS_LOG(INFO) << "Failed to initialize conversation manager: " << conversations_init.error();
-    }
-
-    auto natural_language_search_init = NaturalLanguageSearchModelManager::init(&store);
-
-    if(!natural_language_search_init.ok()) {
-        TS_LOG(INFO) << "Failed to initialize natural language search model manager: " << natural_language_search_init.error();
-    } else {
-        TS_LOG(INFO) << "Loaded " << natural_language_search_init.get() << " natural language search model(s).";
-    }
-
-    std::thread raft_thread([&replication_state, &store, &config, &state_dir,
-                             &app_thread_pool, &server_thread_pool, &replication_thread_pool, batch_indexer]() {
-
-        std::thread batch_indexing_thread([batch_indexer]() {
-            batch_indexer->run();
-        });
-
-        std::thread analytics_sink_thread([&replication_state]() {
-            AnalyticsManager::get_instance().run(&replication_state);
-        });
-
-        std::thread conversation_garbage_collector_thread([]() {
-            TS_LOG(INFO) << "Conversation garbage collector thread started.";
-            ConversationManager::get_instance().run();
-        });
-          
-        HouseKeeper::get_instance().init();
-        std::thread housekeeping_thread([]() {
-            HouseKeeper::get_instance().run();
-        });
-
-        RemoteEmbedder::init(&replication_state);
-
-        std::string path_to_nodes = config.get_nodes();
-        start_raft_server(replication_state, store, state_dir, path_to_nodes,
-                          config.get_peering_address(),
-                          config.get_peering_port(),
-                          config.get_peering_subnet(),
-                          config.get_api_port(),
-                          config.get_snapshot_interval_seconds(),
-                          config.get_snapshot_max_byte_count_per_rpc(),
-                          config.get_reset_peers_on_error());
-
-        TS_LOG(INFO) << "Shutting down batch indexer...";
-        batch_indexer->stop();
-
-        TS_LOG(INFO) << "Waiting for batch indexing thread to be done...";
-        batch_indexing_thread.join();
-
-        TS_LOG(INFO) << "Shutting down event sink thread...";
-        AnalyticsManager::get_instance().stop();
-
-        TS_LOG(INFO) << "Waiting for event sink thread to be done...";
-        analytics_sink_thread.join();
-
-        TS_LOG(INFO) << "Shutting down conversation garbage collector thread...";
-        ConversationManager::get_instance().stop();
-
-        TS_LOG(INFO) << "Waiting for conversation garbage collector thread to be done...";
-        conversation_garbage_collector_thread.join();
-
-        TS_LOG(INFO) << "Waiting for housekeeping thread to be done...";
-        HouseKeeper::get_instance().stop();
-        housekeeping_thread.join();
-
-        TS_LOG(INFO) << "Shutting down server_thread_pool";
-
-        server_thread_pool.shutdown();
-
-        TS_LOG(INFO) << "Shutting down app_thread_pool.";
-
-        app_thread_pool.shutdown();
-
-        TS_LOG(INFO) << "Shutting down replication_thread_pool.";
-        replication_thread_pool.shutdown();
-
-        server->stop();
-    });
-
-    TS_LOG(INFO) << "Starting API service...";
-
-    master_server_routes();
-    int ret_code = server->run(&replication_state);
-
-    // we are out of the event loop here
-
-    TS_LOG(INFO) << "Typesense API service has quit.";
-    quit_raft_service = true;  // we set this once again in case API thread crashes instead of a signal
-    raft_thread.join();
-
-    TS_LOG(INFO) << "Deleting batch indexer";
-
-    delete batch_indexer;
-
-    TS_LOG(INFO) << "CURL clean up";
-
-    curl_global_cleanup();
-
-    TS_LOG(INFO) << "Deleting server";
-
-    delete server;
-
-    TS_LOG(INFO) << "CollectionManager dispose, this might take some time...";
-
-    // We have to delete the models here, before CUDA driver is unloaded.
-    VQModelManager::get_instance().delete_all_models();
-
-    synonymIndexManager.dispose();
-
-    CurationIndexManager.dispose();
-
-    CollectionManager::get_instance().dispose();
-
-    delete analytics_store;
-
-    TS_LOG(INFO) << "Bye.";
-
-    return ret_code;
+    absl::AddLogSink(g_file_sink);
+    absl::SetStderrThreshold(absl::LogSeverityAtLeast::kWarning);
+    std::cout << "Log directory is configured as: " << log_dir << std::endl;
+    return 0;
 }

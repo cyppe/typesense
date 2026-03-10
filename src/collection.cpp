@@ -9270,7 +9270,7 @@ Option<bool> Collection::populate_facets(std::vector<facet> facets, size_t max_f
                     facet_values.emplace_back(facet_value);
                 }
                 else{
-                    LOG (ERROR) << "range_id not found in result map.";
+                    TS_LOG(ERROR) << "range_id not found in result map.";
                 }
             }
         } else {

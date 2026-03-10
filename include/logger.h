@@ -3,8 +3,7 @@
 // Typesense logging facade.
 //
 // Backend: Abseil Logging (ABSL_LOG / ABSL_CHECK).
-// Uses ABSL_ prefixed macros to avoid collision with glog's LOG() macro,
-// which remains visible through brpc/braft transitive includes.
+// Keep the ABSL_ prefixed macros to avoid accidental LOG()/CHECK() collisions.
 
 #include "absl/log/absl_log.h"
 #include "absl/log/absl_check.h"

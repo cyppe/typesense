@@ -4197,7 +4197,7 @@ private:
             std::stringstream error_lines;
             printer.print(st, error_lines);
             for(std::string line; std::getline(error_lines, line);) {
-                LOG(ERROR) << line;
+                ABSL_LOG(ERROR) << line;
             }
 
 #if _XOPEN_SOURCE >= 700 || _POSIX_C_SOURCE >= 200809L

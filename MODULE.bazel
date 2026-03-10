@@ -17,8 +17,6 @@ bazel_dep(name = "rules_proto", version = "7.1.0")
 bazel_dep(name = "protobuf", version = "33.5", repo_name = "com_google_protobuf")
 bazel_dep(name = "abseil-cpp", version = "20250814.1", repo_name = "com_google_absl")
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
-bazel_dep(name = "glog", version = "0.7.1.bcr.1", repo_name = "com_github_google_glog")
-bazel_dep(name = "gflags", version = "2.2.2.bcr.1", repo_name = "com_github_gflags_gflags")
 bazel_dep(name = "zlib", version = "1.3.2", repo_name = "com_github_madler_zlib")
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
@@ -36,15 +34,6 @@ git_repository(
     name = "com_grail_bazel_compdb",
     commit = "58672f5eecd70a2d3ed50016a3abf907701404e0",
     remote = "https://github.com/grailbio/bazel-compilation-database.git",
-)
-
-# brpc and related dependencies.
-git_repository(
-    name = "com_github_brpc_brpc",
-    commit = "37efd2e2b26aa6408fd308490acf14d86713c3fc",
-    patches = ["//bazel/brpc:0001_dynamic_annotations_guards.patch"],
-    patch_args = ["-p1"],
-    remote = "https://github.com/apache/brpc.git",
 )
 
 new_git_repository(
@@ -112,50 +101,6 @@ new_git_repository(
         "sed -i 's|absl/strings ||g' third_party/CMakeLists.txt",
         "sed -i 's|../absl/flags/flag.cc||g' src/CMakeLists.txt",
     ],
-)
-
-git_repository(
-    name = "com_github_brpc_braft",
-    commit = "ab0017f0b98d429138d83a04d3ed351197d671a9",
-    patches = [
-        "//bazel/braft:0001.patch",
-        "//bazel/braft:0002_ipv6_node_manager.patch",
-        "//bazel/braft:0002_ipv6_configuration.patch",
-        "//bazel/braft:0002_ipv6_node.patch",
-        "//bazel/braft:0004_util_namespace.patch",
-        "//bazel/braft:0005_bazel9_string_view.patch",
-        "//bazel/braft:0006_cxx20_shuffle.patch",
-    ],
-    patch_cmds = [
-        "sed -i.bak 's|@zlib//:zlib|@com_github_madler_zlib//:zlib|g' BUILD && rm -f BUILD.bak",
-        "grep -q '@rules_cc//cc:defs.bzl' BUILD || { sed -i.bak '1iload(\"@rules_cc//cc:defs.bzl\", \"cc_library\")' BUILD && rm -f BUILD.bak; }",
-        """cat > bazel/braft.bzl << 'BZLEOF'
-load("@com_google_protobuf//bazel:cc_proto_library.bzl", "cc_proto_library")
-load("@rules_proto//proto:defs.bzl", "proto_library")
-
-def braft_proto_library(name, srcs, deps=[], include=None, visibility=None, testonly=0):
-    native.filegroup(name=name + "_proto_srcs",
-                     srcs=srcs,
-                     visibility=visibility,)
-
-    proto_name = name + "_proto"
-    proto_library(
-        name = proto_name,
-        srcs = srcs,
-        strip_import_prefix = include if include else "",
-        visibility = visibility,
-        testonly = testonly,
-    )
-
-    cc_proto_library(
-        name = name,
-        deps = [":" + proto_name],
-        visibility = visibility,
-        testonly = testonly,
-    )
-BZLEOF""",
-    ],
-    remote = "https://github.com/baidu/braft.git",
 )
 
 http_archive(

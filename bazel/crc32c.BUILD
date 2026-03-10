@@ -15,6 +15,11 @@
 
 load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
 
+config_setting(
+    name = "x86_64",
+    constraint_values = ["@platforms//cpu:x86_64"],
+)
+
 genrule(
     name = "crc32c_config_h",
     srcs = ["src/crc32c_config.h.in"],
@@ -22,16 +27,12 @@ genrule(
     cmd = """
 sed -e 's/#cmakedefine01/#define/' \
 """ + select({
-        "@//bazel/config:brpc_with_sse42": """-e 's/ HAVE_SSE42/ HAVE_SSE42 1/' \
+        ":x86_64": """-e 's/ HAVE_SSE42/ HAVE_SSE42 1/' \
 """,
         "//conditions:default": """-e 's/ HAVE_SSE42/ HAVE_SSE42 0/' \
 """,
-    }) + select({
-        "@//bazel/config:brpc_with_glog": """-e 's/ CRC32C_TESTS_BUILT_WITH_GLOG/ CRC32C_TESTS_BUILT_WITH_GLOG 1/' \
-""",
-        "//conditions:default": """-e 's/ CRC32C_TESTS_BUILT_WITH_GLOG/ CRC32C_TESTS_BUILT_WITH_GLOG 0/' \
-""",
     }) + """-e 's/ BYTE_ORDER_BIG_ENDIAN/ BYTE_ORDER_BIG_ENDIAN 0/' \
+    -e 's/ CRC32C_TESTS_BUILT_WITH_GLOG/ CRC32C_TESTS_BUILT_WITH_GLOG 0/' \
     -e 's/ HAVE_BUILTIN_PREFETCH/ HAVE_BUILTIN_PREFETCH 0/' \
     -e 's/ HAVE_MM_PREFETCH/ HAVE_MM_PREFETCH 0/' \
     -e 's/ HAVE_ARM64_CRC32C/ HAVE_ARM64_CRC32C 0/' \
@@ -62,7 +63,7 @@ cc_library(
         "include/crc32c/crc32c.h",
     ],
     copts = select({
-        "@//bazel/config:brpc_with_sse42": ["-msse4.2"],
+        ":x86_64": ["-msse4.2"],
         "//conditions:default": [],
     }),
     strip_include_prefix = "include",
@@ -86,8 +87,5 @@ cc_test(
         ":crc32c",
         "@com_google_googletest//:gtest",
         "@com_google_googletest//:gtest_main",
-    ] + select({
-        "@//bazel/config:brpc_with_glog": ["@com_github_google_glog//:glog"],
-        "//conditions:default": [],
-    }),
+    ],
 )

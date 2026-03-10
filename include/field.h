@@ -828,7 +828,7 @@ struct facet {
 
     bool get_range(int64_t key, std::pair<int64_t, std::string>& range_pair) {
         if(facet_range_map.empty()) {
-            LOG (ERROR) << "Facet range is not defined!!!";
+            TS_LOG(ERROR) << "Facet range is not defined!!!";
         }
 
         auto it = facet_range_map.lower_bound(key);

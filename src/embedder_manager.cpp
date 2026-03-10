@@ -1,7 +1,6 @@
 #include "embedder_manager.h"
 #include "logger.h"
 #include "system_metrics.h"
-#include <butil/file_util.h>
 
 
 EmbedderManager& EmbedderManager::get_instance() {
@@ -637,13 +636,14 @@ void EmbedderManager::migrate_public_models() {
             // std::filesystem::copy(subdir, model_dir + "/ts_" + subdir_name, std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing);
             // std::filesystem::remove_all(subdir);
             TS_LOG(INFO) << "Migrating public model from " << subdir_name << " to ts_" << subdir_name;
-            butil::FilePath src(subdir);
-            butil::FilePath dest(model_dir + "/ts_" + subdir_name);
-            if(butil::PathExists(dest)) {
-                butil::DeleteFile(dest, true);
+            const std::filesystem::path src(subdir);
+            const std::filesystem::path dest(model_dir + "/ts_" + subdir_name);
+            if(std::filesystem::exists(dest)) {
+                std::filesystem::remove_all(dest);
             }
-            bool res = butil::Move(src, dest);
-            if(!res) {
+            std::error_code ec;
+            std::filesystem::rename(src, dest, ec);
+            if(ec) {
                 TS_LOG(ERROR) << "Failed to migrate public model from " << subdir_name << " to ts_" << subdir_name;
             }
             TS_LOG(INFO) << "Migrated public model from " << subdir_name << " to ts_" << subdir_name;

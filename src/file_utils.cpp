@@ -1,9 +1,15 @@
+#include "file_utils.h"
 
-#include <butil/file_util.h>
-#include <butil/files/file_enumerator.h>
-#include <butil/string_printf.h>
-#include <file_utils.h>
+#include <filesystem>
+#include <string>
+#include <system_error>
+
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "logger.h"
+
+namespace fs = std::filesystem;
 
 bool directory_exists(const std::string& dir_path) {
     struct stat info;
@@ -11,38 +17,43 @@ bool directory_exists(const std::string& dir_path) {
 }
 
 bool create_directory(const std::string& dir_path) {
-    return butil::CreateDirectory(butil::FilePath(dir_path));
+    std::error_code ec;
+    return fs::create_directories(dir_path, ec) || (!ec && fs::exists(dir_path));
 }
 
-bool file_exists(const std::string & file_path) {
+bool file_exists(const std::string& file_path) {
     struct stat info;
     return stat(file_path.c_str(), &info) == 0 && !(info.st_mode & S_IFDIR);
 }
 
-// tries to hard link first
 bool copy_dir(const std::string& from_path, const std::string& to_path) {
     struct stat from_stat;
-
     if (stat(from_path.c_str(), &from_stat) < 0 || !S_ISDIR(from_stat.st_mode)) {
         TS_LOG(WARNING) << "stat " << from_path << " failed";
         return false;
     }
 
-    if (!butil::CreateDirectory(butil::FilePath(to_path))) {
+    if (!create_directory(to_path)) {
         TS_LOG(WARNING) << "CreateDirectory " << to_path << " failed";
         return false;
     }
 
-    butil::FileEnumerator dir_enum(butil::FilePath(from_path),false, butil::FileEnumerator::FILES);
-    for (butil::FilePath name = dir_enum.Next(); !name.empty(); name = dir_enum.Next()) {
-        std::string src_file(from_path);
-        std::string dst_file(to_path);
-        butil::string_appendf(&src_file, "/%s", name.BaseName().value().c_str());
-        butil::string_appendf(&dst_file, "/%s", name.BaseName().value().c_str());
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(from_path, ec)) {
+        if (ec) {
+            TS_LOG(WARNING) << "directory iteration " << from_path << " failed: " << ec.message();
+            return false;
+        }
+        if (!entry.is_regular_file()) {
+            continue;
+        }
 
-        if (0 != link(src_file.c_str(), dst_file.c_str())) {
-            if (!butil::CopyFile(butil::FilePath(src_file), butil::FilePath(dst_file))) {
-                TS_LOG(WARNING) << "copy " << src_file << " to " << dst_file << " failed";
+        const fs::path src = entry.path();
+        const fs::path dst = fs::path(to_path) / src.filename();
+        if (link(src.c_str(), dst.c_str()) != 0) {
+            fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                TS_LOG(WARNING) << "copy " << src.string() << " to " << dst.string() << " failed: " << ec.message();
                 return false;
             }
         }
@@ -53,34 +64,32 @@ bool copy_dir(const std::string& from_path, const std::string& to_path) {
 
 bool mv_dir(const std::string& from_path, const std::string& to_path) {
     struct stat from_stat;
-
     if (stat(from_path.c_str(), &from_stat) < 0 || !S_ISDIR(from_stat.st_mode)) {
         TS_LOG(WARNING) << "stat " << from_path << " failed";
         return false;
     }
 
-    if (!butil::CreateDirectory(butil::FilePath(to_path))) {
+    if (!create_directory(to_path)) {
         TS_LOG(WARNING) << "CreateDirectory " << to_path << " failed";
         return false;
     }
 
-    butil::FileEnumerator file_enum(butil::FilePath(from_path), false, butil::FileEnumerator::FILES
-                                                                      | butil::FileEnumerator::DIRECTORIES);
-    for (butil::FilePath name = file_enum.Next(); !name.empty(); name = file_enum.Next()) {
-        std::string src_file(from_path);
-        std::string dst_file(to_path);
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(from_path, ec)) {
+        if (ec) {
+            TS_LOG(WARNING) << "directory iteration " << from_path << " failed: " << ec.message();
+            return false;
+        }
 
-        if(name.value() == to_path) {
-            // handle edge case when moving a directory into a subdirectory
+        const fs::path src = entry.path();
+        const fs::path dst = fs::path(to_path) / src.filename();
+        if (src == fs::path(to_path)) {
             continue;
         }
 
-        butil::string_appendf(&src_file, "/%s", name.BaseName().value().c_str());
-        butil::string_appendf(&dst_file, "/%s", name.BaseName().value().c_str());
-
-        butil::File::Error error;
-        if (!butil::ReplaceFile(butil::FilePath(src_file), butil::FilePath(dst_file), &error)) {
-            TS_LOG(WARNING) << "move " << src_file << " to " << dst_file << " failed: " << error;
+        fs::rename(src, dst, ec);
+        if (ec) {
+            TS_LOG(WARNING) << "move " << src.string() << " to " << dst.string() << " failed: " << ec.message();
             return false;
         }
     }
@@ -89,19 +98,30 @@ bool mv_dir(const std::string& from_path, const std::string& to_path) {
 }
 
 bool rename_path(const std::string& from_path, const std::string& to_path) {
-    return butil::Move(butil::FilePath(from_path), butil::FilePath(to_path));
+    std::error_code ec;
+    fs::rename(from_path, to_path, ec);
+    return !ec;
 }
 
 bool delete_path(const std::string& path, bool recursive) {
-    return butil::DeleteFile(butil::FilePath(path), recursive);
+    std::error_code ec;
+    if (recursive) {
+        fs::remove_all(path, ec);
+    } else {
+        fs::remove(path, ec);
+    }
+    return !ec;
 }
 
-bool dir_enum_count(const std::string &path) {
+bool dir_enum_count(const std::string& path) {
+    std::error_code ec;
     size_t count = 0;
-    butil::FileEnumerator file_enum(butil::FilePath(path), false, butil::FileEnumerator::FILES
-                                                                       | butil::FileEnumerator::DIRECTORIES);
-    for (butil::FilePath name = file_enum.Next(); !name.empty(); name = file_enum.Next()) {
-        count++;
+    for (const auto& entry : fs::directory_iterator(path, ec)) {
+        static_cast<void>(entry);
+        if (ec) {
+            return false;
+        }
+        ++count;
     }
 
     return count;

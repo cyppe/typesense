@@ -210,6 +210,20 @@ bool invoke_registered_handler(HttpServer* server,
     return false;
 }
 
+bool should_replay_live_product_state(const NuRaftAppliedRequest& applied_request) {
+    switch (applied_request.route_kind) {
+        case NuRaftRouteKind::kCollectionCreate:
+        case NuRaftRouteKind::kCollectionDrop:
+        case NuRaftRouteKind::kDocumentWrite:
+        case NuRaftRouteKind::kDocumentDelete:
+        case NuRaftRouteKind::kDocumentImport:
+        case NuRaftRouteKind::kUnknown:
+            return true;
+        default:
+            return false;
+    }
+}
+
 std::shared_ptr<http_req> build_replay_request(const NuRaftAppliedRequest& applied_request,
                                                const route_path& route) {
     auto request = std::make_shared<http_req>();
@@ -237,7 +251,7 @@ bool get_runtime_collections(const std::shared_ptr<http_req>& request, const std
         return true;
     }
 
-    if (runtime->is_single_node_mode()) {
+    if (!CollectionManager::get_instance().get_collection_names().empty()) {
         return get_collections(request, response);
     }
 
@@ -259,14 +273,14 @@ bool get_runtime_collection(const std::shared_ptr<http_req>& request, const std:
         return true;
     }
 
-    if (runtime->is_single_node_mode()) {
-        return get_collection_summary(request, response);
-    }
-
     const auto it = request->params.find("collection");
     if (it == request->params.end() || it->second.empty()) {
         response->set_400("Missing collection path parameter.");
         return true;
+    }
+
+    if (CollectionManager::get_instance().get_collection(it->second) != nullptr) {
+        return get_collection_summary(request, response);
     }
 
     std::string encoded;
@@ -291,16 +305,17 @@ bool get_runtime_document(const std::shared_ptr<http_req>& request, const std::s
         return true;
     }
 
-    if (runtime->is_single_node_mode()) {
-        return get_fetch_document(request, response);
-    }
-
     const auto collection_it = request->params.find("collection");
     const auto id_it = request->params.find("id");
     if (collection_it == request->params.end() || collection_it->second.empty() ||
         id_it == request->params.end() || id_it->second.empty()) {
         response->set_400("Missing collection or id path parameter.");
         return true;
+    }
+
+    if (runtime->is_single_node_mode() &&
+        CollectionManager::get_instance().get_collection(collection_it->second) != nullptr) {
+        return get_fetch_document(request, response);
     }
 
     std::string encoded;
@@ -376,7 +391,8 @@ NuRaftHttpRuntimeService::NuRaftHttpRuntimeService(HttpServer* server, NuRaftHtt
       options_(std::move(options)),
       layout_(NuRaftStateLayout::from_data_dir(options_.startup_options.data_dir)),
       preferred_leader_server_id_(0),
-      initialized_(false) {}
+      initialized_(false),
+      live_product_state_applied_index_(0) {}
 
 bool NuRaftHttpRuntimeService::cache_enabled() const {
     return options_.cluster_data_dirs.empty() && materialized_state_sink_ != nullptr;
@@ -405,17 +421,13 @@ bool mirror_single_node_typesense_state(const std::shared_ptr<http_req>& request
     }
 }
 
-bool replay_single_node_product_state(HttpServer* server,
-                                      const NuRaftKvStateMachineSink& sink,
-                                      std::string& error) {
+bool replay_live_product_state(HttpServer* server,
+                               const NuRaftKvStateMachineSink& sink,
+                               uint64_t& replayed_through_index,
+                               std::string& error) {
     if (server == nullptr) {
         error = "NuRaft runtime server is not attached.";
         return false;
-    }
-
-    if (!CollectionManager::get_instance().get_collection_names().empty()) {
-        error.clear();
-        return true;
     }
 
     std::vector<NuRaftAppliedRequest> applied_requests;
@@ -423,26 +435,72 @@ bool replay_single_node_product_state(HttpServer* server,
         return error.empty();
     }
 
+    uint64_t latest_index = replayed_through_index;
     for (const auto& applied_request : applied_requests) {
+        latest_index = std::max(latest_index, applied_request.index);
+        if (applied_request.index <= replayed_through_index ||
+            !should_replay_live_product_state(applied_request)) {
+            continue;
+        }
+
         route_path* route = nullptr;
         if (!find_registered_route(server, applied_request.route_hash, route, error)) {
+            TS_LOG(WARNING) << "NuRaft replay: could not find route for hash="
+                            << applied_request.route_hash << " kind=" << static_cast<int>(applied_request.route_kind);
             return false;
         }
 
         auto request = build_replay_request(applied_request, *route);
         auto response = std::make_shared<http_res>(nullptr);
-        if (!invoke_registered_handler(server, request, response, error)) {
-            if (response->status_code == 0) {
-                return false;
-            }
 
-            error = "NuRaft startup replay failed for route '" + request->http_method + " " +
-                    request->path_without_query + "': " + response->body;
-            return false;
+        if (applied_request.route_kind != NuRaftRouteKind::kUnknown) {
+            if (!mirror_single_node_typesense_state(request, applied_request.route_kind, error)) {
+                TS_LOG(WARNING) << "NuRaft startup replay mirror failed for route '"
+                                << request->http_method << " " << request->path_without_query
+                                << "': " << error;
+                error.clear();
+            }
+        } else {
+            if (!invoke_registered_handler(server, request, response, error)) {
+                if (response->status_code == 0) {
+                    return false;
+                }
+
+                TS_LOG(WARNING) << "NuRaft startup replay handler returned "
+                                << response->status_code << " for route '"
+                                << request->http_method << " " << request->path_without_query
+                                << "': " << response->body;
+                error.clear();
+            }
         }
     }
 
+    replayed_through_index = latest_index;
     error.clear();
+    return true;
+}
+
+bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!initialized_.load()) {
+        error.clear();
+        return true;
+    }
+
+    if (materialized_state_sink_ != nullptr) {
+        return replay_live_product_state(server_,
+                                         *materialized_state_sink_,
+                                         live_product_state_applied_index_,
+                                         error);
+    }
+
+    NuRaftKvStateMachineSink sink(layout_);
+    if (!replay_live_product_state(server_, sink,
+                                   live_product_state_applied_index_,
+                                   error)) {
+        TS_LOG(WARNING) << "NuRaft multi-node sync replay deferred: " << error;
+        error.clear();
+    }
     return true;
 }
 
@@ -480,9 +538,9 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     }
 
     uint64_t applied_count = 0;
+    materialized_state_sink_ = std::make_unique<NuRaftKvStateMachineSink>(layout_);
     if (options_.cluster_data_dirs.empty()) {
         local_request_journal_ = std::make_unique<NuRaftRequestJournal>(layout_);
-        materialized_state_sink_ = std::make_unique<NuRaftKvStateMachineSink>(layout_);
         if (!local_request_journal_->initialize(error)) {
             local_request_journal_.reset();
             materialized_state_sink_.reset();
@@ -498,9 +556,15 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         return false;
     }
 
-    if (options_.cluster_data_dirs.empty()) {
+    if (materialized_state_sink_ != nullptr) {
         uint64_t last_applied_index = 0;
-        if (!read_last_local_applied_index(last_applied_index, error) ||
+        if (!materialized_state_sink_->read_last_applied_index(last_applied_index, error)) {
+            local_request_journal_.reset();
+            materialized_state_sink_.reset();
+            return false;
+        }
+
+        if (options_.cluster_data_dirs.empty() &&
             !sync_local_replay_progress(last_applied_index, error)) {
             local_request_journal_.reset();
             materialized_state_sink_.reset();
@@ -508,9 +572,20 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         }
 
         if (materialized_state_sink_ != nullptr &&
-            !replay_single_node_product_state(server_, *materialized_state_sink_, error)) {
+            !replay_live_product_state(server_,
+                                       *materialized_state_sink_,
+                                       live_product_state_applied_index_,
+                                       error)) {
             local_request_journal_.reset();
             materialized_state_sink_.reset();
+            return false;
+        }
+    } else {
+        NuRaftKvStateMachineSink sink(layout_);
+        if (!replay_live_product_state(server_,
+                                       sink,
+                                       live_product_state_applied_index_,
+                                       error)) {
             return false;
         }
     }
@@ -868,12 +943,11 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     const NuRaftRouteKind route_kind = NuRaftRouteClassifier::classify(request->route_hash);
     route_path* route = nullptr;
     const bool has_registered_route = find_registered_route(server_, request->route_hash, route, error);
-    const bool supports_generic_single_node_write =
-        options_.cluster_data_dirs.empty() &&
+    const bool supports_generic_registered_write =
         route_kind == NuRaftRouteKind::kUnknown &&
         has_registered_route;
 
-    if (!supports_generic_single_node_write &&
+    if (!supports_generic_registered_write &&
         route_kind != NuRaftRouteKind::kCollectionCreate &&
         route_kind != NuRaftRouteKind::kCollectionDrop &&
         route_kind != NuRaftRouteKind::kDocumentWrite &&
@@ -913,7 +987,7 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         return;
     }
 
-    if (supports_generic_single_node_write) {
+    if (supports_generic_registered_write) {
         error.clear();
         const bool handler_ok = invoke_registered_handler(server_, request, response, error);
         if (!handler_ok && response->status_code == 0) {
@@ -1376,6 +1450,14 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
 
     if (rpath.handler == get_health) {
         return true;
+    }
+
+    NuRaftHttpRuntimeService* runtime = current_runtime_service();
+    if (runtime != nullptr) {
+        std::string error;
+        if (!runtime->sync_live_product_state(error)) {
+            TS_LOG(WARNING) << "NuRaft runtime failed to sync live product state before handling request: " << error;
+        }
     }
 
     const std::string configured_api_key = Config::get_instance().get_api_key();

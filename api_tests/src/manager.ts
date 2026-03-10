@@ -1,6 +1,6 @@
 import { createServer } from "node:net";
 import { appendFileSync, rmSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
 type ServerInstance = {
   process: Bun.Subprocess;
@@ -107,7 +107,7 @@ export class TypesenseProcessManager {
     }
     this.binaryPath = resolvedBinaryPath;
     this.serverFlavor = process.env.TYPESENSE_SERVER_FLAVOR
-      ?? (basename(this.binaryPath) === "typesense-server-nuraft-runtime" ? "nuraft-runtime" : "typesense-server");
+      ?? "nuraft-runtime";
 
     this.apiHost = process.env.TYPESENSE_API_HOST ?? "localhost";
     this.apiKey = process.env.TYPESENSE_API_KEY ?? "xyz";

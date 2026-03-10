@@ -16,18 +16,9 @@ echo "Running clang warning guardrail build..."
 	--cxxopt=-Wno-enum-constexpr-conversion \
 	--cxxopt=-Wno-unused-command-line-argument \
 	--linkopt=-Wno-unused-command-line-argument \
-	--per_file_copt=.*com_github_brpc_brpc.*@-Wno-deprecated-declarations \
-	--per_file_copt=.*com_github_brpc_braft.*@-Wno-deprecated-declarations \
-	--per_file_copt=.*com_github_brpc_brpc.*@-Wno-vla-cxx-extension \
-	--per_file_copt=.*com_github_brpc_braft.*@-Wno-vla-cxx-extension \
-	--per_file_copt=.*com_github_brpc_brpc.*@-Wno-macro-redefined \
-	--per_file_copt=.*com_github_brpc_braft.*@-Wno-macro-redefined \
-	--per_file_copt=.*com_github_brpc_brpc.*@-Wno-invalid-offsetof \
-	--per_file_copt=.*com_github_brpc_braft.*@-Wno-invalid-offsetof \
 	--per_file_copt=.*onnx_runtime_extensions.*@-Wno-pessimizing-move \
 	--per_file_copt=.*clip_tokenizer.*@-Wno-pessimizing-move \
 	--per_file_copt=.*clip_tokenizer.*@-Wno-unused-variable \
-	--per_file_copt='.*glog.*@-Wno-#pragma-messages' \
 	--per_file_copt=.*quicly.*@-Wno-unused-but-set-variable \
 	2>&1 | tee "${LOG_FILE}" | python3 -c 'import sys; ignore="OpenJDK 64-Bit Server VM warning: Options -Xverify:none and -noverify were deprecated in JDK 13 and will likely be removed in a future release."; [sys.stdout.write(line) for line in sys.stdin if line.rstrip("\n") != ignore]'
 

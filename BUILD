@@ -15,7 +15,12 @@ compilation_database(
 
 filegroup(
     name = "src_files",
-    srcs = glob(["src/*.cpp"]),
+    srcs = glob(
+        ["src/*.cpp"],
+        exclude = [
+            "src/raft_server.cpp",
+        ],
+    ),
 )
 
 cc_library(
@@ -46,9 +51,6 @@ cc_library(
         "@onnx_runtime//:onnxruntime_static_one_protobuf_lib",
         "@sentencepiece",
         "@sentencepiece//:sentencepiece_headers",
-        "@com_github_brpc_braft//:braft",
-        "@com_github_brpc_brpc//:brpc",
-        "@com_github_google_glog//:glog",  # retained for brpc/braft
         "@com_google_absl//absl/log:absl_log",
         "@com_google_absl//absl/log:absl_check",
         "@com_google_absl//absl/log:initialize",
@@ -89,100 +91,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "common_deps_static_probe",
-    defines = [
-        "NDEBUG",
-    ],
-    linkopts = select({
-        "@platforms//os:macos": ["-framework Foundation -framework SystemConfiguration"],
-        "//conditions:default": [],
-    }),
-    deps = [
-        ":headers",
-        "@onnx_runtime//:onnxruntime_static_lib",
-        "@sentencepiece",
-        "@sentencepiece//:sentencepiece_headers",
-        "@com_github_brpc_braft//:braft",
-        "@com_github_brpc_brpc//:brpc",
-        "@com_github_google_glog//:glog",  # retained for brpc/braft
-        "@com_google_absl//absl/log:absl_log",
-        "@com_google_absl//absl/log:absl_check",
-        "@com_google_absl//absl/log:initialize",
-        "@com_google_absl//absl/log:globals",
-        "@com_google_absl//absl/log:log_sink",
-        "@com_google_absl//absl/log:log_sink_registry",
-        "@com_google_absl//absl/log:log_entry",
-        "@curl",
-        "@for",
-        "@h2o",
-        "@iconv",
-        "@icu",
-        "@kakasi",
-        "@lrucache",
-        "@rocksdb",
-        "@s2geometry",
-        "@hnsw",
-        "@clip_tokenizer//:clip",
-        "@whisper.cpp//:whisper",
-        "@whisper.cpp//:whisper_headers",
-        "@snowball",
-        "@snowball//:snowball_headers",
-        "@archive",
-    ] + select({
-        ":asan_mode": [],
-        ":tsan_mode": [],
-        "//conditions:default": ["@jemalloc"],
-    }),
-)
-
-cc_library(
-    name = "common_deps_static_one_protobuf_probe",
-    defines = [
-        "NDEBUG",
-    ],
-    linkopts = select({
-        "@platforms//os:macos": ["-framework Foundation -framework SystemConfiguration"],
-        "//conditions:default": [],
-    }),
-    deps = [
-        ":headers",
-        "@onnx_runtime//:onnxruntime_static_one_protobuf_lib",
-        "@sentencepiece",
-        "@sentencepiece//:sentencepiece_headers",
-        "@com_github_brpc_braft//:braft",
-        "@com_github_brpc_brpc//:brpc",
-        "@com_github_google_glog//:glog",  # retained for brpc/braft
-        "@com_google_absl//absl/log:absl_log",
-        "@com_google_absl//absl/log:absl_check",
-        "@com_google_absl//absl/log:initialize",
-        "@com_google_absl//absl/log:globals",
-        "@com_google_absl//absl/log:log_sink",
-        "@com_google_absl//absl/log:log_sink_registry",
-        "@com_google_absl//absl/log:log_entry",
-        "@curl",
-        "@for",
-        "@h2o",
-        "@iconv",
-        "@icu",
-        "@kakasi",
-        "@lrucache",
-        "@rocksdb",
-        "@s2geometry",
-        "@hnsw",
-        "@clip_tokenizer//:clip",
-        "@whisper.cpp//:whisper",
-        "@whisper.cpp//:whisper_headers",
-        "@snowball",
-        "@snowball//:snowball_headers",
-        "@archive",
-    ] + select({
-        ":asan_mode": [],
-        ":tsan_mode": [],
-        "//conditions:default": ["@jemalloc"],
-    }),
-)
-
 COPTS = [
     "-Wall",
     "-Wextra",
@@ -196,7 +104,7 @@ COPTS = [
 cc_binary(
     name = "typesense-server",
     srcs = [
-        "src/main/typesense_server.cpp",
+        "src/main/typesense_nuraft_runtime.cpp",
         ":src_files",
     ],
     local_defines = [
@@ -211,7 +119,10 @@ cc_binary(
         "@platforms//os:linux": ["-DBACKWARD_HAS_DW=1", "-DBACKWARD_HAS_UNWIND=1"],
         "//conditions:default": [],
     }),
-    deps = [":common_deps"] +  select({
+    deps = [
+        ":common_deps",
+        ":nuraft_runtime_lib",
+    ] +  select({
         "@platforms//os:linux": [":linux_deps"],
         "//conditions:default": [],
     }),
@@ -225,54 +136,6 @@ cc_binary(
     ],
     copts = COPTS,
     deps = [":common_deps"],
-)
-
-cc_binary(
-    name = "typesense-server-static-probe",
-    srcs = [
-        "src/main/typesense_server.cpp",
-        ":src_files",
-    ],
-    local_defines = [
-        "TYPESENSE_VERSION=\\\"$(TYPESENSE_VERSION)\\\"",
-    ],
-    linkopts = select({
-        "@platforms//os:linux": ["-static-libstdc++", "-static-libgcc", "-fuse-ld=lld"],
-        "@platforms//os:macos": ["-framework Foundation", "-framework Accelerate", "-framework Metal", "-framework MetalKit"],
-        "//conditions:default": [],
-    }),
-    copts = COPTS + select({
-        "@platforms//os:linux": ["-DBACKWARD_HAS_DW=1", "-DBACKWARD_HAS_UNWIND=1"],
-        "//conditions:default": [],
-    }),
-    deps = [":common_deps_static_probe"] + select({
-        "@platforms//os:linux": [":linux_deps"],
-        "//conditions:default": [],
-    }),
-)
-
-cc_binary(
-    name = "typesense-server-static-one-protobuf-probe",
-    srcs = [
-        "src/main/typesense_server.cpp",
-        ":src_files",
-    ],
-    local_defines = [
-        "TYPESENSE_VERSION=\\\"$(TYPESENSE_VERSION)\\\"",
-    ],
-    linkopts = select({
-        "@platforms//os:linux": ["-static-libstdc++", "-static-libgcc", "-fuse-ld=lld"],
-        "@platforms//os:macos": ["-framework Foundation", "-framework Accelerate", "-framework Metal", "-framework MetalKit"],
-        "//conditions:default": [],
-    }),
-    copts = COPTS + select({
-        "@platforms//os:linux": ["-DBACKWARD_HAS_DW=1", "-DBACKWARD_HAS_UNWIND=1"],
-        "//conditions:default": [],
-    }),
-    deps = [":common_deps_static_one_protobuf_probe"] + select({
-        "@platforms//os:linux": [":linux_deps"],
-        "//conditions:default": [],
-    }),
 )
 
 cc_binary(
@@ -310,6 +173,7 @@ cc_library(
     copts = COPTS,
     deps = [
         ":headers",
+        "@icu",
         "@rocksdb",
     ],
 )
@@ -353,22 +217,6 @@ cc_library(
     ],
 )
 
-cc_binary(
-    name = "typesense-server-nuraft-runtime",
-    srcs = [
-        ":src_files",
-        "src/main/typesense_nuraft_runtime.cpp",
-    ],
-    local_defines = [
-        "TYPESENSE_VERSION=\"$(TYPESENSE_VERSION)\"",
-    ],
-    copts = COPTS,
-    deps = [
-        ":common_deps",
-        ":nuraft_runtime_lib",
-    ],
-)
-
 cc_test(
     name = "nuraft-bootstrap-builder-test",
     srcs = [
@@ -392,7 +240,7 @@ cc_test(
     ],
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     data = [
-        ":typesense-server-nuraft-runtime",
+        ":typesense-server",
     ],
     deps = [
         ":common_deps",
@@ -673,29 +521,6 @@ config_setting(
 )
 
 cc_test(
-    name = "raft-server-test",
-    srcs = [
-        ":src_files",
-        "test/raft_server_test.cpp",
-    ],
-    copts = TEST_COPTS + ["-O0"],
-    deps = [
-        ":common_deps",
-        "@com_google_googletest//:gtest_main",
-    ],
-    defines = [
-        "ROOT_DIR=",
-    ],
-    linkopts = select({
-       ":asan_mode": ["-fsanitize=address", "-fuse-ld=lld"],
-       "//conditions:default": []
-    }) + select({
-       "@platforms//os:linux": ["-fuse-ld=lld"],
-       "//conditions:default": [],
-   }),
-)
-
-cc_test(
     name = "typesense-test",
     size = "large",
     srcs = [
@@ -714,6 +539,8 @@ cc_test(
     ],
     deps = [
         ":common_deps",
+        ":nuraft_prototype_lib",
+        ":nuraft_runtime_lib",
         "@com_google_googletest//:gtest",
     ],
     defines = [

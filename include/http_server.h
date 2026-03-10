@@ -201,9 +201,9 @@ private:
     static bool is_write_request(const std::string& root_resource, const std::string& http_method,
                                  bool (*handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&));
 
-    static void handle_gzip(const std::shared_ptr<http_req>& request);
-
 public:
+    static Option<bool> handle_gzip(const std::shared_ptr<http_req>& request);
+
     HttpServer(const std::string & version,
                const std::string & listen_address, uint32_t listen_port,
                const std::string & ssl_cert_path,

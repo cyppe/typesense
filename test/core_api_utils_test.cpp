@@ -5,7 +5,6 @@
 #include <core_api.h>
 #include <analytics_manager.h>
 #include "core_api_utils.h"
-#include "raft_server.h"
 #include "conversation_model_manager.h"
 #include "conversation_manager.h"
 #include "synonym_index_manager.h"
@@ -1732,7 +1731,7 @@ TEST_F(CoreAPIUtilsTest, SampleGzipIndexTest) {
     req->body.resize(length);
     infile.read(&req->body[0], length);
 
-    auto res = ReplicationState::handle_gzip(req);
+    auto res = HttpServer::handle_gzip(req);
     if (!res.error().empty()) {
         TS_LOG(ERROR) << res.error();
         FAIL();

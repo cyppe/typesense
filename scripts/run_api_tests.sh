@@ -9,23 +9,12 @@ RUNTIME_BUNDLE_DIR="${TYPESENSE_RUNTIME_BUNDLE_DIR:-${REPO_ROOT}/typesense-runti
 DATA_DIR="${REPO_ROOT}/tmp/test"
 BUN_IMAGE="${TYPESENSE_API_TEST_BUN_IMAGE:-typesense/api-tests-bun:local}"
 SERVER_BINARY_PATH="${TYPESENSE_SERVER_BINARY_PATH:-}"
-SERVER_BINARY_FLAVOR="${TYPESENSE_SERVER_FLAVOR:-typesense-server}"
+SERVER_BINARY_FLAVOR="${TYPESENSE_SERVER_FLAVOR:-nuraft-runtime}"
 USE_HOST_BUN=false
 SKIP_INSTALL=false
 
 detect_server_flavor() {
-	local binary_path="$1"
-	local binary_name
-	binary_name="$(basename "${binary_path}")"
-
-	case "${binary_name}" in
-	typesense-server-nuraft-runtime)
-		echo "nuraft-runtime"
-		;;
-	*)
-		echo "typesense-server"
-		;;
-	esac
+	echo "nuraft-runtime"
 }
 
 usage() {
@@ -42,9 +31,8 @@ Defaults:
 Examples:
   scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
   scripts/run_api_tests.sh -- tests/health.test.ts
-  scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_smoke.test.ts
+  scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/nuraft_runtime_smoke.test.ts
   scripts/run_api_tests.sh --runtime-bundle-dir ./typesense-server-binary -- --no-secrets
-  scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-static-one-protobuf-probe -- --no-secrets tests/health.test.ts
   scripts/run_api_tests.sh --host-bun -- --no-secrets tests/health.test.ts
 
 Environment:

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 bool directory_exists(const std::string & dir_path);
 
 bool create_directory(const std::string& dir_path);
