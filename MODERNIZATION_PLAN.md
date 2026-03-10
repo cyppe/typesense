@@ -129,7 +129,7 @@ Done. Repo default is Bazel 9.0.0. CI and local Docker lanes are green. Platform
 
 - [x] Staged path completed: `29.0` -> `29.5` -> `33.4` -> `33.5` with Bazel 9 compatibility.
 - [x] The previous `brpc`-specific Protobuf 34 blocker is gone from this branch because the old Raft/RPC stack has been removed.
-- [ ] Re-attempt Protobuf 34 against the remaining dependency set when dependency-refresh work cycles back here.
+- [x] Re-attempt Protobuf 34 against the remaining dependency set when dependency-refresh work cycles back here. *(Done Mar 2026: upgraded to 34.0.bcr.1. Clean build, 120/120 API tests, 4/4 unit tests. No source changes needed.)*
 
 ### 7) Burn down external patch debt
 
@@ -220,7 +220,7 @@ Build a deliberate next-wave upgrade shortlist instead of bumping opportunistica
 - [x] Turn the current-vs-latest inventory into a ranked upgrade plan with explicit owners/blockers.
 - [x] High-priority audit findings so far:
   - Vendored `magic_enum` `0.7.2` -> `0.9.7` is now done; the full header refresh replaces the temporary AppleClang-only backport and keeps the compiler fix aligned with upstream.
-  - Protobuf `33.5` -> `34.0` remains the largest obvious core bump still open and is now ready for a fresh full-tree retry on this branch.
+  - Protobuf `33.5` -> `34.0.bcr.1` is now done; clean build, 120/120 API tests pass, all unit tests pass.
 - [ ] Medium-priority candidates worth evaluating next:
   - ONNX Runtime `1.24.2` -> `1.24.3` is now done; canonical Docker build passed, `ldd bazel-bin/typesense-server` still shows no `libonnxruntime.so.1` dependency, and the Dockerized API `tests/health.test.ts` replay passed against the promoted binary.
   - `libarchive` `3.7.7` -> `3.8.x` for packaging/security posture. *(Now in progress on `3.8.5`.)*
@@ -548,7 +548,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 6 | ~~CI hygiene backlog (remaining)~~ | P2.11 | **done** | Bazel disk cache via `actions/cache@v4` in all workflows. |
 | 7 | ~~Benchmark infrastructure audit~~ | P2.13 | **done** | Stack audited, local execution documented, cross-fork comparison feasible. |
 | 8 | ~~Fix pre-existing test warnings~~ | Known Issues | **done** | Narrowing + trigraph warnings fixed. |
-| 9 | Protobuf 34 upgrade | P1.6b | **ready to retry** | Former `brpc` blocker is gone on this branch; re-attempt when dependency refresh cycles back here. |
+| 9 | Protobuf 34 upgrade | P1.6b | **done** | Upgraded from 33.5 to 34.0.bcr.1. Updated MODULE.bazel and onnxruntime.BUILD version strings. Clean build, 120/120 API tests pass, all 4 NuRaft unit tests pass. No code changes required — protobuf is only an indirect dependency via OnnxRuntime and SentencePiece. |
 | 10 | ~~Cross-fork benchmark script~~ | P2.13 | **done** | `scripts/benchmark_vs_upstream.sh` for upstream comparison. |
 | 11 | ~~Definition of Done audit~~ | DoD | **done** | All 6 checkboxes verified and marked complete. |
 | 12 | ~~Fix Bazel 9.0.0 not running in Docker~~ | P1.6 | **done** | Verified with `scripts/bazel_in_docker.sh version` and `TYPESENSE_BAZEL_IMAGE=typesense/ci-bazel:ci scripts/bazel_in_docker.sh version`: Bazelisk `v1.28.1`, Bazel `9.0.0`. CI workflows already run `--build-image-only`; stale local images were the mismatch source. |
