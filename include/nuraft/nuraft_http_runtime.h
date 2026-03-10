@@ -9,7 +9,10 @@
 #include <vector>
 
 #include "http_server.h"
+#include "nuraft_prototype_state_machine.h"
 #include "nuraft_replication_controller.h"
+#include "nuraft_request_journal.h"
+#include "nuraft_state_machine_sink.h"
 #include "replication/replication_service.h"
 
 struct NuRaftHttpServerOptions {
@@ -86,6 +89,9 @@ private:
     std::map<int32_t, std::string> cluster_data_dirs_;
     std::atomic<int32_t> preferred_leader_server_id_;
     std::atomic<bool> initialized_;
+    std::unique_ptr<NuRaftRequestJournal> local_request_journal_;
+    std::unique_ptr<NuRaftPrototypeStateMachine> local_state_machine_;
+    mutable std::unique_ptr<NuRaftKvStateMachineSink> materialized_state_sink_;
     mutable std::mutex mutex_;
 };
 

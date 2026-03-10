@@ -7,6 +7,39 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 18: Focused Raft Runtime Contention Comparison After Single-Node Runtime Reuse (`braft` runtime vs NuRaft runtime, 2026-03-10)
+
+**Commit:** `HEAD` at run time  
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-runtime-contention --duration 5s --docs 100 --reader-threads 2`  
+**Scenario:** same bounded contention lane as Run 17 after keeping the single-node NuRaft request journal, state machine, and materialized-state sink alive across requests, plus avoiding rereads for non-`PATCH` document writes.  
+**Artifacts:** `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260310-070750`
+
+### Aggregated Results
+
+| Measure | `braft` runtime | NuRaft runtime |
+|---|---:|---:|
+| Writes completed | `4,003` | `2,115` |
+| Reads completed | `30,067` | `5,542` |
+| Write p50 / p95 | `0.97 / 2.52 ms` | `2.32 / 2.79 ms` |
+| Read p50 / p95 | `0.27 / 0.64 ms` | `2.17 / 2.63 ms` |
+| Process CPU | `3,610 ms` | `1,360 ms` |
+| Peak RSS | `266,732 KB` | `63,828 KB` |
+
+### Interpretation
+
+- This is still the same bounded document read/write lane, so the comparison remains relevant to the currently implemented common runtime surface.
+- The single-node runtime reuse work changed the contention picture materially. NuRaft moved from roughly `6%` of `braft` write throughput and `2%` of read throughput in Run 17 to roughly `53%` of write throughput and `18%` of read throughput here.
+- NuRaft still trails `braft` on steady-state contention, especially reads, but it no longer loses badly enough to make the migration direction look obviously doomed.
+- The resource picture remains favorable to NuRaft in this lane: much lower CPU time and much lower peak RSS.
+
+### Decision
+
+- Do **not** remove `braft` yet.
+- Do continue NuRaft, because the biggest runtime bottleneck so far responded well to straightforward integration fixes.
+- The remaining question is no longer "can NuRaft be made respectable under runtime contention?" It can. The next question is whether the remaining read-path gap can be closed enough without turning the integration into an unbounded rewrite.
+
+---
+
 ## Run 17: Focused Raft Runtime Contention Comparison (`braft` runtime vs NuRaft runtime, 2026-03-09)
 
 **Commit:** `HEAD` at run time  

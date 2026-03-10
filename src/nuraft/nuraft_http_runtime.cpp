@@ -302,7 +302,27 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     }
 
     uint64_t applied_count = 0;
+    if (options_.cluster_data_dirs.empty()) {
+        local_request_journal_ = std::make_unique<NuRaftRequestJournal>(layout_);
+        materialized_state_sink_ = std::make_unique<NuRaftKvStateMachineSink>(layout_);
+        local_state_machine_ = std::make_unique<NuRaftPrototypeStateMachine>(
+            layout_,
+            std::make_unique<NuRaftKvStateMachineSink>(layout_));
+        if (!local_request_journal_->initialize(error) || !local_state_machine_->initialize(error)) {
+            local_request_journal_.reset();
+            local_state_machine_.reset();
+            materialized_state_sink_.reset();
+            return false;
+        }
+    } else {
+        local_request_journal_.reset();
+        local_state_machine_.reset();
+        materialized_state_sink_.reset();
+    }
     if (!apply_local_pending(applied_count, error)) {
+        local_request_journal_.reset();
+        local_state_machine_.reset();
+        materialized_state_sink_.reset();
         return false;
     }
 
@@ -353,12 +373,16 @@ bool NuRaftHttpRuntimeService::append_and_apply(const std::string& request_json,
                                                         error);
     }
 
-    NuRaftRequestJournal request_journal(layout_);
-    if (!request_journal.initialize(error)) {
-        return false;
-    }
-    if (!request_journal.append_request_json(request_json, appended_index, error)) {
-        return false;
+    if (local_request_journal_ != nullptr) {
+        if (!local_request_journal_->append_request_json(request_json, appended_index, error)) {
+            return false;
+        }
+    } else {
+        NuRaftRequestJournal request_journal(layout_);
+        if (!request_journal.initialize(error) ||
+            !request_journal.append_request_json(request_json, appended_index, error)) {
+            return false;
+        }
     }
 
     uint64_t applied_count = 0;
@@ -366,15 +390,23 @@ bool NuRaftHttpRuntimeService::append_and_apply(const std::string& request_json,
 }
 
 bool NuRaftHttpRuntimeService::apply_local_pending(uint64_t& applied_count, std::string& error) {
-    auto sink = std::make_unique<NuRaftKvStateMachineSink>(layout_);
-    NuRaftPrototypeStateMachine state_machine(layout_, std::move(sink));
-    if (!state_machine.initialize(error)) {
-        return false;
+    std::vector<NuRaftLogEntry> applied_entries;
+    if (local_state_machine_ != nullptr) {
+        if (!local_state_machine_->apply_pending(applied_entries, error)) {
+            return false;
+        }
+    } else {
+        auto sink = std::make_unique<NuRaftKvStateMachineSink>(layout_);
+        NuRaftPrototypeStateMachine state_machine(layout_, std::move(sink));
+        if (!state_machine.initialize(error) || !state_machine.apply_pending(applied_entries, error)) {
+            return false;
+        }
     }
 
-    std::vector<NuRaftLogEntry> applied_entries;
-    if (!state_machine.apply_pending(applied_entries, error)) {
-        return false;
+    if (applied_entries.empty()) {
+        applied_count = 0;
+        error.clear();
+        return true;
     }
 
     applied_count = applied_entries.size();
@@ -386,6 +418,10 @@ bool NuRaftHttpRuntimeService::read_materialized_value(const std::string& key,
                                                        std::string& value,
                                                        bool& found,
                                                        std::string& error) const {
+    if (materialized_state_sink_ != nullptr) {
+        return materialized_state_sink_->read_materialized_value(key, value, found, error);
+    }
+
     NuRaftKvStateMachineSink sink(layout_);
     return sink.read_materialized_value(key, value, found, error);
 }
@@ -394,6 +430,10 @@ bool NuRaftHttpRuntimeService::read_materialized_prefix(
     const std::string& prefix,
     std::vector<std::pair<std::string, std::string>>& entries,
     std::string& error) const {
+    if (materialized_state_sink_ != nullptr) {
+        return materialized_state_sink_->read_materialized_prefix(prefix, entries, error);
+    }
+
     NuRaftKvStateMachineSink sink(layout_);
     return sink.read_materialized_prefix(prefix, entries, error);
 }
@@ -401,6 +441,10 @@ bool NuRaftHttpRuntimeService::read_materialized_prefix(
 bool NuRaftHttpRuntimeService::count_materialized_prefix(const std::string& prefix,
                                                          size_t& count,
                                                          std::string& error) const {
+    if (materialized_state_sink_ != nullptr) {
+        return materialized_state_sink_->count_materialized_prefix(prefix, count, error);
+    }
+
     NuRaftKvStateMachineSink sink(layout_);
     return sink.count_materialized_prefix(prefix, count, error);
 }
@@ -408,6 +452,10 @@ bool NuRaftHttpRuntimeService::count_materialized_prefix(const std::string& pref
 bool NuRaftHttpRuntimeService::read_materialized_entries(
     std::vector<std::pair<std::string, std::string>>& entries,
     std::string& error) const {
+    if (materialized_state_sink_ != nullptr) {
+        return materialized_state_sink_->read_materialized_entries(entries, error);
+    }
+
     NuRaftKvStateMachineSink sink(layout_);
     return sink.read_materialized_entries(entries, error);
 }
@@ -495,28 +543,32 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         }
         has_top_level_result = true;
     } else if (route_kind == NuRaftRouteKind::kDocumentWrite) {
-        auto collection_it = request->params.find("collection");
-        if (collection_it != request->params.end()) {
-            std::string document_id;
-            auto id_it = request->params.find("id");
-            if (id_it != request->params.end()) {
-                document_id = id_it->second;
-            } else {
-                nlohmann::json parsed_body;
-                if (parse_json_if_present(request->body, parsed_body)) {
+        nlohmann::json parsed_body;
+        const bool parsed_request_body = parse_json_if_present(request->body, parsed_body) && parsed_body.is_object();
+        if (request->http_method != "PATCH" && parsed_request_body) {
+            top_level_result = parsed_body;
+            has_top_level_result = true;
+        } else {
+            auto collection_it = request->params.find("collection");
+            if (collection_it != request->params.end()) {
+                std::string document_id;
+                auto id_it = request->params.find("id");
+                if (id_it != request->params.end()) {
+                    document_id = id_it->second;
+                } else if (parsed_request_body) {
                     extract_document_id_from_json(parsed_body, document_id);
                 }
-            }
 
-            if (!document_id.empty()) {
-                std::string stored_document;
-                if (read_document(collection_it->second, document_id, stored_document, error)) {
-                    has_top_level_result = parse_json_if_present(stored_document, top_level_result) &&
-                                           top_level_result.is_object();
-                } else {
-                    response->set_500(error);
-                    send_response(request, response);
-                    return;
+                if (!document_id.empty()) {
+                    std::string stored_document;
+                    if (read_document(collection_it->second, document_id, stored_document, error)) {
+                        has_top_level_result = parse_json_if_present(stored_document, top_level_result) &&
+                                               top_level_result.is_object();
+                    } else {
+                        response->set_500(error);
+                        send_response(request, response);
+                        return;
+                    }
                 }
             }
         }
@@ -760,12 +812,12 @@ bool NuRaftHttpRuntimeService::search_documents(const std::string& collection,
         }
     }
 
+    const std::string prefix = std::string(kDocumentPrefix) + collection + "/";
     std::vector<std::pair<std::string, std::string>> entries;
     if (!read_materialized_prefix(prefix, entries, error)) {
         return false;
     }
 
-    const std::string prefix = std::string(kDocumentPrefix) + collection + "/";
     nlohmann::json hits = nlohmann::json::array();
     for (const auto& entry : entries) {
         if (entry.first.rfind(prefix, 0) != 0) {
