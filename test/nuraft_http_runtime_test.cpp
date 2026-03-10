@@ -80,15 +80,6 @@ public:
         if (!options_.startup_options.nodes_config.empty()) {
             args.insert(args.end(), {"--nodes", options_.startup_options.nodes_config});
         }
-        if (!options_.cluster_data_dirs.empty()) {
-            args.insert(args.end(), {"--cluster-data-dirs", options_.cluster_data_dirs});
-        }
-        if (options_.cluster_leader_api_port != 0) {
-            args.insert(args.end(), {"--cluster-leader-api-port", std::to_string(options_.cluster_leader_api_port)});
-        }
-        if (!options_.install_snapshot_path.empty()) {
-            args.insert(args.end(), {"--install-snapshot", options_.install_snapshot_path});
-        }
         if (options_.startup_options.api_uses_ssl) {
             args.push_back("--api-uses-ssl");
         }
@@ -382,8 +373,6 @@ TEST_F(NuRaftHttpRuntimeTest, InstallsSnapshotIntoFreshHttpRuntimeNode) {
     target_options.listen_address = "127.0.0.1";
     target_options.listen_port = api_port_2;
     target_options.api_key = "xyz";
-    target_options.install_snapshot_path = snapshot_dir;
-
     ASSERT_TRUE(node2_.start(target_options, error)) << error;
 
     response.clear();

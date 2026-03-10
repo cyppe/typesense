@@ -6,6 +6,14 @@
 #include "nuraft/nuraft_file_store.h"
 #include "string_utils.h"
 
+bool NuRaftLogEntry::operator==(const NuRaftLogEntry& other) const {
+    return index == other.index &&
+           envelope.version() == other.envelope.version() &&
+           envelope.payload_encoding() == other.envelope.payload_encoding() &&
+           envelope.flags() == other.envelope.flags() &&
+           envelope.request_json() == other.envelope.request_json();
+}
+
 namespace {
 
 nlohmann::json encode_request(const NuRaftAppliedRequest& request);

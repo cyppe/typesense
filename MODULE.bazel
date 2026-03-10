@@ -338,3 +338,17 @@ http_archive(
     strip_prefix = "libarchive-3.8.5",
     urls = ["https://github.com/libarchive/libarchive/releases/download/v3.8.5/libarchive-3.8.5.tar.gz"],
 )
+
+new_git_repository(
+    name = "asio",
+    build_file = "//bazel:asio.BUILD",
+    commit = "147f7225a96d45a2807a64e443177f621844e51c",
+    remote = "https://github.com/chriskohlhoff/asio.git",
+)
+
+new_git_repository(
+    name = "nuraft",
+    build_file = "//bazel:nuraft.BUILD",
+    commit = "f51ca25ac2a36e4795fc9b42f477fcfcdeeb265c",
+    remote = "https://github.com/eBay/NuRaft.git",
+)

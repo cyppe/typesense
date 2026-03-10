@@ -149,59 +149,29 @@ cc_binary(
 )
 
 cc_library(
-    name = "nuraft_prototype_lib",
+    name = "nuraft_lib",
     srcs = [
         "src/nuraft/nuraft_bootstrap_builder.cpp",
-        "src/nuraft/nuraft_replication_controller.cpp",
-        "src/nuraft/nuraft_file_store.cpp",
         "src/nuraft/nuraft_applied_request_store.cpp",
+        "src/nuraft/nuraft_file_store.cpp",
         "src/nuraft/nuraft_metadata_store.cpp",
         "src/nuraft/nuraft_peer_resolver.cpp",
-        "src/nuraft/nuraft_prototype_state_machine.cpp",
-        "src/nuraft/nuraft_request_journal.cpp",
         "src/nuraft/nuraft_request_envelope.cpp",
-        "src/nuraft/nuraft_replay_coordinator.cpp",
-        "src/nuraft/nuraft_recovery_coordinator.cpp",
         "src/nuraft/nuraft_route_classifier.cpp",
         "src/nuraft/nuraft_snapshot_coordinator.cpp",
         "src/nuraft/nuraft_state_machine_sink.cpp",
-        "src/nuraft/nuraft_static_cluster.cpp",
-        "src/nuraft/nuraft_segment_log_store.cpp",
         "src/nuraft/nuraft_state_initializer.cpp",
         "src/nuraft/nuraft_state_layout.cpp",
+        "src/nuraft/typesense_log_store.cpp",
+        "src/nuraft/typesense_state_manager.cpp",
+        "src/nuraft/typesense_state_machine.cpp",
     ],
     copts = COPTS,
     deps = [
         ":headers",
         "@icu",
+        "@nuraft",
         "@rocksdb",
-    ],
-)
-
-cc_binary(
-    name = "typesense-server-nuraft-prototype",
-    srcs = [
-        "src/main/typesense_nuraft_prototype.cpp",
-    ],
-    local_defines = [
-        "TYPESENSE_VERSION=\"$(TYPESENSE_VERSION)\"",
-    ],
-    copts = COPTS,
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
-    ],
-)
-
-cc_binary(
-    name = "nuraft-prototype-benchmark",
-    srcs = [
-        "src/main/nuraft_prototype_benchmark.cpp",
-    ],
-    copts = COPTS,
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
     ],
 )
 
@@ -213,7 +183,7 @@ cc_library(
     copts = COPTS,
     deps = [
         ":common_deps",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
     ],
 )
 
@@ -225,7 +195,7 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -257,88 +227,11 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
 
-cc_test(
-    name = "nuraft-replication-controller-test",
-    srcs = [
-        "test/nuraft_replication_controller_test.cpp",
-    ],
-    copts = COPTS + ["-O0", "-DTEST_BUILD"],
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "nuraft-segment-log-store-test",
-    srcs = [
-        "test/nuraft_segment_log_store_test.cpp",
-    ],
-    copts = COPTS + ["-O0", "-DTEST_BUILD"],
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "nuraft-request-journal-test",
-    srcs = [
-        "test/nuraft_request_journal_test.cpp",
-    ],
-    copts = COPTS + ["-O0", "-DTEST_BUILD"],
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "nuraft-replay-coordinator-test",
-    srcs = [
-        "test/nuraft_replay_coordinator_test.cpp",
-    ],
-    copts = COPTS + ["-O0", "-DTEST_BUILD"],
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "nuraft-recovery-coordinator-test",
-    srcs = [
-        "test/nuraft_recovery_coordinator_test.cpp",
-    ],
-    copts = COPTS + ["-O0", "-DTEST_BUILD"],
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "nuraft-prototype-state-machine-test",
-    srcs = [
-        "test/nuraft_prototype_state_machine_test.cpp",
-    ],
-    copts = COPTS + ["-O0", "-DTEST_BUILD"],
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
 
 cc_test(
     name = "nuraft-applied-request-store-test",
@@ -348,7 +241,7 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -361,7 +254,7 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -374,7 +267,7 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -387,23 +280,11 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
 
-cc_test(
-    name = "nuraft-static-cluster-test",
-    srcs = [
-        "test/nuraft_static_cluster_test.cpp",
-    ],
-    copts = COPTS + ["-O0", "-DTEST_BUILD"],
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
 
 cc_test(
     name = "nuraft-request-envelope-test",
@@ -413,21 +294,7 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
-        "@com_google_googletest//:gtest_main",
-    ],
-)
-
-cc_test(
-    name = "nuraft-file-store-test",
-    srcs = [
-        "test/nuraft_file_store_test.cpp",
-    ],
-    copts = COPTS + ["-O0", "-DTEST_BUILD"],
-    includes = ["test"],
-    deps = [
-        ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -440,7 +307,7 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -453,7 +320,7 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -466,7 +333,7 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
 )
@@ -539,7 +406,7 @@ cc_test(
     ],
     deps = [
         ":common_deps",
-        ":nuraft_prototype_lib",
+        ":nuraft_lib",
         ":nuraft_runtime_lib",
         "@com_google_googletest//:gtest",
     ],

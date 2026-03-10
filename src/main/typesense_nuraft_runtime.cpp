@@ -43,9 +43,6 @@ std::string runtime_usage(const char* program_name) {
            "  --api-port <port>              API identity port / server_id (default: 8108)\n"
            "  --peering-port <port>          Peer identity port (default: 8107)\n"
            "  --nodes <list>                 Comma-separated host:peer_port:api_port list\n"
-           "  --cluster-data-dirs <list>     Static server_id=data_dir map for multi-node runtime\n"
-           "  --cluster-leader-api-port <port>  Preferred static leader server_id/api_port\n"
-           "  --install-snapshot <path>      Install an exported prototype snapshot before serving\n"
            "  --api-key <value>              API key for HTTP auth (default: xyz)\n"
            "  --api-uses-ssl                 Use HTTPS when deriving leader URLs\n"
            "  --help                         Print this message\n";
@@ -143,15 +140,6 @@ bool parse_options(int argc,
             }
         } else if (option_name == "nodes") {
             options.startup_options.nodes_config = option_value;
-        } else if (option_name == "cluster-data-dirs") {
-            options.cluster_data_dirs = option_value;
-        } else if (option_name == "cluster-leader-api-port") {
-            if (!parse_uint32(option_value, options.cluster_leader_api_port, error)) {
-                error = "invalid value for --cluster-leader-api-port: " + error;
-                return false;
-            }
-        } else if (option_name == "install-snapshot") {
-            options.install_snapshot_path = option_value;
         } else if (option_name == "api-key") {
             options.api_key = option_value;
         } else {

@@ -4,9 +4,8 @@
 #include <string>
 #include <unistd.h>
 
+#include "nuraft/nuraft_applied_request_store.h"
 #include "nuraft/nuraft_metadata_store.h"
-#include "nuraft/nuraft_prototype_state_machine.h"
-#include "nuraft/nuraft_request_journal.h"
 #include "nuraft/nuraft_snapshot_coordinator.h"
 #include "nuraft/nuraft_state_initializer.h"
 #include "nuraft/nuraft_state_machine_sink.h"
@@ -51,7 +50,7 @@ protected:
     std::string temp_dir_;
 };
 
-TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsPrototypeSnapshotExport) {
+TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsSnapshotExport) {
     const uint64_t collection_create_hash = make_route_hash("POST", "collections");
     const uint64_t document_write_hash = make_route_hash("POST", "collections/:collection/documents");
     const std::string source_dir = (std::filesystem::path(temp_dir_) / "source").string();
@@ -61,34 +60,25 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsPrototypeSnapshotExport)
 
     const NuRaftStateLayout source_layout = NuRaftStateLayout::from_data_dir(source_dir);
     std::string error;
-    NuRaftRequestJournal journal(source_layout);
-    ASSERT_TRUE(journal.initialize(error)) << error;
 
-    uint64_t index = 0;
-    ASSERT_TRUE(journal.append_request_json(
-        std::string("{\"route_hash\":") + std::to_string(collection_create_hash) +
-            ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"books\\\"}\"}",
-        index,
-        error)) << error;
-    ASSERT_TRUE(journal.append_request_json(
-        std::string("{\"route_hash\":") + std::to_string(document_write_hash) +
-            ",\"params\":{\"collection\":\"books\",\"id\":\"doc-1\"},"
-            "\"body\":\"{\\\"id\\\":\\\"doc-1\\\",\\\"title\\\":\\\"Dune\\\"}\"}",
-        index,
-        error)) << error;
-
+    // Populate the KV sink with applied requests directly.
     auto source_sink = std::make_unique<NuRaftKvStateMachineSink>(source_layout);
-    NuRaftKvStateMachineSink* source_sink_ptr = source_sink.get();
-    NuRaftPrototypeStateMachine state_machine(source_layout, std::move(source_sink));
-    ASSERT_TRUE(state_machine.initialize(error)) << error;
 
-    std::vector<NuRaftLogEntry> applied_entries;
-    ASSERT_TRUE(state_machine.apply_pending(applied_entries, error)) << error;
-    ASSERT_EQ(applied_entries.size(), 2u);
+    NuRaftAppliedRequest req1;
+    req1.index = 1;
+    req1.route_hash = collection_create_hash;
+    req1.body = R"({"name":"books"})";
+    NuRaftAppliedRequest req2;
+    req2.index = 2;
+    req2.route_hash = document_write_hash;
+    req2.params = {{"collection", "books"}, {"id", "doc-1"}};
+    req2.body = R"({"id":"doc-1","title":"Dune"})";
+
+    ASSERT_TRUE(source_sink->apply_all({req1, req2}, error)) << error;
 
     NuRaftSnapshotCoordinator coordinator(source_layout);
     NuRaftSnapshotDescriptor descriptor;
-    ASSERT_TRUE(coordinator.create_snapshot(export_dir, source_sink_ptr, descriptor, error)) << error;
+    ASSERT_TRUE(coordinator.create_snapshot(export_dir, source_sink.get(), descriptor, error)) << error;
     EXPECT_EQ(descriptor.last_log_index, 2u);
     EXPECT_EQ(descriptor.last_applied_index, 2u);
 
@@ -101,8 +91,6 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsPrototypeSnapshotExport)
     EXPECT_TRUE(std::filesystem::is_directory(
         std::filesystem::path(export_dir) / "state" / NuRaftStateLayout::kPrototypeRootName /
             "snapshot" / descriptor.snapshot_id / "materialized_state"));
-    EXPECT_FALSE(std::filesystem::exists(
-        std::filesystem::path(export_dir) / "state" / NuRaftStateLayout::kPrototypeRootName / "log"));
 
     NuRaftPrototypeOptions restored_options;
     restored_options.data_dir = restored_dir;
@@ -128,16 +116,6 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsPrototypeSnapshotExport)
     ASSERT_TRUE(restored_metadata.read_identity(restored_identity_after, error)) << error;
     EXPECT_EQ(restored_identity_after, restored_identity_before);
 
-    NuRaftReplayProgress restored_progress;
-    ASSERT_TRUE(restored_metadata.read_replay_progress(restored_progress, error)) << error;
-    EXPECT_EQ(restored_progress.last_applied_index, 2u);
-
-    NuRaftRequestJournal restored_journal(NuRaftStateLayout::from_data_dir(restored_dir));
-    ASSERT_TRUE(restored_journal.initialize(error)) << error;
-    std::vector<NuRaftLogEntry> restored_entries;
-    ASSERT_TRUE(restored_journal.replay(restored_entries, error)) << error;
-    ASSERT_EQ(restored_entries.size(), 2u);
-
     NuRaftKvStateMachineSink restored_sink(NuRaftStateLayout::from_data_dir(restored_dir));
     std::vector<std::pair<std::string, std::string>> entries;
     ASSERT_TRUE(restored_sink.read_materialized_entries(entries, error)) << error;
@@ -156,37 +134,20 @@ TEST_F(NuRaftSnapshotCoordinatorTest, InstallClearsStaleMaterializedStateWhenSou
 
     const NuRaftStateLayout source_layout = NuRaftStateLayout::from_data_dir(source_dir);
     std::string error;
-    NuRaftRequestJournal source_journal(source_layout);
-    ASSERT_TRUE(source_journal.initialize(error)) << error;
-
-    uint64_t index = 0;
-    ASSERT_TRUE(source_journal.append_request_json(
-        std::string("{\"route_hash\":") + std::to_string(collection_create_hash) +
-            ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"books\\\"}\"}",
-        index,
-        error)) << error;
 
     NuRaftSnapshotCoordinator source_coordinator(source_layout);
     NuRaftSnapshotDescriptor source_descriptor;
     ASSERT_TRUE(source_coordinator.create_snapshot(export_dir, nullptr, source_descriptor, error)) << error;
 
+    // Create stale materialized state in the restored node.
     const NuRaftStateLayout restored_layout = NuRaftStateLayout::from_data_dir(restored_dir);
-    NuRaftRequestJournal restored_journal(restored_layout);
-    ASSERT_TRUE(restored_journal.initialize(error)) << error;
-    ASSERT_TRUE(restored_journal.append_request_json(
-        std::string("{\"route_hash\":") + std::to_string(collection_create_hash) +
-            ",\"params\":{},\"body\":\"{\\\"name\\\":\\\"stale\\\"}\"}",
-        index,
-        error)) << error;
-
     {
-        auto sink = std::make_unique<NuRaftKvStateMachineSink>(restored_layout);
-        NuRaftPrototypeStateMachine state_machine(restored_layout, std::move(sink));
-        ASSERT_TRUE(state_machine.initialize(error)) << error;
-
-        std::vector<NuRaftLogEntry> applied_entries;
-        ASSERT_TRUE(state_machine.apply_pending(applied_entries, error)) << error;
-        ASSERT_EQ(applied_entries.size(), 1u);
+        NuRaftKvStateMachineSink sink(restored_layout);
+        NuRaftAppliedRequest stale_req;
+        stale_req.index = 1;
+        stale_req.route_hash = collection_create_hash;
+        stale_req.body = R"({"name":"stale"})";
+        ASSERT_TRUE(sink.apply_all({stale_req}, error)) << error;
     }
 
     ASSERT_TRUE(std::filesystem::is_directory(restored_layout.materialized_state_dir));

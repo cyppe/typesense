@@ -275,16 +275,9 @@ export class TypesenseProcessManager {
       .join(",");
 
     if (this.serverFlavor === "nuraft-runtime") {
-      const clusterDataDirs = configs
-        .map((node) => `${node.port}=${join(this.baseDir, node.dataDir)}`)
-        .join(",");
-      const leaderPort = configs[0]!.port;
-
       for (const node of configs) {
         const args = [
           `--nodes=${clusterNodes}`,
-          `--cluster-data-dirs=${clusterDataDirs}`,
-          `--cluster-leader-api-port=${leaderPort}`,
           `--data-dir=${join(this.baseDir, node.dataDir)}`,
           `--api-key=${this.apiKey}`,
           `--api-port=${node.port}`,

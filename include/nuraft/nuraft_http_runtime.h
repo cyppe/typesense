@@ -11,10 +11,14 @@
 #include <unordered_map>
 #include <vector>
 
+#include <libnuraft/nuraft.hxx>
+
 #include "http_server.h"
-#include "nuraft_replication_controller.h"
-#include "nuraft_request_journal.h"
+#include "nuraft_state_initializer.h"
 #include "nuraft_state_machine_sink.h"
+#include "typesense_log_store.h"
+#include "typesense_state_machine.h"
+#include "typesense_state_manager.h"
 #include "replication/replication_service.h"
 
 struct NuRaftHttpServerOptions {
@@ -22,9 +26,6 @@ struct NuRaftHttpServerOptions {
     std::string listen_address = "127.0.0.1";
     uint32_t listen_port = 8108;
     std::string api_key = "xyz";
-    std::string cluster_data_dirs;
-    std::string install_snapshot_path;
-    uint32_t cluster_leader_api_port = 0;
 };
 
 class NuRaftHttpRuntimeService : public ReplicationService {
@@ -64,20 +65,17 @@ public:
                           std::string& error) const;
     bool is_single_node_mode() const;
     bool sync_live_product_state(std::string& error);
+    void shutdown();
 
 private:
+    bool initialize_raft_server(std::string& error);
+    bool append_via_raft(const std::string& request_json,
+                         const http_req& request,
+                         uint64_t& committed_index,
+                         bool& forwarded_to_leader,
+                         std::string& error);
     bool cache_enabled() const;
-    bool append_and_apply(const std::string& request_json,
-                          const http_req& request,
-                          uint64_t& appended_index,
-                          bool& forwarded_to_leader,
-                          int32_t& target_server_id,
-                          std::string& error);
-    bool apply_single_local_append(const NuRaftAppliedRequest& applied_request,
-                                   std::string& error);
-    bool apply_local_pending(uint64_t& applied_count, std::string& error);
     bool read_last_local_applied_index(uint64_t& last_applied_index, std::string& error) const;
-    bool sync_local_replay_progress(uint64_t last_applied_index, std::string& error) const;
     bool read_materialized_value(const std::string& key,
                                  std::string& value,
                                  bool& found,
@@ -99,10 +97,7 @@ private:
     NuRaftIdentity identity_;
     NuRaftBootstrapConfig bootstrap_config_;
     NuRaftStateLayout layout_;
-    std::map<int32_t, std::string> cluster_data_dirs_;
-    std::atomic<int32_t> preferred_leader_server_id_;
     std::atomic<bool> initialized_;
-    std::unique_ptr<NuRaftRequestJournal> local_request_journal_;
     mutable std::unique_ptr<NuRaftKvStateMachineSink> materialized_state_sink_;
     mutable std::shared_mutex document_cache_mutex_;
     mutable std::unordered_map<std::string, std::string> document_cache_;
@@ -110,6 +105,12 @@ private:
     mutable std::unordered_set<std::string> materialized_read_preferred_collections_;
     uint64_t live_product_state_applied_index_;
     mutable std::mutex mutex_;
+
+    // Real NuRaft consensus members.
+    std::unique_ptr<nuraft::raft_launcher> raft_launcher_;
+    nuraft::ptr<TypesenseStateMachine> raft_state_machine_;
+    nuraft::ptr<TypesenseStateManager> raft_state_manager_;
+    nuraft::ptr<nuraft::raft_server> raft_server_;
 };
 
 bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,

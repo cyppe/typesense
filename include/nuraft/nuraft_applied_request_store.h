@@ -5,8 +5,16 @@
 #include <string>
 #include <vector>
 
+#include "nuraft_request_envelope.h"
 #include "nuraft_route_classifier.h"
-#include "nuraft_segment_log_store.h"
+#include "nuraft_state_layout.h"
+
+struct NuRaftLogEntry {
+    uint64_t index = 0;
+    NuRaftRequestEnvelope envelope;
+
+    bool operator==(const NuRaftLogEntry& other) const;
+};
 
 struct NuRaftAppliedRequest {
     uint64_t index = 0;

@@ -6,7 +6,6 @@
 #include "json.hpp"
 #include "nuraft/nuraft_applied_request_store.h"
 #include "nuraft/nuraft_file_store.h"
-#include "nuraft/nuraft_request_journal.h"
 #include "nuraft/nuraft_state_machine_sink.h"
 
 namespace {
@@ -132,35 +131,19 @@ bool resolve_snapshot_root(const std::string& snapshot_path,
 }
 
 bool build_descriptor(const NuRaftStateLayout& layout,
+                      const NuRaftKvStateMachineSink* kv_sink,
                       NuRaftSnapshotDescriptor& descriptor,
                       std::string& error) {
-    NuRaftRequestJournal journal(layout);
-    if (!journal.initialize(error)) {
-        return false;
-    }
-
-    std::vector<NuRaftLogEntry> entries;
-    if (!journal.replay(entries, error)) {
-        return false;
-    }
-
-    NuRaftMetadataStore metadata_store(layout);
-    if (!metadata_store.initialize(error)) {
-        return false;
-    }
-
-    NuRaftReplayProgress progress;
-    if (!std::filesystem::exists(layout.replay_progress_file)) {
-        if (!metadata_store.write_replay_progress(progress, error)) {
+    uint64_t last_applied_index = 0;
+    if (kv_sink != nullptr) {
+        if (!kv_sink->read_last_applied_index(last_applied_index, error)) {
             return false;
         }
-    } else if (!metadata_store.read_replay_progress(progress, error)) {
-        return false;
     }
 
     descriptor = NuRaftSnapshotDescriptor();
-    descriptor.last_log_index = entries.empty() ? 0 : entries.back().index;
-    descriptor.last_applied_index = progress.last_applied_index;
+    descriptor.last_log_index = last_applied_index;
+    descriptor.last_applied_index = last_applied_index;
     descriptor.snapshot_id = "snapshot-" + zero_padded_index(descriptor.last_applied_index) + "-" +
                              zero_padded_index(descriptor.last_log_index);
     error.clear();
@@ -187,7 +170,7 @@ bool NuRaftSnapshotCoordinator::create_snapshot(const std::string& export_path,
         return false;
     }
 
-    if (!build_descriptor(layout_, descriptor, error)) {
+    if (!build_descriptor(layout_, kv_sink, descriptor, error)) {
         return false;
     }
 
