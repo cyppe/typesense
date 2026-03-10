@@ -721,6 +721,10 @@ bool HttpServer::is_write_request(const std::string& root_resource, const std::s
         return false;
     }
 
+    if(rpath_handler == post_analytics_flush) {
+        return false;
+    }
+
     bool write_free_request = (root_resource == "multi_search" || root_resource == "proxy" ||
                                root_resource == "operations" || root_resource == "config"  || 
                                root_resource == "proxy_sse");

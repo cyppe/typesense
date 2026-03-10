@@ -346,6 +346,21 @@ bool search_runtime_documents(const std::shared_ptr<http_req>& request, const st
         return true;
     }
 
+    // When the collection is live in CollectionManager, use the real search
+    // pipeline (in-memory index, analytics, presets, stopwords, etc.).
+    if (CollectionManager::get_instance().get_collection(collection_it->second) != nullptr) {
+        nlohmann::json embedded_params = nlohmann::json::object();
+        std::string results_json_str;
+        Option<bool> search_op = CollectionManager::do_search(request->params, embedded_params,
+                                                               results_json_str, request->conn_ts);
+        if (!search_op.ok()) {
+            response->set_body(search_op.code(), R"({"message":")" + search_op.error() + R"("})");
+        } else {
+            response->set_body(200, results_json_str);
+        }
+        return true;
+    }
+    // Materialized KV fallback for collections not yet replayed.
     nlohmann::json body;
     std::string error;
     if (!runtime->search_documents(collection_it->second, request->params, body, error)) {
@@ -481,7 +496,12 @@ bool replay_live_product_state(HttpServer* server,
 }
 
 bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        // A write is in progress; state will be consistent after it completes.
+        error.clear();
+        return true;
+    }
     if (!initialized_.load()) {
         error.clear();
         return true;
@@ -993,13 +1013,30 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         if (!handler_ok && response->status_code == 0) {
             response->set_500(error);
         }
+        // Only advance the replay index in single-node mode. In multi-node mode,
+        // classified writes (collection create, document import, etc.) are not applied
+        // by write() — they rely on sync_live_product_state() replay. Advancing the
+        // index here would cause those entries to be skipped.
+        if (options_.cluster_data_dirs.empty() &&
+            appended_index > live_product_state_applied_index_) {
+            live_product_state_applied_index_ = appended_index;
+        }
         send_response(request, response);
         return;
     }
 
-    if (options_.cluster_data_dirs.empty() && !mirror_single_node_typesense_state(request, route_kind, error)) {
+    // Apply classified writes to CollectionManager inline. In single-node mode
+    // this is the primary application path. In multi-node mode, this ensures the
+    // handling process has the write reflected immediately (e.g., counter increments
+    // via document import need to be visible when reading back the document).
+    if (!mirror_single_node_typesense_state(request, route_kind, error)) {
         TS_LOG(WARNING) << "NuRaft runtime skipped live Typesense state mirror: " << error;
         error.clear();
+    }
+    // Advance the replay index so sync_live_product_state() doesn't re-apply
+    // the entry that mirror_single_node_typesense_state() just applied.
+    if (appended_index > live_product_state_applied_index_) {
+        live_product_state_applied_index_ = appended_index;
     }
 
     update_single_node_document_cache(*request, route_kind);
@@ -1278,7 +1315,7 @@ bool NuRaftHttpRuntimeService::read_collection(const std::string& collection,
                                                std::string& encoded,
                                                std::string& error) const {
     encoded.clear();
-    if (options_.cluster_data_dirs.empty() && !prefers_materialized_reads(collection)) {
+    if (!prefers_materialized_reads(collection)) {
         auto live_collection = CollectionManager::get_instance().get_collection(collection);
         if (live_collection != nullptr) {
             encoded = live_collection->get_summary_json().dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore);
@@ -1315,7 +1352,7 @@ bool NuRaftHttpRuntimeService::read_document(const std::string& collection,
                                              std::string& encoded,
                                              std::string& error) const {
     encoded.clear();
-    if (options_.cluster_data_dirs.empty() && !prefers_materialized_reads(collection)) {
+    if (!prefers_materialized_reads(collection)) {
         auto live_collection = CollectionManager::get_instance().get_collection(collection);
         if (live_collection != nullptr) {
             Option<nlohmann::json> live_document = live_collection->get(document_id);
@@ -1452,8 +1489,17 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
         return true;
     }
 
+    // Sync replayed product state before handling the request.
+    // In single-node mode, writes already apply via mirror_single_node_typesense_state,
+    // so read-only requests can skip the sync. In multi-node mode, followers must
+    // always sync to replay entries received from the leader.
+    const bool is_read_only = (rpath.http_method == "GET") ||
+                               (rpath.handler == post_create_event) ||
+                               (rpath.handler == post_multi_search);
     NuRaftHttpRuntimeService* runtime = current_runtime_service();
-    if (runtime != nullptr) {
+    const bool needs_sync = !is_read_only ||
+                             (runtime != nullptr && !runtime->is_single_node_mode());
+    if (needs_sync && runtime != nullptr) {
         std::string error;
         if (!runtime->sync_live_product_state(error)) {
             TS_LOG(WARNING) << "NuRaft runtime failed to sync live product state before handling request: " << error;
