@@ -1482,27 +1482,48 @@ bool NuRaftHttpRuntimeService::append_via_raft(
     NuRaftRequestEnvelope envelope(request_json);
     std::string serialized = envelope.serialize();
 
-    auto buf = nuraft::buffer::alloc(serialized.size());
-    std::memcpy(buf->data(), serialized.data(), serialized.size());
-
     // Append to Raft — this blocks until committed by majority (blocking mode).
-    auto result = raft_server_->append_entries({buf});
-    if (!result->get_accepted()) {
+    // Retry on NOT_LEADER: covers the transient window where no leader is
+    // elected yet (leader_ == -1) or a leadership transition is in flight.
+    static constexpr int kMaxRetries = 5;
+    static constexpr int kRetryBackoffMs = 200;
+
+    for (int attempt = 0; attempt <= kMaxRetries; ++attempt) {
+        auto buf_copy = nuraft::buffer::alloc(serialized.size());
+        std::memcpy(buf_copy->data(), serialized.data(), serialized.size());
+
+        auto result = raft_server_->append_entries({buf_copy});
+        if (result->get_accepted()) {
+            committed_index = raft_state_machine_->get_last_commit_index();
+            forwarded_to_leader = !raft_server_->is_leader();
+            error.clear();
+            return true;
+        }
+
         auto result_code = result->get_result_code();
-        if (result_code == nuraft::cmd_result_code::NOT_LEADER) {
-            error = "Not the leader. Leader is server " +
-                    std::to_string(raft_server_->get_leader());
+        if (result_code != nuraft::cmd_result_code::NOT_LEADER ||
+            attempt == kMaxRetries) {
+            if (result_code == nuraft::cmd_result_code::NOT_LEADER) {
+                error = "Not the leader after " + std::to_string(kMaxRetries) +
+                        " retries. Leader is server " +
+                        std::to_string(raft_server_->get_leader());
+            } else {
+                error = "NuRaft append_entries failed: result code " +
+                        std::to_string(static_cast<int>(result_code));
+            }
             return false;
         }
-        error = "NuRaft append_entries failed: result code " +
-                std::to_string(static_cast<int>(result_code));
-        return false;
+
+        TS_LOG(INFO) << "NuRaft append_entries: NOT_LEADER (attempt "
+                     << (attempt + 1) << "/" << (kMaxRetries + 1)
+                     << "), leader=" << raft_server_->get_leader()
+                     << ", retrying in " << kRetryBackoffMs << "ms";
+        std::this_thread::sleep_for(std::chrono::milliseconds(kRetryBackoffMs));
     }
 
-    committed_index = raft_state_machine_->get_last_commit_index();
-    forwarded_to_leader = !raft_server_->is_leader();
-    error.clear();
-    return true;
+    // Should not be reached — the loop returns on success or final failure.
+    error = "NuRaft append_entries: unexpected exit from retry loop";
+    return false;
 }
 
 void NuRaftHttpRuntimeService::shutdown() {
