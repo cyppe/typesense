@@ -1408,29 +1408,35 @@ bool NuRaftHttpRuntimeService::initialize_raft_server(std::string& error) {
     raft_state_manager_ = nuraft::cs_new<TypesenseStateManager>(
         layout_, identity_, bootstrap_config_);
 
-    // Configure raft parameters.
+    // Configure raft parameters from options (CLI args > ENV vars > defaults).
+    const NuRaftRaftParams& rp = options_.raft_params;
     nuraft::raft_params params;
-    params.heart_beat_interval_ = 100;
-    params.election_timeout_lower_bound_ = 200;
-    params.election_timeout_upper_bound_ = 400;
-    params.reserved_log_items_ = 5000;
-    params.client_req_timeout_ = 3000;
+    params.heart_beat_interval_ = static_cast<int>(rp.heart_beat_interval_ms);
+    params.election_timeout_lower_bound_ = static_cast<int>(rp.election_timeout_lower_bound_ms);
+    params.election_timeout_upper_bound_ = static_cast<int>(rp.election_timeout_upper_bound_ms);
+    params.reserved_log_items_ = static_cast<int>(rp.reserved_log_items);
+    params.client_req_timeout_ = static_cast<int>(rp.client_req_timeout_ms);
     params.return_method_ = nuraft::raft_params::blocking;
-    params.auto_forwarding_ = true;
-    params.auto_forwarding_req_timeout_ = 5000;
-
-    // Enable snapshots every 10000 commits.
-    params.snapshot_distance_ = 10000;
-
-    // Leadership expiry: 0 = auto (20x heartbeat = 2s).
-    params.leadership_expiry_ = 0;
-
-    // Pre-vote protocol to prevent disruptive elections from partitioned nodes.
+    params.auto_forwarding_ = rp.auto_forwarding;
+    params.auto_forwarding_req_timeout_ = static_cast<int>(rp.auto_forwarding_req_timeout_ms);
+    params.snapshot_distance_ = static_cast<int>(rp.snapshot_distance);
+    params.leadership_expiry_ = static_cast<int>(rp.leadership_expiry_ms);
     params.use_bg_thread_for_urgent_commit_ = true;
 
     // ASIO options for the NuRaft RPC transport.
     nuraft::asio_service::options asio_opts;
-    asio_opts.thread_pool_size_ = 4;
+    asio_opts.thread_pool_size_ = static_cast<int>(rp.asio_thread_pool_size);
+
+    TS_LOG(INFO) << "NuRaft params: heartbeat=" << rp.heart_beat_interval_ms
+                 << "ms election=[" << rp.election_timeout_lower_bound_ms
+                 << "," << rp.election_timeout_upper_bound_ms
+                 << "]ms client_timeout=" << rp.client_req_timeout_ms
+                 << "ms snapshot_distance=" << rp.snapshot_distance
+                 << " reserved_logs=" << rp.reserved_log_items
+                 << " leadership_expiry=" << rp.leadership_expiry_ms
+                 << "ms auto_fwd=" << (rp.auto_forwarding ? "true" : "false")
+                 << " auto_fwd_timeout=" << rp.auto_forwarding_req_timeout_ms
+                 << "ms asio_threads=" << rp.asio_thread_pool_size;
 
     // Launch NuRaft server via raft_launcher.
     raft_launcher_ = std::make_unique<nuraft::raft_launcher>();

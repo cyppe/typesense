@@ -50,6 +50,8 @@ private:
 
     std::atomic<bool> quit = false;
     std::atomic<bool> flush_requested = false;
+    std::atomic<uint64_t> flush_generation{0};
+    std::condition_variable_any flush_done_cv;
 
     DocAnalytics& doc_analytics = DocAnalytics::get_instance();
     SearchAnalytics& search_analytics = SearchAnalytics::get_instance();

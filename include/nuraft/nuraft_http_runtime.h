@@ -21,11 +21,39 @@
 #include "typesense_state_manager.h"
 #include "replication/replication_service.h"
 
+struct NuRaftRaftParams {
+    // Heartbeat and election timing.
+    uint32_t heart_beat_interval_ms = 100;
+    uint32_t election_timeout_lower_bound_ms = 200;
+    uint32_t election_timeout_upper_bound_ms = 400;
+
+    // Log compaction: how many log entries to keep after the last snapshot.
+    uint32_t reserved_log_items = 5000;
+
+    // Client request timeout (blocking mode wait).
+    uint32_t client_req_timeout_ms = 3000;
+
+    // Auto-forwarding: followers forward writes to the leader automatically.
+    bool auto_forwarding = true;
+    uint32_t auto_forwarding_req_timeout_ms = 5000;
+
+    // Snapshot distance: number of commits between automatic snapshots.
+    uint32_t snapshot_distance = 10000;
+
+    // Leadership expiry: step down if no quorum acknowledgment within this time.
+    // 0 = disabled (NuRaft default). Recommended: 5000ms for production multi-node.
+    uint32_t leadership_expiry_ms = 5000;
+
+    // ASIO transport thread pool size.
+    uint32_t asio_thread_pool_size = 4;
+};
+
 struct NuRaftHttpServerOptions {
     NuRaftPrototypeOptions startup_options;
     std::string listen_address = "127.0.0.1";
     uint32_t listen_port = 8108;
     std::string api_key = "xyz";
+    NuRaftRaftParams raft_params;
 };
 
 class NuRaftHttpRuntimeService : public ReplicationService {

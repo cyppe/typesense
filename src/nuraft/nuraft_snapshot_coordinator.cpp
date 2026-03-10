@@ -280,6 +280,14 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
         return false;
     }
 
+    // Remove source node's NuRaft cluster config and server state so the target
+    // node performs a clean first-boot election with its own identity.
+    {
+        std::error_code ec;
+        std::filesystem::remove(layout_.cluster_config_file, ec);
+        std::filesystem::remove(layout_.server_state_file, ec);
+    }
+
     if (std::filesystem::is_directory(snapshot_archive_root)) {
         if (!replace_tree(snapshot_archive_root, layout_.snapshot_dir, error)) {
             return false;

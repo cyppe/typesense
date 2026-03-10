@@ -67,10 +67,12 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsSnapshotExport) {
     NuRaftAppliedRequest req1;
     req1.index = 1;
     req1.route_hash = collection_create_hash;
+    req1.route_kind = NuRaftRouteKind::kCollectionCreate;
     req1.body = R"({"name":"books"})";
     NuRaftAppliedRequest req2;
     req2.index = 2;
     req2.route_hash = document_write_hash;
+    req2.route_kind = NuRaftRouteKind::kDocumentWrite;
     req2.params = {{"collection", "books"}, {"id", "doc-1"}};
     req2.body = R"({"id":"doc-1","title":"Dune"})";
 
@@ -146,6 +148,7 @@ TEST_F(NuRaftSnapshotCoordinatorTest, InstallClearsStaleMaterializedStateWhenSou
         NuRaftAppliedRequest stale_req;
         stale_req.index = 1;
         stale_req.route_hash = collection_create_hash;
+        stale_req.route_kind = NuRaftRouteKind::kCollectionCreate;
         stale_req.body = R"({"name":"stale"})";
         ASSERT_TRUE(sink.apply_all({stale_req}, error)) << error;
     }

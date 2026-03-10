@@ -20,6 +20,8 @@
 
 #include "http_client.h"
 #include "nuraft/nuraft_http_runtime.h"
+#include "nuraft/nuraft_snapshot_coordinator.h"
+#include "nuraft/nuraft_state_initializer.h"
 #include "test/runfiles_utils.h"
 #include "test/temp_dir_utils.h"
 
@@ -364,6 +366,24 @@ TEST_F(NuRaftHttpRuntimeTest, InstallsSnapshotIntoFreshHttpRuntimeNode) {
     EXPECT_TRUE(parse_json(response)["success"].get<bool>()) << "runtime log: " << node1_.log_path();
 
     node1_.stop();
+
+    // Install the exported snapshot into target_dir by initializing the target node
+    // and then using NuRaftSnapshotCoordinator to install the snapshot.
+    {
+        NuRaftPrototypeOptions init_options;
+        init_options.data_dir = target_dir;
+        init_options.local_host = "127.0.0.1";
+        init_options.peer_port = peer_port_2;
+        init_options.api_port = api_port_2;
+        NuRaftIdentity target_identity;
+        NuRaftBootstrapConfig target_bootstrap;
+        ASSERT_TRUE(NuRaftStateInitializer::initialize(init_options, target_identity,
+                                                        target_bootstrap, error)) << error;
+
+        NuRaftSnapshotCoordinator coordinator(NuRaftStateLayout::from_data_dir(target_dir));
+        NuRaftSnapshotDescriptor installed_descriptor;
+        ASSERT_TRUE(coordinator.install_snapshot(snapshot_dir, installed_descriptor, error)) << error;
+    }
 
     NuRaftHttpServerOptions target_options;
     target_options.startup_options.data_dir = target_dir;
