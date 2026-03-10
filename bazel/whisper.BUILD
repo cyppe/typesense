@@ -1,5 +1,5 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "cmake")
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_shared_library")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -8,64 +8,45 @@ filegroup(
     srcs = glob(["**"]),
 )
 
-config_setting(
-    name = "with_cuda",
-    define_values = { "use_cuda": "on" }
-)
-
 cmake(
     name = "whisper",
-    cache_entries= {
-        'BUILD_SHARED_LIBS': 'OFF',
-        'WHISPER_BUILD_EXAMPLES': 'OFF',
-        'WHISPER_BUILD_TESTS': 'OFF',
-        'CMAKE_POSITION_INDEPENDENT_CODE': 'ON',
-        'CMAKE_C_FLAGS': '-DGGML_USE_CUBLAS',
-        'CMAKE_CXX_FLAGS': '-DGGML_USE_CUBLAS',
-    }, 
+    cache_entries = {
+        "BUILD_SHARED_LIBS": "OFF",
+        "WHISPER_BUILD_EXAMPLES": "OFF",
+        "WHISPER_BUILD_TESTS": "OFF",
+        "WHISPER_BUILD_SERVER": "OFF",
+        "CMAKE_POSITION_INDEPENDENT_CODE": "ON",
+        # CPU-only build; CUDA/Metal/Vulkan backends disabled.
+        "GGML_CUDA": "OFF",
+        "GGML_METAL": "OFF",
+        "GGML_VULKAN": "OFF",
+        # Disable optional deps not needed by Typesense.
+        "WHISPER_CURL": "OFF",
+        "WHISPER_SDL2": "OFF",
+        "WHISPER_COREML": "OFF",
+        "WHISPER_OPENVINO": "OFF",
+        "WHISPER_FFMPEG": "OFF",
+        # Typesense runs whisper single-threaded; skip OpenMP.
+        "GGML_OPENMP": "OFF",
+        # Let the toolchain choose native optimizations.
+        "GGML_NATIVE": "ON",
+    },
     build_args = [
-        "--", "-j8"
+        "--", "-j8",
     ],
     lib_source = "//:whisper_srcs",
-    out_static_libs = ["static/libwhisper.a"],
-    tags=["requires-network","no-sandbox"],
+    out_static_libs = [
+        "libwhisper.a",
+        "libggml.a",
+        "libggml-base.a",
+        "libggml-cpu.a",
+    ],
+    tags = ["requires-network", "no-sandbox"],
 )
 
 cc_library(
     name = "whisper_headers",
-    hdrs = glob(["*.h"]),
-    visibility = ["//visibility:public"]
-)
-
-load("@cuda_home_repo//:cuda_home.bzl", "CUDA_HOME")
-load("@cuda_home_repo//:cudnn_home.bzl", "CUDNN_HOME")
-load("@rules_cuda//cuda:defs.bzl", "cuda_library")
-
-cc_shared_library(
-    name = "whisper_cuda_shared",
-    deps = [":whisper_cuda", ":whisper"],
+    hdrs = ["include/whisper.h"] + glob(["ggml/include/*.h"]),
+    includes = ["include", "ggml/include"],
     visibility = ["//visibility:public"],
-    user_link_flags = ["-lcudart",
-            "-lcublas",
-            "-lcuda",
-            "-L" + CUDA_HOME + "/lib64",
-    ]
-)
-
-cc_library(
-    name = "ggml",
-    srcs = ["ggml.c", "ggml-quants.c", "ggml-backend.c", "ggml-alloc.c"],
-    deps = [":whisper_headers"],
-)
-
-
-cuda_library(
-    name = "whisper_cuda", 
-    srcs = ["ggml-cuda.cu", 
-            "ggml-cuda.h", 
-            "ggml.h", 
-            "ggml-impl.h", 
-            "ggml-backend.h", 
-            "ggml-alloc.h", 
-            "ggml-backend-impl.h"],
 )

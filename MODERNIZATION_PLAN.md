@@ -228,7 +228,7 @@ Build a deliberate next-wave upgrade shortlist instead of bumping opportunistica
   - `typesense-js` in `tests/` `2.0.3` -> `3.0.2` is now done to match the benchmark toolchain client line; `pnpm exec tsc --noEmit` passes in `tests/` after the bump.
   - `abseil-cpp` `20250814.1` -> `20260107.1` attempted but **blocked by ORT ABI mismatch**: ORT internally builds `re2` against its own fetched abseil (lts_20250814), so linking fails when the external abseil uses a different LTS namespace tag. Fix requires injecting external abseil into ORT's CMake build (same pattern as the protobuf injection in `onnxruntime.patch`). Defer until ORT's abseil injection is implemented.
 - [ ] Keep treating patch-debt reduction as at least as important as raw version bumps; some deps (for example `whisper.cpp`, `h2o`) matter more because of maintenance surface than because they are numerically old.
-- [ ] **whisper.cpp major upgrade (v1.8.x):** Current pin `022756a8` is pre-v1.7.x (still uses deprecated `GGML_USE_CUBLAS`). Upgrading to v1.8.x would likely eliminate all 6 CUDA dlopen/dlsym patch hunks (ggml now has proper backend plugin loading), gain flash attention by default, VAD support, and hallucination reduction. **Effort: high** — project structure changed fundamentally (ggml is a separate subproject), so `whisper.BUILD` and `whisper.patch` would need a complete rewrite. Classify as P2 standalone sprint.
+- [x] **whisper.cpp major upgrade (v1.8.3):** Upgraded from `022756a8` (pre-v1.7.x) to `2eeeba56` (v1.8.3). Complete `whisper.BUILD` rewrite (now uses `rules_foreign_cc` cmake rule instead of hand-rolled cc_library). Patch reduced from 7 hunks/4 files to 1 hunk/1 file (only non-speech token expansion remains). API change: `suppress_non_speech_tokens` renamed to `suppress_nst`. OpenMP disabled (`GGML_OPENMP=OFF`) since Typesense runs whisper single-threaded. All 141 API tests pass.
 - [x] `h2o` patch reduced from 774 to 48 lines by moving 9 conflicting brotli `BUILD` file deletions to `MODULE.bazel` `patch_cmds`. Remaining delta is CMakeLists.txt-only (CONFIGURE_FILE + INSTALL target stripping).
 
 ### 7d) NuRaft cutover record and hardening lane
@@ -544,7 +544,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 2 | ~~ICU fork→upstream tarball~~ | P1.7 | **done** | Switched from `typesense/icu` fork to official ICU 71.1 release tarball. Patch unchanged. |
 | 3 | ~~CI action version bumps~~ | P2.11 | **done** | `actions/checkout` v4→v6, `actions/upload-artifact` v4→v7 across all 5 workflows. |
 | 4 | ~~ICU version upgrade (71→78)~~ | P1.7 | **done** | Upgraded to ICU 78.2 (Unicode 14→17, CLDR 48). Patch regenerated. |
-| 5 | ~~Patch debt reduction (whisper)~~ | P1.7 | **done** | Reduced from 11 hunks to 8. Dropped 3 non-essential hunks. |
+| 5 | ~~Patch debt reduction (whisper)~~ | P1.7 | **done** | Reduced from 11 hunks to 8, then to 1 hunk via v1.8.3 upgrade. |
 | 6 | ~~CI hygiene backlog (remaining)~~ | P2.11 | **done** | Bazel disk cache via `actions/cache@v4` in all workflows. |
 | 7 | ~~Benchmark infrastructure audit~~ | P2.13 | **done** | Stack audited, local execution documented, cross-fork comparison feasible. |
 | 8 | ~~Fix pre-existing test warnings~~ | Known Issues | **done** | Narrowing + trigraph warnings fixed. |
@@ -557,7 +557,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
-| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **done** | All actionable deps refreshed: magic_enum 0.9.7, libarchive 3.8.5, snappy 1.2.2, ORT 1.24.3, typesense-js 3.0.2, protobuf 34.0.bcr.1. Core infra deps (curl 8.18.0, openssl 3.6.1, jemalloc 5.3.0, zstd 1.5.7, lz4 1.10.0) all confirmed at latest. Patch debt: 5 active patches at minimum, h2o reduced to 48 lines. Abseil upgrade blocked by ORT ABI. whisper.cpp v1.8.x upgrade planned as P2 sprint. |
+| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **done** | All actionable deps refreshed: magic_enum 0.9.7, libarchive 3.8.5, snappy 1.2.2, ORT 1.24.3, typesense-js 3.0.2, protobuf 34.0.bcr.1. Core infra deps (curl 8.18.0, openssl 3.6.1, jemalloc 5.3.0, zstd 1.5.7, lz4 1.10.0) all confirmed at latest. Patch debt: 5 active patches at minimum, h2o reduced to 48 lines. Abseil upgrade blocked by ORT ABI. whisper.cpp upgraded to v1.8.3 (patch down to 1 hunk). |
 | 19 | NuRaft replacement cutover and hardening | P1.7d | **done** | Real NuRaft consensus is the only path. All 120/120 API tests pass (0 failures). Prototype code deleted, CLI/ENV config exposed, analytics counter bugs fixed, snapshot identity fixed. Remaining follow-ups (async/streaming, route audit, env-dependent suites) tracked as unchecked items in P1.7d. |
 
 ### Backlog map (active / later / archival)
@@ -566,7 +566,8 @@ Use this to decide what to pick next without scanning multiple files.
 
 - **Active now (execution lane):** All primary modernization lanes complete. Pick next from the "Later" list below.
 - **Recently finished:** item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
-- **Later (planned but not started):** whisper.cpp major upgrade to v1.8.x (P2 standalone sprint — would eliminate most of `whisper.patch` but requires `whisper.BUILD` rewrite). Abseil `20260107.1` upgrade (blocked by ORT ABI mismatch). Remaining NuRaft hardening tasks (async/streaming, route audit) under item **19**.
+- **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule.
+- **Later (planned but not started):** Abseil `20260107.1` upgrade (blocked by ORT ABI mismatch). Remaining NuRaft hardening tasks (async/streaming, env-dependent suites) under item **19**.
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
   - `TODO.md` upstream product backlog (not the modernization source of truth; mine opportunistically only when an item aligns with current modernization goals).

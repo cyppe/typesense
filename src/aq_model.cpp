@@ -20,7 +20,7 @@ WhisperModel::WhisperModel(whisper_context* ctx, const std::string& model_name)
         params.detect_language = true;
     }
 
-    params.suppress_non_speech_tokens = true;
+    params.suppress_nst = true;
 }
 
 WhisperModel::~WhisperModel() {
