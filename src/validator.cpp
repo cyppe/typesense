@@ -281,7 +281,16 @@ Option<uint32_t> validator_t::coerce_int32_t(const DIRTY_VALUES& dirty_values, c
     // try to value coerce into an integer
 
     if(item.is_number_float()) {
-        item = static_cast<int32_t>(item.get<float>());
+        double val = item.get<double>();
+        if(val > static_cast<double>(INT32_MAX) || val < static_cast<double>(INT32_MIN)) {
+            if(dirty_values == DIRTY_VALUES::COERCE_OR_DROP && a_field.optional) {
+                if(!is_array) { document.erase(field_name); }
+                else { array_iter = document[field_name].erase(array_iter); array_ele_erased = true; }
+                return Option<uint32_t>(200);
+            }
+            return Option<>(400, "Field `" + field_name + "` exceeds maximum value of int32.");
+        }
+        item = static_cast<int32_t>(val);
     }
 
     else if(item.is_boolean()) {
@@ -374,7 +383,16 @@ Option<uint32_t> validator_t::coerce_int64_t(const DIRTY_VALUES& dirty_values, c
     // try to value coerce into an integer
 
     if(item.is_number_float()) {
-        item = static_cast<int64_t>(item.get<float>());
+        double val = item.get<double>();
+        if(val > static_cast<double>(INT64_MAX) || val < static_cast<double>(INT64_MIN)) {
+            if(dirty_values == DIRTY_VALUES::COERCE_OR_DROP && a_field.optional) {
+                if(!is_array) { document.erase(field_name); }
+                else { array_iter = document[field_name].erase(array_iter); array_ele_erased = true; }
+                return Option<uint32_t>(200);
+            }
+            return Option<>(400, "Field `" + field_name + "` exceeds maximum value of int64.");
+        }
+        item = static_cast<int64_t>(val);
     }
 
     else if(item.is_boolean()) {

@@ -578,8 +578,8 @@ From `TODO.md`, these are the highest-value items that still align with current 
 - **Replication throughput control:** parameterize replica `MAX_UPDATES_TO_SEND` (currently not exposed as a tunable in our config surface).
 - **Indexing hot-path efficiency:** reduce avoidable string copies during indexing/import code paths.
 - **Search work budget tuning:** make "minimum results" heuristic configurable instead of coupling to `max_results` behavior.
-- **Numeric safety hardening:** add validation for float values beyond `INT32_MAX` in int32-related paths.
-- **Reliability coverage:** expand replication test coverage for replay/catch-up edge cases.
+- ~~**Numeric safety hardening:**~~ done — `coerce_int32_t()` and `coerce_int64_t()` in `validator.cpp` now bounds-check float values before casting, preventing UB from out-of-range floats. Returns 400 or drops the field per dirty_values policy.
+- ~~**Reliability coverage:**~~ done — `nuraft_replication_edges.test.ts` adds 19 focused multi-node tests covering follower-originated metadata writes, cross-node visibility, restart persistence, and snapshot persistence. Fixed NOT_LEADER race in `append_via_raft()`. Total: 139 pass, 0 fail.
 
 These were intentionally deferred while item 13 was active and are now strong next candidates post-Phase-3.
 
