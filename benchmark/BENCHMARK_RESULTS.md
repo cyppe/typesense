@@ -7,6 +7,41 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 21: Repeated Raft Runtime Contention Median After Read-Mostly Cache Cleanup (`braft` runtime vs NuRaft runtime, 2026-03-10)
+
+**Commit:** `HEAD` at run time
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-runtime-contention --duration 5s --docs 100 --reader-threads 2 --repeats 3`
+**Scenario:** same bounded contention lane as Run 19, but now with repeat support in the harness plus a read-mostly single-node document cache that avoids taking write-side cache locks for uncached documents.
+**Artifacts:** `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260310-102718`
+
+### Aggregated Results
+
+| Measure | `braft` runtime | NuRaft runtime |
+|---|---:|---:|
+| Writes completed (median of 3) | `3,260` | `3,415` |
+| Reads completed (median of 3) | `42,517` | `9,042` |
+| Write p50 / p95 | `0.91 / 1.21 ms` | `1.44 / 1.66 ms` |
+| Read p50 / p95 | `0.20 / 0.46 ms` | `1.33 / 1.56 ms` |
+| Process CPU | `2,820 ms` | `820 ms` |
+| Peak RSS | `255,908 KB` | `61,708 KB` |
+| NuRaft / `braft` write ratio |  | `1.05x` |
+| NuRaft / `braft` read ratio |  | `0.21x` |
+
+### Interpretation
+
+- This is the first contention checkpoint using repeated-run medians instead of a single wall-clock sample.
+- The read-mostly cache cleanup removed the worst write-side cache interference. On the median of three repeats, NuRaft is now roughly at write parity or slightly ahead on this lane.
+- Reads are still materially behind. Even on the cleaner median, NuRaft is only around `21%` of `braft` read throughput here.
+- The per-run raw data still shows host sensitivity, so this should be treated as a stronger steady-state checkpoint than Run 19, but not as the final word on production read behavior.
+
+### Decision
+
+- Do **not** remove `braft` yet.
+- Do continue NuRaft, because the write-side contention gap is no longer the blocker it was.
+- The main remaining performance question is now concentrated in steady-state read behavior on the live runtime path.
+
+---
+
 ## Run 20: Focused Raft API Replay After Single-Node Runtime Cache Cleanup (`braft` runtime vs NuRaft runtime, 2026-03-10)
 
 **Commit:** `HEAD` at run time

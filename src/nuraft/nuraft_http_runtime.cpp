@@ -591,7 +591,16 @@ void NuRaftHttpRuntimeService::update_single_node_document_cache(const http_req&
         return;
     }
 
+    bool cache_contains_key = false;
+    {
+        std::shared_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+        cache_contains_key = document_cache_.find(key) != document_cache_.end();
+    }
+
     if (request.http_method != "PATCH") {
+        if (!cache_contains_key) {
+            return;
+        }
         std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
         document_cache_[key] = request.body;
         return;
@@ -617,6 +626,10 @@ void NuRaftHttpRuntimeService::update_single_node_document_cache(const http_req&
                 return;
             }
         }
+    }
+
+    if (!cache_contains_key) {
+        return;
     }
 
     std::string stored_document;

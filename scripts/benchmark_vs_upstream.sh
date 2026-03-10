@@ -56,7 +56,7 @@ Options:
   --post-snapshot-docs N   Writes per outage round for raft-recovery (default: 50)
   --snapshot-rounds N      Outage rounds / snapshot attempts for raft-recovery (default: 3)
   --outage-sleep SEC       Seconds to sleep between raft-recovery rounds (default: 22)
-  --repeats N              Number of raft-recovery repeats (default: 2)
+  --repeats N              Number of repeats for raft-recovery and raft-runtime-contention (default: 2)
   --reader-threads N       Concurrent document readers for raft-runtime-contention (default: 2)
   --no-flush               Keep existing InfluxDB data for trend analysis
   --server-args ...        Extra args passed through to typesense-server
@@ -71,7 +71,7 @@ Examples:
   scripts/benchmark_vs_upstream.sh --profile write-stress --server-args --max-indexing-concurrency=16
   scripts/benchmark_vs_upstream.sh --build --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3
   scripts/benchmark_vs_upstream.sh --build --profile raft-api-replay
-  scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 10s --docs 200 --reader-threads 2
+  scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 10s --docs 200 --reader-threads 2 --repeats 3
   scripts/benchmark_vs_upstream.sh --baseline-binary ./base/typesense-server --baseline-label abc123 \
     --fork-binary ./head/typesense-server --fork-label def456 --duration 1m --no-flush
 EOF
@@ -412,6 +412,7 @@ if [[ "${PROFILE}" == "raft-runtime-contention" ]]; then
 		--duration-seconds "${DURATION%s}"
 		--preload-docs "${DOCS}"
 		--reader-threads "${READER_THREADS}"
+		--repeats "${REPEATS}"
 		--output "${RESULT_PATH}"
 	)
 
@@ -438,6 +439,8 @@ summary = data["summary"]
 
 print(f"Run root: {data['run_root']}")
 print(f"JSON:     {sys.argv[1]}")
+print("")
+print(f"Repeat count: {braft['repeat_count']}")
 print("")
 print("| Measure | braft runtime | NuRaft runtime |")
 print("|---|---:|---:|")

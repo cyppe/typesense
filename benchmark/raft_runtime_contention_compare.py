@@ -6,6 +6,7 @@ import os
 import random
 import shutil
 import socket
+import statistics
 import subprocess
 import threading
 import time
@@ -26,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--duration-seconds", type=float, default=10.0, help="Benchmark duration per runtime")
     parser.add_argument("--preload-docs", type=int, default=200, help="Number of docs to pre-create")
     parser.add_argument("--reader-threads", type=int, default=2, help="Concurrent document-read threads")
+    parser.add_argument("--repeats", type=int, default=1, help="Number of repeated contention runs to aggregate")
     parser.add_argument("--output", required=True, help="Path to write JSON results")
     return parser.parse_args()
 
@@ -265,6 +267,32 @@ def run_contention(label: str,
             process.wait(timeout=5)
 
 
+def aggregate_results(label: str, runs: list[dict[str, Any]]) -> dict[str, Any]:
+    if not runs:
+        raise ValueError("aggregate_results requires at least one run")
+
+    def med(key: str) -> float:
+        return float(statistics.median(run[key] for run in runs))
+
+    return {
+        "label": label,
+        "repeat_count": len(runs),
+        "duration_seconds": runs[0]["duration_seconds"],
+        "preload_docs": runs[0]["preload_docs"],
+        "reader_threads": runs[0]["reader_threads"],
+        "writes_completed": int(round(med("writes_completed"))),
+        "reads_completed": int(round(med("reads_completed"))),
+        "write_p50_ms": med("write_p50_ms"),
+        "write_p95_ms": med("write_p95_ms"),
+        "read_p50_ms": med("read_p50_ms"),
+        "read_p95_ms": med("read_p95_ms"),
+        "process_cpu_ms": med("process_cpu_ms"),
+        "process_peak_rss_kb": med("process_peak_rss_kb"),
+        "errors": [error for run in runs for error in run["errors"]],
+        "log_paths": [run["log_path"] for run in runs],
+    }
+
+
 def main() -> int:
     args = parse_args()
     repo_root = Path(args.repo_root).resolve()
@@ -273,11 +301,35 @@ def main() -> int:
     run_root = work_dir / time.strftime("%Y%m%d-%H%M%S")
     run_root.mkdir(parents=True, exist_ok=True)
 
-    braft = run_contention("braft", args.braft_binary, run_root, args.duration_seconds, args.preload_docs, args.reader_threads)
-    nuraft = run_contention("nuraft-runtime", args.nuraft_binary, run_root, args.duration_seconds, args.preload_docs, args.reader_threads)
+    repeats: list[dict[str, Any]] = []
+    braft_runs: list[dict[str, Any]] = []
+    nuraft_runs: list[dict[str, Any]] = []
+    for repeat in range(args.repeats):
+        repeat_root = run_root / f"repeat-{repeat + 1}"
+        repeat_root.mkdir(parents=True, exist_ok=True)
+        braft = run_contention("braft", args.braft_binary, repeat_root, args.duration_seconds, args.preload_docs, args.reader_threads)
+        nuraft = run_contention("nuraft-runtime", args.nuraft_binary, repeat_root, args.duration_seconds, args.preload_docs, args.reader_threads)
+        braft_runs.append(braft)
+        nuraft_runs.append(nuraft)
+        repeats.append(
+            {
+                "repeat": repeat + 1,
+                "run_root": str(repeat_root),
+                "braft": braft,
+                "nuraft": nuraft,
+                "summary": {
+                    "write_speedup_ratio": (nuraft["writes_completed"] / braft["writes_completed"]) if braft["writes_completed"] else 0.0,
+                    "read_speedup_ratio": (nuraft["reads_completed"] / braft["reads_completed"]) if braft["reads_completed"] else 0.0,
+                },
+            }
+        )
+
+    braft = aggregate_results("braft", braft_runs)
+    nuraft = aggregate_results("nuraft-runtime", nuraft_runs)
 
     payload = {
         "run_root": str(run_root),
+        "runs": repeats,
         "braft": braft,
         "nuraft": nuraft,
         "summary": {
