@@ -116,6 +116,13 @@ bool scan_log_bytes(std::string_view bytes,
     return true;
 }
 
+void close_fd_if_open(int& fd) {
+    if (fd >= 0) {
+        close(fd);
+        fd = -1;
+    }
+}
+
 }  // namespace
 
 bool NuRaftLogEntry::operator==(const NuRaftLogEntry& other) const {
@@ -129,6 +136,10 @@ bool NuRaftLogEntry::operator==(const NuRaftLogEntry& other) const {
 NuRaftSegmentLogStore::NuRaftSegmentLogStore(NuRaftStateLayout layout)
     : layout_(std::move(layout)) {}
 
+NuRaftSegmentLogStore::~NuRaftSegmentLogStore() {
+    close_fd_if_open(append_fd_);
+}
+
 const NuRaftStateLayout& NuRaftSegmentLogStore::layout() const {
     return layout_;
 }
@@ -138,6 +149,7 @@ uint64_t NuRaftSegmentLogStore::next_index() const {
 }
 
 bool NuRaftSegmentLogStore::initialize(std::string& error) {
+    close_fd_if_open(append_fd_);
     if (!NuRaftFileStore::ensure_layout(layout_, error)) {
         return false;
     }
@@ -159,6 +171,7 @@ bool NuRaftSegmentLogStore::initialize(std::string& error) {
 }
 
 bool NuRaftSegmentLogStore::recover_truncated_tail(std::string& error) {
+    close_fd_if_open(append_fd_);
     if (!std::filesystem::exists(layout_.active_log_segment_file)) {
         next_index_ = 1;
         error.clear();
@@ -203,6 +216,31 @@ bool NuRaftSegmentLogStore::recover_truncated_tail(std::string& error) {
     return true;
 }
 
+bool NuRaftSegmentLogStore::ensure_append_fd(bool& log_already_exists, std::string& error) {
+    log_already_exists = std::filesystem::exists(layout_.active_log_segment_file);
+    if (append_fd_ >= 0) {
+        error.clear();
+        return true;
+    }
+
+    const std::filesystem::path log_path(layout_.active_log_segment_file);
+    std::error_code ec;
+    std::filesystem::create_directories(log_path.parent_path(), ec);
+    if (ec) {
+        error = "Failed to create log dir '" + log_path.parent_path().string() + "': " + ec.message();
+        return false;
+    }
+
+    append_fd_ = open(log_path.c_str(), O_CREAT | O_APPEND | O_WRONLY, 0644);
+    if (append_fd_ < 0) {
+        error = "Failed to open segment log '" + log_path.string() + "': " + std::strerror(errno);
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
 bool NuRaftSegmentLogStore::append(const NuRaftRequestEnvelope& envelope,
                                    uint64_t& index,
                                    std::string& error) {
@@ -214,42 +252,23 @@ bool NuRaftSegmentLogStore::append(const NuRaftRequestEnvelope& envelope,
     record.append(payload);
 
     const std::filesystem::path log_path(layout_.active_log_segment_file);
-    std::error_code ec;
-    std::filesystem::create_directories(log_path.parent_path(), ec);
-    if (ec) {
-        error = "Failed to create log dir '" + log_path.parent_path().string() + "': " + ec.message();
-        return false;
-    }
-
-    const bool log_already_exists = std::filesystem::exists(log_path);
-    const int fd = open(log_path.c_str(), O_CREAT | O_APPEND | O_WRONLY, 0644);
-    if (fd < 0) {
-        error = "Failed to open segment log '" + log_path.string() + "': " + std::strerror(errno);
+    bool log_already_exists = false;
+    if (!ensure_append_fd(log_already_exists, error)) {
         return false;
     }
 
     size_t written = 0;
     while (written < record.size()) {
-        const ssize_t rc = write(fd, record.data() + written, record.size() - written);
+        const ssize_t rc = write(append_fd_, record.data() + written, record.size() - written);
         if (rc < 0) {
-            const int saved_errno = errno;
-            close(fd);
-            error = "Failed to append segment log '" + log_path.string() + "': " + std::strerror(saved_errno);
+            error = "Failed to append segment log '" + log_path.string() + "': " + std::strerror(errno);
             return false;
         }
         written += static_cast<size_t>(rc);
     }
 
-    if (fsync(fd) != 0) {
-        const int saved_errno = errno;
-        close(fd);
-        error = "Failed to fsync segment log '" + log_path.string() + "': " + std::strerror(saved_errno);
-        return false;
-    }
-
-    if (close(fd) != 0) {
-        const int saved_errno = errno;
-        error = "Failed to close segment log '" + log_path.string() + "': " + std::strerror(saved_errno);
+    if (fsync(append_fd_) != 0) {
+        error = "Failed to fsync segment log '" + log_path.string() + "': " + std::strerror(errno);
         return false;
     }
 

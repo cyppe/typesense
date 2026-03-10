@@ -17,6 +17,7 @@ struct NuRaftLogEntry {
 class NuRaftSegmentLogStore {
 public:
     explicit NuRaftSegmentLogStore(NuRaftStateLayout layout);
+    ~NuRaftSegmentLogStore();
 
     const NuRaftStateLayout& layout() const;
     uint64_t next_index() const;
@@ -27,6 +28,9 @@ public:
     bool read_all(std::vector<NuRaftLogEntry>& entries, std::string& error) const;
 
 private:
+    bool ensure_append_fd(bool& log_already_exists, std::string& error);
+
     NuRaftStateLayout layout_;
     uint64_t next_index_ = 1;
+    int append_fd_ = -1;
 };

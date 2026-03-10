@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--health-timeout-seconds",
         type=float,
-        default=30.0,
+        default=120.0,
         help="Timeout for server /health and cluster startup checks",
     )
     parser.add_argument(

@@ -7,6 +7,70 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 20: Focused Raft API Replay After Single-Node Runtime Cache Cleanup (`braft` runtime vs NuRaft runtime, 2026-03-10)
+
+**Commit:** `HEAD` at run time
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-api-replay`
+**Scenario:** same bounded API wrapper comparison as Run 16 after the direct-local-apply work, durable replay-progress/segment-log reuse, and a small single-node document cache in the NuRaft runtime.
+**Artifacts:** `~/.cache/typesense/benchmark/raft-api-replay-summary.json`
+
+### Aggregated Results
+
+| Suite | `braft` runtime | NuRaft runtime | Delta | Speedup |
+|---|---:|---:|---:|---:|
+| `tests/collections.test.ts` | `56,268.93 ms` | `2,431.67 ms` | `53,837.26 ms` faster | `23.14x` |
+| `tests/documents.test.ts` | `58,272.66 ms` | `2,479.94 ms` | `55,792.73 ms` faster | `23.50x` |
+
+### Interpretation
+
+- The bounded NuRaft runtime is still materially faster than the live `braft` runtime on the currently implemented API surface.
+- The new single-node cache did not change scope, but it did keep the focused API replay lane firmly in NuRaft's favor while preserving restart, snapshot, and static multi-node replay behavior.
+- Fresh `raft-runtime-contention` reruns taken in the same session were too host-sensitive to replace Run 19: `braft` write p95 bounced into the `22-38 ms` range while read throughput spiked abnormally, so Run 19 remains the current trustworthy steady-state contention baseline.
+
+### Decision
+
+- Do **not** remove `braft` yet.
+- Do continue NuRaft, because the runtime-integration work is still producing real wins on the implemented API surface.
+- Treat Run 19 as the current contention checkpoint until the same lane is rerun on a quieter host or with a more stable harness setting.
+
+---
+
+## Run 19: Focused Raft Runtime Contention Comparison After Direct Local Apply + Reusable Replay Progress (`braft` runtime vs NuRaft runtime, 2026-03-10)
+
+**Commit:** `HEAD` at run time
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-runtime-contention --duration 5s --docs 100 --reader-threads 2`
+**Scenario:** same bounded contention lane as Runs 17-18 after three more single-node runtime optimizations: direct local append/apply for fresh writes, persistent segment-log append handles, and reusable replay-progress persistence instead of reconstructing a fresh metadata store per write.
+**Artifacts:** `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`, run roots `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260310-075149` and `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260310-075210`
+
+### Aggregated Results
+
+| Measure | `braft` runtime | NuRaft runtime |
+|---|---:|---:|
+| Writes completed | `5,179-5,198` | `3,388-3,448` |
+| Reads completed | `31,197-31,373` | `9,061-9,102` |
+| Write p50 / p95 | `0.94 / 1.17 ms` | `1.42-1.44 / 1.67-1.72 ms` |
+| Read p50 / p95 | `0.25 / 0.66 ms` | `1.32 / 1.56-1.61 ms` |
+| Process CPU | `4,050-4,070 ms` | `880-890 ms` |
+| Peak RSS | `339,632-371,112 KB` | `107,916-110,180 KB` |
+| NuRaft / `braft` write ratio |  | `0.65-0.67x` |
+| NuRaft / `braft` read ratio |  | `0.29x` |
+
+### Interpretation
+
+- This is the first clean repeat band after the write-side bookkeeping optimizations rather than a single noisy sample.
+- The direct local apply path and reusable replay-progress persistence moved NuRaft from the Run 18 band of roughly `53%` write throughput / `18%` read throughput versus `braft` to a repeatable band around `65-67%` writes / `29%` reads.
+- NuRaft still trails `braft` on steady-state point reads and writes, so `braft` remains the safer production runtime today.
+- The remaining gap is no longer large enough to look like a core-library disqualifier. It looks like a runtime-integration gap that still needs more read-path and request-lifecycle work.
+- Resource use remains materially lower on the NuRaft side in this lane, which keeps the migration question open instead of closing it.
+
+### Decision
+
+- Do **not** remove `braft` yet.
+- Do continue NuRaft, because the current runtime contention gap keeps shrinking under localized integration fixes.
+- The next priority should stay on read-path and request-lifecycle efficiency in the live NuRaft runtime, then rerun all three canonical lanes together.
+
+---
+
 ## Run 18: Focused Raft Runtime Contention Comparison After Single-Node Runtime Reuse (`braft` runtime vs NuRaft runtime, 2026-03-10)
 
 **Commit:** `HEAD` at run time  

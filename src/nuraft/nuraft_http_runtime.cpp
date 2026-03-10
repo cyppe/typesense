@@ -12,6 +12,7 @@
 #include "nuraft/nuraft_static_cluster.h"
 #include "nuraft/nuraft_state_initializer.h"
 #include "nuraft/nuraft_state_machine_sink.h"
+#include "nuraft/nuraft_metadata_store.h"
 #include "typesense_server_utils.h"
 #include "tsconfig.h"
 
@@ -115,6 +116,26 @@ bool extract_document_id_from_json(const nlohmann::json& parsed, std::string& do
     }
 
     return false;
+}
+
+std::string document_materialized_key(const std::string& collection, const std::string& document_id) {
+    return std::string(kDocumentPrefix) + collection + "/" + document_id;
+}
+
+void build_applied_request_from_http_request(const http_req& request,
+                                             uint64_t index,
+                                             NuRaftAppliedRequest& applied_request) {
+    applied_request.index = index;
+    applied_request.route_hash = request.route_hash;
+    applied_request.route_kind = NuRaftRouteClassifier::classify(request.route_hash);
+    applied_request.params = request.params;
+    applied_request.metadata = request.metadata;
+    applied_request.body = request.body;
+    applied_request.first_chunk_aggregate = request.first_chunk_aggregate;
+    applied_request.last_chunk_aggregate = request.last_chunk_aggregate.load();
+    applied_request.start_ts = request.start_ts;
+    applied_request.log_index = request.log_index;
+    applied_request.is_binary_body = request.is_binary_body;
 }
 
 NuRaftHttpRuntimeService* current_runtime_service() {
@@ -268,6 +289,10 @@ NuRaftHttpRuntimeService::NuRaftHttpRuntimeService(HttpServer* server, NuRaftHtt
       preferred_leader_server_id_(0),
       initialized_(false) {}
 
+bool NuRaftHttpRuntimeService::cache_enabled() const {
+    return options_.cluster_data_dirs.empty() && materialized_state_sink_ != nullptr;
+}
+
 bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!NuRaftStateInitializer::initialize(options_.startup_options, identity_, bootstrap_config_, error)) {
@@ -305,25 +330,36 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     if (options_.cluster_data_dirs.empty()) {
         local_request_journal_ = std::make_unique<NuRaftRequestJournal>(layout_);
         materialized_state_sink_ = std::make_unique<NuRaftKvStateMachineSink>(layout_);
+        local_metadata_store_ = std::make_unique<NuRaftMetadataStore>(layout_);
         local_state_machine_ = std::make_unique<NuRaftPrototypeStateMachine>(
             layout_,
             std::make_unique<NuRaftKvStateMachineSink>(layout_));
-        if (!local_request_journal_->initialize(error) || !local_state_machine_->initialize(error)) {
+        if (!local_request_journal_->initialize(error) ||
+            !local_metadata_store_->initialize(error) ||
+            !local_state_machine_->initialize(error)) {
             local_request_journal_.reset();
             local_state_machine_.reset();
+            local_metadata_store_.reset();
             materialized_state_sink_.reset();
             return false;
         }
     } else {
         local_request_journal_.reset();
         local_state_machine_.reset();
+        local_metadata_store_.reset();
         materialized_state_sink_.reset();
     }
     if (!apply_local_pending(applied_count, error)) {
         local_request_journal_.reset();
         local_state_machine_.reset();
+        local_metadata_store_.reset();
         materialized_state_sink_.reset();
         return false;
+    }
+
+    {
+        std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+        document_cache_.clear();
     }
 
     initialized_.store(true);
@@ -343,6 +379,7 @@ void NuRaftHttpRuntimeService::send_response(const std::shared_ptr<http_req>& re
 }
 
 bool NuRaftHttpRuntimeService::append_and_apply(const std::string& request_json,
+                                                const http_req& request,
                                                 uint64_t& appended_index,
                                                 bool& forwarded_to_leader,
                                                 int32_t& target_server_id,
@@ -377,6 +414,15 @@ bool NuRaftHttpRuntimeService::append_and_apply(const std::string& request_json,
         if (!local_request_journal_->append_request_json(request_json, appended_index, error)) {
             return false;
         }
+        NuRaftAppliedRequest applied_request;
+        build_applied_request_from_http_request(request, appended_index, applied_request);
+        if (!apply_single_local_append(applied_request, error)) {
+            return false;
+        }
+        forwarded_to_leader = false;
+        target_server_id = identity_.server_id;
+        error.clear();
+        return true;
     } else {
         NuRaftRequestJournal request_journal(layout_);
         if (!request_journal.initialize(error) ||
@@ -387,6 +433,31 @@ bool NuRaftHttpRuntimeService::append_and_apply(const std::string& request_json,
 
     uint64_t applied_count = 0;
     return apply_local_pending(applied_count, error);
+}
+
+bool NuRaftHttpRuntimeService::apply_single_local_append(const NuRaftAppliedRequest& applied_request,
+                                                         std::string& error) {
+    if (materialized_state_sink_ == nullptr) {
+        error = "NuRaft runtime materialized state sink is not initialized.";
+        return false;
+    }
+    if (local_metadata_store_ == nullptr) {
+        error = "NuRaft runtime metadata store is not initialized.";
+        return false;
+    }
+
+    if (!materialized_state_sink_->apply_all({applied_request}, error)) {
+        return false;
+    }
+
+    NuRaftReplayProgress progress;
+    progress.last_applied_index = applied_request.index;
+    if (!local_metadata_store_->write_replay_progress(progress, error)) {
+        return false;
+    }
+
+    error.clear();
+    return true;
 }
 
 bool NuRaftHttpRuntimeService::apply_local_pending(uint64_t& applied_count, std::string& error) {
@@ -460,6 +531,105 @@ bool NuRaftHttpRuntimeService::read_materialized_entries(
     return sink.read_materialized_entries(entries, error);
 }
 
+void NuRaftHttpRuntimeService::invalidate_single_node_collection_cache(const std::string& collection) {
+    if (!cache_enabled()) {
+        return;
+    }
+
+    const std::string prefix = std::string(kDocumentPrefix) + collection + "/";
+    std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+    for (auto it = document_cache_.begin(); it != document_cache_.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+            it = document_cache_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void NuRaftHttpRuntimeService::update_single_node_document_cache(const http_req& request,
+                                                                 NuRaftRouteKind route_kind) {
+    if (!cache_enabled()) {
+        return;
+    }
+
+    const auto collection_it = request.params.find("collection");
+    if (collection_it == request.params.end() || collection_it->second.empty()) {
+        return;
+    }
+    const std::string& collection = collection_it->second;
+
+    if (route_kind == NuRaftRouteKind::kCollectionDrop) {
+        invalidate_single_node_collection_cache(collection);
+        return;
+    }
+
+    if (route_kind == NuRaftRouteKind::kDocumentImport) {
+        invalidate_single_node_collection_cache(collection);
+        return;
+    }
+
+    std::string document_id;
+    const auto id_it = request.params.find("id");
+    if (id_it != request.params.end() && !id_it->second.empty()) {
+        document_id = id_it->second;
+    } else {
+        nlohmann::json parsed_body;
+        if (parse_json_if_present(request.body, parsed_body)) {
+            extract_document_id_from_json(parsed_body, document_id);
+        }
+    }
+
+    if (document_id.empty()) {
+        return;
+    }
+
+    const std::string key = document_materialized_key(collection, document_id);
+    if (route_kind == NuRaftRouteKind::kDocumentDelete) {
+        std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+        document_cache_.erase(key);
+        return;
+    }
+
+    if (request.http_method != "PATCH") {
+        std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+        document_cache_[key] = request.body;
+        return;
+    }
+
+    nlohmann::json patch_body;
+    if (!parse_json_if_present(request.body, patch_body) || !patch_body.is_object()) {
+        return;
+    }
+
+    {
+        std::shared_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+        const auto existing = document_cache_.find(key);
+        if (existing != document_cache_.end()) {
+            nlohmann::json merged;
+            if (parse_json_if_present(existing->second, merged) && merged.is_object()) {
+                for (auto it = patch_body.begin(); it != patch_body.end(); ++it) {
+                    merged[it.key()] = it.value();
+                }
+                cache_lock.unlock();
+                std::unique_lock<std::shared_mutex> write_lock(document_cache_mutex_);
+                document_cache_[key] = merged.dump();
+                return;
+            }
+        }
+    }
+
+    std::string stored_document;
+    bool found = false;
+    std::string error;
+    if (!read_materialized_value(key, stored_document, found, error) || !found) {
+        return;
+    }
+
+    std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+    document_cache_[key] = stored_document;
+}
+
 void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
                                      const std::shared_ptr<http_res>& response) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -503,11 +673,14 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     uint64_t appended_index = 0;
     bool forwarded_to_leader = false;
     int32_t target_server_id = identity_.server_id;
-    if (!append_and_apply(request->to_json(), appended_index, forwarded_to_leader, target_server_id, error)) {
+    const std::string request_json = request->to_json();
+    if (!append_and_apply(request_json, *request, appended_index, forwarded_to_leader, target_server_id, error)) {
         response->set_500(error);
         send_response(request, response);
         return;
     }
+
+    update_single_node_document_cache(*request, route_kind);
 
     nlohmann::json response_body = {
         {"success", true},
@@ -774,10 +947,25 @@ bool NuRaftHttpRuntimeService::read_document(const std::string& collection,
                                              std::string& encoded,
                                              std::string& error) const {
     encoded.clear();
-    const std::string key = std::string(kDocumentPrefix) + collection + "/" + document_id;
+    const std::string key = document_materialized_key(collection, document_id);
+    if (cache_enabled()) {
+        std::shared_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+        const auto cached = document_cache_.find(key);
+        if (cached != document_cache_.end()) {
+            encoded = cached->second;
+            error.clear();
+            return true;
+        }
+    }
+
     bool found = false;
     if (!read_materialized_value(key, encoded, found, error)) {
         return false;
+    }
+
+    if (found && cache_enabled()) {
+        std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+        document_cache_[key] = encoded;
     }
 
     error.clear();

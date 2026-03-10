@@ -11,6 +11,14 @@ BAZEL_BIN_PATH="$(readlink -f "${REPO_ROOT}/bazel-bin")"
 DEFAULT_SERVER_BINARY="${BAZEL_BIN_PATH}/typesense-server"
 SERVER_BINARY_INPUT="${2:-${TYPESENSE_SERVER_BINARY_PATH:-${DEFAULT_SERVER_BINARY}}}"
 SERVER_BINARY="$(readlink -f "${SERVER_BINARY_INPUT}")"
+SERVER_BINARY_BASENAME="$(basename "${SERVER_BINARY_INPUT}")"
+
+if [[ ! -f "${SERVER_BINARY}" ]]; then
+	RUNFILES_BINARY="${SERVER_BINARY}.runfiles/_main/${SERVER_BINARY_BASENAME}"
+	if [[ -f "${RUNFILES_BINARY}" ]]; then
+		SERVER_BINARY="${RUNFILES_BINARY}"
+	fi
+fi
 
 if [[ ! -f "${SERVER_BINARY}" ]]; then
 	echo "typesense-server binary not found at ${SERVER_BINARY}" >&2

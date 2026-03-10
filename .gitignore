@@ -22,4 +22,5 @@ typesense-data
 *.tar.gz
 /hf_cache/
 /typesense-server-binary/
+/typesense-runtime-bundle/
 /api_tests/tmp/

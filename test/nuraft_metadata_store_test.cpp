@@ -63,3 +63,39 @@ TEST_F(NuRaftMetadataStoreTest, WritesAndReadsReplayProgress) {
     ASSERT_TRUE(store.read_replay_progress(actual, error)) << error;
     EXPECT_EQ(actual, expected);
 }
+
+TEST_F(NuRaftMetadataStoreTest, ReadsLegacyJsonReplayProgress) {
+    NuRaftMetadataStore store(NuRaftStateLayout::from_data_dir(temp_dir_));
+    std::string error;
+    ASSERT_TRUE(store.initialize(error)) << error;
+    ASSERT_TRUE(NuRaftFileStore::write_file_atomically(store.layout().replay_progress_file,
+                                                       R"({"format_version":1,"last_applied_index":7})",
+                                                       error))
+        << error;
+
+    NuRaftReplayProgress actual;
+    ASSERT_TRUE(store.read_replay_progress(actual, error)) << error;
+    EXPECT_EQ(actual.last_applied_index, 7u);
+}
+
+TEST_F(NuRaftMetadataStoreTest, ReadsLatestReplayProgressAfterMultipleWrites) {
+    NuRaftMetadataStore store(NuRaftStateLayout::from_data_dir(temp_dir_));
+    std::string error;
+    ASSERT_TRUE(store.initialize(error)) << error;
+
+    NuRaftReplayProgress first;
+    first.last_applied_index = 11;
+    ASSERT_TRUE(store.write_replay_progress(first, error)) << error;
+
+    NuRaftReplayProgress second;
+    second.last_applied_index = 29;
+    ASSERT_TRUE(store.write_replay_progress(second, error)) << error;
+
+    NuRaftReplayProgress third;
+    third.last_applied_index = 47;
+    ASSERT_TRUE(store.write_replay_progress(third, error)) << error;
+
+    NuRaftReplayProgress actual;
+    ASSERT_TRUE(store.read_replay_progress(actual, error)) << error;
+    EXPECT_EQ(actual.last_applied_index, 47u);
+}

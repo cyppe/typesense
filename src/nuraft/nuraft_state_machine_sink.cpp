@@ -8,6 +8,7 @@
 #include <utility>
 
 #include <rocksdb/options.h>
+#include <rocksdb/table.h>
 #include <rocksdb/write_batch.h>
 #include <rocksdb/utilities/checkpoint.h>
 
@@ -577,6 +578,11 @@ bool NuRaftKvStateMachineSink::initialize_db(std::string& error) const {
 
     rocksdb::Options options;
     options.create_if_missing = true;
+    options.OptimizeForPointLookup(64);
+    rocksdb::BlockBasedTableOptions table_options;
+    table_options.cache_index_and_filter_blocks = true;
+    table_options.pin_l0_filter_and_index_blocks_in_cache = true;
+    options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(table_options));
     rocksdb::DB* db = nullptr;
     const rocksdb::Status status = rocksdb::DB::Open(options, layout_.materialized_state_dir, &db);
     if (!status.ok()) {

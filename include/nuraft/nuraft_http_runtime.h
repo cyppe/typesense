@@ -5,7 +5,9 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "http_server.h"
@@ -13,6 +15,7 @@
 #include "nuraft_replication_controller.h"
 #include "nuraft_request_journal.h"
 #include "nuraft_state_machine_sink.h"
+#include "nuraft_metadata_store.h"
 #include "replication/replication_service.h"
 
 struct NuRaftHttpServerOptions {
@@ -62,11 +65,15 @@ public:
                           std::string& error) const;
 
 private:
+    bool cache_enabled() const;
     bool append_and_apply(const std::string& request_json,
+                          const http_req& request,
                           uint64_t& appended_index,
                           bool& forwarded_to_leader,
                           int32_t& target_server_id,
                           std::string& error);
+    bool apply_single_local_append(const NuRaftAppliedRequest& applied_request,
+                                   std::string& error);
     bool apply_local_pending(uint64_t& applied_count, std::string& error);
     bool read_materialized_value(const std::string& key,
                                  std::string& value,
@@ -78,6 +85,8 @@ private:
     bool count_materialized_prefix(const std::string& prefix, size_t& count, std::string& error) const;
     bool read_materialized_entries(std::vector<std::pair<std::string, std::string>>& entries,
                                    std::string& error) const;
+    void update_single_node_document_cache(const http_req& request, NuRaftRouteKind route_kind);
+    void invalidate_single_node_collection_cache(const std::string& collection);
     void send_response(const std::shared_ptr<http_req>& request,
                        const std::shared_ptr<http_res>& response) const;
 
@@ -91,7 +100,10 @@ private:
     std::atomic<bool> initialized_;
     std::unique_ptr<NuRaftRequestJournal> local_request_journal_;
     std::unique_ptr<NuRaftPrototypeStateMachine> local_state_machine_;
+    std::unique_ptr<NuRaftMetadataStore> local_metadata_store_;
     mutable std::unique_ptr<NuRaftKvStateMachineSink> materialized_state_sink_;
+    mutable std::shared_mutex document_cache_mutex_;
+    mutable std::unordered_map<std::string, std::string> document_cache_;
     mutable std::mutex mutex_;
 };
 

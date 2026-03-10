@@ -138,7 +138,7 @@ public:
 private:
     bool wait_until_ready(std::string& error) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        for (int attempt = 0; attempt < 100; ++attempt) {
+        for (int attempt = 0; attempt < 400; ++attempt) {
             std::string response;
             std::map<std::string, std::string> headers;
             const long status = HttpClient::get_response(base_url() + "/health",

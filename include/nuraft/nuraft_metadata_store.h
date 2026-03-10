@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -42,6 +43,7 @@ struct NuRaftReplayProgress {
 class NuRaftMetadataStore {
 public:
     explicit NuRaftMetadataStore(NuRaftStateLayout layout);
+    ~NuRaftMetadataStore();
 
     const NuRaftStateLayout& layout() const;
     bool initialize(std::string& error) const;
@@ -53,5 +55,11 @@ public:
     bool read_replay_progress(NuRaftReplayProgress& progress, std::string& error) const;
 
 private:
+    bool ensure_replay_progress_handle(bool& file_already_exists, std::string& error) const;
+
     NuRaftStateLayout layout_;
+    mutable int replay_progress_fd_ = -1;
+    mutable uint64_t replay_progress_sequence_ = 0;
+    mutable bool replay_progress_initialized_ = false;
+    mutable std::mutex replay_progress_mutex_;
 };
