@@ -76,27 +76,23 @@ To replay a single lane/file quickly, append the test path:
 scripts/run_api_tests.sh -- --no-secrets tests/health.test.ts
 ```
 
-To replay the API harness against an alternate built binary (for example the self-contained ONNX Runtime probe), point the wrapper at it directly:
+To replay the current NuRaft HTTP runtime through the same wrapper:
 
 ```bash
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-static-one-protobuf-probe -- --no-secrets tests/health.test.ts
-```
-
-To replay the bounded NuRaft HTTP runtime lane through the same wrapper:
-
-```bash
-scripts/bazel_in_docker.sh build //:typesense-server-nuraft-runtime
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_smoke.test.ts
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/health.test.ts
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_cluster.test.ts
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/collections.test.ts
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/documents.test.ts
+scripts/bazel_in_docker.sh build //:typesense-server
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/nuraft_runtime_smoke.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/health.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/nuraft_runtime_cluster.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/collections.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/documents.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --single-node-only --no-secrets tests/synonym_sets.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --single-node-only --no-secrets tests/analytics.test.ts
 ```
 
 If you intentionally want to reuse only the single-node phases of a file, the API runner now supports:
 
 ```bash
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --single-node-only --no-secrets tests/health.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --single-node-only --no-secrets tests/health.test.ts
 ```
 
 If you intentionally want to bypass the Dockerized Bun image and use host Bun:
@@ -141,7 +137,7 @@ The binary emits JSON for append/apply throughput, snapshot-recovery timing, rep
 Use this when you need the bounded HTTP-facing NuRaft lane rather than the CLI-only prototype controller.
 
 ```bash
-scripts/bazel_in_docker.sh build //:typesense-server-nuraft-runtime
+scripts/bazel_in_docker.sh build //:typesense-server
 scripts/bazel_in_docker.sh test //:nuraft-http-runtime-test
 ```
 
@@ -150,55 +146,23 @@ The current runtime smoke covers a real subprocess-backed HTTP binary with healt
 The same bounded runtime now also passes the real `api_tests` wrapper for the focused single-node smoke lane:
 
 ```bash
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_smoke.test.ts
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/health.test.ts
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/nuraft_runtime_cluster.test.ts
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/collections.test.ts
-scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server-nuraft-runtime -- --no-secrets tests/documents.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/nuraft_runtime_smoke.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/health.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/nuraft_runtime_cluster.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/collections.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/documents.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --single-node-only --no-secrets tests/synonym_sets.test.ts
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --single-node-only --no-secrets tests/analytics.test.ts
 ```
 
-## 11) Raft recovery comparison
-
-Use this when you need one canonical command that compares the current fork's live `braft` runtime recovery path against the isolated NuRaft prototype on the same follower-outage shape.
+When you want the broadest current NuRaft runtime regression signal, use the full wrapper replay directly:
 
 ```bash
-scripts/benchmark_vs_upstream.sh --build --profile raft-recovery
+scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets
 ```
 
-Optional knobs:
+Treat that full no-secrets replay as the main hardening lane now. The targeted suite commands above are still useful for isolating failures quickly, but they are no longer enough on their own to claim broad runtime parity.
 
-```bash
-scripts/benchmark_vs_upstream.sh --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3 --repeats 2
-```
+## 11) Historical Raft comparison note
 
-This mode stages a runtime bundle for `//:typesense-server`, runs a simple steady single-node write case plus a real 3-node follower-outage/rejoin scenario and a late-third-node join scenario on the current `braft` path, runs the matching NuRaft prototype `append-apply`, `snapshot-policy-compare`, and `delayed-join` benchmarks, and writes a JSON summary to `~/.cache/typesense/benchmark/raft-recovery-summary.json`. The JSON also includes explicit recovery-path classification (`snapshot-install-only`, `snapshot-install-plus-log-replay`, or `log-replay-only`) plus process-level CPU/RSS samples for the live `braft` leader/follower and the NuRaft benchmark process, with the caveat that this is still prototype-vs-runtime evidence rather than a drop-in server comparison.
-
-## 12) Raft API replay comparison
-
-Use this when you need a focused runtime-vs-runtime comparison on the real API wrapper for the currently implemented NuRaft HTTP surface.
-
-```bash
-scripts/benchmark_vs_upstream.sh --build --profile raft-api-replay
-```
-
-This mode runs the same `scripts/run_api_tests.sh` replay files against `//:typesense-server` and `//:typesense-server-nuraft-runtime`, currently `tests/collections.test.ts` and `tests/documents.test.ts`, and writes a JSON summary to `~/.cache/typesense/benchmark/raft-api-replay-summary.json`.
-
-## 13) Raft runtime contention comparison
-
-Use this when you need one canonical command for steady-state document read/write pressure on the currently implemented runtime surfaces.
-
-```bash
-scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 1 --reader-threads 2 --repeats 3
-```
-
-This mode runs the live `//:typesense-server` and `//:typesense-server-nuraft-runtime` binaries directly, preloads a bounded collection, then measures configurable document writers plus configurable document readers against preloaded document ids. It repeats the full comparison `--repeats` times and reports median totals/latencies in `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`.
-
-Useful isolation variants:
-
-```bash
-scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 0 --reader-threads 2 --repeats 3
-scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 1 --reader-threads 0 --repeats 3
-scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 10s --docs 100 --writer-threads 1 --writer-interval-ms 2 --reader-threads 2 --repeats 2
-```
-
-Treat this as bounded runtime contention on currently implemented document CRUD surfaces, not as full product parity. It intentionally does not use the temporary NuRaft search path, because that path is still a simplified compatibility shim rather than decision-grade search behavior.
+The old `raft-recovery`, `raft-api-replay`, and `raft-runtime-contention` wrapper profiles were retired once this branch removed the in-tree `braft` runtime. Keep `benchmark/BENCHMARK_RESULTS.md` as the archival record of those side-by-side cutover benchmarks.

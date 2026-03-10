@@ -4,6 +4,7 @@
 #include <set>
 #include <utility>
 
+#include "analytics_manager.h"
 #include "core_api.h"
 #include "json.hpp"
 #include "collection_manager.h"
@@ -14,6 +15,8 @@
 #include "nuraft/nuraft_state_initializer.h"
 #include "nuraft/nuraft_state_machine_sink.h"
 #include "nuraft/nuraft_metadata_store.h"
+#include "search_analytics.h"
+#include "tokenizer.h"
 #include "typesense_server_utils.h"
 #include "tsconfig.h"
 
@@ -143,22 +146,6 @@ NuRaftHttpRuntimeService* current_runtime_service() {
     return (server == nullptr) ? nullptr : dynamic_cast<NuRaftHttpRuntimeService*>(server->get_replication_state());
 }
 
-bool create_snapshot_response(const std::shared_ptr<http_req>& request, const std::shared_ptr<http_res>& response) {
-    NuRaftHttpRuntimeService* runtime = current_runtime_service();
-    if (runtime == nullptr) {
-        response->set_500("NuRaft runtime service is not attached.");
-        return true;
-    }
-
-    std::string snapshot_path;
-    const auto it = request->params.find("snapshot_path");
-    if (it != request->params.end()) {
-        snapshot_path = it->second;
-    }
-    runtime->do_snapshot(snapshot_path, request, response);
-    return true;
-}
-
 bool apply_typesense_write_handler(const std::shared_ptr<http_req>& request,
                                    bool (*handler)(const std::shared_ptr<http_req>&,
                                                    const std::shared_ptr<http_res>&),
@@ -181,27 +168,77 @@ bool apply_typesense_write_handler(const std::shared_ptr<http_req>& request,
     return false;
 }
 
-bool vote_response(const std::shared_ptr<http_req>& request, const std::shared_ptr<http_res>& response) {
-    static_cast<void>(request);
+bool find_registered_route(HttpServer* server,
+                           uint64_t route_hash,
+                           route_path*& route,
+                           std::string& error) {
+    route = nullptr;
+    if (server == nullptr) {
+        error = "NuRaft runtime server is not attached.";
+        return false;
+    }
+
+    if (!server->get_route(route_hash, &route) || route == nullptr || route->handler == nullptr) {
+        error = "NuRaft runtime could not resolve registered route handler.";
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
+bool invoke_registered_handler(HttpServer* server,
+                               const std::shared_ptr<http_req>& request,
+                               const std::shared_ptr<http_res>& response,
+                               std::string& error) {
+    route_path* route = nullptr;
+    if (!find_registered_route(server, request->route_hash, route, error)) {
+        return false;
+    }
+
+    if (route->handler(request, response)) {
+        error.clear();
+        return true;
+    }
+
+    if (response->status_code == 0) {
+        error = "Registered route handler failed without setting an HTTP response.";
+        return false;
+    }
+
+    error.clear();
+    return false;
+}
+
+std::shared_ptr<http_req> build_replay_request(const NuRaftAppliedRequest& applied_request,
+                                               const route_path& route) {
+    auto request = std::make_shared<http_req>();
+    request->http_method = !applied_request.metadata.empty() ? applied_request.metadata : route.http_method;
+    request->path_without_query = "/" + StringUtils::join(route.path_parts, "/");
+    request->route_hash = applied_request.route_hash;
+    request->params = applied_request.params;
+    request->body = applied_request.body;
+    request->metadata = applied_request.metadata;
+    request->first_chunk_aggregate = applied_request.first_chunk_aggregate;
+    request->last_chunk_aggregate = applied_request.last_chunk_aggregate;
+    request->start_ts = applied_request.start_ts;
+    request->log_index = applied_request.log_index;
+    request->is_binary_body = applied_request.is_binary_body;
+    request->api_auth_key = Config::get_instance().get_api_key();
+    request->client_ip = "127.0.0.1";
+    request->is_write = true;
+    return request;
+}
+
+bool get_runtime_collections(const std::shared_ptr<http_req>& request, const std::shared_ptr<http_res>& response) {
     NuRaftHttpRuntimeService* runtime = current_runtime_service();
     if (runtime == nullptr) {
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
 
-    nlohmann::json body = {
-        {"success", runtime->trigger_vote()},
-    };
-    response->set_body(200, body.dump());
-    return true;
-}
-
-bool get_runtime_collections(const std::shared_ptr<http_req>& request, const std::shared_ptr<http_res>& response) {
-    static_cast<void>(request);
-    NuRaftHttpRuntimeService* runtime = current_runtime_service();
-    if (runtime == nullptr) {
-        response->set_500("NuRaft runtime service is not attached.");
-        return true;
+    if (runtime->is_single_node_mode()) {
+        return get_collections(request, response);
     }
 
     nlohmann::json body;
@@ -220,6 +257,10 @@ bool get_runtime_collection(const std::shared_ptr<http_req>& request, const std:
     if (runtime == nullptr) {
         response->set_500("NuRaft runtime service is not attached.");
         return true;
+    }
+
+    if (runtime->is_single_node_mode()) {
+        return get_collection_summary(request, response);
     }
 
     const auto it = request->params.find("collection");
@@ -248,6 +289,10 @@ bool get_runtime_document(const std::shared_ptr<http_req>& request, const std::s
     if (runtime == nullptr) {
         response->set_500("NuRaft runtime service is not attached.");
         return true;
+    }
+
+    if (runtime->is_single_node_mode()) {
+        return get_fetch_document(request, response);
     }
 
     const auto collection_it = request->params.find("collection");
@@ -293,13 +338,34 @@ bool search_runtime_documents(const std::shared_ptr<http_req>& request, const st
         return true;
     }
 
-    response->set_body(200, body.dump());
-    return true;
-}
+    if (runtime->is_single_node_mode() && Config::get_instance().get_enable_search_analytics()) {
+        const auto user_it = request->params.find(http_req::USER_HEADER);
+        if (user_it != request->params.end() && !user_it->second.empty()) {
+            const auto query_it = request->params.find("q");
+            const std::string normalized_query =
+                (query_it == request->params.end()) ? "" : Tokenizer::normalize_ascii_no_spaces(query_it->second);
+            if (!normalized_query.empty()) {
+                search_internal_event_t internal_event = {
+                    SearchAnalytics::LOG_TYPE,
+                    collection_it->second,
+                    normalized_query,
+                    normalized_query,
+                    user_it->second,
+                    request->params.count("filter_by") != 0 ? request->params.at("filter_by") : "",
+                    request->params.count("analytics_tag") != 0 ? request->params.at("analytics_tag") : "",
+                };
+                AnalyticsManager::get_instance().add_internal_event(internal_event);
 
-bool write_placeholder(const std::shared_ptr<http_req>& request, const std::shared_ptr<http_res>& response) {
-    static_cast<void>(request);
-    static_cast<void>(response);
+                const bool found_hits = body.contains("found") && body["found"].is_number_unsigned() &&
+                                        body["found"].get<size_t>() != 0;
+                internal_event.type = found_hits ? SearchAnalytics::POPULAR_QUERIES_TYPE :
+                                                   SearchAnalytics::NO_HIT_QUERIES_TYPE;
+                AnalyticsManager::get_instance().add_internal_event(internal_event);
+            }
+        }
+    }
+
+    response->set_body(200, body.dump());
     return true;
 }
 
@@ -337,6 +403,47 @@ bool mirror_single_node_typesense_state(const std::shared_ptr<http_req>& request
             error.clear();
             return true;
     }
+}
+
+bool replay_single_node_product_state(HttpServer* server,
+                                      const NuRaftKvStateMachineSink& sink,
+                                      std::string& error) {
+    if (server == nullptr) {
+        error = "NuRaft runtime server is not attached.";
+        return false;
+    }
+
+    if (!CollectionManager::get_instance().get_collection_names().empty()) {
+        error.clear();
+        return true;
+    }
+
+    std::vector<NuRaftAppliedRequest> applied_requests;
+    if (!sink.read_all(applied_requests, error) || applied_requests.empty()) {
+        return error.empty();
+    }
+
+    for (const auto& applied_request : applied_requests) {
+        route_path* route = nullptr;
+        if (!find_registered_route(server, applied_request.route_hash, route, error)) {
+            return false;
+        }
+
+        auto request = build_replay_request(applied_request, *route);
+        auto response = std::make_shared<http_res>(nullptr);
+        if (!invoke_registered_handler(server, request, response, error)) {
+            if (response->status_code == 0) {
+                return false;
+            }
+
+            error = "NuRaft startup replay failed for route '" + request->http_method + " " +
+                    request->path_without_query + "': " + response->body;
+            return false;
+        }
+    }
+
+    error.clear();
+    return true;
 }
 
 bool NuRaftHttpRuntimeService::initialize(std::string& error) {
@@ -395,6 +502,13 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         uint64_t last_applied_index = 0;
         if (!read_last_local_applied_index(last_applied_index, error) ||
             !sync_local_replay_progress(last_applied_index, error)) {
+            local_request_journal_.reset();
+            materialized_state_sink_.reset();
+            return false;
+        }
+
+        if (materialized_state_sink_ != nullptr &&
+            !replay_single_node_product_state(server_, *materialized_state_sink_, error)) {
             local_request_journal_.reset();
             materialized_state_sink_.reset();
             return false;
@@ -752,7 +866,15 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     }
 
     const NuRaftRouteKind route_kind = NuRaftRouteClassifier::classify(request->route_hash);
-    if (route_kind != NuRaftRouteKind::kCollectionCreate &&
+    route_path* route = nullptr;
+    const bool has_registered_route = find_registered_route(server_, request->route_hash, route, error);
+    const bool supports_generic_single_node_write =
+        options_.cluster_data_dirs.empty() &&
+        route_kind == NuRaftRouteKind::kUnknown &&
+        has_registered_route;
+
+    if (!supports_generic_single_node_write &&
+        route_kind != NuRaftRouteKind::kCollectionCreate &&
         route_kind != NuRaftRouteKind::kCollectionDrop &&
         route_kind != NuRaftRouteKind::kDocumentWrite &&
         route_kind != NuRaftRouteKind::kDocumentDelete &&
@@ -787,6 +909,16 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     const std::string request_json = request->to_json();
     if (!append_and_apply(request_json, *request, appended_index, forwarded_to_leader, target_server_id, error)) {
         response->set_500(error);
+        send_response(request, response);
+        return;
+    }
+
+    if (supports_generic_single_node_write) {
+        error.clear();
+        const bool handler_ok = invoke_registered_handler(server_, request, response, error);
+        if (!handler_ok && response->status_code == 0) {
+            response->set_500(error);
+        }
         send_response(request, response);
         return;
     }
@@ -898,6 +1030,10 @@ bool NuRaftHttpRuntimeService::is_read_caught_up() const {
     return initialized_.load();
 }
 
+bool NuRaftHttpRuntimeService::is_single_node_mode() const {
+    return options_.cluster_data_dirs.empty();
+}
+
 bool NuRaftHttpRuntimeService::is_write_caught_up() const {
     return initialized_.load();
 }
@@ -921,6 +1057,29 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         {"write_caught_up", is_write_caught_up()},
         {"queued_writes", 0},
     };
+
+    if (options_.cluster_data_dirs.empty() && materialized_state_sink_ != nullptr) {
+        uint64_t last_applied_index = 0;
+        std::string local_error;
+        if (materialized_state_sink_->read_last_applied_index(last_applied_index, local_error)) {
+            uint64_t last_index = 0;
+            if (local_request_journal_ != nullptr) {
+                std::vector<NuRaftLogEntry> entries;
+                if (local_request_journal_->replay(entries, local_error)) {
+                    last_index = entries.empty() ? 0 : entries.back().index;
+                }
+            }
+
+            status["last_index"] = last_index;
+            status["committed_index"] = last_index;
+            status["known_applied_index"] = last_applied_index;
+            status["applying_index"] = 0;
+            return status;
+        }
+
+        status["error"] = local_error;
+        return status;
+    }
 
     std::string error;
     std::vector<NuRaftStaticClusterNodeStatus> statuses;
@@ -1224,21 +1383,126 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
 }
 
 void register_nuraft_http_runtime_routes(HttpServer* server) {
+    // Keep this as the one central route table for the NuRaft-backed server.
+    // The old typesense_server.cpp route list was useful because it let you scan
+    // most of the product surface in one place. Preserve that property here.
+
+    server->get("/collections/:collection/documents/search", search_runtime_documents);
+    server->post("/multi_search", post_multi_search, false, true);
+
+    server->post("/collections/:collection/documents", post_add_document);
+    server->del("/collections/:collection/documents", del_remove_documents, false, true);
+    server->post("/collections/:collection/documents/import", post_import_documents, true, true);
+    server->get("/collections/:collection/documents/export", get_export_documents, false, true);
+    server->get("/collections/:collection/documents/:id", get_runtime_document);
+    server->patch("/collections/:collection/documents/:id", patch_update_document);
+    server->patch("/collections/:collection/documents", patch_update_documents);
+    server->del("/collections/:collection/documents/:id", del_remove_document);
+
+    server->post("/collections", post_create_collection);
+    server->patch("/collections/:collection", patch_update_collection);
+    server->get("/collections", get_runtime_collections);
+    server->del("/collections/:collection", del_drop_collection);
+    server->get("/collections/:collection", get_runtime_collection);
+
+    server->get("/aliases", get_aliases);
+    server->get("/aliases/:alias", get_alias);
+    server->put("/aliases/:alias", put_upsert_alias);
+    server->del("/aliases/:alias", del_alias);
+
+    server->get("/keys", get_keys);
+    server->get("/keys/:id", get_key);
+    server->post("/keys", post_create_key);
+    server->del("/keys/:id", del_key);
+
+    server->get("/presets", get_presets);
+    server->get("/presets/:name", get_preset);
+    server->put("/presets/:name", put_upsert_preset);
+    server->del("/presets/:name", del_preset);
+
+    server->get("/stopwords", get_stopwords);
+    server->get("/stopwords/:name", get_stopword);
+    server->put("/stopwords/:name", put_upsert_stopword);
+    server->del("/stopwords/:name", del_stopword);
+
+    server->get("/synonym_sets", get_synonym_sets);
+    server->get("/synonym_sets/:name", get_synonym_set);
+    server->put("/synonym_sets/:name", put_synonym_set);
+    server->del("/synonym_sets/:name", del_synonym_set);
+    server->get("/synonym_sets/:name/items", get_synonym_set_items);
+    server->get("/synonym_sets/:name/items/:id", get_synonym_set_item);
+    server->put("/synonym_sets/:name/items/:id", put_synonym_set_item);
+    server->del("/synonym_sets/:name/items/:id", del_synonym_set_item);
+
+    server->get("/curation_sets", get_curation_sets);
+    server->get("/curation_sets/:name", get_curation_set);
+    server->put("/curation_sets/:name", put_curation_set);
+    server->del("/curation_sets/:name", del_curation_set);
+    server->get("/curation_sets/:name/items", get_curation_set_items);
+    server->get("/curation_sets/:name/items/:id", get_curation_set_item);
+    server->put("/curation_sets/:name/items/:id", put_curation_set_item);
+    server->del("/curation_sets/:name/items/:id", del_curation_set_item);
+
+    server->get("/analytics/rules", get_analytics_rules);
+    server->get("/analytics/rules/:name", get_analytics_rule);
+    server->post("/analytics/rules", post_create_analytics_rules);
+    server->put("/analytics/rules/:name", put_upsert_analytics_rules);
+    server->del("/analytics/rules/:name", del_analytics_rules);
+    server->post("/analytics/events", post_create_event);
+    server->post("/analytics/aggregate_events", post_write_analytics_to_db);
+    server->get("/analytics/events", get_analytics_events);
+    server->post("/analytics/flush", post_analytics_flush);
+    server->get("/analytics/status", get_analytics_status);
+
+    server->post("/stemming/dictionaries/import", post_import_stemming_dictionary, true, true);
+    server->get("/stemming/dictionaries", get_stemming_dictionaries);
+    server->get("/stemming/dictionaries/:id", get_stemming_dictionary);
+    server->del("/stemming/dictionaries/:id", del_stemming_dictionary);
+
+    server->get("/metrics.json", get_metrics_json);
+    server->get("/stats.json", get_stats_json);
+    server->get("/debug", get_debug);
     server->get("/health", get_health);
+    server->get("/health_with_rusage", get_health_with_resource_usage);
+    server->post("/health", post_health);
     server->get("/status", get_status);
 
-    server->get("/collections", get_runtime_collections);
-    server->get("/collections/:collection", get_runtime_collection);
-    server->get("/collections/:collection/documents/search", search_runtime_documents);
-    server->get("/collections/:collection/documents/:id", get_runtime_document);
+    server->post("/operations/snapshot", post_snapshot, false, true);
+    server->post("/operations/vote", post_vote, false, false);
+    server->post("/operations/cache/clear", post_clear_cache, false, false);
+    server->post("/operations/db/compact", post_compact_db, false, false);
+    server->post("/operations/reset_peers", post_reset_peers, false, false);
+    server->get("/operations/schema_changes", get_schema_changes);
 
-    server->post("/collections", write_placeholder);
-    server->del("/collections/:collection", write_placeholder);
-    server->post("/collections/:collection/documents", write_placeholder);
-    server->patch("/collections/:collection/documents/:id", write_placeholder);
-    server->del("/collections/:collection/documents/:id", write_placeholder);
-    server->post("/collections/:collection/documents/import", write_placeholder, true, true);
+    server->post("/conversations/models", post_conversation_model);
+    server->get("/conversations/models", get_conversation_models);
+    server->get("/conversations/models/:id", get_conversation_model);
+    server->put("/conversations/models/:id", put_conversation_model);
+    server->del("/conversations/models/:id", del_conversation_model);
 
-    server->post("/operations/snapshot", create_snapshot_response, false, true);
-    server->post("/operations/vote", vote_response);
+    server->post("/personalization/models", post_personalization_model);
+    server->get("/personalization/models", get_personalization_models);
+    server->get("/personalization/models/:id", get_personalization_model);
+    server->del("/personalization/models/:id", del_personalization_model);
+    server->put("/personalization/models/:id", put_personalization_model);
+
+    server->get("/limits", get_rate_limits);
+    server->get("/limits/active", get_active_throttles);
+    server->get("/limits/exceeds", get_limit_exceed_counts);
+    server->get("/limits/:id", get_rate_limit);
+    server->post("/limits", post_rate_limit);
+    server->put("/limits/:id", put_rate_limit);
+    server->del("/limits/:id", del_rate_limit);
+    server->del("/limits/active/:id", del_throttle);
+    server->del("/limits/exceeds/:id", del_exceed);
+    server->post("/config", post_config, false, false);
+
+    server->post("/proxy", post_proxy);
+    server->post("/proxy_sse", post_proxy_sse, false, true);
+
+    server->post("/nl_search_models", post_nl_search_model);
+    server->get("/nl_search_models", get_nl_search_models);
+    server->get("/nl_search_models/:id", get_nl_search_model);
+    server->put("/nl_search_models/:id", put_nl_search_model);
+    server->del("/nl_search_models/:id", delete_nl_search_model);
 }

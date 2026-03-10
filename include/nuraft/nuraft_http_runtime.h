@@ -62,6 +62,7 @@ public:
                           const std::map<std::string, std::string>& params,
                           nlohmann::json& result,
                           std::string& error) const;
+    bool is_single_node_mode() const;
 
 private:
     bool cache_enabled() const;

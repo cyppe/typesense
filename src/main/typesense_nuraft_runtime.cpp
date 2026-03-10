@@ -8,10 +8,19 @@
 
 #include <curl/curl.h>
 
+#include "analytics_manager.h"
 #include "collection_manager.h"
+#include "conversation_model_manager.h"
+#include "curation_index_manager.h"
 #include "http_client.h"
 #include "nuraft/nuraft_http_runtime.h"
+#include "natural_language_search_model_manager.h"
+#include "personalization_model_manager.h"
+#include "ratelimit_manager.h"
+#include "stemmer_manager.h"
 #include "store.h"
+#include "stopwords_manager.h"
+#include "synonym_index_manager.h"
 #include "threadpool.h"
 #include "typesense_server_utils.h"
 #include "tsconfig.h"
@@ -23,7 +32,7 @@ namespace {
 
 std::string runtime_usage(const char* program_name) {
     const std::string binary_name = (program_name == nullptr || std::string(program_name).empty()) ?
-                                    "typesense-server-nuraft-runtime" :
+                                    "typesense-server" :
                                     std::string(program_name);
     return "usage: " + binary_name + " --data-dir <dir> [options]\n"
            "options:\n"
@@ -182,6 +191,9 @@ int main(int argc, char** argv) {
     config.set_data_dir(options.startup_options.data_dir);
     config.set_listen_address(options.listen_address);
     config.set_listen_port(static_cast<int>(options.listen_port));
+    config.set_enable_search_analytics(true);
+    config.set_analytics_dir(options.startup_options.data_dir + "/analytics_db");
+    config.set_analytics_minute_rate_limit(1000);
 
     curl_global_init(CURL_GLOBAL_SSL);
     HttpClient::get_instance().init(options.api_key);
@@ -191,7 +203,14 @@ int main(int argc, char** argv) {
     ThreadPool server_thread_pool(4);
     std::filesystem::create_directories(options.startup_options.data_dir);
     std::filesystem::create_directories(options.startup_options.data_dir + "/db");
+    std::filesystem::create_directories(config.get_analytics_dir());
+    std::filesystem::create_directories(config.get_analytics_dir() + "/db");
     Store store(options.startup_options.data_dir + "/db", 24 * 60 * 60, 1024, true, 0);
+    auto analytics_store = std::make_unique<Store>(config.get_analytics_dir() + "/db",
+                                                   24 * 60 * 60,
+                                                   1024,
+                                                   true,
+                                                   config.get_analytics_db_ttl());
     HttpServer http_server(
         TS_STRINGIFY(TYPESENSE_VERSION),
         options.listen_address,
@@ -217,9 +236,41 @@ int main(int argc, char** argv) {
                             config.get_api_key(),
                             quit_product_state,
                             config.get_filter_by_max_ops());
+    StopwordsManager::get_instance().init(&store);
+    StemmerManager::get_instance().init(&store);
+    SynonymIndexManager::get_instance().init_store(&store);
+    CurationIndexManager::get_instance().init_store(&store);
+    AnalyticsManager::get_instance().init(&store,
+                                          analytics_store.get(),
+                                          static_cast<uint32_t>(config.get_analytics_minute_rate_limit()));
+    const auto rate_limit_manager_init = RateLimitManager::getInstance()->init(&store);
+    if (!rate_limit_manager_init.ok()) {
+        TS_LOG(INFO) << "NuRaft runtime failed to initialize rate limit manager: "
+                     << rate_limit_manager_init.error();
+    }
+    static_cast<void>(ConversationModelManager::init(&store));
+    static_cast<void>(PersonalizationModelManager::init(&store));
+    static_cast<void>(NaturalLanguageSearchModelManager::init(&store));
+
+    const auto load_op = collection_manager.load(config.get_num_collections_parallel_load(),
+                                                 config.get_num_documents_parallel_load());
+    if (!load_op.ok()) {
+        collection_manager.dispose();
+        app_thread_pool.shutdown();
+        std::cerr << load_op.error() << "\n";
+        curl_global_cleanup();
+        return 1;
+    }
 
     NuRaftHttpRuntimeService runtime_service(&http_server, options);
     if (!runtime_service.initialize(error)) {
+        AnalyticsManager::get_instance().dispose();
+        NaturalLanguageSearchModelManager::dispose();
+        PersonalizationModelManager::dispose();
+        CurationIndexManager::get_instance().dispose();
+        SynonymIndexManager::get_instance().dispose();
+        StemmerManager::get_instance().dispose();
+        StopwordsManager::get_instance().dispose();
         collection_manager.dispose();
         app_thread_pool.shutdown();
         std::cerr << error << "\n";
@@ -227,9 +278,22 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    std::thread analytics_thread([&runtime_service]() {
+        AnalyticsManager::get_instance().run(&runtime_service);
+    });
     const int exit_code = http_server.run(&runtime_service);
     quit_product_state.store(true);
     server = nullptr;
+    AnalyticsManager::get_instance().stop();
+    if (analytics_thread.joinable()) {
+        analytics_thread.join();
+    }
+    NaturalLanguageSearchModelManager::dispose();
+    PersonalizationModelManager::dispose();
+    CurationIndexManager::get_instance().dispose();
+    SynonymIndexManager::get_instance().dispose();
+    StemmerManager::get_instance().dispose();
+    StopwordsManager::get_instance().dispose();
     collection_manager.dispose();
     app_thread_pool.shutdown();
     server_thread_pool.shutdown();

@@ -25,6 +25,13 @@
 
 namespace {
 
+constexpr const char* kBooksCollectionSchema = R"({
+  "name":"books",
+  "fields":[
+    {"name":"title","type":"string"}
+  ]
+})";
+
 uint32_t pick_free_port() {
     const int fd = socket(AF_INET, SOCK_STREAM, 0);
     EXPECT_NE(fd, -1);
@@ -55,8 +62,8 @@ public:
         stop();
         options_ = options;
         const std::string binary_path = resolve_test_path({
-            "bazel-bin/typesense-server-nuraft-runtime",
-            "typesense-server-nuraft-runtime",
+            "bazel-bin/typesense-server",
+            "typesense-server",
         });
         log_path_ = (std::filesystem::path(options_.startup_options.data_dir) / "runtime.log").string();
 
@@ -236,13 +243,13 @@ TEST_F(NuRaftHttpRuntimeTest, PersistsHttpWritesAcrossRestartAndSnapshot) {
     std::map<std::string, std::string> headers;
     ASSERT_EQ(201,
               HttpClient::post_response(node1_.base_url() + "/collections",
-                                        R"({"name":"books"})",
+                                        kBooksCollectionSchema,
                                         response,
                                         headers,
                                         {},
                                         2000,
                                         true));
-    EXPECT_TRUE(parse_json(response)["success"].get<bool>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ("books", parse_json(response)["name"].get<std::string>()) << "runtime log: " << node1_.log_path();
 
     response.clear();
     headers.clear();
@@ -254,7 +261,8 @@ TEST_F(NuRaftHttpRuntimeTest, PersistsHttpWritesAcrossRestartAndSnapshot) {
                                         {},
                                         2000,
                                         true));
-    EXPECT_TRUE(parse_json(response)["success"].get<bool>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ("1", parse_json(response)["id"].get<std::string>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ("Dune", parse_json(response)["title"].get<std::string>()) << "runtime log: " << node1_.log_path();
 
     response.clear();
     headers.clear();
@@ -332,12 +340,16 @@ TEST_F(NuRaftHttpRuntimeTest, InstallsSnapshotIntoFreshHttpRuntimeNode) {
     std::map<std::string, std::string> headers;
     ASSERT_EQ(201,
               HttpClient::post_response(node1_.base_url() + "/collections",
-                                        R"({"name":"books"})",
+                                        kBooksCollectionSchema,
                                         response,
                                         headers,
                                         {},
                                         2000,
                                         true));
+    EXPECT_EQ("books", parse_json(response)["name"].get<std::string>()) << "runtime log: " << node1_.log_path();
+
+    response.clear();
+    headers.clear();
     ASSERT_EQ(201,
               HttpClient::post_response(node1_.base_url() + "/collections/books/documents",
                                         R"({"id":"9","title":"Hyperion"})",
@@ -346,6 +358,7 @@ TEST_F(NuRaftHttpRuntimeTest, InstallsSnapshotIntoFreshHttpRuntimeNode) {
                                         {},
                                         2000,
                                         true));
+    EXPECT_EQ("9", parse_json(response)["id"].get<std::string>()) << "runtime log: " << node1_.log_path();
 
     response.clear();
     headers.clear();
