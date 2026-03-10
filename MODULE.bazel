@@ -193,6 +193,9 @@ new_git_repository(
     build_file = "//bazel/h2o:BUILD",
     commit = "725e54bc932fbe0c6e208db4e71eb1df79ec43ff",
     patches = ["//bazel/h2o:h2o_725e54bc932fbe0c6e208db4e71eb1df79ec43ff.patch"],
+    patch_cmds = [
+        "rm -f deps/brotli/BUILD deps/brotli/go/cbrotli/BUILD deps/brotli/java/org/brotli/dec/BUILD deps/brotli/java/org/brotli/integration/BUILD deps/brotli/java/org/brotli/wrapper/common/BUILD deps/brotli/java/org/brotli/wrapper/dec/BUILD deps/brotli/java/org/brotli/wrapper/enc/BUILD deps/brotli/js/BUILD deps/brotli/research/BUILD",
+    ],
     remote = "https://github.com/h2o/h2o.git",
 )
 
