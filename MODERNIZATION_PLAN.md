@@ -226,6 +226,7 @@ Build a deliberate next-wave upgrade shortlist instead of bumping opportunistica
   - `libarchive` `3.7.7` -> `3.8.x` for packaging/security posture. *(Now in progress on `3.8.5`.)*
   - `snappy` `1.1.7` -> `1.2.x` for compiler/perf hygiene. *(Now done on `1.2.2`.)*
   - `typesense-js` in `tests/` `2.0.3` -> `3.0.2` is now done to match the benchmark toolchain client line; `pnpm exec tsc --noEmit` passes in `tests/` after the bump.
+  - `abseil-cpp` `20250814.1` -> `20260107.1` attempted but **blocked by ORT ABI mismatch**: ORT internally builds `re2` against its own fetched abseil (lts_20250814), so linking fails when the external abseil uses a different LTS namespace tag. Fix requires injecting external abseil into ORT's CMake build (same pattern as the protobuf injection in `onnxruntime.patch`). Defer until ORT's abseil injection is implemented.
 - [ ] Keep treating patch-debt reduction as at least as important as raw version bumps; some deps (for example `whisper.cpp`, `h2o`) matter more because of maintenance surface than because they are numerically old.
 
 ### 7d) NuRaft cutover record and hardening lane
