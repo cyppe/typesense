@@ -395,6 +395,11 @@ This section is now partly archival. The feasibility sprint is over on this bran
   - TEI/embedding suites with the required model/service env,
   - secret-gated conversation flows.
 - [ ] Keep historical benchmark evidence archived in `benchmark/BENCHMARK_RESULTS.md`, but validate future runtime optimizations on the NuRaft-only server with the active benchmark profiles instead of resurrecting the old side-by-side lanes.
+- [ ] **Expose NuRaft configuration as CLI args and ENV overrides.** Currently all NuRaft `raft_params` values are hardcoded in `initialize_raft_server()` (e.g., `heart_beat_interval_=100`, `election_timeout_lower_bound_=200`, `election_timeout_upper_bound_=400`, `snapshot_distance_=5`, `reserved_log_items_=5`, `client_req_timeout_=3000`, `auto_forwarding_req_timeout_=5000`, `leadership_expiry_=0`). Tasks:
+  1. Research production-sensible defaults for each NuRaft param (heartbeat, election timeouts, snapshot distance, reserved log items, client timeout, leadership expiry, auto-forwarding timeout, max append size, log gap threshold, etc.).
+  2. Add each as a `--nuraft-*` CLI argument and `TYPESENSE_NURAFT_*` env variable, following the existing pattern used for RocksDB and Typesense-specific settings.
+  3. Set `leadership_expiry_` to a non-zero production default (e.g., 5000ms) to prevent stale leaders in network partitions.
+  4. Document all NuRaft tunables in the same style as existing server config documentation.
 
 **Story F - Decision record**
 
