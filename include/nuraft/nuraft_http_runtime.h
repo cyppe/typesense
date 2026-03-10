@@ -7,6 +7,7 @@
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
 #include <vector>
 
@@ -87,6 +88,7 @@ private:
                                    std::string& error) const;
     void update_single_node_document_cache(const http_req& request, NuRaftRouteKind route_kind);
     void invalidate_single_node_collection_cache(const std::string& collection);
+    bool prefers_materialized_reads(const std::string& collection) const;
     void send_response(const std::shared_ptr<http_req>& request,
                        const std::shared_ptr<http_res>& response) const;
 
@@ -104,6 +106,8 @@ private:
     mutable std::unique_ptr<NuRaftKvStateMachineSink> materialized_state_sink_;
     mutable std::shared_mutex document_cache_mutex_;
     mutable std::unordered_map<std::string, std::string> document_cache_;
+    mutable std::shared_mutex read_preference_mutex_;
+    mutable std::unordered_set<std::string> materialized_read_preferred_collections_;
     mutable std::mutex mutex_;
 };
 

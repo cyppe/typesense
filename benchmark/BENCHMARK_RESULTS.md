@@ -7,6 +7,40 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 22: Repeated Runtime Contention After Bounded Live Typesense-State Mirror (`braft` runtime vs NuRaft runtime, 2026-03-10)
+
+**Commit:** `HEAD` at run time
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-runtime-contention --duration 5s --docs 100 --reader-threads 2 --repeats 3`
+**Scenario:** same repeated contention lane as Run 21, but the single-node NuRaft runtime now bootstraps a minimal `CollectionManager`/`Store` stack, mirrors valid-schema CRUD writes into that live Typesense state, and prefers live reads for collections that stay on the mirrored subset.
+**Artifacts:** `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260310-104653`
+
+### Aggregated Results
+
+| Measure | `braft` runtime | NuRaft runtime |
+|---|---:|---:|
+| Writes completed (median of 3) | `2,872` | `3,022` |
+| Reads completed (median of 3) | `40,646` | `7,853` |
+| Write p50 / p95 | `0.99 / 1.65 ms` | `1.50 / 1.80 ms` |
+| Read p50 / p95 | `0.21 / 0.49 ms` | `1.40 / 1.68 ms` |
+| Process CPU | `3,010 ms` | `950 ms` |
+| Peak RSS | `256,468 KB` | `71,356 KB` |
+| NuRaft / `braft` write ratio |  | `1.05x` |
+| NuRaft / `braft` read ratio |  | `0.19x` |
+
+### Interpretation
+
+- The bounded live-state mirror kept the write-side result roughly where Run 21 already had it: near parity or slightly ahead on median completed writes.
+- It did **not** materially close the steady-state read gap. Even after preferring live Typesense state for the contention collection, NuRaft still reached only about `19%` of `braft` read throughput in this lane.
+- That is a useful negative result. It means the remaining read deficit is not explained only by the earlier prototype RocksDB materialized-view read path.
+
+### Decision
+
+- Do **not** remove `braft` yet.
+- Do continue NuRaft only if the next work is explicitly aimed at explaining or closing the live read-path gap.
+- The replacement question is now much tighter: recovery is better, bounded API replay is better, writes are close enough, but reads are still the main unresolved reason `braft` remains safer today.
+
+---
+
 ## Run 21: Repeated Raft Runtime Contention Median After Read-Mostly Cache Cleanup (`braft` runtime vs NuRaft runtime, 2026-03-10)
 
 **Commit:** `HEAD` at run time

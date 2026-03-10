@@ -6,6 +6,7 @@
 
 #include "core_api.h"
 #include "json.hpp"
+#include "collection_manager.h"
 #include "nuraft/nuraft_request_journal.h"
 #include "nuraft/nuraft_route_classifier.h"
 #include "nuraft/nuraft_snapshot_coordinator.h"
@@ -158,6 +159,28 @@ bool create_snapshot_response(const std::shared_ptr<http_req>& request, const st
     return true;
 }
 
+bool apply_typesense_write_handler(const std::shared_ptr<http_req>& request,
+                                   bool (*handler)(const std::shared_ptr<http_req>&,
+                                                   const std::shared_ptr<http_res>&),
+                                   std::string& error) {
+    auto response = std::make_shared<http_res>(nullptr);
+    if (handler(request, response)) {
+        error.clear();
+        return true;
+    }
+
+    if (!response->body.empty()) {
+        error = response->body;
+    } else if (response->status_code != 0) {
+        error = std::string("Typesense state mirror failed with HTTP ") +
+                std::to_string(response->status_code) + " " +
+                http_res::get_status_reason(response->status_code);
+    } else {
+        error = "Typesense state mirror failed without a response body";
+    }
+    return false;
+}
+
 bool vote_response(const std::shared_ptr<http_req>& request, const std::shared_ptr<http_res>& response) {
     static_cast<void>(request);
     NuRaftHttpRuntimeService* runtime = current_runtime_service();
@@ -293,6 +316,29 @@ bool NuRaftHttpRuntimeService::cache_enabled() const {
     return options_.cluster_data_dirs.empty() && materialized_state_sink_ != nullptr;
 }
 
+bool mirror_single_node_typesense_state(const std::shared_ptr<http_req>& request,
+                                        NuRaftRouteKind route_kind,
+                                        std::string& error) {
+    switch (route_kind) {
+        case NuRaftRouteKind::kCollectionCreate:
+            return apply_typesense_write_handler(request, post_create_collection, error);
+        case NuRaftRouteKind::kCollectionDrop:
+            return apply_typesense_write_handler(request, del_drop_collection, error);
+        case NuRaftRouteKind::kDocumentWrite:
+            if (request->http_method == "PATCH") {
+                return apply_typesense_write_handler(request, patch_update_document, error);
+            }
+            return apply_typesense_write_handler(request, post_add_document, error);
+        case NuRaftRouteKind::kDocumentDelete:
+            return apply_typesense_write_handler(request, del_remove_document, error);
+        case NuRaftRouteKind::kDocumentImport:
+            return apply_typesense_write_handler(request, post_import_documents, error);
+        default:
+            error.clear();
+            return true;
+    }
+}
+
 bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!NuRaftStateInitializer::initialize(options_.startup_options, identity_, bootstrap_config_, error)) {
@@ -360,6 +406,10 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     {
         std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
         document_cache_.clear();
+    }
+    {
+        std::unique_lock<std::shared_mutex> preference_lock(read_preference_mutex_);
+        materialized_read_preferred_collections_.clear();
     }
 
     initialized_.store(true);
@@ -547,6 +597,11 @@ void NuRaftHttpRuntimeService::invalidate_single_node_collection_cache(const std
     }
 }
 
+bool NuRaftHttpRuntimeService::prefers_materialized_reads(const std::string& collection) const {
+    std::shared_lock<std::shared_mutex> preference_lock(read_preference_mutex_);
+    return materialized_read_preferred_collections_.find(collection) != materialized_read_preferred_collections_.end();
+}
+
 void NuRaftHttpRuntimeService::update_single_node_document_cache(const http_req& request,
                                                                  NuRaftRouteKind route_kind) {
     if (!cache_enabled()) {
@@ -561,11 +616,15 @@ void NuRaftHttpRuntimeService::update_single_node_document_cache(const http_req&
 
     if (route_kind == NuRaftRouteKind::kCollectionDrop) {
         invalidate_single_node_collection_cache(collection);
+        std::unique_lock<std::shared_mutex> preference_lock(read_preference_mutex_);
+        materialized_read_preferred_collections_.erase(collection);
         return;
     }
 
     if (route_kind == NuRaftRouteKind::kDocumentImport) {
         invalidate_single_node_collection_cache(collection);
+        std::unique_lock<std::shared_mutex> preference_lock(read_preference_mutex_);
+        materialized_read_preferred_collections_.insert(collection);
         return;
     }
 
@@ -691,6 +750,11 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         response->set_500(error);
         send_response(request, response);
         return;
+    }
+
+    if (options_.cluster_data_dirs.empty() && !mirror_single_node_typesense_state(request, route_kind, error)) {
+        TS_LOG(WARNING) << "NuRaft runtime skipped live Typesense state mirror: " << error;
+        error.clear();
     }
 
     update_single_node_document_cache(*request, route_kind);
@@ -932,6 +996,15 @@ bool NuRaftHttpRuntimeService::read_collection(const std::string& collection,
                                                std::string& encoded,
                                                std::string& error) const {
     encoded.clear();
+    if (options_.cluster_data_dirs.empty() && !prefers_materialized_reads(collection)) {
+        auto live_collection = CollectionManager::get_instance().get_collection(collection);
+        if (live_collection != nullptr) {
+            encoded = live_collection->get_summary_json().dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore);
+            error.clear();
+            return true;
+        }
+    }
+
     const std::string key = std::string(kCollectionPrefix) + collection;
     bool found = false;
     if (!read_materialized_value(key, encoded, found, error)) {
@@ -960,6 +1033,22 @@ bool NuRaftHttpRuntimeService::read_document(const std::string& collection,
                                              std::string& encoded,
                                              std::string& error) const {
     encoded.clear();
+    if (options_.cluster_data_dirs.empty() && !prefers_materialized_reads(collection)) {
+        auto live_collection = CollectionManager::get_instance().get_collection(collection);
+        if (live_collection != nullptr) {
+            Option<nlohmann::json> live_document = live_collection->get(document_id);
+            if (live_document.ok()) {
+                encoded = live_document.get().dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore);
+                error.clear();
+                return true;
+            }
+            if (live_document.code() != 404) {
+                error = live_document.error();
+                return false;
+            }
+        }
+    }
+
     const std::string key = document_materialized_key(collection, document_id);
     if (cache_enabled()) {
         std::shared_lock<std::shared_mutex> cache_lock(document_cache_mutex_);

@@ -1,5 +1,6 @@
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <limits>
 #include <set>
@@ -7,8 +8,10 @@
 
 #include <curl/curl.h>
 
+#include "collection_manager.h"
 #include "http_client.h"
 #include "nuraft/nuraft_http_runtime.h"
+#include "store.h"
 #include "threadpool.h"
 #include "typesense_server_utils.h"
 #include "tsconfig.h"
@@ -183,7 +186,12 @@ int main(int argc, char** argv) {
     curl_global_init(CURL_GLOBAL_SSL);
     HttpClient::get_instance().init(options.api_key);
 
+    std::atomic<bool> quit_product_state(false);
+    ThreadPool app_thread_pool(4);
     ThreadPool server_thread_pool(4);
+    std::filesystem::create_directories(options.startup_options.data_dir);
+    std::filesystem::create_directories(options.startup_options.data_dir + "/db");
+    Store store(options.startup_options.data_dir + "/db", 24 * 60 * 60, 1024, true, 0);
     HttpServer http_server(
         TS_STRINGIFY(TYPESENSE_VERSION),
         options.listen_address,
@@ -202,15 +210,28 @@ int main(int argc, char** argv) {
     http_server.on(HttpServer::DEFER_PROCESSING_MESSAGE, HttpServer::on_deferred_processing_message);
     register_nuraft_http_runtime_routes(&http_server);
 
+    CollectionManager& collection_manager = CollectionManager::get_instance();
+    collection_manager.init(&store,
+                            &app_thread_pool,
+                            config.get_max_memory_ratio(),
+                            config.get_api_key(),
+                            quit_product_state,
+                            config.get_filter_by_max_ops());
+
     NuRaftHttpRuntimeService runtime_service(&http_server, options);
     if (!runtime_service.initialize(error)) {
+        collection_manager.dispose();
+        app_thread_pool.shutdown();
         std::cerr << error << "\n";
         curl_global_cleanup();
         return 1;
     }
 
     const int exit_code = http_server.run(&runtime_service);
+    quit_product_state.store(true);
     server = nullptr;
+    collection_manager.dispose();
+    app_thread_pool.shutdown();
     server_thread_pool.shutdown();
     curl_global_cleanup();
     return exit_code;
