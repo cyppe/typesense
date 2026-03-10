@@ -389,10 +389,7 @@ This section is now partly archival. The feasibility sprint is over on this bran
 - [ ] Expand the real runtime/API surface beyond the current bounded CRUD/snapshot lane now that the benchmark viability question is no longer the main blocker.
 - [ ] Revisit the current synchronous write/snapshot HTTP path and restore an async design only once completion/error handling is well-specified.
 - [ ] Add import-streaming and long-running response parity only after the steady-state read/write contention gap is meaningfully smaller.
-- [ ] Audit the central NuRaft route table against the old Typesense surface and group the remaining uncovered families into durable tasks:
-  - admin/config metadata routes (`aliases`, `keys`, `presets`, `stopwords`, rate limits, config);
-  - AI/runtime model routes (`conversations`, `personalization`, `nl_search_models`);
-  - proxy/streaming and other long-running handlers.
+- [x] Audit the central NuRaft route table against the old Typesense surface. *(Done Mar 2026: all 119 HTTP endpoints from `core_api.h` are registered in `register_nuraft_http_runtime_routes()`. Zero gaps found — aliases, keys, presets, stopwords, rate limits, config, conversations, personalization, nl_search_models, proxy/streaming all present.)*
 - [ ] Once the no-secrets wrapper is green, rerun the env-dependent suites with the correct setup instead of leaving them as “not yet tried”:
   - migration replay with a legacy binary,
   - TEI/embedding suites with the required model/service env,
