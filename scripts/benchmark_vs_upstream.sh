@@ -20,6 +20,7 @@ POST_SNAPSHOT_DOCS="50"
 SNAPSHOT_ROUNDS="3"
 OUTAGE_SLEEP_SECONDS="22"
 REPEATS="2"
+WRITER_THREADS="1"
 READER_THREADS="2"
 
 usage() {
@@ -57,6 +58,7 @@ Options:
   --snapshot-rounds N      Outage rounds / snapshot attempts for raft-recovery (default: 3)
   --outage-sleep SEC       Seconds to sleep between raft-recovery rounds (default: 22)
   --repeats N              Number of repeats for raft-recovery and raft-runtime-contention (default: 2)
+  --writer-threads N       Concurrent document writers for raft-runtime-contention (default: 1)
   --reader-threads N       Concurrent document readers for raft-runtime-contention (default: 2)
   --no-flush               Keep existing InfluxDB data for trend analysis
   --server-args ...        Extra args passed through to typesense-server
@@ -71,7 +73,7 @@ Examples:
   scripts/benchmark_vs_upstream.sh --profile write-stress --server-args --max-indexing-concurrency=16
   scripts/benchmark_vs_upstream.sh --build --profile raft-recovery --docs 200 --post-snapshot-docs 50 --snapshot-rounds 3
   scripts/benchmark_vs_upstream.sh --build --profile raft-api-replay
-  scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 10s --docs 200 --reader-threads 2 --repeats 3
+  scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 10s --docs 200 --writer-threads 1 --reader-threads 2 --repeats 3
   scripts/benchmark_vs_upstream.sh --baseline-binary ./base/typesense-server --baseline-label abc123 \
     --fork-binary ./head/typesense-server --fork-label def456 --duration 1m --no-flush
 EOF
@@ -151,9 +153,13 @@ while [[ $# -gt 0 ]]; do
 		READER_THREADS="$2"
 		shift 2
 		;;
+	--writer-threads)
+		WRITER_THREADS="$2"
+		shift 2
+		;;
 	--server-args)
 		shift
-		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "--docs" && "$1" != "--post-snapshot-docs" && "$1" != "--snapshot-rounds" && "$1" != "--outage-sleep" && "$1" != "--repeats" && "$1" != "--reader-threads" && "$1" != "-h" && "$1" != "--help" ]]; do
+		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "--docs" && "$1" != "--post-snapshot-docs" && "$1" != "--snapshot-rounds" && "$1" != "--outage-sleep" && "$1" != "--repeats" && "$1" != "--writer-threads" && "$1" != "--reader-threads" && "$1" != "-h" && "$1" != "--help" ]]; do
 			SERVER_ARGS+=("$1")
 			shift
 		done
@@ -411,6 +417,7 @@ if [[ "${PROFILE}" == "raft-runtime-contention" ]]; then
 		--nuraft-binary "${REPO_DIR}/bazel-bin/typesense-server-nuraft-runtime"
 		--duration-seconds "${DURATION%s}"
 		--preload-docs "${DOCS}"
+		--writer-threads "${WRITER_THREADS}"
 		--reader-threads "${READER_THREADS}"
 		--repeats "${REPEATS}"
 		--output "${RESULT_PATH}"
@@ -441,6 +448,8 @@ print(f"Run root: {data['run_root']}")
 print(f"JSON:     {sys.argv[1]}")
 print("")
 print(f"Repeat count: {braft['repeat_count']}")
+print(f"Writer threads: {braft['writer_threads']}")
+print(f"Reader threads: {braft['reader_threads']}")
 print("")
 print("| Measure | braft runtime | NuRaft runtime |")
 print("|---|---:|---:|")

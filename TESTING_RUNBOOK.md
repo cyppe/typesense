@@ -188,9 +188,16 @@ This mode runs the same `scripts/run_api_tests.sh` replay files against `//:type
 Use this when you need one canonical command for steady-state document read/write pressure on the currently implemented runtime surfaces.
 
 ```bash
-scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --reader-threads 2 --repeats 3
+scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 1 --reader-threads 2 --repeats 3
 ```
 
-This mode runs the live `//:typesense-server` and `//:typesense-server-nuraft-runtime` binaries directly, preloads a bounded collection, then measures one writer plus configurable document readers against preloaded document ids. It repeats the full comparison `--repeats` times and reports median totals/latencies in `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`.
+This mode runs the live `//:typesense-server` and `//:typesense-server-nuraft-runtime` binaries directly, preloads a bounded collection, then measures configurable document writers plus configurable document readers against preloaded document ids. It repeats the full comparison `--repeats` times and reports median totals/latencies in `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`.
+
+Useful isolation variants:
+
+```bash
+scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 0 --reader-threads 2 --repeats 3
+scripts/benchmark_vs_upstream.sh --build --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 1 --reader-threads 0 --repeats 3
+```
 
 Treat this as bounded runtime contention on currently implemented document CRUD surfaces, not as full product parity. It intentionally does not use the temporary NuRaft search path, because that path is still a simplified compatibility shim rather than decision-grade search behavior.

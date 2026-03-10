@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nuraft-binary", required=True, help="Path to the NuRaft runtime binary")
     parser.add_argument("--duration-seconds", type=float, default=10.0, help="Benchmark duration per runtime")
     parser.add_argument("--preload-docs", type=int, default=200, help="Number of docs to pre-create")
+    parser.add_argument("--writer-threads", type=int, default=1, help="Concurrent document writers")
     parser.add_argument("--reader-threads", type=int, default=2, help="Concurrent document-read threads")
     parser.add_argument("--repeats", type=int, default=1, help="Number of repeated contention runs to aggregate")
     parser.add_argument("--output", required=True, help="Path to write JSON results")
@@ -151,6 +152,7 @@ def run_contention(label: str,
                    work_dir: Path,
                    duration_seconds: float,
                    preload_docs: int,
+                   writer_threads: int,
                    reader_threads: int) -> dict[str, Any]:
     data_dir = work_dir / f"{label}-data"
     shutil.rmtree(data_dir, ignore_errors=True)
@@ -231,7 +233,8 @@ def run_contention(label: str,
                         errors.append(f"reader:{exc}")
                     stop_event.set()
 
-        threads = [threading.Thread(target=rss_sampler, daemon=True), threading.Thread(target=writer, daemon=True)]
+        threads = [threading.Thread(target=rss_sampler, daemon=True)]
+        threads.extend(threading.Thread(target=writer, daemon=True) for _ in range(writer_threads))
         threads.extend(threading.Thread(target=reader, daemon=True) for _ in range(reader_threads))
         for thread in threads:
             thread.start()
@@ -246,6 +249,7 @@ def run_contention(label: str,
             "label": label,
             "duration_seconds": duration_seconds,
             "preload_docs": preload_docs,
+            "writer_threads": writer_threads,
             "reader_threads": reader_threads,
             "writes_completed": len(writer_latencies),
             "reads_completed": len(reader_latencies),
@@ -279,6 +283,7 @@ def aggregate_results(label: str, runs: list[dict[str, Any]]) -> dict[str, Any]:
         "repeat_count": len(runs),
         "duration_seconds": runs[0]["duration_seconds"],
         "preload_docs": runs[0]["preload_docs"],
+        "writer_threads": runs[0]["writer_threads"],
         "reader_threads": runs[0]["reader_threads"],
         "writes_completed": int(round(med("writes_completed"))),
         "reads_completed": int(round(med("reads_completed"))),
@@ -307,8 +312,10 @@ def main() -> int:
     for repeat in range(args.repeats):
         repeat_root = run_root / f"repeat-{repeat + 1}"
         repeat_root.mkdir(parents=True, exist_ok=True)
-        braft = run_contention("braft", args.braft_binary, repeat_root, args.duration_seconds, args.preload_docs, args.reader_threads)
-        nuraft = run_contention("nuraft-runtime", args.nuraft_binary, repeat_root, args.duration_seconds, args.preload_docs, args.reader_threads)
+        braft = run_contention("braft", args.braft_binary, repeat_root, args.duration_seconds, args.preload_docs,
+                               args.writer_threads, args.reader_threads)
+        nuraft = run_contention("nuraft-runtime", args.nuraft_binary, repeat_root, args.duration_seconds,
+                                args.preload_docs, args.writer_threads, args.reader_threads)
         braft_runs.append(braft)
         nuraft_runs.append(nuraft)
         repeats.append(

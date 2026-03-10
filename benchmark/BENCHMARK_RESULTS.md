@@ -7,6 +7,68 @@ Tool: k6 via benchmark CLI, 30s per scenario
 
 ---
 
+## Run 24: Pure-Write Runtime Contention Isolation (`braft` runtime vs NuRaft runtime, 2026-03-10)
+
+**Commit:** `HEAD` at run time
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 1 --reader-threads 0 --repeats 3`
+**Scenario:** isolate sustained document-write pressure with no readers so the contention lane can distinguish raw write throughput from mixed read/write interference.
+**Artifacts:** `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260310-110607`
+
+### Aggregated Results
+
+| Measure | `braft` runtime | NuRaft runtime |
+|---|---:|---:|
+| Writes completed (median of 3) | `4,736` | `2,245` |
+| Write p50 / p95 | `0.97 / 1.35 ms` | `1.29 / 1.59 ms` |
+| Process CPU | `2,270 ms` | `600 ms` |
+| Peak RSS | `154,636 KB` | `69,832 KB` |
+| NuRaft / `braft` write ratio |  | `0.47x` |
+
+### Interpretation
+
+- Pure writes are still a real NuRaft bottleneck on the live runtime lane. The median run reached only about `47%` of `braft` write throughput here.
+- That changes the earlier story: the mixed contention gap is not primarily a raw read-path problem anymore. Pure reads already look healthy, but sustained write pressure still degrades the current NuRaft runtime enough to drag mixed read/write throughput down with it.
+- The lower CPU and RSS numbers show this is still more likely runtime-integration debt than a proof that the core NuRaft library cannot compete.
+
+### Decision
+
+- Do **not** remove `braft` yet.
+- Do continue NuRaft only if the next work is explicitly aimed at write-path interference, synchronous durability/response handling, and mixed contention behavior.
+- Stop describing the blocker as “the live read path” alone; the cleaner statement is “NuRaft still loses under sustained writes and therefore under mixed read/write pressure.”
+
+---
+
+## Run 23: Pure-Read Runtime Contention Isolation (`braft` runtime vs NuRaft runtime, 2026-03-10)
+
+**Commit:** `HEAD` at run time
+**Command:** `scripts/benchmark_vs_upstream.sh --profile raft-runtime-contention --duration 5s --docs 100 --writer-threads 0 --reader-threads 2 --repeats 3`
+**Scenario:** isolate steady-state document reads with no writers so the contention lane can distinguish raw read latency from mixed read/write interference.
+**Artifacts:** `~/.cache/typesense/benchmark/raft-runtime-contention-summary.json`, run root `/home/cyppe/.cache/typesense/benchmark/raft-runtime-contention-runs/20260310-105927`
+
+### Aggregated Results
+
+| Measure | `braft` runtime | NuRaft runtime |
+|---|---:|---:|
+| Reads completed (median of 3) | `53,928` | `57,204` |
+| Read p50 / p95 | `0.18 / 0.24 ms` | `0.17 / 0.23 ms` |
+| Process CPU | `1,450 ms` | `960 ms` |
+| Peak RSS | `163,408 KB` | `68,172 KB` |
+| NuRaft / `braft` read ratio |  | `1.06x` |
+
+### Interpretation
+
+- Pure reads are no longer the blocker on the bounded live runtime lane. NuRaft slightly beat `braft` on median completed reads and latency in this isolated run.
+- That is a useful narrowing result: the large mixed contention gap is not caused by an intrinsically slow document read path.
+- The remaining gap must therefore be explained by sustained write cost or read/write interference rather than standalone read lookup speed.
+
+### Decision
+
+- Do **not** remove `braft` yet.
+- Do continue NuRaft, because the old “NuRaft reads are just slow” explanation is no longer supported by the data.
+- Use pure-read and pure-write isolation alongside the mixed lane from here forward so contention regressions are easier to attribute.
+
+---
+
 ## Run 22: Repeated Runtime Contention After Bounded Live Typesense-State Mirror (`braft` runtime vs NuRaft runtime, 2026-03-10)
 
 **Commit:** `HEAD` at run time
@@ -30,14 +92,14 @@ Tool: k6 via benchmark CLI, 30s per scenario
 ### Interpretation
 
 - The bounded live-state mirror kept the write-side result roughly where Run 21 already had it: near parity or slightly ahead on median completed writes.
-- It did **not** materially close the steady-state read gap. Even after preferring live Typesense state for the contention collection, NuRaft still reached only about `19%` of `braft` read throughput in this lane.
-- That is a useful negative result. It means the remaining read deficit is not explained only by the earlier prototype RocksDB materialized-view read path.
+- It did **not** materially close the mixed-workload gap. Even after preferring live Typesense state for the contention collection, NuRaft still reached only about `19%` of `braft` read throughput in this lane.
+- Later pure-read isolation showed that standalone reads are already fine. The mixed deficit is therefore better explained by sustained write pressure and read/write interference than by the old prototype materialized-view read path alone.
 
 ### Decision
 
 - Do **not** remove `braft` yet.
-- Do continue NuRaft only if the next work is explicitly aimed at explaining or closing the live read-path gap.
-- The replacement question is now much tighter: recovery is better, bounded API replay is better, writes are close enough, but reads are still the main unresolved reason `braft` remains safer today.
+- Do continue NuRaft only if the next work is explicitly aimed at explaining or closing the sustained-write and mixed-interference gap.
+- The replacement question is now much tighter: recovery is better, bounded API replay is better, pure reads are already fine, but sustained writes and mixed contention are still the main unresolved reason `braft` remains safer today.
 
 ---
 

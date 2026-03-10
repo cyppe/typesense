@@ -23,4 +23,5 @@ typesense-data
 /hf_cache/
 /typesense-server-binary/
 /typesense-runtime-bundle/
+__pycache__/
 /api_tests/tmp/
