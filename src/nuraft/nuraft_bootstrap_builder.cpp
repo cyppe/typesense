@@ -20,7 +20,7 @@ bool build_single_node_config(const std::string& local_host,
 
     config = NuRaftBootstrapConfig();
     config.self = {local_host, peer_port, api_port};
-    config.peers = {config.self};
+    config.peers.clear();
     config.api_uses_ssl = api_uses_ssl;
     error.clear();
     return true;
@@ -57,10 +57,11 @@ bool NuRaftBootstrapBuilder::build(const std::string& local_host,
             return false;
         }
 
-        built.peers.push_back(peer);
         if (peer.api_port == api_port) {
             built.self = peer;
             found_self = true;
+        } else {
+            built.peers.push_back(peer);
         }
     }
 

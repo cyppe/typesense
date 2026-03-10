@@ -11,8 +11,7 @@ TEST(NuRaftBootstrapBuilderTest, BuildsSingleNodeConfigWhenNodesAreEmpty) {
 
     EXPECT_EQ(config.group_id, "default_group");
     EXPECT_EQ(config.self, (NuRaftPeerAddress{"127.0.0.1", 7107, 8108}));
-    ASSERT_EQ(config.peers.size(), 1u);
-    EXPECT_EQ(config.peers[0], config.self);
+    EXPECT_TRUE(config.peers.empty());
     EXPECT_FALSE(config.api_uses_ssl);
 }
 
@@ -28,8 +27,9 @@ TEST(NuRaftBootstrapBuilderTest, SelectsSelfFromExistingNodesConfig) {
                                               error)) << error;
 
     EXPECT_EQ(config.self, (NuRaftPeerAddress{"127.0.0.2", 7109, 8110}));
-    ASSERT_EQ(config.peers.size(), 3u);
-    EXPECT_EQ(config.peers[2], (NuRaftPeerAddress{"[2001:db8::1]", 7111, 8112}));
+    ASSERT_EQ(config.peers.size(), 2u);
+    EXPECT_EQ(config.peers[0], (NuRaftPeerAddress{"127.0.0.1", 7107, 8108}));
+    EXPECT_EQ(config.peers[1], (NuRaftPeerAddress{"[2001:db8::1]", 7111, 8112}));
     EXPECT_TRUE(config.api_uses_ssl);
 }
 

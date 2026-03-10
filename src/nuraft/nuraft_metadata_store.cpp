@@ -76,13 +76,9 @@ bool validate_bootstrap_config(const NuRaftBootstrapConfig& config, std::string&
         return false;
     }
 
-    if (config.peers.empty()) {
-        error = "NuRaft bootstrap config must include at least one peer";
-        return false;
-    }
-
+    // peers does not include self — it contains only remote nodes.
     std::set<int32_t> seen_server_ids;
-    bool found_self = false;
+    seen_server_ids.insert(config.self.server_id());
     for (const auto& peer : config.peers) {
         if (peer.host.empty() || peer.peer_port == 0 || peer.api_port == 0) {
             error = "NuRaft bootstrap config contains an incomplete peer address";
@@ -94,15 +90,6 @@ bool validate_bootstrap_config(const NuRaftBootstrapConfig& config, std::string&
             error = "NuRaft bootstrap config contains duplicate server ids";
             return false;
         }
-
-        if (peer == config.self) {
-            found_self = true;
-        }
-    }
-
-    if (!found_self) {
-        error = "NuRaft bootstrap config peer list must include self";
-        return false;
     }
 
     error.clear();

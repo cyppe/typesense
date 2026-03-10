@@ -298,13 +298,8 @@ bool get_runtime_document(const std::shared_ptr<http_req>& request, const std::s
         return true;
     }
 
-    const bool single_node = runtime->is_single_node_mode();
-    const bool has_live_collection = CollectionManager::get_instance().get_collection(collection_it->second) != nullptr;
-    TS_LOG(INFO) << "get_runtime_document: collection=" << collection_it->second
-                 << " id=" << id_it->second
-                 << " single_node=" << single_node
-                 << " has_live_collection=" << has_live_collection;
-    if (single_node && has_live_collection) {
+    if (runtime->is_single_node_mode() &&
+        CollectionManager::get_instance().get_collection(collection_it->second) != nullptr) {
         return get_fetch_document(request, response);
     }
 
@@ -645,12 +640,7 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     }
 
     if (!mirror_single_node_typesense_state(request, route_kind, error)) {
-        TS_LOG(WARNING) << "NuRaft runtime skipped live Typesense state mirror for "
-                        << request->http_method << " " << request->path_without_query
-                        << " route_kind=" << static_cast<int>(route_kind)
-                        << " body_size=" << request->body.size()
-                        << " body=[" << request->body.substr(0, 200) << "]"
-                        << ": " << error;
+        TS_LOG(WARNING) << "NuRaft runtime skipped live Typesense state mirror: " << error;
         error.clear();
     }
     if (committed_index > live_product_state_applied_index_) {
@@ -977,9 +967,13 @@ void NuRaftHttpRuntimeService::update_single_node_document_cache(const http_req&
     }
 
     if (route_kind == NuRaftRouteKind::kDocumentImport) {
+        // Invalidate per-document cache entries for this collection since an
+        // import may have changed many documents.  Do NOT mark the collection
+        // for materialized-state reads: imports containing $operations.increment
+        // are stored raw in the materialized KV store but are resolved into
+        // concrete field values by the live engine.  Preferring materialized
+        // reads after an import would return unresolved $operations directives.
         invalidate_single_node_collection_cache(collection);
-        std::unique_lock<std::shared_mutex> preference_lock(read_preference_mutex_);
-        materialized_read_preferred_collections_.insert(collection);
         return;
     }
 

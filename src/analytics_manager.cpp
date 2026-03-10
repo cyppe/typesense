@@ -16,28 +16,25 @@ void AnalyticsManager::persist_db_events(ReplicationService *raft_server, uint64
 
     auto update_counter_events = [&](const std::string& import_payload, const std::string& collection, const std::string& operation) {
         if (raft_server == nullptr) {
-            TS_LOG(WARNING) << "Analytics counter: raft_server is null, skipping update for " << collection;
             return;
         }
 
         std::string leader_url = raft_server->get_leader_url();
-        if (leader_url.empty()) {
-            TS_LOG(WARNING) << "Analytics counter: leader_url is empty, skipping update for " << collection;
-            return;
+        if (!leader_url.empty()) {
+            const std::string &base_url = leader_url + "collections/" + collection;
+            std::string res;
+
+            const std::string &update_url = base_url + "/documents/import?action=" + operation;
+            std::map<std::string, std::string> res_headers;
+            long status_code = HttpClient::post_response(update_url, import_payload,
+                                                         res, res_headers, {}, 10 * 1000, true);
+
+            if (status_code != 200) {
+                TS_LOG(ERROR) << "Error while sending update_counter_events to leader. "
+                           << "Collection: " << collection << ", operation: " << operation
+                           << " Status code: " << status_code << ", response: " << res;
+            }
         }
-
-        const std::string &base_url = leader_url + "collections/" + collection;
-        std::string res;
-
-        const std::string &update_url = base_url + "/documents/import?action=" + operation;
-        TS_LOG(INFO) << "Analytics counter: POST " << update_url
-                     << " payload=[" << import_payload << "]";
-        std::map<std::string, std::string> res_headers;
-        long status_code = HttpClient::post_response(update_url, import_payload,
-                                                     res, res_headers, {}, 10 * 1000, true);
-
-        TS_LOG(INFO) << "Analytics counter: status=" << status_code
-                     << " response=[" << res << "] for " << collection;
     };
 
     auto limit_to_top_k = [&](const std::string& collection, const uint32_t limit) {
