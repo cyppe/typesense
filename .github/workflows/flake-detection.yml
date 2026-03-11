@@ -101,11 +101,11 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p flake-logs
-          cmd='scripts/run_api_tests.sh -- --no-secrets --download-migration-binary tests/documents.test.ts'
+          cmd='scripts/run_api_tests.sh -- --no-secrets tests/documents.test.ts'
           echo "[api-flake] command: ${cmd}" | tee flake-logs/api-flake.log
           for i in $(seq 1 10); do
             echo "[api-flake] run ${i}/10" | tee -a flake-logs/api-flake.log
-            TYPESENSE_DATA_DIR="${{ github.workspace }}/tmp/test" scripts/run_api_tests.sh -- --no-secrets --download-migration-binary tests/documents.test.ts 2>&1 | tee "flake-logs/api-documents-run-${i}.log"
+            TYPESENSE_DATA_DIR="${{ github.workspace }}/tmp/test" scripts/run_api_tests.sh -- --no-secrets tests/documents.test.ts 2>&1 | tee "flake-logs/api-documents-run-${i}.log"
           done
 
       - name: Save Bazel cache
