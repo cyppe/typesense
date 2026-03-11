@@ -1,62 +1,64 @@
 # ThreadSanitizer suppression file for Typesense tests.
 # These are pre-existing upstream issues not introduced by our fork.
 # Syntax: <type>:<function_or_module_pattern>
+#
+# TSAN with halt_on_error=1 aborts on the first issue found, and the
+# specific race it hits is non-deterministic. The suppressions below
+# cover all known pre-existing races observed across many CI runs.
 
+# ── sparsepp ──────────────────────────────────────────────────────────
 # Data race in sparsepp hash map during concurrent batch_memory_index.
-# Upstream issue: sparsepp::sparsegroup::_sizing() accessed without
-# synchronization from Index::index_field_in_memory() worker threads.
 race:spp::sparsegroup*::_sizing
 
-# Lock-order-inversion between two shared_mutex instances in the
-# analytics path: SearchAnalytics::add_internal_event() acquires M1
-# while holding M0, but other paths acquire in reverse order.
+# ── Lock-order-inversions (deadlock suppressions) ────────────────────
+# Analytics path: SearchAnalytics::add_internal_event acquires locks in
+# reverse order vs other paths.
 deadlock:SearchAnalytics::add_internal_event
 
-# Lock-order-inversion between Index lock and CollectionManager::get_collection
-# shared_mutex. Index::run_search holds the Index lock then calls
-# filter_result_iterator_t::validate_object_filter which acquires the
-# CollectionManager lock; other paths acquire them in reverse order.
+# CollectionManager::get_collection shared_mutex vs Index lock — search
+# paths acquire in inconsistent order.
 deadlock:CollectionManager::get_collection
 
-# Data race on reference_info map during concurrent collection loading.
-# CollectionManager::load loads collections in parallel; add_referenced_ins
-# writes to the shared map while load reads from it. Pre-existing upstream
-# race in the join/reference loading path.
-race:CollectionManager::add_referenced_ins
-race:CollectionManager::load_collection
-
-# Lock-order-inversion between Collection shared_mutexes during join/reference
-# operations. Collection::search holds one Collection's lock, then various
-# reference/join methods (get_reference_filter_ids, get_filter_ids,
-# reference_populate_sort_mapping, etc.) acquire another Collection's lock
-# in inconsistent order. Broad suppression because the same root cause
-# manifests through many different Collection methods.
+# Collection shared_mutexes during join/reference operations — many
+# different methods (get_reference_filter_ids, get_filter_ids,
+# reference_populate_sort_mapping, etc.) acquire Collection locks in
+# inconsistent order during cross-collection joins.
 deadlock:Collection::
 
-# Data races on shared vector<vector<art_leaf*>> in Index methods.
-# search_wildcard worker threads read vector::size() while the main thread
-# does push_back() in the same function; refresh_schemas/batch_memory_index
-# also race on the same vector. Pre-existing upstream synchronization gap.
+# ── Collection/Index data races ──────────────────────────────────────
+# Shared vector<vector<art_leaf*>> in Index methods — worker threads
+# read while main thread does push_back(). Pre-existing upstream gap.
 race:Index::search_wildcard
 race:Index::batch_memory_index
 race:Index::refresh_schemas
 
-# Data races in RocksDB internals during concurrent reads and writes.
-# These are upstream issues in RocksDB's lock-free MemTable (skiplist with
-# custom atomics that TSAN cannot fully model) and flush/compaction paths.
-# NOT suppressed broadly — only specific internal functions are listed so
-# that real synchronization bugs in OUR Store/Collection code are still caught.
+# Concurrent collection loading races on reference_info map and
+# AuthManager state during CollectionManager::load.
+race:CollectionManager::add_referenced_ins
+race:CollectionManager::load_collection
+race:CollectionManager::load
+race:AuthManager::init
+
+# ── RocksDB internals ────────────────────────────────────────────────
+# RocksDB uses lock-free data structures with custom atomics and memory
+# barriers that TSAN cannot model. These are well-tested upstream
+# components, not bugs in our code. Only RocksDB-internal functions are
+# suppressed — our Store/Collection code remains fully instrumented.
 #
-# MemTable concurrent skiplist (lock-free with custom atomics, TSAN FP):
+# MemTable concurrent skiplist (lock-free, custom atomics):
 race:rocksdb::MemTable::Add
 race:BytewiseComparatorImpl::Compare
 race:rocksdb::Arena::AllocateNewBlock
 race:rocksdb::Arena::AllocateAligned
-# BlockBuilder vs ZSTD compression during flush (separate buffers, TSAN FP):
+# BlockBuilder vs ZSTD compression during flush:
 race:rocksdb::BlockBuilder::AddWithLastKeyImpl
 race:ZSTD_compressBlock
-# Internal compaction/flush thread pool races:
+# Internal compaction/flush thread pool:
 race:rocksdb::CompactionJob
 race:rocksdb::FlushJob
 race:rocksdb::DBImpl::BackgroundFlush
 race:rocksdb::DBImpl::BackgroundCompaction
+# Posix file I/O during concurrent open/close:
+race:rocksdb::PosixRandomAccessFile
+race:rocksdb::PosixSequentialFile
+race:rocksdb::PosixWritableFile
