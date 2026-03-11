@@ -14,6 +14,11 @@ race:spp::sparsegroup*::_sizing
 # Index::index_field_in_memory worker threads during addPoint/updatePoint.
 race:hnswlib::
 
+# ONNX Runtime — heap-use-after-free in CustomOpKernel destructor during
+# InferenceSession teardown. Pre-existing upstream bug in ONNX Runtime's
+# session cleanup for custom op extensions (CLIP model path).
+race:onnxruntime::
+
 # ── Lock-order-inversions (deadlock suppressions) ────────────────────
 # Analytics path: SearchAnalytics::add_internal_event acquires locks in
 # reverse order vs other paths.
