@@ -29,7 +29,7 @@ Defaults:
   - Forces IPv4 API health checks via TYPESENSE_API_HOST=127.0.0.1
 
 Examples:
-  scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
+  scripts/run_api_tests.sh -- --no-secrets
   scripts/run_api_tests.sh -- tests/health.test.ts
   scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/nuraft_runtime_smoke.test.ts
   scripts/run_api_tests.sh --runtime-bundle-dir ./typesense-server-binary -- --no-secrets

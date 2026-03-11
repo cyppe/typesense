@@ -191,14 +191,6 @@ export class TypesenseTestRunner {
     return cwdResolved;
   }
 
-  private async ensureNoPhasePorts() {
-    if (!process.env.TYPESENSE_MIGRATION_SOURCE_API_PORT || !process.env.TYPESENSE_MIGRATION_SOURCE_PEERING_PORT) {
-      const [apiPort, peeringPort] = await TypesenseProcessManager.findFreePorts(2);
-      process.env.TYPESENSE_MIGRATION_SOURCE_API_PORT = process.env.TYPESENSE_MIGRATION_SOURCE_API_PORT ?? `${apiPort}`;
-      process.env.TYPESENSE_MIGRATION_SOURCE_PEERING_PORT = process.env.TYPESENSE_MIGRATION_SOURCE_PEERING_PORT ?? `${peeringPort}`;
-    }
-  }
-
   private buildTestEnv(): Record<string, string> {
     const inheritedEnv: Record<string, string> = {};
     for (const [key, value] of Object.entries(process.env)) {
@@ -254,7 +246,7 @@ export class TypesenseTestRunner {
       return;
     }
 
-    await this.ensureNoPhasePorts();
+    // Migration port allocation removed — NuRaft server cannot load braft-era state.
     console.log(`\n=== ⭐ Running phase: ${Phases.NO_PHASE} ===\n`);
     const pattern = this.getTestNamePattern(Phases.NO_PHASE, filters);
     const proc = this.runPhaseTests(pattern, testFile);
