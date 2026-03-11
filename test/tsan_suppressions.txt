@@ -25,3 +25,21 @@ deadlock:CollectionManager::get_collection
 race:Index::search_wildcard
 race:Index::batch_memory_index
 race:Index::refresh_schemas
+
+# Data races in RocksDB internals during concurrent reads and writes.
+# These are upstream issues in RocksDB's lock-free MemTable (skiplist with
+# custom atomics that TSAN cannot fully model) and flush/compaction paths.
+# NOT suppressed broadly — only specific internal functions are listed so
+# that real synchronization bugs in OUR Store/Collection code are still caught.
+#
+# Arena allocation vs concurrent MemTable reads (lock-free skiplist):
+race:rocksdb::Arena::AllocateNewBlock
+race:rocksdb::Arena::AllocateAligned
+# BlockBuilder vs ZSTD compression during flush (separate buffers, TSAN FP):
+race:rocksdb::BlockBuilder::AddWithLastKeyImpl
+race:ZSTD_compressBlock
+# Internal compaction/flush thread pool races:
+race:rocksdb::CompactionJob
+race:rocksdb::FlushJob
+race:rocksdb::DBImpl::BackgroundFlush
+race:rocksdb::DBImpl::BackgroundCompaction
