@@ -32,7 +32,9 @@ race:Index::refresh_schemas
 # NOT suppressed broadly — only specific internal functions are listed so
 # that real synchronization bugs in OUR Store/Collection code are still caught.
 #
-# Arena allocation vs concurrent MemTable reads (lock-free skiplist):
+# MemTable concurrent skiplist (lock-free with custom atomics, TSAN FP):
+race:rocksdb::MemTable::Add
+race:BytewiseComparatorImpl::Compare
 race:rocksdb::Arena::AllocateNewBlock
 race:rocksdb::Arena::AllocateAligned
 # BlockBuilder vs ZSTD compression during flush (separate buffers, TSAN FP):
