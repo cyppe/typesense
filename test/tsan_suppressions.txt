@@ -51,7 +51,7 @@ race:BytewiseComparatorImpl::Compare
 race:rocksdb::Arena::AllocateNewBlock
 race:rocksdb::Arena::AllocateAligned
 # BlockBuilder vs ZSTD compression during flush:
-race:rocksdb::BlockBuilder::AddWithLastKeyImpl
+race:rocksdb::BlockBuilder::Add
 race:ZSTD_compressBlock
 # Internal compaction/flush thread pool:
 race:rocksdb::CompactionJob
