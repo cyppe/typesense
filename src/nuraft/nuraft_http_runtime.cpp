@@ -1403,7 +1403,7 @@ bool NuRaftHttpRuntimeService::initialize_raft_server(std::string& error) {
     raft_state_machine_ = nuraft::cs_new<TypesenseStateMachine>(
         layout_,
         materialized_state_sink_.get(),
-        [this](uint64_t log_idx, const std::string& request_json) {
+        [](uint64_t log_idx, const std::string& request_json) {
             (void)log_idx;
             (void)request_json;
         });

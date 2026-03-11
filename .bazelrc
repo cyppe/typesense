@@ -8,20 +8,9 @@ build --cxxopt="-std=gnu++20"
 build --cxxopt="-include" --cxxopt="cstdint"
 # Scope deprecation-noise suppression to third-party Protobuf sources only.
 build --per_file_copt=external/protobuf\+.*@-Wno-deprecated-declarations
+build --per_file_copt=external/protobuf\+.*@-Wno-deprecated-this-capture
 build --host_per_file_copt=external/protobuf\+.*@-Wno-deprecated-declarations
 # Scope heavy third-party warning buckets to their dependency boundaries.
-build --per_file_copt=.*com_github_brpc_brpc.*@-Wno-deprecated-declarations
-build --per_file_copt=.*com_github_brpc_braft.*@-Wno-deprecated-declarations
-build --per_file_copt=.*com_github_brpc_brpc.*@-Wno-format-security
-build --per_file_copt=.*com_github_brpc_braft.*@-Wno-format-security
-build --per_file_copt=.*com_github_brpc_brpc.*@-Wno-sign-compare
-build --per_file_copt=.*com_github_brpc_braft.*@-Wno-sign-compare
-build --per_file_copt=.*com_github_brpc_braft.*@-Wno-overloaded-virtual
-build --per_file_copt=.*src/brpc/server\.cpp@-Wno-invalid-offsetof
-build --per_file_copt=.*src/brpc/socket\.cpp@-Wno-invalid-offsetof
-build --per_file_copt=.*src/brpc/policy/http2_rpc_protocol\.cpp@-Wno-invalid-offsetof
-build --per_file_copt=.*src/brpc/parallel_channel\.cpp@-Wno-invalid-offsetof
-build --per_file_copt=.*src/braft/(snapshot_throttle|file_reader|file_service|file_system_adaptor|log|node_manager)\.cpp@-w
 build --per_file_copt=external/\+new_git_repository\+lrucache/.*@-Wno-deprecated-declarations
 build --per_file_copt=external/\+new_git_repository\+onnx_runtime_extensions/.*@-Wno-pessimizing-move
 build --per_file_copt=.*clip_tokenizer.*@-Wno-sign-compare
@@ -31,14 +20,11 @@ build --per_file_copt=.*quicly.*@-Wno-unused-but-set-variable
 build --conlyopt="-std=gnu17"
 build:linux --conlyopt="-D_GNU_SOURCE"
 build --strip=never
-build --define=BRPC_WITH_GLOG=true
 build --jobs=6
 
 test --jobs=6
-test --define=BRPC_WITH_GLOG=true
 
 run --jobs=6
-run --define=BRPC_WITH_GLOG=true
 
 build --enable_platform_specific_config
 

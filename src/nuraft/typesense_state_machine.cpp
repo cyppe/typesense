@@ -15,8 +15,6 @@
 
 namespace {
 
-constexpr size_t kSnapshotChunkSize = 4 * 1024 * 1024;  // 4 MB per logical object.
-
 // Build a flat list of all files in a directory tree (relative paths).
 void list_files_recursive(const std::string& base_dir,
                           const std::string& rel_prefix,
