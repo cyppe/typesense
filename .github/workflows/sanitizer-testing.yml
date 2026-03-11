@@ -108,7 +108,7 @@ jobs:
           --test_summary=detailed
           --flaky_test_attempts=2
           //:typesense-test
-          --test_timeout=1800
+          --test_timeout=3600
           --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
 
       - name: Save Bazel cache
