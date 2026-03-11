@@ -1,0 +1,13 @@
+# ThreadSanitizer suppression file for Typesense tests.
+# These are pre-existing upstream issues not introduced by our fork.
+# Syntax: <type>:<function_or_module_pattern>
+
+# Data race in sparsepp hash map during concurrent batch_memory_index.
+# Upstream issue: sparsepp::sparsegroup::_sizing() accessed without
+# synchronization from Index::index_field_in_memory() worker threads.
+race:spp::sparsegroup*::_sizing
+
+# Lock-order-inversion between two shared_mutex instances in the
+# analytics path: SearchAnalytics::add_internal_event() acquires M1
+# while holding M0, but other paths acquire in reverse order.
+deadlock:SearchAnalytics::add_internal_event

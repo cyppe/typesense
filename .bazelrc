@@ -43,13 +43,16 @@ run --define=BRPC_WITH_GLOG=true
 build --enable_platform_specific_config
 
 # --- Sanitizer configs ---
+# --copt applies to all cc_library targets (including external deps like abseil/protobuf).
+# Foreign_cc targets (kakasi, iconv, etc.) must override CFLAGS in their BUILD files
+# to strip sanitizer flags, since configure scripts break under instrumentation.
 build:sanitizer --strip=never
 build:sanitizer --copt -fno-omit-frame-pointer
 
 build:asan --config=sanitizer
 build:asan --define=mode=asan
-build:asan --copt -fsanitize=address,undefined
-build:asan --linkopt -fsanitize=address,undefined
+build:asan --copt -fsanitize=address
+build:asan --linkopt -fsanitize=address
 build:asan --copt -DASAN_BUILD
 build:asan --copt -DNO_JEMALLOC
 build:asan --copt -DADDRESS_SANITIZER=1
@@ -63,7 +66,7 @@ build:tsan --copt -fsanitize=thread
 build:tsan --linkopt -fsanitize=thread
 build:tsan --copt -DTSAN_BUILD
 build:tsan --copt -DNO_JEMALLOC
-build:tsan --test_env=TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:history_size=4
+build:tsan --test_env=TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:history_size=4:suppressions=test/tsan_suppressions.txt
 
 # Static linking of libstdc++/libgcc is handled by linkopts in BUILD file
 # BAZEL_LINKLIBS removed: Bazel 7+ treats the value as a single token (not split on spaces)

@@ -74,7 +74,7 @@ All workflows run on `ubuntu-24.04`. Nightly lanes are staggered to avoid resour
 |---|---|---|---|---|
 | `tests` | `tests.yml` | push, PR | — | Primary gate: build + warning guardrails + C++ tests + API tests + TEI |
 | `flake-detection` | `flake-detection.yml` | nightly, PR, manual | `0 2 * * *` | 20x reruns of 6 historically flaky C++ tests + 10x API documents test |
-| `sanitizer-testing` | `sanitizer-testing.yml` | nightly, manual | `0 4 * * *` | Full C++ suite under ASAN+UBSAN and TSAN (parallel jobs) |
+| `sanitizer-testing` | `sanitizer-testing.yml` | nightly, manual | `0 4 * * *` | Full C++ suite under ASAN and TSAN (parallel jobs) |
 | `nightly-extended` | `nightly-extended.yml` | nightly, manual | `0 6 * * *` | Full C++ suite 5x stress + full API suite 3x multi-node longevity |
 | `benchmark-testing` | `benchmark-testing.yml` | nightly, manual | `0 */12 * * *` | Performance benchmarks |
 
@@ -425,8 +425,14 @@ Done. Backend swapped from glog to Abseil Logging. Key artifacts:
 - [x] CI enforces guardrails via `scripts/check_clang_warning_guardrail.sh` and `scripts/check_gcc_warning_guardrail.sh` with failure-artifact upload.
 - [x] First-party C++ test signedness cleanup committed (`e9bea816`); all `-Wsign-compare` warnings resolved.
 - [x] Unused-variable warnings across test files and src cleaned up (`8420f815`).
+- [ ] **Tighten third-party warning suppression:** Current build emits warnings from external deps during sanitizer builds (and some in normal builds). Goal: zero warnings visible during any build config. Known sources:
+  - `protobuf`: `-Wsign-compare` in repeated field accessors (suppressed by `--per_file_copt` for normal builds; verify sanitizer builds too)
+  - `abseil-cpp`: deprecated C++20 implicit lambda capture of `this` in `container_internal` headers
+  - `abseil-cpp`: TSAN `atomic_thread_fence` warning in `synchronization/internal/graphcycles.cc`
+  - Approach: extend `--per_file_copt` patterns in `.bazelrc` to cover all known third-party warning sources across all build configs.
 - Done when:
   - [x] Warning debt trend is downward and enforced by CI.
+  - [ ] Zero warnings visible in normal, ASAN, and TSAN builds.
 
 ## Priority 2 - CI And Developer Experience
 
@@ -436,9 +442,11 @@ Done. Dockerized Bazel wrapper (`scripts/bazel_in_docker.sh`), CI uses repo Dock
 
 ### 11) Add modern verification lanes
 
-- [x] Add sanitizer coverage (ASAN, UBSAN, and TSAN).
-  - `.bazelrc` `--config=asan` with ASAN+UBSAN flags, `--config=tsan` with TSAN flags.
+- [x] Add sanitizer coverage (ASAN and TSAN).
+  - `.bazelrc` `--config=asan` with ASAN flags (UBSAN removed — breaks abseil constexpr evaluation with GCC 14), `--config=tsan` with TSAN flags.
   - Jemalloc exclusion via `NO_JEMALLOC` define and `select()` in BUILD for both sanitizer configs.
+  - Foreign_cc deps (iconv, kakasi) cancel sanitizer flags via `-fno-sanitize` env overrides in their BUILD files (configure scripts break under instrumentation).
+  - TSAN suppression file (`test/tsan_suppressions.txt`) for pre-existing upstream bugs: sparsepp data race, analytics lock-order-inversion.
   - Nightly CI lane in `.github/workflows/sanitizer-testing.yml` with parallel ASAN and TSAN jobs.
 - [x] Add optional slower nightly checks (stress, migration, multi-node longevity).
   - Full-suite stress (`--runs_per_test=5`) and multi-node API longevity lanes in `.github/workflows/nightly-extended.yml`.
@@ -567,7 +575,7 @@ Use this to decide what to pick next without scanning multiple files.
 - **Active now (execution lane):** All primary modernization lanes complete. Pick next from the "Later" list below.
 - **Recently finished:** item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
 - **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule. NuRaft async/streaming parity verified against upstream (both synchronous, full match).
-- **Later (planned but not started):** NuRaft benchmark baseline (k6 profiles against NuRaft server). Env-dependent test suites (blocked on infrastructure). Abseil `20260107.1` upgrade (blocked by ORT ABI mismatch).
+- **Later (planned but not started):** NuRaft benchmark baseline (k6 profiles against NuRaft server). Compile warning cleanup (surgical `per_file_copt` suppression of third-party warnings from protobuf, abseil, libstdc++ regex — zero-noise build output). Env-dependent test suites (blocked on infrastructure). Abseil `20260107.1` upgrade (blocked by ORT ABI mismatch).
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
   - `TODO.md` upstream product backlog (not the modernization source of truth; mine opportunistically only when an item aligns with current modernization goals).
@@ -768,6 +776,10 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 11. **Dockerized API harness should force IPv4 localhost.** Inside the API Bun container, `localhost` health checks can miss servers that are listening on IPv4 only. Set `TYPESENSE_API_HOST=127.0.0.1` in the wrapper to keep Dockerized API runs reliable.
 
 12. **Upstream ships self-contained core CPU artifacts, and this fork now matches that on the promoted local target.** Keep checking with `ldd` after future ORT/build-graph changes so the repo does not silently regress back to a `libonnxruntime.so.1` runtime dependency.
+
+14. **Sanitizer flags leak into `rules_foreign_cc` configure scripts.** Bazel's `--copt -fsanitize=X` applies globally, breaking autoconf detection in deps like kakasi and iconv. Fix by adding `env = select({"@@//:asan_mode": {"CFLAGS": "-fno-sanitize=address", ...}})` to each foreign_cc target. Note: `@@//` (not `@//`) is required in Bazel 9 Bzlmod to reference main-repo config_settings from external BUILD files.
+
+15. **UBSAN breaks abseil with GCC 14.** `-fsanitize=undefined` causes constexpr evaluation failures in `absl/container/internal/hash_policy_traits.h:158`. Keep ASAN and TSAN separate; do not combine UBSAN with either until abseil ships a fix.
 
 13. **Static ONNX Runtime probes hit multiple false-front blockers before the real protobuf conflict.** Modern CMake 3.31 first rejects ONNX Runtime Extensions' export set and build-tree include metadata, then the static vision build trips an upstream zlib-1.3 guard. Patch through those only far enough to reach the final link result; they are not the core reason this repo needs the shared `libonnxruntime.so.1` boundary.
 

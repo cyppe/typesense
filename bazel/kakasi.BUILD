@@ -24,6 +24,19 @@ configure_make(
         "@platforms//os:macos": {
             "AR": "",
         },
+        # Sanitizer flags break kakasi's configure iconv detection
+        # (EUC-JP/UTF-8 test programs fail under instrumentation).
+        # Override CFLAGS/CXXFLAGS to strip sanitizer flags for this dep.
+        "@@//:asan_mode": {
+            "CFLAGS": "-fno-sanitize=address",
+            "CXXFLAGS": "-fno-sanitize=address",
+            "LDFLAGS": "-fno-sanitize=address",
+        },
+        "@@//:tsan_mode": {
+            "CFLAGS": "-fno-sanitize=thread",
+            "CXXFLAGS": "-fno-sanitize=thread",
+            "LDFLAGS": "-fno-sanitize=thread",
+        },
         "//conditions:default": {},
     }),
     lib_source = "@kakasi//:all_srcs",
