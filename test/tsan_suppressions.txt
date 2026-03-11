@@ -11,3 +11,10 @@ race:spp::sparsegroup*::_sizing
 # analytics path: SearchAnalytics::add_internal_event() acquires M1
 # while holding M0, but other paths acquire in reverse order.
 deadlock:SearchAnalytics::add_internal_event
+
+# Data race between Index::refresh_schemas() and Index::batch_memory_index()
+# on a shared vector<vector<art_leaf*>>. refresh_schemas takes a unique_lock
+# on the schema mutex but batch_memory_index worker threads read vector::size()
+# without holding the same lock.
+race:Index::batch_memory_index
+race:Index::refresh_schemas
