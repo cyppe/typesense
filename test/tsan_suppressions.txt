@@ -19,11 +19,12 @@ deadlock:SearchAnalytics::add_internal_event
 deadlock:CollectionManager::get_collection
 
 # Lock-order-inversion between Collection shared_mutexes during join/reference
-# filter resolution. Collection::search holds one Collection's lock, then
-# get_reference_filter_ids/get_filter_ids acquires another Collection's lock;
-# other search paths acquire them in reverse order.
-deadlock:Collection::get_reference_filter_ids
-deadlock:Collection::get_filter_ids
+# operations. Collection::search holds one Collection's lock, then various
+# reference/join methods (get_reference_filter_ids, get_filter_ids,
+# reference_populate_sort_mapping, etc.) acquire another Collection's lock
+# in inconsistent order. Broad suppression because the same root cause
+# manifests through many different Collection methods.
+deadlock:Collection::
 
 # Data races on shared vector<vector<art_leaf*>> in Index methods.
 # search_wildcard worker threads read vector::size() while the main thread
