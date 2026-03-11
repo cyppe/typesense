@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "embedder_manager.h"
 #include "logger.h"
 
 class TypesenseTestEnvironment : public testing::Environment {
@@ -8,7 +9,8 @@ public:
     }
 
     virtual void TearDown() {
-
+        EmbedderManager::get_instance().delete_all_image_embedders();
+        EmbedderManager::get_instance().delete_all_text_embedders();
     }
 };
 

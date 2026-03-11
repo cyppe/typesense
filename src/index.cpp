@@ -47,6 +47,7 @@ spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::group_found_sentinel_va
 spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::eval_sentinel_value;
 spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::geo_sentinel_value;
 spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::str_sentinel_value;
+spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::random_order_sentinel_value;
 spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::vector_distance_sentinel_value;
 spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::vector_query_sentinel_value;
 spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::union_search_index_sentinel_value;
@@ -3575,8 +3576,8 @@ Option<bool> Index::search(std::vector<query_tokens_t>& field_query_tokens, cons
     size_t exclude_token_ids_size = 0;
     handle_exclusion(num_search_fields, field_query_tokens, the_fields, exclude_token_ids, exclude_token_ids_size);
 
-    int sort_order[3];  // 1 or -1 based on DESC or ASC respectively
-    std::array<spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*, 3> field_values;
+    int sort_order[3] = {0, 0, 0};  // 1 or -1 based on DESC or ASC respectively
+    std::array<spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*, 3> field_values{};
     std::vector<size_t> geopoint_indices;
     auto populate_op = populate_sort_mapping(sort_order, geopoint_indices, sort_fields_std, field_values,
                                              validate_field_names);
@@ -5652,7 +5653,6 @@ Option<bool> Index::compute_sort_scores(const std::vector<sort_by>& sort_fields,
 
     for(size_t i = 0; i < sort_fields.size(); i++) {
         auto const& is_reference_sort = !sort_fields[i].reference_collection_name.empty();
-        auto is_random_sort = sort_fields[i].random_sort.is_enabled;
         auto is_decay_function_sort = (sort_fields[i].sort_by_param == sort_by::linear ||
                                         sort_fields[i].sort_by_param == sort_by::exp ||
                                         sort_fields[i].sort_by_param == sort_by::gauss ||
@@ -5782,6 +5782,8 @@ Option<bool> Index::compute_sort_scores(const std::vector<sort_by>& sort_fields,
             }
 
             scores[i] = found ? eval.scores[eval_index] : 0;
+        } else if(field_values[i] == &random_order_sentinel_value) {
+            scores[i] = sort_fields[i].random_sort.generate_random();
         } else if(field_values[i] == &vector_distance_sentinel_value) {
             scores[i] = float_to_int64_t(vector_distance);
         } else if(field_values[i] == &vector_query_sentinel_value) {
@@ -5803,9 +5805,7 @@ Option<bool> Index::compute_sort_scores(const std::vector<sort_by>& sort_fields,
                 // do nothing
             }
         } else {
-            if(is_random_sort) {
-                scores[i] = sort_fields[i].random_sort.generate_random();
-            } else if(is_decay_function_sort) {
+            if(is_decay_function_sort) {
                 auto score = compute_decay_function_score(sort_fields[i], seq_id);
                 if(score == std::numeric_limits<float>::max()) {
                     return Option<bool>(400, "Error computing decay function score.");
@@ -6837,6 +6837,8 @@ Option<bool> Index::populate_sort_mapping(int* sort_order, std::vector<size_t>& 
             }
         } else if(sort_fields_std[i].name == sort_field_const::vector_distance) {
             field_values[i] = &vector_distance_sentinel_value;
+        } else if(sort_fields_std[i].name == sort_field_const::random_order) {
+            field_values[i] = &random_order_sentinel_value;
         } else if(sort_fields_std[i].name == sort_field_const::vector_query) {
             field_values[i] = &vector_query_sentinel_value;
         } else if (search_schema.count(sort_fields_std[i].name) != 0 && search_schema.at(sort_fields_std[i].name).sort) {
@@ -9034,8 +9036,8 @@ Option<bool> Index::populate_result_kvs(Topster<KV>* topster, std::vector<std::v
 
 Option<bool> Index::process_ref_include_fields_sort(std::vector<sort_by>& sort_fields_std, size_t limit, std::vector<uint32_t>& doc_ids) {
 
-    int sort_order[3];  // 1 or -1 based on DESC or ASC respectively
-    std::array<spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*, 3> field_values;
+    int sort_order[3] = {0, 0, 0};  // 1 or -1 based on DESC or ASC respectively
+    std::array<spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*, 3> field_values{};
     std::vector<size_t> geopoint_indices;
     auto populate_op = populate_sort_mapping_with_lock(sort_order, geopoint_indices, sort_fields_std, field_values, true);
     if (!populate_op.ok()) {

@@ -8,6 +8,11 @@
 #include <dlfcn.h>
 
 TextEmbedder::TextEmbedder(const std::string& model_name, const bool is_public_model) {
+    std::ifstream config_file(EmbedderManager::get_absolute_config_path(model_name, is_public_model));
+    nlohmann::json config;
+    config_file >> config;
+    const TokenizerType tokenizer_type = EmbedderManager::get_tokenizer_type(config);
+
     // create environment for local model
     Ort::SessionOptions session_options;
     auto providers = Ort::GetAvailableProviders();
@@ -29,14 +34,9 @@ TextEmbedder::TextEmbedder(const std::string& model_name, const bool is_public_m
         }
     }
     std::string abs_path = EmbedderManager::get_absolute_model_path(model_name, is_public_model);
-    session_options.EnableOrtCustomOps();
     TS_LOG(INFO) << "Loading model from disk: " << abs_path;
     env_ = std::make_shared<Ort::Env>();
     session_ = std::make_shared<Ort::Session>(*env_, abs_path.c_str(), session_options);
-    std::ifstream config_file(EmbedderManager::get_absolute_config_path(model_name, is_public_model));
-    nlohmann::json config;
-    config_file >> config;
-    TokenizerType tokenizer_type = EmbedderManager::get_tokenizer_type(config);
     auto vocab_path = EmbedderManager::get_absolute_vocab_path(model_name, config["vocab_file_name"].get<std::string>(), is_public_model);
     if(tokenizer_type == TokenizerType::bert) {
         tokenizer_ = std::make_unique<BertTokenizerWrapper>(vocab_path);

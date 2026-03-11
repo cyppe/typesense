@@ -95,6 +95,20 @@ scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_out
 scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=3600
 ```
 
+Notes:
+- The ASAN lane currently keeps `ASAN_OPTIONS=new_delete_type_mismatch=0` in `.bazelrc` because ONNX Runtime Extensions' vision custom-op loader trips a third-party teardown mismatch.
+- `CollectionVectorTest.TestVoiceQuery` is skipped in TSAN builds in code because Whisper inference fails functionally under TSAN instrumentation and does not surface a useful race report.
+
+Focused sanitizer replays used during local stabilization:
+
+```bash
+# _rand(seed) / sort-path validation under ASAN
+scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800 '--test_arg=--gtest_filter=CollectionSortingTest.TestSortByRandomOrder'
+
+# Current TSAN confirmation subset for sanitizer lane work
+scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=3600 '--test_arg=--gtest_filter=CollectionSortingTest.TestSortByRandomOrder:CollectionSpecificMoreTest.SearchCutoffTest:CollectionVectorTest.TestVoiceQuery:NuRaftBootstrapConfigTest.*:NuRaftHttpRuntimeTest.*:NuRaftStateInitializerTest.*' --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+```
+
 ## 9) API replay (one-command style)
 
 When API tests fail in CI (especially startup/runtime linker issues), use the API wrapper. It prepares the runtime bundle automatically and runs the Bun harness in Docker by default, so the host does not need Bun installed:

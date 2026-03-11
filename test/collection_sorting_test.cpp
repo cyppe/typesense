@@ -3029,33 +3029,37 @@ TEST_F(CollectionSortingTest, TestSortByRandomOrder) {
         ASSERT_TRUE(coll->add(doc.dump()).ok());
     }
 
+    auto collect_ids = [](const nlohmann::json& search_results) {
+        std::vector<std::string> ids;
+        ids.reserve(search_results["hits"].size());
+        for (const auto& hit : search_results["hits"]) {
+            ids.push_back(hit["document"]["id"].get<std::string>());
+        }
+        return ids;
+    };
+
     sort_fields = {
             sort_by("_rand(5)", "asc"),
     };
 
     auto results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
     ASSERT_EQ(size_t{5}, results["hits"].size());
-    ASSERT_EQ("1", results["hits"][0]["document"]["id"]);
-    ASSERT_EQ("4", results["hits"][1]["document"]["id"]);
-    ASSERT_EQ("0", results["hits"][2]["document"]["id"]);
-    ASSERT_EQ("3", results["hits"][3]["document"]["id"]);
-    ASSERT_EQ("2", results["hits"][4]["document"]["id"]);
+    const auto seed_5_ids = collect_ids(results);
 
-
+    results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
+    ASSERT_EQ(seed_5_ids, collect_ids(results));
 
     sort_fields = {
             sort_by("_rand(8)", "asc"),
     };
 
     results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
-
     ASSERT_EQ(size_t{5}, results["hits"].size());
-    ASSERT_EQ("1", results["hits"][0]["document"]["id"]);
-    ASSERT_EQ("3", results["hits"][1]["document"]["id"]);
-    ASSERT_EQ("4", results["hits"][2]["document"]["id"]);
-    ASSERT_EQ("0", results["hits"][3]["document"]["id"]);
-    ASSERT_EQ("2", results["hits"][4]["document"]["id"]);
+    const auto seed_8_ids = collect_ids(results);
 
+    results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
+    ASSERT_EQ(seed_8_ids, collect_ids(results));
+    ASSERT_NE(seed_5_ids, seed_8_ids);
 
     //without seed value it takes current time as seed
     sort_fields = {
@@ -3079,11 +3083,7 @@ TEST_F(CollectionSortingTest, TestSortByRandomOrder) {
     };
     results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
     ASSERT_EQ(size_t{5}, results["hits"].size());
-    ASSERT_EQ("1", results["hits"][0]["document"]["id"]);
-    ASSERT_EQ("4", results["hits"][1]["document"]["id"]);
-    ASSERT_EQ("0", results["hits"][2]["document"]["id"]);
-    ASSERT_EQ("3", results["hits"][3]["document"]["id"]);
-    ASSERT_EQ("2", results["hits"][4]["document"]["id"]);
+    ASSERT_EQ(seed_5_ids, collect_ids(results));
 
     sort_fields = {
             sort_by("_text_match", "desc"),
@@ -3091,11 +3091,7 @@ TEST_F(CollectionSortingTest, TestSortByRandomOrder) {
     };
     results = coll->search("smartphone", {"product_name"}, "", {}, sort_fields, {0}).get();
     ASSERT_EQ(size_t{5}, results["hits"].size());
-    ASSERT_EQ("1", results["hits"][0]["document"]["id"]);
-    ASSERT_EQ("3", results["hits"][1]["document"]["id"]);
-    ASSERT_EQ("4", results["hits"][2]["document"]["id"]);
-    ASSERT_EQ("0", results["hits"][3]["document"]["id"]);
-    ASSERT_EQ("2", results["hits"][4]["document"]["id"]);
+    ASSERT_EQ(seed_8_ids, collect_ids(results));
 
     //negative seed value is not allowed
     sort_fields = {

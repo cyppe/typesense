@@ -4395,6 +4395,15 @@ TEST_F(CollectionVectorTest, TestInvalidVoiceQueryModel) {
 }
 
 TEST_F(CollectionVectorTest, TestVoiceQuery) {
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+    GTEST_SKIP() << "Whisper voice-query inference is not stable under ThreadSanitizer instrumentation.";
+#endif
+#endif
+#if defined(__SANITIZE_THREAD__)
+    GTEST_SKIP() << "Whisper voice-query inference is not stable under ThreadSanitizer instrumentation.";
+#endif
+
     nlohmann::json schema_json = R"({
         "name": "test",
         "fields": [

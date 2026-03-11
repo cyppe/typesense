@@ -12,6 +12,7 @@
 #include "conversation_model.h"
 #include "field.h"
 #include "core_api_utils.h"
+#include "embedder_manager.h"
 #include "synonym_index_manager.h"
 #include "curation_index_manager.h"
 
@@ -685,6 +686,8 @@ void CollectionManager::dispose() {
     referenced_ins.clear();
     store->close();
     collection_id_names.clear();
+    EmbedderManager::get_instance().delete_all_image_embedders();
+    EmbedderManager::get_instance().delete_all_text_embedders();
     SynonymIndexManager::get_instance().dispose();
     CurationIndexManager::get_instance().dispose();
 }

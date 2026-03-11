@@ -490,6 +490,7 @@ private:
     static spp::sparse_hash_map<uint32_t, int64_t, Hasher32> eval_sentinel_value;
     static spp::sparse_hash_map<uint32_t, int64_t, Hasher32> geo_sentinel_value;
     static spp::sparse_hash_map<uint32_t, int64_t, Hasher32> str_sentinel_value;
+    static spp::sparse_hash_map<uint32_t, int64_t, Hasher32> random_order_sentinel_value;
     static spp::sparse_hash_map<uint32_t, int64_t, Hasher32> vector_distance_sentinel_value;
     static spp::sparse_hash_map<uint32_t, int64_t, Hasher32> vector_query_sentinel_value;
     static spp::sparse_hash_map<uint32_t, int64_t, Hasher32> union_search_index_sentinel_value;
