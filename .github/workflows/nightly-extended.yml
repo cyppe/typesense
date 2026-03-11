@@ -1,8 +1,6 @@
 name: nightly-extended
 
 on:
-  schedule:
-    - cron: "0 6 * * *"   # 6 AM UTC daily, after sanitizer lane (4 AM)
   workflow_dispatch:
 
 concurrency:

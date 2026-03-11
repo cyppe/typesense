@@ -401,6 +401,7 @@ cc_test(
     }),
     data = [
         ":test_data_files",
+        ":typesense-server",
         "@libart//:data",
         "@token_offsets//file",
     ],

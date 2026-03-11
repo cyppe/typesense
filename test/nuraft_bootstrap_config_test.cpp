@@ -30,7 +30,6 @@ TEST_F(NuRaftBootstrapConfigTest, WritesAndReadsBootstrapConfig) {
     NuRaftBootstrapConfig expected;
     expected.self = {"127.0.0.1", 7107, 8108};
     expected.peers = {
-        expected.self,
         {"127.0.0.2", 7109, 8110},
     };
     expected.api_uses_ssl = true;
@@ -42,7 +41,7 @@ TEST_F(NuRaftBootstrapConfigTest, WritesAndReadsBootstrapConfig) {
     EXPECT_EQ(actual, expected);
 }
 
-TEST_F(NuRaftBootstrapConfigTest, RejectsMissingSelfPeer) {
+TEST_F(NuRaftBootstrapConfigTest, RejectsDuplicateServerIdsIncludingSelf) {
     NuRaftMetadataStore store(NuRaftStateLayout::from_data_dir(temp_dir_));
     std::string error;
     ASSERT_TRUE(store.initialize(error)) << error;
@@ -50,11 +49,11 @@ TEST_F(NuRaftBootstrapConfigTest, RejectsMissingSelfPeer) {
     NuRaftBootstrapConfig config;
     config.self = {"127.0.0.1", 7107, 8108};
     config.peers = {
-        {"127.0.0.2", 7109, 8110},
+        {"127.0.0.2", 7109, 8108},
     };
 
     ASSERT_FALSE(store.write_bootstrap_config(config, error));
-    EXPECT_EQ(error, "NuRaft bootstrap config peer list must include self");
+    EXPECT_EQ(error, "NuRaft bootstrap config contains duplicate server ids");
 }
 
 TEST_F(NuRaftBootstrapConfigTest, RejectsMalformedBootstrapJson) {

@@ -36,8 +36,7 @@ TEST_F(NuRaftStateInitializerTest, WritesIdentityAndBootstrapMetadata) {
 
     EXPECT_EQ(identity.server_id, 8108);
     EXPECT_EQ(identity.peer_endpoint, "127.0.0.1:7107");
-    ASSERT_EQ(bootstrap_config.peers.size(), 1u);
-    EXPECT_EQ(bootstrap_config.self, bootstrap_config.peers[0]);
+    EXPECT_TRUE(bootstrap_config.peers.empty());
 
     NuRaftMetadataStore store(NuRaftStateLayout::from_data_dir(temp_dir_));
     NuRaftIdentity persisted_identity;
@@ -104,8 +103,8 @@ TEST_F(NuRaftStateInitializerTest, RefreshesMultiNodePeerListWithoutRewritingSel
     options.nodes_config = "127.0.0.1:7107:8108,127.0.0.3:7111:8109";
     ASSERT_TRUE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) << error;
     EXPECT_EQ(identity.peer_endpoint, "127.0.0.1:7107");
-    ASSERT_EQ(bootstrap_config.peers.size(), 2u);
-    EXPECT_EQ(bootstrap_config.peers[1], (NuRaftPeerAddress{"127.0.0.3", 7111, 8109}));
+    ASSERT_EQ(bootstrap_config.peers.size(), 1u);
+    EXPECT_EQ(bootstrap_config.peers[0], (NuRaftPeerAddress{"127.0.0.3", 7111, 8109}));
 }
 
 TEST_F(NuRaftStateInitializerTest, RejectsPersistedSelfAddressRewriteForMultiNodeBootstrap) {

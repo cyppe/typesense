@@ -1,8 +1,6 @@
 name: sanitizer-testing
 
 on:
-  schedule:
-    - cron: "0 4 * * *"   # 4 AM UTC daily, offset from flake-detection (2 AM)
   workflow_dispatch:
 
 concurrency:

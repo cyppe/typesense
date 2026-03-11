@@ -40,28 +40,62 @@ bazel test --cache_test_results=no --test_output=all //:typesense-test --test_ti
 - Makes CI and local command lines identical in behavior.
 - Centralizes compiler/Bazel/tooling versions in one Dockerfile.
 
-## 4) Known gotcha: GCC 15 + rules_foreign_cc pkgconfig
+## 4) GitHub trigger policy
+
+- `tests.yml` is the only automatic CI gate. It runs on `push` and can also be started manually with `workflow_dispatch`.
+- `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, and `release-binaries.yml` are manual-only workflows.
+- Prefer replaying the matching local wrapper command before dispatching a heavy manual workflow. This repo's wrappers are the canonical local equivalents of the GitHub lanes.
+
+## 5) Known gotcha: GCC 15 + rules_foreign_cc pkgconfig
 
 `rules_foreign_cc` 0.15.1 has a known pkgconfig bootstrap failure with GCC 15 C23 defaults (`goption.c ... gboolean bool`).
 To keep builds stable while staying modern, the repo pins C mode to gnu17 (`.bazelrc`) for C codepaths.
 
-## 5) Useful debugging commands
+## 6) Useful debugging commands
 
 ```bash
 scripts/bazel_in_docker.sh clean --expunge
 scripts/bazel_in_docker.sh test --verbose_failures //:typesense-test
 ```
 
-## 6) Sanitizer lanes
+## 7) Workflow-to-local mapping
+
+Use these before pushing or before manually dispatching the heavier GitHub workflows:
+
+```bash
+# tests.yml
+scripts/bazel_in_docker.sh build //:typesense-server
+scripts/bazel_in_docker.sh test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=1200 --flaky_test_attempts=2 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
+
+# sanitizer-testing.yml
+scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors --test_summary=detailed --flaky_test_attempts=2 //:typesense-test --test_timeout=1800 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors --test_summary=detailed --flaky_test_attempts=2 //:typesense-test --test_timeout=3600 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+
+# flake-detection.yml
+scripts/bazel_in_docker.sh test --cache_test_results=no --runs_per_test=20 --test_output=errors --test_summary=detailed //:typesense-test --test_timeout=900 '--test_arg=--gtest_filter=ArtTest.test_art_insert:ArtTest.test_art_insert_search_uuid:ArtTest.test_art_fuzzy_search:MatchTest.MatchScoreWithOffsetWrapAround:CollectionVectorTest.TestImageEmbedding:CollectionCurationTest.OverridesWithSemanticSearch'
+for i in $(seq 1 10); do TYPESENSE_DATA_DIR="$PWD/tmp/test-$i" scripts/run_api_tests.sh -- --no-secrets tests/documents.test.ts; done
+
+# nightly-extended.yml
+scripts/bazel_in_docker.sh test --cache_test_results=no --runs_per_test=5 --test_output=errors --test_summary=detailed //:typesense-test --test_timeout=1800 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+for i in $(seq 1 3); do TYPESENSE_DATA_DIR="$PWD/tmp/test-$i" scripts/run_api_tests.sh -- --no-secrets; done
+
+# benchmark-testing.yml
+scripts/benchmark_vs_upstream.sh --build --profile standard
+```
+
+The workflow YAML also layers GitHub-specific cache and artifact plumbing on top of these commands, but the wrappers above are the primary repro paths.
+
+## 8) Sanitizer lanes
 
 Use these for memory, UB, and race checks when you are touching lower-level C++ code, build plumbing, or concurrency-sensitive paths.
 
 ```bash
 scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800
-scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800
+scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=3600
 ```
 
-## 7) API replay (one-command style)
+## 9) API replay (one-command style)
 
 When API tests fail in CI (especially startup/runtime linker issues), use the API wrapper. It prepares the runtime bundle automatically and runs the Bun harness in Docker by default, so the host does not need Bun installed:
 
@@ -101,7 +135,7 @@ If you intentionally want to bypass the Dockerized Bun image and use host Bun:
 scripts/run_api_tests.sh --host-bun -- --no-secrets tests/health.test.ts
 ```
 
-## 8) C++ integration replay (one-command style)
+## 10) C++ integration replay (one-command style)
 
 When `//:typesense-test` fails in CI, replay the same lane locally with one command. The helper will prewarm the `ts/e5-small` model cache if needed and run the Dockerized Bazel test command with CI-like flags.
 
@@ -119,7 +153,7 @@ You can still append extra Bazel test options after the filter when needed, for 
 test/scripts/replay_typesense_test.sh FilterTest.FilterTreeIteratorTimeout --runs_per_test=20
 ```
 
-## 9) NuRaft prototype microbenchmark
+## 11) NuRaft prototype microbenchmark
 
 Use this only for the isolated NuRaft feasibility sprint. It does not replace the normal HTTP benchmark wrapper in `scripts/benchmark_vs_upstream.sh`.
 
@@ -132,7 +166,7 @@ scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-
 
 The binary emits JSON for append/apply throughput, snapshot-recovery timing, repeated timed-snapshot pressure while a follower stays unhealthy, and direct leader-only vs `require-healthy-peers` outage comparison, so Story E can measure the prototype without pretending the normal HTTP benchmark lane already covers NuRaft.
 
-## 10) NuRaft HTTP runtime smoke
+## 12) NuRaft HTTP runtime smoke
 
 Use this when you need the bounded HTTP-facing NuRaft lane rather than the CLI-only prototype controller.
 
@@ -163,6 +197,6 @@ scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-se
 
 Treat that full no-secrets replay as the main hardening lane now. The targeted suite commands above are still useful for isolating failures quickly, but they are no longer enough on their own to claim broad runtime parity.
 
-## 11) Historical Raft comparison note
+## 13) Historical Raft comparison note
 
 The old `raft-recovery`, `raft-api-replay`, and `raft-runtime-contention` wrapper profiles were retired once this branch removed the in-tree `braft` runtime. Keep `benchmark/BENCHMARK_RESULTS.md` as the archival record of those side-by-side cutover benchmarks.

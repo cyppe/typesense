@@ -1,11 +1,13 @@
 name: tests
 
-on: [push, pull_request]
+on:
+  push:
+  workflow_dispatch:
 
 # Cancel previous running if a new push is made
 # Source: https://stackoverflow.com/a/72408109/123545
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -108,7 +110,7 @@ jobs:
         if: failure()
 
       - name: Save Bazel cache
-        if: always() && github.event_name != 'pull_request' && steps.bazel-cache.outputs.cache-hit != 'true'
+        if: always() && steps.bazel-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
           path: ${{ github.workspace }}/.cache/bazel-docker

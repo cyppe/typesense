@@ -30,6 +30,7 @@ Completed and historical migration notes are tracked in git history and PRs.
 - C++ suite `//:typesense-test` is passing in CI-parity Docker after deterministic tie-breaker fixes in grouping tests.
 - API no-secrets suite is healthy across all harness phases with migration auto-download; dedicated TEI lane is green when `TYPESENSE_TEST_TEI_URL` is configured.
 - Parallel stress validation now shows isolated temp/model paths per process after helper migration; no active shared-path collision failure is known.
+- Heavy auxiliary workflows are now manual-only by policy; `tests.yml` is the only automatic GitHub Actions gate and the local wrapper commands in `TESTING_RUNBOOK.md` are the preferred pre-push validation path.
 
 ## Quick Reference: How To Build And Test
 
@@ -68,15 +69,15 @@ bash test/scripts/prewarm_e5_small_model.sh "$PWD/tmp/ci-models"
 
 ## CI Workflow Map
 
-All workflows run on `ubuntu-24.04`. Nightly lanes are staggered to avoid resource contention:
+All workflows run on `ubuntu-24.04`. Only `tests.yml` runs automatically; the heavier lanes are manual on purpose so local Dockerized repro can happen before spending GitHub runner time.
 
 | Workflow | File | Trigger | Schedule | Purpose |
 |---|---|---|---|---|
-| `tests` | `tests.yml` | push, PR | — | Primary gate: build + warning guardrails + C++ tests + API tests + TEI |
-| `flake-detection` | `flake-detection.yml` | nightly, PR, manual | `0 2 * * *` | 20x reruns of 6 historically flaky C++ tests + 10x API documents test |
-| `sanitizer-testing` | `sanitizer-testing.yml` | nightly, manual | `0 4 * * *` | Full C++ suite under ASAN and TSAN (parallel jobs) |
-| `nightly-extended` | `nightly-extended.yml` | nightly, manual | `0 6 * * *` | Full C++ suite 5x stress + full API suite 3x multi-node longevity |
-| `benchmark-testing` | `benchmark-testing.yml` | nightly, manual | `0 */12 * * *` | Performance benchmarks |
+| `tests` | `tests.yml` | push, manual | — | Primary gate: build + warning guardrails + C++ tests + API tests + TEI |
+| `flake-detection` | `flake-detection.yml` | manual | — | 20x reruns of 6 historically flaky C++ tests + 10x API documents test |
+| `sanitizer-testing` | `sanitizer-testing.yml` | manual | — | Full C++ suite under ASAN and TSAN (parallel jobs) |
+| `nightly-extended` | `nightly-extended.yml` | manual | — | Full C++ suite 5x stress + full API suite 3x multi-node longevity |
+| `benchmark-testing` | `benchmark-testing.yml` | manual | — | Performance benchmarks |
 
 ### Warning guardrails
 
@@ -89,7 +90,7 @@ If you add new first-party code, fix any warnings before committing. Third-party
 ## Definition Of Done (100% Modernized)
 
 - [x] All test suites pass on a clean checkout in CI and locally with documented commands. *(CI green; local repro via `scripts/bazel_in_docker.sh` documented in Quick Reference above.)*
-- [x] No known flaky tests after stress validation (`--runs_per_test=20`) on targeted suites. *(Flake-detection and nightly-extended lanes run on schedule; P0 items 1–5 eliminated all known flake sources.)*
+- [x] No known flaky tests after stress validation (`--runs_per_test=20`) on targeted suites. *(Dedicated flake-detection and extended stress lanes exist for opt-in validation; P0 items 1–5 eliminated all known flake sources.)*
 - [x] Tests are parallel-safe (no shared writable paths, no port collisions, no hidden global state). *(P0 items 1–4: temp dirs, dynamic ports, no globals — all done and stress-validated.)*
 - [x] Bazel 9 migration is complete and stable. *(P1.6 done; `.bazelversion` = 9.0.0, CI green.)*
 - [x] Dependency set is current, with patch debt minimized and documented exceptions only. *(5 active patches with justifications in `bazel/PATCH_DEBT.md`. The old `brpc`/`braft` patch stack is gone from this branch.)*
@@ -117,7 +118,7 @@ Done. Audit complete — stabilized grouping, curation ordering, embedding polli
 
 - [x] Add CI jobs for stress reruns of historically flaky targets.
 - [x] Publish failing seed and command details in CI artifacts for reproducibility.
-- [x] Flakes are detected before merge instead of after release (PR trigger added to `flake-detection.yml`).
+- [x] Dedicated flake-detection workflow remains available for manual pre-merge stress validation and artifact capture.
 
 ## Priority 1 - Build And Dependency Modernization
 
@@ -447,8 +448,8 @@ Done. Dockerized Bazel wrapper (`scripts/bazel_in_docker.sh`), CI uses repo Dock
   - Jemalloc exclusion via `NO_JEMALLOC` define and `select()` in BUILD for both sanitizer configs.
   - Foreign_cc deps (iconv, kakasi) cancel sanitizer flags via `-fno-sanitize` env overrides in their BUILD files (configure scripts break under instrumentation).
   - TSAN suppression file (`test/tsan_suppressions.txt`) for pre-existing upstream bugs: sparsepp data race, analytics lock-order-inversion.
-  - Nightly CI lane in `.github/workflows/sanitizer-testing.yml` with parallel ASAN and TSAN jobs.
-- [x] Add optional slower nightly checks (stress, migration, multi-node longevity).
+  - Manual CI lane in `.github/workflows/sanitizer-testing.yml` with parallel ASAN and TSAN jobs.
+- [x] Add optional slower manual checks (stress, migration, multi-node longevity).
   - Full-suite stress (`--runs_per_test=5`) and multi-node API longevity lanes in `.github/workflows/nightly-extended.yml`.
 **CI hygiene backlog:**
 - [x] Pin Bazelisk version in `docker/ci-bazel.Dockerfile` (pinned to v1.28.1).
@@ -460,12 +461,11 @@ Done. Dockerized Bazel wrapper (`scripts/bazel_in_docker.sh`), CI uses repo Dock
   - ~~`actions/setup-node` `@v3` → `@v4`~~ done (benchmark-testing.yml).
   - ~~`dawidd6/action-download-artifact` `@v2` → `@v6`~~ done (benchmark-testing.yml).
   - `oven-sh/setup-bun` `@v2` — already on latest major.
-- [x] Add `bazel/` and `docker/` to flake-detection PR path trigger.
+- [x] Keep `flake-detection.yml` available as the dedicated manual stress workflow for source/build-system changes.
 - [x] Bazel disk cache persistence via `actions/cache@v4` across all CI workflows.
   - Caches `${{ github.workspace }}/.cache/bazel-docker` (disk-cache + repository-cache + bazelisk).
   - Key: `bazel-{os}-{workflow}-{hashFiles('MODULE.bazel','BUILD','.bazelrc','bazel/**')}` with prefix restore-keys.
   - Sanitizer jobs use config-specific keys (`-asan-`, `-tsan-`) since different build configs produce incompatible artifacts.
-  - `save-always` gated on `github.event_name != 'pull_request'` for workflows with PR triggers (tests, flake-detection) to prevent cache pollution.
   - Cache size reporting step (`du -sh`) added to every job for monitoring; review after first few runs and split if >5GB.
 
 - Done when:
@@ -489,7 +489,7 @@ Done. Dockerized Bazel wrapper (`scripts/bazel_in_docker.sh`), CI uses repo Dock
 
 **Stack:** TypeScript CLI (`benchmark/`) using [Commander](https://github.com/tj/commander.js) + [neverthrow](https://github.com/supermacro/neverthrow). Repo-managed JS tooling is Bun-first. Load generation via [k6](https://k6.io/) (Grafana). Metrics stored in InfluxDB 1.8. Visualization via Grafana 8.5.21. All three services run as Docker Compose containers (`benchmark/docker-compose.yml`).
 
-**CI workflow** (`benchmark-testing.yml`): Runs every 12 hours. Downloads the two most recent successful `typesense-server` binaries from the `tests` workflow using `dawidd6/action-download-artifact@v6`. Starts Docker Compose services, builds the CLI, runs `./dist/index.js benchmark --binaries <old> <new> -c <old-sha> <new-sha> --duration 1m`. InfluxDB data is persisted across runs via artifact upload/download. Results are compared using configurable p95 regression thresholds per scenario.
+**CI workflow** (`benchmark-testing.yml`): Manual `workflow_dispatch` lane. Downloads the two most recent successful `typesense-server` binaries from the `tests` workflow using `dawidd6/action-download-artifact@v6`. Starts Docker Compose services, builds the CLI, runs `./dist/index.js benchmark --binaries <old> <new> -c <old-sha> <new-sha> --duration 1m`. InfluxDB data is persisted across runs via artifact upload/download. Results are compared using configurable p95 regression thresholds per scenario.
 
 **Benchmark scenarios (9 search + 1 indexing):**
 - `just_q` — typeahead-style incremental search (3-char permutations)
@@ -818,6 +818,7 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 29. **Use a RocksDB checkpoint for live prototype KV snapshots when a sink handle is available.** Recursive directory copies are acceptable as a cold fallback, but the closer prototype path is to reuse the open `NuRaftKvStateMachineSink` DB handle and export a checkpointed materialized-state tree, matching the real snapshot direction more closely.
 30. **Do not silently rewrite persisted self identity for a multi-node NuRaft prototype.** Refreshing peer lists from `--nodes` is acceptable metadata churn, and single-node self-address drift is a real recovery case, but changing a persisted node's own peer endpoint inside a multi-node bootstrap is the same class of unsafe escape hatch as `reset_peers()` and should fail loudly.
 31. **Prototype follower catch-up should reject divergent history, not auto-heal it.** If a follower log no longer matches the leader prefix, the feasibility prototype should fail loudly so the migration decision sees the real repair gap instead of hiding it behind implicit truncation or overwrite behavior.
+39. **Keep heavyweight CI lanes manual unless they are the main gate.** GitHub's `workflow_dispatch` and reusable-workflow guidance fit this repo better than always-on cron for sanitizer, flake, stress, and benchmark lanes. Prefer the documented local wrapper commands first, then dispatch the corresponding heavy workflow only when you want GitHub-hosted confirmation.
 32. **Timed snapshot policy is part of the recovery contract, not just a scheduler detail.** If snapshots are blocked on follower health, a lagging follower can be trapped behind a permanently stale recovery point. Keep a test lane that distinguishes "require healthy peers" from "leader-only snapshot" policy so this deadlock class stays visible.
 33. **Do not misuse the existing HTTP benchmark wrapper as NuRaft evidence.** `scripts/benchmark_vs_upstream.sh` measures full server binaries behind the normal API/runtime surface. Until NuRaft has either a thin HTTP-facing adapter or a dedicated prototype benchmark harness, Story E needs its own measurement lane.
 34. **Prototype benchmarking should stay explicitly separate from the normal HTTP benchmark wrapper until the runtime surfaces actually match.** A dedicated NuRaft microbenchmark target is useful for Story E, but it is still measuring isolated replication/storage paths, not a drop-in server replacement. Treat it as evidence for feasibility, not as a substitute for a later apples-to-apples runtime comparison.

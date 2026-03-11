@@ -64,8 +64,8 @@ bool refresh_existing_metadata(const NuRaftMetadataStore& store,
     const bool self_changed = !(persisted_bootstrap_config.self == built_bootstrap_config.self) ||
                               persisted_identity.peer_endpoint != built_identity.peer_endpoint;
     const bool allow_self_rewrite = self_changed &&
-                                    persisted_bootstrap_config.peers.size() == 1 &&
-                                    built_bootstrap_config.peers.size() == 1;
+                                    persisted_bootstrap_config.peers.empty() &&
+                                    built_bootstrap_config.peers.empty();
     if (self_changed && !allow_self_rewrite) {
         error = "NuRaft state initializer refuses to rewrite the persisted self peer address for a multi-node bootstrap";
         return false;
