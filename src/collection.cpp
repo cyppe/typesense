@@ -2343,6 +2343,9 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
 
         auto transcribe_res = vq_model->transcribe(voice_query);
         if(!transcribe_res.ok()) {
+            TS_LOG(ERROR) << "Voice query transcription failed for collection `" << name
+                          << "` using model `" << vq_model->get_model_name()
+                          << "`: " << transcribe_res.error();
             return Option<bool>(transcribe_res.code(), transcribe_res.error());
         }
         query = transcribe_res.get();

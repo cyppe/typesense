@@ -2387,7 +2387,7 @@ TEST_F(CollectionSpecificMoreTest, SearchCutoffTest) {
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
                                  "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 1);
 
-    ASSERT_TRUE(coll_op.ok());
+    ASSERT_TRUE(coll_op.ok()) << coll_op.error();
     ASSERT_TRUE(coll_op.get()["search_cutoff"]);
 }
 

@@ -1,4 +1,5 @@
 #include "vq_model.h"
+#include "logger.h"
 #include <sstream>
 #define DR_WAV_IMPLEMENTATION
 #include "dr_wav.h"
@@ -81,6 +82,7 @@ Option<std::string> WhisperModel::transcribe(const std::string& audio_base64) {
     {
         std::unique_lock<std::mutex> lock(mutex);
         if(whisper_full_parallel(ctx, params, pcmf32.data(), pcmf32.size(), 1) != 0) {
+            TS_LOG(ERROR) << "Whisper transcription failed for model `" << get_model_name() << "`.";
             return Option<std::string>(400, "Error while transcribing.");
         }
     }
