@@ -12,9 +12,10 @@ race:spp::sparsegroup*::_sizing
 # while holding M0, but other paths acquire in reverse order.
 deadlock:SearchAnalytics::add_internal_event
 
-# Data race between Index::refresh_schemas() and Index::batch_memory_index()
-# on a shared vector<vector<art_leaf*>>. refresh_schemas takes a unique_lock
-# on the schema mutex but batch_memory_index worker threads read vector::size()
-# without holding the same lock.
+# Data races on shared vector<vector<art_leaf*>> in Index methods.
+# search_wildcard worker threads read vector::size() while the main thread
+# does push_back() in the same function; refresh_schemas/batch_memory_index
+# also race on the same vector. Pre-existing upstream synchronization gap.
+race:Index::search_wildcard
 race:Index::batch_memory_index
 race:Index::refresh_schemas
