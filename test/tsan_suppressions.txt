@@ -12,6 +12,12 @@ race:spp::sparsegroup*::_sizing
 # while holding M0, but other paths acquire in reverse order.
 deadlock:SearchAnalytics::add_internal_event
 
+# Lock-order-inversion between Index lock and CollectionManager::get_collection
+# shared_mutex. Index::run_search holds the Index lock then calls
+# filter_result_iterator_t::validate_object_filter which acquires the
+# CollectionManager lock; other paths acquire them in reverse order.
+deadlock:CollectionManager::get_collection
+
 # Data races on shared vector<vector<art_leaf*>> in Index methods.
 # search_wildcard worker threads read vector::size() while the main thread
 # does push_back() in the same function; refresh_schemas/batch_memory_index
