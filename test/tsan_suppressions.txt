@@ -6,9 +6,13 @@
 # specific race it hits is non-deterministic. The suppressions below
 # cover all known pre-existing races observed across many CI runs.
 
-# ── sparsepp ──────────────────────────────────────────────────────────
-# Data race in sparsepp hash map during concurrent batch_memory_index.
+# ── Third-party library races ─────────────────────────────────────────
+# sparsepp hash map — concurrent batch_memory_index workers.
 race:spp::sparsegroup*::_sizing
+
+# hnswlib — shared random number generator accessed by concurrent
+# Index::index_field_in_memory worker threads during addPoint/updatePoint.
+race:hnswlib::
 
 # ── Lock-order-inversions (deadlock suppressions) ────────────────────
 # Analytics path: SearchAnalytics::add_internal_event acquires locks in
