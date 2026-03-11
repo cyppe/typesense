@@ -18,6 +18,13 @@ deadlock:SearchAnalytics::add_internal_event
 # CollectionManager lock; other paths acquire them in reverse order.
 deadlock:CollectionManager::get_collection
 
+# Data race on reference_info map during concurrent collection loading.
+# CollectionManager::load loads collections in parallel; add_referenced_ins
+# writes to the shared map while load reads from it. Pre-existing upstream
+# race in the join/reference loading path.
+race:CollectionManager::add_referenced_ins
+race:CollectionManager::load_collection
+
 # Lock-order-inversion between Collection shared_mutexes during join/reference
 # operations. Collection::search holds one Collection's lock, then various
 # reference/join methods (get_reference_filter_ids, get_filter_ids,
