@@ -193,7 +193,7 @@ jobs:
           if [ "${STATUS}" -ne 0 ] && [ "${STATUS}" -ne 1 ]; then
             exit "${STATUS}"
           fi
-          grep -q "Command line usage:" "${HELP_OUTPUT}"
+          grep -Eq '^usage:|^Command line usage:' "${HELP_OUTPUT}"
 
       - name: Package tarball
         run: |
