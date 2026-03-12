@@ -187,6 +187,13 @@ describe(Phases.SINGLE_FRESH, () => {
       }
     );
     expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
+    const lines = (await res.text()).trim().split("\n");
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as { success?: boolean };
+      expect(parsed.success).toBe(true);
+    }
 
     let getRes = await fetchSingleNode(
       "/collections/companies_docs_single/documents/1",
@@ -289,6 +296,13 @@ describe(Phases.MULTI_FRESH, () => {
       { method: "POST", body: jsonl }
     );
     expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
+    const lines = (await res.text()).trim().split("\n");
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as { success?: boolean };
+      expect(parsed.success).toBe(true);
+    }
 
     const doc1 = await waitForMultiNodeDocument(2, "m1", (doc) => doc.num_employees === 6000);
     expect(doc1.num_employees).toBe(6000);

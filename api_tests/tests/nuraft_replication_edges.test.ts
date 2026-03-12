@@ -134,7 +134,9 @@ describe(Phases.MULTI_FRESH, () => {
       headers: { "Content-Type": "text/plain" },
     });
     expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
     const lines = (await res.text()).trim().split("\n");
+    expect(lines).toHaveLength(2);
     for (const line of lines) {
       const result = JSON.parse(line);
       expect(result.success).toBe(true);

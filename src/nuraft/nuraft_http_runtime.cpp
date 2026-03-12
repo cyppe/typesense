@@ -586,6 +586,10 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     const bool supports_generic_registered_write =
         route_kind == NuRaftRouteKind::kUnknown &&
         has_registered_route;
+    const bool delegates_to_registered_import_handler =
+        route_kind == NuRaftRouteKind::kDocumentImport &&
+        has_registered_route &&
+        route != nullptr;
 
     if (!supports_generic_registered_write &&
         route_kind != NuRaftRouteKind::kCollectionCreate &&
@@ -626,7 +630,7 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         return;
     }
 
-    if (supports_generic_registered_write) {
+    if (supports_generic_registered_write || delegates_to_registered_import_handler) {
         error.clear();
         const bool handler_ok = invoke_registered_handler(server_, request, response, error);
         if (!handler_ok && response->status_code == 0) {
@@ -635,6 +639,11 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         if (committed_index > live_product_state_applied_index_) {
             live_product_state_applied_index_ = committed_index;
         }
+
+        if (route != nullptr && (route->async_req || route->async_res)) {
+            return;
+        }
+
         send_response(request, response);
         return;
     }
