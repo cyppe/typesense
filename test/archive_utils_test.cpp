@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include "archive_utils.h"
 #include "tsconfig.h"
+#include "temp_dir_utils.h"
 #include <fstream>
 #include <cstdio>
 #include <filesystem>
@@ -8,13 +9,13 @@
 class ArchiveUtilsTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        temp_dir = std::filesystem::temp_directory_path() / "archive_utils_test";
-        std::filesystem::create_directory(temp_dir);
+        temp_dir = typesense_test::make_test_temp_dir("archive_utils");
+        typesense_test::reset_test_temp_dir(temp_dir.string());
         Config::get_instance().set_data_dir(temp_dir.string());
     }
 
     void TearDown() override {
-        std::filesystem::remove_all(temp_dir);
+        typesense_test::cleanup_test_temp_dir(temp_dir.string());
     }
 
     std::filesystem::path temp_dir;
