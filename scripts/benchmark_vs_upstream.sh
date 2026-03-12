@@ -350,7 +350,7 @@ if [[ ${#SERVER_ARGS[@]} -gt 0 ]]; then
 	done
 fi
 
-node dist/index.js \
+bun dist/index.js \
 	benchmark \
 	--binaries "${BASELINE_BINARY}" "${FORK_BINARY}" \
 	-c "${BASELINE_LABEL}" "${FORK_LABEL}" \

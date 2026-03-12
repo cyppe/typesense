@@ -33,7 +33,7 @@ function getErrorMessage(error: unknown) {
 }
 
 function handleZodError(error: ZodError) {
-  error.errors.map((err) => logger.error(`error for argument '${err.path.join(".")}': ${err.message}`));
+  error.issues.map((issue) => logger.error(`error for argument '${issue.path.join(".")}': ${issue.message}`));
 }
 
 function handleError(error: unknown) {

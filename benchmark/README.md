@@ -15,8 +15,8 @@ Use the CLI in `benchmark/` directly only when you are developing the benchmark 
 ## Prerequisites
 
 - Docker
-- Node.js 20+
-- Bun 1.3+
+- Node.js 24 LTS
+- Bun 1.3.10
 - A built `typesense-server` binary when you are not using `scripts/benchmark_vs_upstream.sh --build`
 
 ## Default Workflow
@@ -53,7 +53,7 @@ The CLI currently exposes two commands: `install` and `benchmark`.
 ### Installing Typesense
 
 ```bash
-./dist/index.js install [options]
+bun dist/index.js install [options]
 
 Options:
   -n, --container-name <name>     Name for the Docker container (default: "bazel-build")
@@ -68,7 +68,7 @@ Options:
 ### Running Benchmarks
 
 ```bash
-./dist/index.js benchmark [options]
+bun dist/index.js benchmark [options]
 
 Options:
   --commit-hashes <hashes...>    Commits to compare

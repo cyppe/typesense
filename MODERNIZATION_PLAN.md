@@ -226,7 +226,8 @@ Build a deliberate next-wave upgrade shortlist instead of bumping opportunistica
   - ONNX Runtime `1.24.2` -> `1.24.3` is now done; canonical Docker build passed, `ldd bazel-bin/typesense-server` still shows no `libonnxruntime.so.1` dependency, and the Dockerized API `tests/health.test.ts` replay passed against the promoted binary.
   - `libarchive` `3.7.7` -> `3.8.5` is now done.
   - `snappy` `1.1.7` -> `1.2.x` for compiler/perf hygiene. *(Now done on `1.2.2`.)*
-  - `typesense-js` in `tests/` `2.0.3` -> `3.0.2` is now done to match the benchmark toolchain client line; `pnpm exec tsc --noEmit` passes in `tests/` after the bump.
+  - `typesense-js` in `tests/` `2.0.3` -> `3.0.2` is now done to match the benchmark toolchain client line; `bun run check` passes in `tests/` after the bump.
+  - JS tooling baseline is now aligned on Bun `1.3.10` plus Node `24.14.0` LTS for optional host-side flows. `tests/` no longer carries pnpm metadata, benchmark wrapper invocations use Bun, and shared package pins were refreshed to the current stable lines (`eslint 10.0.3`, `typescript-eslint 8.57.0`, `vitest 4.1.0`, `openai 6.27.0`, `zod 4.3.6`, `@types/node 25.4.0`). `tests/src/error.ts` needed the expected Zod 4 compatibility fix (`error.errors` -> `error.issues`), and `bun outdated` is now clean in `api_tests/`, `benchmark/`, and `tests/`.
   - `abseil-cpp` `20250814.1` -> `20260107.1` attempted but **blocked by ORT ABI mismatch**: ORT internally builds `re2` against its own fetched abseil (lts_20250814), so linking fails when the external abseil uses a different LTS namespace tag. Fix requires injecting external abseil into ORT's CMake build (same pattern as the protobuf injection in `onnxruntime.patch`). Defer until ORT's abseil injection is implemented.
 - [ ] Keep treating patch-debt reduction as at least as important as raw version bumps; some deps (for example `whisper.cpp`, `h2o`) matter more because of maintenance surface than because they are numerically old.
 - [x] **whisper.cpp major upgrade (v1.8.3):** Upgraded from `022756a8` (pre-v1.7.x) to `2eeeba56` (v1.8.3). Complete `whisper.BUILD` rewrite (now uses `rules_foreign_cc` cmake rule instead of hand-rolled cc_library). Patch reduced from 7 hunks/4 files to 1 hunk/1 file (only non-speech token expansion remains). API change: `suppress_non_speech_tokens` renamed to `suppress_nst`. OpenMP disabled (`GGML_OPENMP=OFF`) since Typesense runs whisper single-threaded. All 141 API tests pass.
@@ -811,7 +812,9 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 
 25. **Add a workflow input before splitting release workflows.** A single `release-binaries.yml` with a `target_scope` / matrix-filter input was enough to debug one macOS lane quickly without duplicating logic across multiple workflows. Keep one canonical workflow unless maintenance pressure truly forces a reusable split.
 
-26. **`tests/` currently has no Vitest spec files.** For dependency-only maintenance in that package, `pnpm exec tsc --noEmit` is the useful verification command; `pnpm exec vitest run` exits with "No test files found".
+26. **`tests/` currently has no Vitest spec files.** For dependency-only maintenance in that package, `bun run check` is the useful verification command; `bun run test` is not the primary signal until real test files exist.
+
+27. **Prefer exact version pins to floating tags in Bun-managed packages.** `bun update --latest` is useful for discovering upgrades, but manifests and lockfiles should land on concrete version numbers rather than `latest` so CI and local replays stay reproducible.
 
 27. **Chunked import replay must key carryover by request identity, not log index.** For the NuRaft prototype's materialized apply path, import fragments only reassemble correctly across restart when the pending tail is stored under a stable request id (`start_ts`, with log-index fallback for synthetic single-chunk cases), mirroring how the batched indexer treats one logical import request across multiple chunks.
 
