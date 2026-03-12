@@ -20,6 +20,7 @@ cmake(
         "GGML_CUDA": "OFF",
         "GGML_METAL": "OFF",
         "GGML_VULKAN": "OFF",
+        "GGML_BLAS": "OFF",
         # Disable optional deps not needed by Typesense.
         "WHISPER_CURL": "OFF",
         "WHISPER_SDL2": "OFF",
