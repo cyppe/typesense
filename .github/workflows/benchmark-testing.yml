@@ -10,6 +10,7 @@ concurrency:
 jobs:
   benchmark-testing:
     runs-on: ubuntu-24.04
+    timeout-minutes: 120
 
     steps:
       - name: Checkout code
@@ -22,38 +23,35 @@ jobs:
           REPO_INFO=$(gh api /repos/${{ github.repository }})
           IS_FORK=$(echo "$REPO_INFO" | jq -r '.fork')
           PARENT_REPO=$(echo "$REPO_INFO" | jq -r '.parent.full_name // empty')
-          DEFAULT_BRANCH=$(echo "$REPO_INFO" | jq -r '.default_branch')
+          CURRENT_BRANCH="${{ github.ref_name }}"
           
           echo "Is fork: $IS_FORK"
+          echo "Current branch: $CURRENT_BRANCH"
           if [ "$IS_FORK" = "true" ]; then
             echo "This is a fork of $PARENT_REPO"
-            # For forks, get successful runs from the current repo
-            REPO_TO_CHECK="${{ github.repository }}"
+            # For forks, compare against successful runs from the same branch in the current repo.
           else
             echo "This is the main repo"
-            # For main repo, get successful runs from main branch
-            REPO_TO_CHECK="${{ github.repository }}"
-            BRANCH_FILTER="and .head_branch == \"$DEFAULT_BRANCH\""
           fi
+          REPO_TO_CHECK="${{ github.repository }}"
 
           echo "Fetching workflow runs from $REPO_TO_CHECK..."
-          if [ "$IS_FORK" = "true" ]; then
-            RUNS_INFO=$(gh api -H "Accept: application/vnd.github+json" \
-              /repos/$REPO_TO_CHECK/actions/workflows/tests.yml/runs \
-              -q '.workflow_runs[] | select(.conclusion == "success") | {id: .id, sha: .head_sha, branch: .head_branch, conclusion: .conclusion}' \
-              --paginate | head -n 2)
-          else
-            RUNS_INFO=$(gh api -H "Accept: application/vnd.github+json" \
-              /repos/$REPO_TO_CHECK/actions/workflows/tests.yml/runs \
-              -q ".workflow_runs[] | select(.conclusion == \"success\" and .head_branch == \"$DEFAULT_BRANCH\") | {id: .id, sha: .head_sha, branch: .head_branch, conclusion: .conclusion}" \
-              --paginate | head -n 2)
-          fi
+          RUNS_INFO=$(gh api -H "Accept: application/vnd.github+json" \
+            /repos/$REPO_TO_CHECK/actions/workflows/tests.yml/runs \
+            -q ".workflow_runs[] | select(.conclusion == \"success\" and .head_branch == \"$CURRENT_BRANCH\") | {id: .id, sha: .head_sha, branch: .head_branch, conclusion: .conclusion}" \
+            --paginate | head -n 2)
           
           echo "Found runs info:"
           echo "$RUNS_INFO"
           
           if [ -z "$RUNS_INFO" ]; then
-            echo "No successful runs found"
+            echo "No successful tests.yml runs found on branch $CURRENT_BRANCH"
+            exit 1
+          fi
+
+          RUN_COUNT=$(printf '%s\n' "$RUNS_INFO" | sed '/^$/d' | wc -l | tr -d ' ')
+          if [ "$RUN_COUNT" -lt 2 ]; then
+            echo "Need at least two successful tests.yml runs on branch $CURRENT_BRANCH to benchmark a candidate against a baseline."
             exit 1
           fi
           
@@ -113,8 +111,9 @@ jobs:
           name: benchmark-data
           workflow: benchmark-testing.yml
           path: ./benchmark/influxdb-data
+          branch: ${{ github.ref_name }}
           search_artifacts: true
-          workflow_conclusion: ""
+          workflow_conclusion: success
         continue-on-error: true
 
       # Prepare InfluxDB
