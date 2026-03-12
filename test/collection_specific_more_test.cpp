@@ -19,6 +19,22 @@ static nlohmann::json find_doc_by_id(const nlohmann::json& results, const std::s
     return nlohmann::json();
 }
 
+namespace {
+
+constexpr size_t search_cutoff_test_deadline_ms() {
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+    return 25;
+#endif
+#endif
+#if defined(__SANITIZE_THREAD__)
+    return 25;
+#endif
+    return 1;
+}
+
+}  // namespace
+
 class CollectionSpecificMoreTest : public ::testing::Test {
 protected:
     Store *store;
@@ -2385,7 +2401,8 @@ TEST_F(CollectionSpecificMoreTest, SearchCutoffTest) {
     auto coll_op = coll1->search("foobarbar1 2", {"title", "desc"}, "", {}, {}, {2}, 3, 1, FREQUENCY, {false}, 5,
                                  spp::sparse_hash_set<std::string>(),
                                  spp::sparse_hash_set<std::string>(), 10, "", 30, 4, "title", 20, {}, {}, {}, 0,
-                                 "<mark>", "</mark>", {}, 1000, true, false, true, "", false, 1);
+                                 "<mark>", "</mark>", {}, 1000, true, false, true, "", false,
+                                 search_cutoff_test_deadline_ms());
 
     ASSERT_TRUE(coll_op.ok()) << coll_op.error();
     ASSERT_TRUE(coll_op.get()["search_cutoff"]);

@@ -105,8 +105,14 @@ Focused sanitizer replays used during local stabilization:
 # _rand(seed) / sort-path validation under ASAN
 scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=1800 '--test_arg=--gtest_filter=CollectionSortingTest.TestSortByRandomOrder'
 
+# Hosted-ASAN timeout replay for voice query
+scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors --runs_per_test=3 //:typesense-test --test_timeout=3600 '--test_arg=--gtest_filter=CollectionVectorTest.TestVoiceQuery' --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+
 # Current TSAN confirmation subset for sanitizer lane work
 scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=3600 '--test_arg=--gtest_filter=CollectionSortingTest.TestSortByRandomOrder:CollectionSpecificMoreTest.SearchCutoffTest:CollectionVectorTest.TestVoiceQuery:NuRaftBootstrapConfigTest.*:NuRaftHttpRuntimeTest.*:NuRaftStateInitializerTest.*' --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+
+# Hosted-TSAN timeout replay for search_cutoff behavior
+scripts/bazel_in_docker.sh test --config=tsan --cache_test_results=no --test_output=errors --runs_per_test=3 //:typesense-test --test_timeout=3600 '--test_arg=--gtest_filter=CollectionSpecificMoreTest.SearchCutoffTest'
 ```
 
 ## 9) API replay (one-command style)
