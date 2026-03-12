@@ -3,7 +3,7 @@ import type { EnvVariableKey } from "@/utils/types";
 import type { Params } from "k6/http";
 import type { Options } from "k6/options";
 
-import { check } from "k6";
+import { check, sleep } from "k6";
 import { SharedArray } from "k6/data";
 import http from "k6/http";
 import { Trend } from "k6/metrics";
@@ -13,6 +13,10 @@ import { validateK6Environment } from "./k6-utils.ts";
 const importDuration = new Trend("import_duration");
 const clientChunkSize = 5_000;
 const responseSnippetLength = 500;
+const acceptedImportStatuses = new Set([200, 201]);
+const collectionSummaryTimeoutMs = "10000";
+const collectionSummaryPollAttempts = 8;
+const collectionSummaryPollIntervalSeconds = 3;
 const allLines = new SharedArray("index-data", () => {
   const raw = open("../../data/data.json");
   return raw.split("\n").filter((line: string) => line.trim().length > 0);
@@ -37,6 +41,43 @@ function summarizeImportResponse(body: string): {
     errorCount: lines.length - successCount,
     snippet: body.substring(0, responseSnippetLength),
   };
+}
+
+function readImportedDocumentCount(collectionUrl: string, params: Params): {
+  bodySnippet: string;
+  documentCount: number;
+  error: string;
+  status: number;
+} {
+  const res = http.get(collectionUrl, params);
+  const body = typeof res.body === "string" ? res.body : "";
+  const bodySnippet = body.substring(0, responseSnippetLength);
+
+  if (res.status !== 200) {
+    return {
+      bodySnippet,
+      documentCount: -1,
+      error: res.error ?? "",
+      status: res.status,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(body) as { num_documents?: number };
+    return {
+      bodySnippet,
+      documentCount: typeof parsed.num_documents === "number" ? parsed.num_documents : -1,
+      error: "",
+      status: res.status,
+    };
+  } catch (error) {
+    return {
+      bodySnippet,
+      documentCount: -1,
+      error: error instanceof Error ? error.message : String(error),
+      status: res.status,
+    };
+  }
 }
 
 export const options: Options = {
@@ -91,7 +132,7 @@ export default function () {
     headers: {
       "X-TYPESENSE-API-KEY": __ENV.API_KEY ?? "xyz",
     },
-    timeout: "10000",
+    timeout: collectionSummaryTimeoutMs,
   };
 
   const benchmarkStart = new Date().getTime();
@@ -120,7 +161,7 @@ export default function () {
             snippet: "<non-string body>",
           };
 
-    if (res.status !== 200) {
+    if (!acceptedImportStatuses.has(res.status)) {
       failedChunkStart = start;
       failedChunkStatus = res.status;
       failedChunkPayloadBytes = chunk.length;
@@ -128,7 +169,11 @@ export default function () {
       break;
     }
 
-    if (summary.lineCount !== expectedChunkDocumentCount || summary.successCount !== expectedChunkDocumentCount) {
+    if (
+      res.status !== 200 ||
+      summary.lineCount !== expectedChunkDocumentCount ||
+      summary.successCount !== expectedChunkDocumentCount
+    ) {
       responseContractWarnings += 1;
 
       if (responseContractWarnings === 1) {
@@ -136,6 +181,7 @@ export default function () {
           [
             `Index benchmark import response contract drift for ${url}`,
             `chunk_start=${start}`,
+            `status=${res.status}`,
             `expected_chunk_docs=${expectedChunkDocumentCount}`,
             `response_line_count=${summary.lineCount}`,
             `success_count=${summary.successCount}`,
@@ -148,12 +194,26 @@ export default function () {
   }
 
   const importOnlyDuration = new Date().getTime() - benchmarkStart;
-  const collectionSummaryRes = http.get(`http://${__ENV.HOST}:${__ENV.PORT}/collections/${__ENV.COLLECTION_NAME}`, readParams);
-  const collectionSummary =
-    collectionSummaryRes.status === 200 && typeof collectionSummaryRes.body === "string"
-      ? JSON.parse(collectionSummaryRes.body) as { num_documents?: number }
-      : {};
-  const importedDocumentCount = typeof collectionSummary.num_documents === "number" ? collectionSummary.num_documents : -1;
+  const collectionUrl = `http://${__ENV.HOST}:${__ENV.PORT}/collections/${__ENV.COLLECTION_NAME}`;
+  let lastCollectionSummary = {
+    bodySnippet: "",
+    documentCount: -1,
+    error: "",
+    status: 0,
+  };
+
+  for (let attempt = 0; attempt < collectionSummaryPollAttempts; attempt += 1) {
+    lastCollectionSummary = readImportedDocumentCount(collectionUrl, readParams);
+    if (lastCollectionSummary.status === 200 && lastCollectionSummary.documentCount === expectedDocumentCount) {
+      break;
+    }
+
+    if (attempt < collectionSummaryPollAttempts - 1) {
+      sleep(collectionSummaryPollIntervalSeconds);
+    }
+  }
+
+  const importedDocumentCount = lastCollectionSummary.documentCount;
   const duration = new Date().getTime() - benchmarkStart;
   importDuration.add(importOnlyDuration);
 
@@ -163,7 +223,9 @@ export default function () {
     failedChunkStart,
     failedChunkStatus,
     responseContractWarnings,
-    summaryStatus: collectionSummaryRes.status,
+    summaryError: lastCollectionSummary.error,
+    summarySnippet: lastCollectionSummary.bodySnippet,
+    summaryStatus: lastCollectionSummary.status,
   };
 
   const checksPassed = check(benchmarkSummary, {
@@ -182,7 +244,9 @@ export default function () {
         `total_duration_ms=${duration}`,
         `expected_docs=${expectedDocumentCount}`,
         `imported_docs=${importedDocumentCount}`,
-        `collection_summary_status=${collectionSummaryRes.status}`,
+        `collection_summary_status=${lastCollectionSummary.status}`,
+        `collection_summary_error=${lastCollectionSummary.error}`,
+        `collection_summary_snippet=${lastCollectionSummary.bodySnippet}`,
         `response_contract_warnings=${responseContractWarnings}`,
         `failed_chunk_payload_bytes=${failedChunkPayloadBytes}`,
         `failed_chunk_response_line_count=${failedChunkSummary.lineCount}`,
