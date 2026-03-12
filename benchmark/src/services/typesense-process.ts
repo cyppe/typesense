@@ -489,15 +489,13 @@ export class TypesenseProcessManager {
     }
 
     const { grpc, http, dataDir } = node;
-    const multiNodeArgs = [`--nodes`, path.join(this.workingDirectory, "nodes")];
-    const ipArgs = ["--peering-address", address.value];
+    const multiNodeArgs = [`--nodes`, this.buildNodesConfig(address.value)];
+    const networkArgs = ["--node-host", address.value, "--listen-address", "0.0.0.0"];
     const baseArgs = [
       `--data-dir=${dataDir}`,
       `--api-key=${this.apiKey}`,
       `--api-port`,
       `${http}`,
-      `--api-address`,
-      `0.0.0.0`,
       `--peering-port`,
       `${grpc}`,
     ];
@@ -506,7 +504,7 @@ export class TypesenseProcessManager {
     if (options?.multiNode !== false) {
       args.push(...multiNodeArgs);
     }
-    args.push(...ipArgs);
+    args.push(...networkArgs);
     args.push(...baseArgs);
     if (this.extraServerArgs?.length) {
       args.push(...this.extraServerArgs);
@@ -643,6 +641,12 @@ export class TypesenseProcessManager {
     return ResultAsync.combine(directories.map((dir) => exists(dir))).map(() => true);
   }
 
+  private buildNodesConfig(ipAddress: string): string {
+    return this.nodeToPortMap
+      .map(({ grpc, http }) => `${ipAddress}:${grpc}:${http}`)
+      .join(",");
+  }
+
   private writeToNodesFile(): ResultAsync<string, ErrorWithMessage> {
     this.spinner.start("Writing nodes file");
     const nodesFile = path.join(this.workingDirectory, "nodes");
@@ -652,9 +656,7 @@ export class TypesenseProcessManager {
       return errAsync(ipAddress.error);
     }
 
-    const contents = this.nodeToPortMap
-      .map(({ grpc, http }) => `${ipAddress.value}:${grpc}:${http}`)
-      .join(",");
+    const contents = this.buildNodesConfig(ipAddress.value);
 
     logger.info(`Writing nodes file to ${nodesFile} with contents:\n${contents}`);
     return ResultAsync.fromPromise(writeFile(nodesFile, contents, { encoding: "utf-8" }), toErrorWithMessage).map(
