@@ -1196,6 +1196,12 @@ Within each batch:
 | `write-stress` | 60s | Import + parallel stress | Focus on write/import performance |
 | `full` | 60s | All scenarios + stress + metrics | Comprehensive analysis |
 
+### Hosted CI Import Chunking
+
+- The standard indexing benchmark uses a smaller client-side import chunk size on hosted CI (`500` docs) than in local/manual runs (`5000` docs).
+- Reason: upstream `v31` and this fork both inherit a hardcoded `60s` H2O HTTP request/request-I/O timeout, and GitHub's smaller runners can cross that limit on a single `5000`-doc import request.
+- This keeps the benchmark workflow stable without changing product behavior or masking the still-open server timeout limitation for long-running bulk imports.
+
 ### Monitoring Endpoints
 
 During benchmarks, the following Typesense endpoints are polled:

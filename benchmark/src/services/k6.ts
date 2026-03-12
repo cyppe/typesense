@@ -23,6 +23,7 @@ interface BaseK6Env {
 
 export interface IndexK6Env extends BaseK6Env {
   BATCH_SIZE: number;
+  INDEX_CHUNK_SIZE?: number;
 }
 
 export interface SearchK6Env extends BaseK6Env {
@@ -78,9 +79,18 @@ export class K6Benchmarks {
   }
 
   public performIndexingBenchmark(): ResultAsync<void, ErrorWithMessage> {
+    const indexChunkSize = this.isInCi ? 500 : 5000;
     return this.getIndexingBenchmarkPath().andThen((path) => {
       return this.createBenchmarkCollection()
-        .andThen(() => this.executeK6Benchmark({ name: "indexing", scriptPath: path }))
+        .andThen(() =>
+          this.executeK6Benchmark({
+            name: `indexing-${indexChunkSize}chunk`,
+            scriptPath: path,
+            additionalVars: {
+              INDEX_CHUNK_SIZE: indexChunkSize,
+            },
+          }),
+        )
         .map(() => {
           this.config.spinner.succeed("Indexing benchmark complete");
         });

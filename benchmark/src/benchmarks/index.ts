@@ -11,12 +11,17 @@ import { Trend } from "k6/metrics";
 import { validateK6Environment } from "./k6-utils.ts";
 
 const importDuration = new Trend("import_duration");
-const clientChunkSize = 5_000;
+const defaultClientChunkSize = 5_000;
 const responseSnippetLength = 500;
 const acceptedImportStatuses = new Set([200, 201]);
 const collectionSummaryTimeoutMs = "10000";
 const collectionSummaryPollAttempts = 8;
 const collectionSummaryPollIntervalSeconds = 3;
+const configuredClientChunkSize = Number.parseInt(__ENV.INDEX_CHUNK_SIZE ?? "", 10);
+const clientChunkSize =
+  Number.isFinite(configuredClientChunkSize) && configuredClientChunkSize > 0
+    ? configuredClientChunkSize
+    : defaultClientChunkSize;
 const allLines = new SharedArray("index-data", () => {
   const raw = open("../../data/data.json");
   return raw.split("\n").filter((line: string) => line.trim().length > 0);
@@ -187,6 +192,7 @@ export default function () {
             `success_count=${summary.successCount}`,
             `error_count=${summary.errorCount}`,
             `response_snippet=${summary.snippet}`,
+            `client_chunk_size=${clientChunkSize}`,
           ].join(" "),
         );
       }
@@ -243,6 +249,7 @@ export default function () {
         `import_duration_ms=${importOnlyDuration}`,
         `total_duration_ms=${duration}`,
         `expected_docs=${expectedDocumentCount}`,
+        `client_chunk_size=${clientChunkSize}`,
         `imported_docs=${importedDocumentCount}`,
         `collection_summary_status=${lastCollectionSummary.status}`,
         `collection_summary_error=${lastCollectionSummary.error}`,
