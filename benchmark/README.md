@@ -32,6 +32,9 @@ scripts/benchmark_vs_upstream.sh --build --profile quick
 
 # Mixed read/write stress validation
 scripts/benchmark_vs_upstream.sh --build --profile write-stress
+
+# Reproduce the benchmark lane locally against the same freshly built binary
+scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick
 ```
 
 See `benchmark/BENCHMARK_RESULTS.md` for the meaning of each profile and the accepted default tuning posture.

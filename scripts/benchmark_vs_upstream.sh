@@ -5,6 +5,7 @@ set -euo pipefail
 BUILD=false
 CLEAN=false
 FLUSH_DB=true
+SELF_COMPARE=false
 UPSTREAM_VERSION="30.1"
 DURATION="30s"
 PORT="12108"
@@ -33,6 +34,7 @@ Profiles:
 
 Options:
   --build                  Build the fork binary first via bazel_in_docker.sh
+  --self-compare           Compare the same staged fork binary against itself for local repro/debug
   --upstream VER           Upstream version to compare against (default: 30.1)
   --baseline-binary PATH   Explicit baseline binary path
   --baseline-label LABEL   Label for baseline binary (default: upstream-<ver> or file basename)
@@ -53,6 +55,7 @@ Environment:
 
 Examples:
   scripts/benchmark_vs_upstream.sh --build --profile standard
+  scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick
   scripts/benchmark_vs_upstream.sh --profile write-stress --server-args --max-indexing-concurrency=16
   scripts/benchmark_vs_upstream.sh --baseline-binary ./base/typesense-server --baseline-label abc123 \
     --fork-binary ./head/typesense-server --fork-label def456 --duration 1m --no-flush
@@ -63,6 +66,10 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 	--build)
 		BUILD=true
+		shift
+		;;
+	--self-compare)
+		SELF_COMPARE=true
 		shift
 		;;
 	--clean)
@@ -111,7 +118,7 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--server-args)
 		shift
-		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "-h" && "$1" != "--help" ]]; do
+		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--self-compare" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "-h" && "$1" != "--help" ]]; do
 			SERVER_ARGS+=("$1")
 			shift
 		done
@@ -302,7 +309,19 @@ verify_binary() {
 }
 
 resolve_fork_binary
-resolve_baseline_binary
+if [[ "${SELF_COMPARE}" == "true" ]]; then
+	BASELINE_BINARY="${FORK_BINARY}"
+	if [[ -n "${BASELINE_LABEL_OVERRIDE}" ]]; then
+		BASELINE_LABEL="${BASELINE_LABEL_OVERRIDE}"
+	else
+		BASELINE_LABEL="${FORK_LABEL}-self-base"
+	fi
+	if [[ -z "${FORK_LABEL_OVERRIDE}" ]]; then
+		FORK_LABEL="${FORK_LABEL}-self-head"
+	fi
+else
+	resolve_baseline_binary
+fi
 verify_binary "${FORK_BINARY}"
 verify_binary "${BASELINE_BINARY}"
 
