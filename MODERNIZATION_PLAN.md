@@ -570,18 +570,101 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **done** | All actionable deps refreshed: magic_enum 0.9.7, libarchive 3.8.5, snappy 1.2.2, ORT 1.24.3, typesense-js 3.0.2, protobuf 34.0.bcr.1. Core infra deps (curl 8.18.0, openssl 3.6.1, jemalloc 5.3.0, zstd 1.5.7, lz4 1.10.0) all confirmed at latest. Patch debt: 5 active patches at minimum, h2o reduced to 48 lines. Abseil upgrade blocked by ORT ABI. whisper.cpp upgraded to v1.8.3 (patch down to 1 hunk). |
 | 19 | NuRaft replacement cutover and hardening | P1.7d | **done** | Real NuRaft consensus is the only path. All 120/120 API tests pass (0 failures). Prototype code deleted, CLI/ENV config exposed, analytics counter bugs fixed, snapshot identity fixed. Remaining follow-ups (async/streaming, route audit, env-dependent suites) tracked as unchecked items in P1.7d. |
 | 20 | Sanitizer lane stabilization + ORT extensions boundary audit | Known Issues | **in progress** | Local-first stabilization work is now broadly validated on GitHub: `tests`, `sanitizer-testing`, `nightly-extended`, and `flake-detection` are all green on the current `v32` line, and the narrow `release-binaries` linux-amd64 lane is also green after fixing its stale help-banner smoke assertion. Root cause for the prior suite-only `_rand(seed)` failure was a missing random-sort sentinel in `populate_sort_mapping()`, which left `field_values` undefined and could route scoring into the wrong branch under ASAN. The hosted-only sanitizer reds were latency-budget mismatches, not new sanitizer reports: `CollectionSpecificMoreTest.SearchCutoffTest` needed a slightly larger TSAN-only cutoff to exercise `search_cutoff` instead of returning a hard 408, and `CollectionVectorTest.TestVoiceQuery` needed a larger ASAN search deadline because the test validates voice-query integration, not timeout behavior. The nightly local blocker was a parallel-safe test bug in `ArchiveUtilsTest`, which used a shared `/tmp/archive_utils_test` directory across `runs_per_test` invocations; switching it to the repo temp-dir helper removed the collision. The hosted nightly failure was also workflow shape, not a product regression: GitHub's standard private `ubuntu-24.04` runner only provides 2 vCPUs, and Bazel was launching four `typesense-test` stress reruns concurrently, which exhausted ONNX Runtime thread creation (`pthread_create failed`, `EAGAIN`). The workflow now keeps the same 5x stress signal but caps Bazel to `--local_test_jobs=1` for that hosted lane. The benchmark lane fix also split cleanly into five parts: workflow drift (stale server CLI flags) is fixed; the NuRaft import path now delegates `kDocumentImport` through the real registered async handler instead of the mirror-plus-synthetic-response path, restoring documented `200` plus per-document newline-delimited results locally; hosted benchmarking now uses smaller client-side indexing chunks on GitHub so it stays inside the inherited upstream `60s` H2O request timeout without changing product behavior; the benchmark harness now uses k6's `handleSummary()` hook for the indexing lane to emit a machine-readable `import_duration` summary directly to stderr, which avoids both Influx timing gaps and Docker bind-mount permission issues from file-based summary export; and the indexing benchmark now uses an explicit `per-vu-iterations` scenario with a much larger hosted-CI `maxDuration` so k6 does not ignore the cap or terminate the single import iteration at its default `10m` ceiling before checks and Trend values are finalized. The hosted replays proved that both `20m` and `30m` were still too tight: the `20m` run hit k6's end-of-test summary at `09:06:48Z` after starting at `08:46:10Z`, and the later `30m` run still timed out at `10:05:58Z` after starting the indexing phase at `09:35:20Z`. The local self-compare replay on the latest branch tip completed successfully, emitted the normal ASCII benchmark graphs, and indexed all `1,000,000` documents with zero response-contract warnings, which means the remaining red was not a local benchmark-path bug. The next root cause was workflow semantics: a `workflow_dispatch` benchmark launched in parallel with `git push` can run on the previous branch tip, so the repo now treats benchmark selection as "benchmark this workflow SHA if and only if it already has a successful `tests.yml` artifact; otherwise fail fast." The workflow now prints the checked-out SHA and refuses to benchmark stale artifacts by default, instead selecting the current workflow SHA as the candidate and the most recent earlier successful `tests.yml` run on the same branch as the baseline. The harness also polls collection summary after import instead of assuming one immediate read is authoritative, and opts JavaScript actions into Node 24 explicitly so `oven-sh/setup-bun@v2` is exercised against the post-Node-20 runner path before GitHub flips the default. Local validation of the import-handler delegation fix is good: direct 2-doc and 5,000-doc single-node imports return `200`, emit the expected number of response lines, and land all documents; targeted API suites `nuraft_runtime_documents_crud.test.ts`, `nuraft_replication_edges.test.ts`, and `documents.test.ts` pass against the rebuilt binary with the stronger assertions. The full release matrix also exposed a new macOS-specific packaging issue: upstream `ggml` enables `GGML_BLAS=ON` by default on Apple, which makes `libggml.a` reference `ggml_backend_blas_reg()` while our Bazel staging only ships the core static libs. Remaining work is final hosted confirmation that the benchmark lane stays green on the latest SHA, the macOS release rerun after forcing `GGML_BLAS=OFF` for whisper's CPU-only build, and the longer-term ORT Extensions registration cleanup while keeping the promoted binary self-contained. |
+| 21 | NuRaft import/runtime parity + benchmark refactor sprint | P1 Runtime/Perf | **planned** | New highest-priority runtime/perf sprint. Root hypothesis from branch-vs-upstream audit: upstream `v30/v31` benchmarks the classic single-node server with one large import POST, while this fork benchmarks the NuRaft runtime and currently falls back to `500`-doc client chunks on hosted CI because the server still hardcodes a `60000ms` H2O request timeout. The likely deeper regression is not just the timeout constant: the NuRaft runtime import route is still `async_req=true`, and each aggregated request chunk appears to go through `append_via_raft(...)`, meaning one logical large import may be paying Raft append/commit overhead per transport chunk. The sprint must (1) make server request timeout configurable, (2) prove whether runtime import granularity is per logical request or per transport chunk, (3) refactor runtime import so a full large POST can complete safely without tiny client-side chunking, and (4) split the benchmark lane into a fast upstream-comparable `core` path and a manual `extended` path for stress/concurrent/extra metrics. |
 
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now (execution lane):** item **20** (`Sanitizer lane stabilization + ORT extensions boundary audit`) — hosted confirmation is now green for `tests`, `sanitizer-testing`, `nightly-extended`, and `flake-detection`. The remaining CI validation is the full multi-arch `release-binaries` matrix plus `benchmark-testing` on the latest SHA. NuRaft bulk-import response semantics are fixed locally and covered by stronger API assertions; the benchmark runtime path is also now stable enough to finish, and the active blocker has narrowed to benchmark post-processing: hosted CI needed smaller client-side index chunks to stay inside the inherited upstream `60s` H2O request timeout, and the harness now needs to tolerate missing `import_duration` rows from Influx by reading the indexing run's `handleSummary()` output directly instead of relying on a file export or the eventual Influx row. The release matrix also has one concrete open task now: Darwin whisper builds must stop inheriting upstream `GGML_BLAS=ON` auto-detection unless we intentionally stage/link the BLAS backend. ORT Extensions boundary cleanup remains the longer follow-up architecture work.
+- **Active now (execution lane):** item **21** (`NuRaft import/runtime parity + benchmark refactor sprint`) — the benchmark lane is now blocked on runtime architecture, not only workflow plumbing. The branch-vs-upstream audit showed three structural mismatches that must be fixed in order: (1) the server still hardcodes `REQ_TIMEOUT_MS = 60000` for `http1.req_timeout`, `http1.req_io_timeout`, and `http2.idle_timeout`, (2) the benchmark currently exercises the NuRaft runtime binary rather than the classic single-node path upstream used, and (3) the runtime import route is still `async_req=true` while `NuRaftHttpRuntimeService::write()` calls `append_via_raft(...)`, which likely turns one logical large import into many Raft appends/commits across transport chunks. The sprint goal is to restore safe full-POST import support on this fork, then narrow the default benchmark lane so GitHub runs a fair upstream-comparable `core` profile while the heavier stress/concurrent/metrics phases remain manual `extended` coverage.
 - **Recently finished:** item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
 - **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule. NuRaft async/streaming parity verified against upstream (both synchronous, full match).
-- **Later (planned but not started):** NuRaft benchmark baseline (k6 profiles against NuRaft server). Compile warning cleanup (surgical `per_file_copt` suppression of third-party warnings from protobuf, abseil, libstdc++ regex — zero-noise build output). Env-dependent test suites (blocked on infrastructure). Abseil `20260107.1` upgrade (blocked by ORT ABI mismatch). ONNX Runtime Extensions registration cleanup: keep static/self-contained ORT core packaging, but revisit whether image custom ops can move to a more explicit registration model to reduce sanitizer teardown debt without reintroducing runtime `libonnxruntime.so.1` coupling. Release workflow follow-up: keep local Linux replay as the first validation step, because stale smoke-test assertions like the old `Command line usage:` grep can break packaging even when the binary itself is healthy, and consider extracting Linux tarball/package assembly into a repo-owned wrapper so CI and local replay stop depending on workflow-only shell blocks.
+- **Later (planned but not started):** Compile warning cleanup (surgical `per_file_copt` suppression of third-party warnings from protobuf, abseil, libstdc++ regex — zero-noise build output). Env-dependent test suites (blocked on infrastructure). Abseil `20260107.1` upgrade (blocked by ORT ABI mismatch). ONNX Runtime Extensions registration cleanup: keep static/self-contained ORT core packaging, but revisit whether image custom ops can move to a more explicit registration model to reduce sanitizer teardown debt without reintroducing runtime `libonnxruntime.so.1` coupling. Release workflow follow-up: keep local Linux replay as the first validation step, because stale smoke-test assertions like the old `Command line usage:` grep can break packaging even when the binary itself is healthy, and consider extracting Linux tarball/package assembly into a repo-owned wrapper so CI and local replay stop depending on workflow-only shell blocks.
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
   - `TODO.md` upstream product backlog (not the modernization source of truth; mine opportunistically only when an item aligns with current modernization goals).
+
+### 21a) NuRaft import/runtime parity + benchmark refactor sprint
+
+**Why this sprint exists now**
+
+- Upstream `typesense/typesense` `v30/v31` benchmarked the classic single-node server path and sent the 1M-doc import as one large POST.
+- This fork's hosted benchmark currently launches the NuRaft runtime binary and uses `500`-doc client chunks on GitHub to avoid the inherited `60000ms` H2O request timeout.
+- Local self-compare completed successfully with a full benchmark replay and zero import-contract warnings, so the main red is not a generic benchmark CLI bug.
+- The strongest remaining regression hypothesis is runtime execution-model mismatch: the NuRaft import route is still `async_req=true`, but `NuRaftHttpRuntimeService::write()` calls `append_via_raft(...)` before delegating to the real import handler, so one logical streaming import may be paying Raft append/commit cost per aggregated transport chunk.
+
+**Sprint goal**
+
+- Restore safe support for large single-request bulk imports on the NuRaft-backed `typesense-server`, then make the benchmark lane compare that path fairly against previous commits without tiny client-side chunking.
+
+**Story A — prove the actual import execution model**
+
+- [ ] Instrument the runtime import path to answer one question unambiguously: for one large client POST, how many Raft appends happen, and at what chunk boundaries?
+- [ ] Capture the same flow on the classic single-node server path so we can separate HTTP chunking from Raft-induced overhead.
+- [ ] Record whether the runtime returns only after full commit/apply visibility or whether it can safely acknowledge earlier without violating product semantics.
+- [ ] Keep the evidence in short notes here and add a concise benchmark decision note in `benchmark/BENCHMARK_RESULTS.md`.
+
+**Story B — make server request timeout configurable**
+
+- [ ] Replace the hardcoded HTTP request timeout path with a runtime-configurable server option for both classic and NuRaft entrypoints.
+- [ ] Keep the old effective default first, then add benchmark/test coverage for explicitly raised timeout values.
+- [ ] Confirm the new option affects `http1.req_timeout`, `http1.req_io_timeout`, and `http2.idle_timeout` together so behavior is predictable.
+
+**Story C — fix NuRaft import granularity**
+
+- [ ] Refactor runtime import so transport chunking does not become Raft log-entry granularity for one logical bulk import request.
+- [ ] Preserve the documented import response contract: `200` and newline-delimited per-document result lines when no per-document errors are expected.
+- [ ] Verify follower/leader behavior remains correct and deterministic after the refactor; do not regress the earlier local fix that routed `kDocumentImport` through the real registered handler.
+- [ ] Prefer a design that is explicit and replay-safe: aggregate one logical import request on the leader, replicate one logical import mutation, then execute/import with the existing product handler semantics.
+- [ ] Do the implementation and large single-POST replay locally first; do **not** re-enable full benchmark comparisons until this runtime path is proven with a direct local one-shot import against the latest built binary.
+
+**Story D — split benchmark intent**
+
+- [ ] Add a benchmark scope/profile split:
+  - `core`: upstream-comparable path (`index + search`)
+  - `extended`: stress-import, concurrent search+import, extra RocksDB snapshots, long-lived metrics collector
+- [ ] Make `benchmark-testing.yml` run `core` by default.
+- [ ] Keep `extended` manual and reachable via the existing wrapper/CLI so stress coverage is preserved.
+- [ ] Only revisit hosted client-side chunking after Stories B/C prove large full-POST imports are safe again.
+
+**Story E — validation matrix after the refactor**
+
+- [ ] Local single-node large import replay against `//:typesense-server` with a large one-shot POST and raised request-timeout. This is the hard gate before any new benchmark reruns.
+- [ ] Local benchmark wrapper replay:
+  - `scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick`
+  - then `--profile standard`
+- [ ] Targeted API coverage for import contract and visibility:
+  - `tests/documents.test.ts`
+  - `tests/nuraft_runtime_documents_crud.test.ts`
+  - `tests/nuraft_replication_edges.test.ts`
+- [ ] Canonical build/test gates after runtime changes:
+  - `scripts/bazel_in_docker.sh build //:typesense-server`
+  - `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`
+- [ ] Hosted confirmation after local green:
+  - `tests`
+  - `benchmark-testing`
+  - then `nightly-extended` only if the refactor touches long-running import/search behavior materially
+
+**Required deep-dive comparisons against upstream**
+
+- [ ] Re-read upstream classic import flow in:
+  - `src/core_api.cpp`
+  - `src/http_server.cpp`
+  - `src/main/typesense_server.cpp`
+- [ ] Compare against this fork's runtime path in:
+  - `src/nuraft/nuraft_http_runtime.cpp`
+  - `src/nuraft/nuraft_state_machine_sink.cpp`
+  - `src/main/typesense_nuraft_runtime.cpp`
+- [ ] Confirm whether upstream's long benchmark runs were still using one-shot imports and whether their wall-clock stayed bounded because they were not paying per-chunk consensus overhead.
+- [ ] If the runtime refactor diverges from upstream classic semantics, document exactly why the divergence is necessary and what product contract is preserved.
+
+**Exit criteria**
+
+- [ ] A large single-request import completes successfully on the NuRaft-backed server with a raised configured timeout.
+- [ ] Runtime import no longer appears to pay one Raft append/commit per transport chunk for one logical request.
+- [ ] The first benchmark rerun happens only after the local large single-POST import gate is green.
+- [ ] The default benchmark lane finishes comfortably inside GitHub's workflow timeout budget on the latest SHA.
+- [ ] `benchmark/BENCHMARK_RESULTS.md` and this plan both explain the new benchmark/runtime policy in one short section each.
 
 ### Upstream TODO candidates worth pulling in (post-Phase-3 queue)
 
