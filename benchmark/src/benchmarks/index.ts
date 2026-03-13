@@ -88,9 +88,14 @@ function readImportedDocumentCount(collectionUrl: string, params: Params): {
 }
 
 export const options: Options = {
-  vus: 1,
-  iterations: 1,
-  maxDuration: indexMaxDuration,
+  scenarios: {
+    index_import: {
+      executor: "per-vu-iterations",
+      vus: 1,
+      iterations: 1,
+      maxDuration: indexMaxDuration,
+    },
+  },
   tags: {
     commitHash: __ENV.COMMIT_HASH ?? "unknown",
   },
