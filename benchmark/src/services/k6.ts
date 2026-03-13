@@ -97,7 +97,7 @@ export class K6Benchmarks {
             scriptPath: path,
             additionalVars: {
               INDEX_CHUNK_SIZE: indexChunkSize,
-              INDEX_MAX_DURATION: this.isInCi ? "20m" : "10m",
+              INDEX_MAX_DURATION: this.isInCi ? "30m" : "10m",
             },
           }),
         )
