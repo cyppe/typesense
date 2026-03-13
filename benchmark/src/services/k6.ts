@@ -244,6 +244,7 @@ export class K6Benchmarks {
       logger.getLevel() <= LogLevel.DEBUG ? "--quiet" : "",
     ].join(" ");
 
+    const outputChunks: string[] = [];
     const errors: string[] = [];
     const warnings: string[] = [];
 
@@ -252,14 +253,15 @@ export class K6Benchmarks {
         commandOptions: ["--no-deps", "--remove-orphans"],
         log: logger.getLevel() === LogLevel.DEBUG,
         cwd: findRoot(process.cwd()),
-        callback: (chunk) => this.processLogChunk(chunk, errors, warnings),
+        callback: (chunk) => this.processLogChunk(chunk, outputChunks, errors, warnings),
       }),
       toErrorWithMessage,
-    ).andThen((result) => this.handleK6Result(result, errors, warnings));
+    ).andThen((result) => this.handleK6Result(result, outputChunks, errors, warnings));
   }
 
-  private processLogChunk(chunk: Buffer, errors: string[], warnings: string[]): void {
+  private processLogChunk(chunk: Buffer, outputChunks: string[], errors: string[], warnings: string[]): void {
     const log = chunk.toString();
+    outputChunks.push(log);
     if (log.includes("level=error")) {
       errors.push(log.trim());
     }
@@ -270,10 +272,14 @@ export class K6Benchmarks {
 
   private handleK6Result(
     result: IDockerComposeResult,
+    outputChunks: string[],
     errors: string[],
     warnings: string[],
   ): ResultAsync<K6ExecutionResult, ErrorWithMessage> {
-    const cleanOutput = result.out.trim();
+    const cleanOutput = [outputChunks.join(""), result.out, result.err]
+      .filter((chunk): chunk is string => typeof chunk === "string" && chunk.trim().length > 0)
+      .join("\n")
+      .trim();
 
     // Handle empty output (k6 crashed or container failed to start)
     if (!cleanOutput) {
