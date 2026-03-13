@@ -1201,6 +1201,7 @@ Within each batch:
 - The standard indexing benchmark uses a smaller client-side import chunk size on hosted CI (`500` docs) than in local/manual runs (`5000` docs).
 - Reason: upstream `v31` and this fork both inherit a hardcoded `60s` H2O HTTP request/request-I/O timeout, and GitHub's smaller runners can cross that limit on a single `5000`-doc import request.
 - This keeps the benchmark workflow stable without changing product behavior or masking the still-open server timeout limitation for long-running bulk imports.
+- Hosted CI also uses a larger explicit k6 indexing `maxDuration` (`20m`) than the default executor ceiling, because the smaller CI chunking makes the single import iteration long enough to hit k6's default `10m` cap on GitHub's hosted runners.
 - Hosted CI also cannot rely solely on Influx for the single-point `import_duration` metric. The benchmark harness now uses k6's `handleSummary()` hook in the indexing lane to emit a machine-readable `import_duration` payload directly to stderr, and falls back to that direct value if the post-run Influx query returns no `import_duration` rows. This keeps benchmark reporting honest when the workload itself succeeded but Influx did not surface the index Trend in time, and avoids Docker bind-mount permission issues from file-based summary export.
 
 ### Monitoring Endpoints

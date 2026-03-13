@@ -24,6 +24,7 @@ interface BaseK6Env {
 export interface IndexK6Env extends BaseK6Env {
   BATCH_SIZE: number;
   INDEX_CHUNK_SIZE?: number;
+  INDEX_MAX_DURATION?: string;
 }
 
 export interface SearchK6Env extends BaseK6Env {
@@ -96,6 +97,7 @@ export class K6Benchmarks {
             scriptPath: path,
             additionalVars: {
               INDEX_CHUNK_SIZE: indexChunkSize,
+              INDEX_MAX_DURATION: this.isInCi ? "20m" : "10m",
             },
           }),
         )

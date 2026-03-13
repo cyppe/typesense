@@ -19,6 +19,7 @@ const collectionSummaryTimeoutMs = "10000";
 const collectionSummaryPollAttempts = 8;
 const collectionSummaryPollIntervalSeconds = 3;
 const configuredClientChunkSize = Number.parseInt(__ENV.INDEX_CHUNK_SIZE ?? "", 10);
+const indexMaxDuration = __ENV.INDEX_MAX_DURATION ?? "10m";
 const clientChunkSize =
   Number.isFinite(configuredClientChunkSize) && configuredClientChunkSize > 0
     ? configuredClientChunkSize
@@ -89,6 +90,7 @@ function readImportedDocumentCount(collectionUrl: string, params: Params): {
 export const options: Options = {
   vus: 1,
   iterations: 1,
+  maxDuration: indexMaxDuration,
   tags: {
     commitHash: __ENV.COMMIT_HASH ?? "unknown",
   },
