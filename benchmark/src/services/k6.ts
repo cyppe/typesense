@@ -1,3 +1,4 @@
+import fs from "fs";
 import path from "path";
 import type { TypesenseProcessManager } from "@/services/typesense-process";
 import type { ErrorWithMessage } from "@/utils/error";
@@ -44,10 +45,24 @@ interface LoadTestConfig {
 
 interface K6ExecutionResult {
   output: string;
+  summary?: K6Summary;
 }
 
 export interface IndexBenchmarkExecutionResult {
   importDurationMs: number;
+}
+
+interface K6SummaryMetricValues {
+  avg?: number;
+  ["avg"]?: number;
+}
+
+interface K6SummaryMetric {
+  values?: K6SummaryMetricValues;
+}
+
+interface K6Summary {
+  metrics?: Record<string, K6SummaryMetric>;
 }
 
 export class K6Benchmarks {
@@ -97,9 +112,10 @@ export class K6Benchmarks {
             additionalVars: {
               INDEX_CHUNK_SIZE: indexChunkSize,
             },
+            summaryExportName: `indexing-${indexChunkSize}chunk`,
           }),
         )
-        .andThen((result) => this.extractIndexBenchmarkExecutionResult(result.output))
+        .andThen((result) => this.extractIndexBenchmarkExecutionResult(result.output, result.summary))
         .map((result) => {
           this.config.spinner.succeed("Indexing benchmark complete");
           return result;
@@ -232,14 +248,19 @@ export class K6Benchmarks {
     scriptPath: string;
     name: string;
     additionalVars?: Record<string, unknown>;
+    summaryExportName?: string;
   }): ResultAsync<K6ExecutionResult, ErrorWithMessage> {
     const { scriptPath, name } = options;
     const envVarString = this.buildK6EnvironmentVars(options.additionalVars);
     this.config.spinner.start(`Running ${name} benchmark\n`);
+    const summaryPaths = options.summaryExportName
+      ? this.prepareSummaryExportPaths(options.summaryExportName)
+      : undefined;
 
     const command = [
       "run",
       envVarString,
+      summaryPaths ? `--summary-export ${summaryPaths.containerPath}` : "",
       scriptPath,
       logger.getLevel() <= LogLevel.DEBUG ? "--quiet" : "",
     ].join(" ");
@@ -256,7 +277,7 @@ export class K6Benchmarks {
         callback: (chunk) => this.processLogChunk(chunk, outputChunks, errors, warnings),
       }),
       toErrorWithMessage,
-    ).andThen((result) => this.handleK6Result(result, outputChunks, errors, warnings));
+    ).andThen((result) => this.handleK6Result(result, outputChunks, errors, warnings, summaryPaths?.hostPath));
   }
 
   private processLogChunk(chunk: Buffer, outputChunks: string[], errors: string[], warnings: string[]): void {
@@ -275,11 +296,13 @@ export class K6Benchmarks {
     outputChunks: string[],
     errors: string[],
     warnings: string[],
+    summaryHostPath?: string,
   ): ResultAsync<K6ExecutionResult, ErrorWithMessage> {
     const cleanOutput = [outputChunks.join(""), result.out, result.err]
       .filter((chunk): chunk is string => typeof chunk === "string" && chunk.trim().length > 0)
       .join("\n")
       .trim();
+    const summary = summaryHostPath ? this.loadSummary(summaryHostPath) : undefined;
 
     // Handle empty output (k6 crashed or container failed to start)
     if (!cleanOutput) {
@@ -305,7 +328,7 @@ export class K6Benchmarks {
     if (checksPassRate === null) {
       logger.warn("No checks line found in k6 output — assuming benchmark completed (custom metrics only)");
       this.config.spinner.succeed("Benchmark complete");
-      return okAsync({ output: cleanOutput });
+      return okAsync({ output: cleanOutput, summary });
     }
 
     logger.info(`Checks pass rate: ${checksPassRate}%`);
@@ -317,12 +340,20 @@ export class K6Benchmarks {
     }
 
     this.config.spinner.succeed("Benchmark complete");
-    return okAsync({ output: cleanOutput });
+    return okAsync({ output: cleanOutput, summary });
   }
 
   private extractIndexBenchmarkExecutionResult(
     output: string,
+    summary?: K6Summary,
   ): ResultAsync<IndexBenchmarkExecutionResult, ErrorWithMessage> {
+    const summaryDuration = summary?.metrics?.import_duration?.values?.avg;
+    if (typeof summaryDuration === "number" && Number.isFinite(summaryDuration)) {
+      return okAsync({
+        importDurationMs: Math.round(summaryDuration),
+      });
+    }
+
     const summaryMatch = /Index benchmark summary .*?\bimport_duration_ms=(\d+)/.exec(output);
     if (!summaryMatch) {
       return errAsync({
@@ -333,6 +364,37 @@ export class K6Benchmarks {
     return okAsync({
       importDurationMs: Number.parseInt(summaryMatch[1], 10),
     });
+  }
+
+  private prepareSummaryExportPaths(name: string): { containerPath: string; hostPath: string } {
+    const repoRoot = findRoot(process.cwd());
+    const summariesDirectory = path.join(repoRoot, "benchmark", "benchmark-workdir", "k6-summaries");
+    fs.mkdirSync(summariesDirectory, { recursive: true });
+    const hostPath = path.join(summariesDirectory, `${this.config.commitHash}-${name}.json`);
+    try {
+      fs.rmSync(hostPath, { force: true });
+    } catch {
+      // ignore stale cleanup failures
+    }
+
+    const relativePath = path.relative(repoRoot, hostPath).split(path.sep).join("/");
+    return {
+      containerPath: `/app/${relativePath}`,
+      hostPath,
+    };
+  }
+
+  private loadSummary(summaryHostPath: string): K6Summary | undefined {
+    try {
+      if (!fs.existsSync(summaryHostPath)) {
+        return undefined;
+      }
+
+      const raw = fs.readFileSync(summaryHostPath, "utf-8");
+      return JSON.parse(raw) as K6Summary;
+    } catch {
+      return undefined;
+    }
   }
 
   private extractChecksPassRate(output: string): number | null {

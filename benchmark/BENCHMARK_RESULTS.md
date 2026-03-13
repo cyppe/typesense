@@ -1201,7 +1201,7 @@ Within each batch:
 - The standard indexing benchmark uses a smaller client-side import chunk size on hosted CI (`500` docs) than in local/manual runs (`5000` docs).
 - Reason: upstream `v31` and this fork both inherit a hardcoded `60s` H2O HTTP request/request-I/O timeout, and GitHub's smaller runners can cross that limit on a single `5000`-doc import request.
 - This keeps the benchmark workflow stable without changing product behavior or masking the still-open server timeout limitation for long-running bulk imports.
-- Hosted CI also cannot rely solely on Influx for the single-point `import_duration` metric. The benchmark harness now captures `import_duration_ms` directly from the successful indexing k6 output and uses that as a fallback if the post-run Influx query returns no `import_duration` rows. This keeps benchmark reporting honest when the workload itself succeeded but Influx did not surface the index Trend in time.
+- Hosted CI also cannot rely solely on Influx for the single-point `import_duration` metric. The benchmark harness now exports a k6 summary JSON for the indexing lane and uses that direct `import_duration` value as a fallback if the post-run Influx query returns no `import_duration` rows. This keeps benchmark reporting honest when the workload itself succeeded but Influx did not surface the index Trend in time.
 
 ### Monitoring Endpoints
 
