@@ -11,6 +11,7 @@ import { Trend } from "k6/metrics";
 import { validateK6Environment } from "./k6-utils.ts";
 
 const importDuration = new Trend("import_duration");
+const indexSummaryPrefix = "K6_INDEX_SUMMARY_JSON:";
 const defaultClientChunkSize = 5_000;
 const responseSnippetLength = 500;
 const acceptedImportStatuses = new Set([200, 201]);
@@ -275,4 +276,18 @@ export default function () {
       `response_contract_warnings=${responseContractWarnings}`,
     ].join(" "),
   );
+}
+
+export function handleSummary(data: { metrics?: Record<string, { values?: Record<string, number>; passes?: number; fails?: number }> }) {
+  const importDurationMs = data.metrics?.import_duration?.values?.avg ?? -1;
+  const passedChecks = data.metrics?.checks?.passes ?? 0;
+  const failedChecks = data.metrics?.checks?.fails ?? 0;
+
+  return {
+    stderr: `${indexSummaryPrefix}${JSON.stringify({
+      checksPassed: passedChecks,
+      checksTotal: passedChecks + failedChecks,
+      importDurationMs: Math.round(importDurationMs),
+    })}\n`,
+  };
 }
