@@ -42,6 +42,14 @@ interface LoadTestConfig {
   spinner: Ora;
 }
 
+interface K6ExecutionResult {
+  output: string;
+}
+
+export interface IndexBenchmarkExecutionResult {
+  importDurationMs: number;
+}
+
 export class K6Benchmarks {
   private readonly config: LoadTestConfig;
   private readonly isInCi: boolean;
@@ -78,7 +86,7 @@ export class K6Benchmarks {
       });
   }
 
-  public performIndexingBenchmark(): ResultAsync<void, ErrorWithMessage> {
+  public performIndexingBenchmark(): ResultAsync<IndexBenchmarkExecutionResult, ErrorWithMessage> {
     const indexChunkSize = this.isInCi ? 500 : 5000;
     return this.getIndexingBenchmarkPath().andThen((path) => {
       return this.createBenchmarkCollection()
@@ -91,8 +99,10 @@ export class K6Benchmarks {
             },
           }),
         )
-        .map(() => {
+        .andThen((result) => this.extractIndexBenchmarkExecutionResult(result.output))
+        .map((result) => {
           this.config.spinner.succeed("Indexing benchmark complete");
+          return result;
         });
     });
   }
@@ -222,7 +232,7 @@ export class K6Benchmarks {
     scriptPath: string;
     name: string;
     additionalVars?: Record<string, unknown>;
-  }): ResultAsync<void, ErrorWithMessage> {
+  }): ResultAsync<K6ExecutionResult, ErrorWithMessage> {
     const { scriptPath, name } = options;
     const envVarString = this.buildK6EnvironmentVars(options.additionalVars);
     this.config.spinner.start(`Running ${name} benchmark\n`);
@@ -262,7 +272,7 @@ export class K6Benchmarks {
     result: IDockerComposeResult,
     errors: string[],
     warnings: string[],
-  ): ResultAsync<void, ErrorWithMessage> {
+  ): ResultAsync<K6ExecutionResult, ErrorWithMessage> {
     const cleanOutput = result.out.trim();
 
     // Handle empty output (k6 crashed or container failed to start)
@@ -289,7 +299,7 @@ export class K6Benchmarks {
     if (checksPassRate === null) {
       logger.warn("No checks line found in k6 output — assuming benchmark completed (custom metrics only)");
       this.config.spinner.succeed("Benchmark complete");
-      return okAsync(undefined);
+      return okAsync({ output: cleanOutput });
     }
 
     logger.info(`Checks pass rate: ${checksPassRate}%`);
@@ -301,7 +311,22 @@ export class K6Benchmarks {
     }
 
     this.config.spinner.succeed("Benchmark complete");
-    return okAsync(undefined);
+    return okAsync({ output: cleanOutput });
+  }
+
+  private extractIndexBenchmarkExecutionResult(
+    output: string,
+  ): ResultAsync<IndexBenchmarkExecutionResult, ErrorWithMessage> {
+    const summaryMatch = /Index benchmark summary .*?\bimport_duration_ms=(\d+)/.exec(output);
+    if (!summaryMatch) {
+      return errAsync({
+        message: "Index benchmark completed but no import_duration_ms summary was found in k6 output",
+      });
+    }
+
+    return okAsync({
+      importDurationMs: Number.parseInt(summaryMatch[1], 10),
+    });
   }
 
   private extractChecksPassRate(output: string): number | null {

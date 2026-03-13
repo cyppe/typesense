@@ -263,4 +263,16 @@ export default function () {
       ].join(" "),
     );
   }
+
+  console.log(
+    [
+      "Index benchmark summary",
+      `import_duration_ms=${importOnlyDuration}`,
+      `total_duration_ms=${duration}`,
+      `expected_docs=${expectedDocumentCount}`,
+      `imported_docs=${importedDocumentCount}`,
+      `client_chunk_size=${clientChunkSize}`,
+      `response_contract_warnings=${responseContractWarnings}`,
+    ].join(" "),
+  );
 }

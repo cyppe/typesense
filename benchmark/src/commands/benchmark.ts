@@ -265,6 +265,7 @@ class Benchmarks {
   private readonly spinner: Ora;
   private readonly benchmarkGroupsByCommitHash: Record<string, BenchmarkGroup>;
   private readonly reproductionService: ReproductionService;
+  private readonly fallbackIndexResultsByCommitHash = new Map<string, number>();
 
   constructor(options: {
     typesenseProcessManagers: [TypesenseProcessManager, TypesenseProcessManager];
@@ -445,7 +446,20 @@ class Benchmarks {
         scenario: `concurrent_${r.scenario}`,
       }));
       const mergedSearchResults = [...results[0], ...concurrentResults];
-      return this.mapResults({ indexResults: results[1], searchResults: mergedSearchResults });
+      const mergedIndexResultsMap = new Map(results[1].map((row) => [row.commitHash, row.mean_import_duration]));
+      for (const [commitHash, meanImportDuration] of this.fallbackIndexResultsByCommitHash.entries()) {
+        if (!mergedIndexResultsMap.has(commitHash)) {
+          logger.warn(`Using fallback indexing duration for ${commitHash} because Influx returned no import_duration rows`);
+          mergedIndexResultsMap.set(commitHash, meanImportDuration);
+        }
+      }
+
+      const mergedIndexResults = Array.from(
+        mergedIndexResultsMap,
+        ([commitHash, mean_import_duration]) => ({ commitHash, mean_import_duration }),
+      );
+
+      return this.mapResults({ indexResults: mergedIndexResults, searchResults: mergedSearchResults });
     });
   }
 
@@ -1015,6 +1029,10 @@ class Benchmarks {
                 }
                 return benchmarkGroup.k6Benchmark
                   .performIndexingBenchmark()
+                  .map((indexResult) => {
+                    this.fallbackIndexResultsByCommitHash.set(commitHash, indexResult.importDurationMs);
+                    return indexResult;
+                  })
                   .andThen(() => this.collectRocksDBMetrics(commitHash))
                   .andThen(() => benchmarkGroup.k6Benchmark.performSearchBenchmark())
                   .andThen(() => this.collectRocksDBMetrics(commitHash))
