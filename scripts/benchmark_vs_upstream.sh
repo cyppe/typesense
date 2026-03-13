@@ -11,6 +11,7 @@ DURATION="30s"
 PORT="12108"
 WORK_DIR="${HOME}/.cache/typesense/benchmark"
 PROFILE="standard"
+SCOPE=""
 SERVER_ARGS=()
 FORK_BINARY_OVERRIDE=""
 FORK_LABEL_OVERRIDE=""
@@ -32,6 +33,10 @@ Profiles:
   write-stress  heavier concurrent read/write validation
   full          longer run with preserved history support
 
+Scopes:
+  core          upstream-comparable index + search only
+  extended      core plus stress/concurrent/metrics phases
+
 Options:
   --build                  Build the fork binary first via bazel_in_docker.sh
   --self-compare           Compare the same staged fork binary against itself for local repro/debug
@@ -45,6 +50,7 @@ Options:
   --work-dir DIR           Working directory for binaries and data
   --clean                  Remove work dir and InfluxDB data before running
   --profile NAME           quick, standard, write-stress, full (default: standard)
+  --scope NAME             core or extended (default: inferred from profile)
   --no-flush               Keep existing InfluxDB data for trend analysis
   --server-args ...        Extra args passed through to typesense-server
   -h, --help               Show this help
@@ -52,6 +58,8 @@ Options:
 Environment:
   OPENAI_API_KEY             Passed through to the benchmark CLI when needed
   TYPESENSE_BAZEL_CACHE_DIR  Reused when staging a built fork binary
+  TYPESENSE_REQUEST_TIMEOUT_MS
+                             Forwarded into benchmark server containers when set
 
 Examples:
   scripts/benchmark_vs_upstream.sh --build --profile standard
@@ -116,6 +124,10 @@ while [[ $# -gt 0 ]]; do
 		PROFILE="$2"
 		shift 2
 		;;
+	--scope)
+		SCOPE="$2"
+		shift 2
+		;;
 	--server-args)
 		shift
 		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--self-compare" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "-h" && "$1" != "--help" ]]; do
@@ -155,6 +167,27 @@ write-stress)
 		;;
 	*)
 	echo "Unknown profile: ${PROFILE}. Use: quick, standard, write-stress, full" >&2
+	exit 1
+	;;
+esac
+
+if [[ -z "${SCOPE}" ]]; then
+	case "${PROFILE}" in
+	write-stress | full)
+		SCOPE="extended"
+		;;
+	*)
+		SCOPE="core"
+		;;
+	esac
+fi
+
+case "${SCOPE}" in
+core | extended)
+	:
+	;;
+*)
+	echo "Unknown scope: ${SCOPE}. Use: core or extended" >&2
 	exit 1
 	;;
 esac
@@ -353,8 +386,10 @@ bun run build
 echo ""
 echo "========================================="
 echo "  Profile: ${PROFILE}"
+echo "  Scope: ${SCOPE}"
 echo "  ${BASELINE_LABEL} vs ${FORK_LABEL}"
 echo "  Duration: ${DURATION} per scenario"
+echo "  Request timeout override: ${TYPESENSE_REQUEST_TIMEOUT_MS:-default}"
 echo "  Port: ${PORT}"
 if [[ ${#SERVER_ARGS[@]} -gt 0 ]]; then
 	echo "  Server args: ${SERVER_ARGS[*]}"
@@ -375,6 +410,7 @@ bun dist/index.js \
 	-c "${BASELINE_LABEL}" "${FORK_LABEL}" \
 	-d "${WORK_DIR}/data" \
 	--duration "${DURATION}" \
+	--scope "${SCOPE}" \
 	--port "${PORT}" \
 	"${SERVER_ARGS_CMD[@]}" \
 	-y -v
@@ -412,7 +448,7 @@ fi
 
 # --- Step 7: Archive metrics snapshot ---
 ARCHIVE_ROOT="${WORK_DIR}/archives"
-ARCHIVE_ID="$(date -u +"%Y%m%d-%H%M%S")-${PROFILE}"
+ARCHIVE_ID="$(date -u +"%Y%m%d-%H%M%S")-${PROFILE}-${SCOPE}"
 
 if [[ ${#SERVER_ARGS[@]} -gt 0 ]]; then
 	SAFE_ARGS="$(printf "%s" "${SERVER_ARGS[*]}" | tr ' /' '__' | tr -cd '[:alnum:]_.-')"
@@ -426,8 +462,8 @@ if [[ -d "${METRICS_DIR}" ]]; then
 	cp "${METRICS_DIR}"/*.json "${ARCHIVE_DIR}/" 2>/dev/null || true
 fi
 
-printf "baseline_label=%s\nfork_label=%s\nprofile=%s\nduration=%s\nport=%s\nserver_args=%s\nmetrics_dir=%s\n" \
-	"${BASELINE_LABEL}" "${FORK_LABEL}" "${PROFILE}" "${DURATION}" "${PORT}" \
+printf "baseline_label=%s\nfork_label=%s\nprofile=%s\nscope=%s\nduration=%s\nrequest_timeout_ms=%s\nport=%s\nserver_args=%s\nmetrics_dir=%s\n" \
+	"${BASELINE_LABEL}" "${FORK_LABEL}" "${PROFILE}" "${SCOPE}" "${DURATION}" "${TYPESENSE_REQUEST_TIMEOUT_MS:-}" "${PORT}" \
 	"${SERVER_ARGS[*]:-}" "${METRICS_DIR}" >"${ARCHIVE_DIR}/run-info.txt"
 
 echo "Archived benchmark snapshot: ${ARCHIVE_DIR}"

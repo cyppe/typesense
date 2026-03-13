@@ -1290,7 +1290,9 @@ void register_nuraft_http_runtime_routes(HttpServer* server) {
 
     server->post("/collections/:collection/documents", post_add_document);
     server->del("/collections/:collection/documents", del_remove_documents, false, true);
-    server->post("/collections/:collection/documents/import", post_import_documents, true, true);
+    // Buffer one logical import request before entering the Raft write path so
+    // transport chunking does not become log-entry granularity.
+    server->post("/collections/:collection/documents/import", post_import_documents, false, true);
     server->get("/collections/:collection/documents/export", get_export_documents, false, true);
     server->get("/collections/:collection/documents/:id", get_runtime_document);
     server->patch("/collections/:collection/documents/:id", patch_update_document);

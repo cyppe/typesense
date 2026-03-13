@@ -403,11 +403,15 @@ export class TypesenseProcessManager {
             windowsHide: true,
             cleanup: true,
             extendEnv: true,
+            buffer: false,
           };
 
           const containerName = `typesense-bench-${http}`;
           const realBinaryPath = realpathSync(this.binaryPath);
           const binDir = dirname(realBinaryPath);
+
+          const requestTimeoutMs = process.env.TYPESENSE_REQUEST_TIMEOUT_MS;
+          const dockerEnvArgs = requestTimeoutMs ? ["-e", `TYPESENSE_REQUEST_TIMEOUT_MS=${requestTimeoutMs}`] : [];
 
           const dockerArgs = [
             "run", "--rm", "--init",
@@ -418,6 +422,7 @@ export class TypesenseProcessManager {
             "-p", `${http}:${http}`,
             "-p", `${grpc}:${grpc}`,
             "-e", `LD_LIBRARY_PATH=${binDir}`,
+            ...dockerEnvArgs,
             "-v", `${binDir}:${binDir}:ro`,
             "-v", `${node.dataDir}:${node.dataDir}`,
             "ubuntu:24.04",

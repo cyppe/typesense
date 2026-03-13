@@ -23,7 +23,6 @@ interface BaseK6Env {
 
 export interface IndexK6Env extends BaseK6Env {
   BATCH_SIZE: number;
-  INDEX_CHUNK_SIZE?: number;
   INDEX_MAX_DURATION?: string;
 }
 
@@ -88,15 +87,13 @@ export class K6Benchmarks {
   }
 
   public performIndexingBenchmark(): ResultAsync<IndexBenchmarkExecutionResult, ErrorWithMessage> {
-    const indexChunkSize = this.isInCi ? 500 : 5000;
     return this.getIndexingBenchmarkPath().andThen((path) => {
       return this.createBenchmarkCollection()
         .andThen(() =>
           this.executeK6Benchmark({
-            name: `indexing-${indexChunkSize}chunk`,
+            name: "indexing",
             scriptPath: path,
             additionalVars: {
-              INDEX_CHUNK_SIZE: indexChunkSize,
               INDEX_MAX_DURATION: this.isInCi ? "60m" : "10m",
             },
           }),

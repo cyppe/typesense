@@ -482,6 +482,10 @@ void Config::load_config_file(cmdline::parser& options) {
         this->api_port = reader.GetInteger("server", "api-port", 8108);
     }
 
+    if(reader.Exists("server", "request-timeout-ms")) {
+        this->request_timeout_ms = reader.GetInteger("server", "request-timeout-ms", 60000);
+    }
+
     if(reader.Exists("server", "enable-cors")) {
         auto enable_cors_value = reader.Get("server", "enable-cors", "true");
         StringUtils::tolowercase(enable_cors_value);
@@ -806,6 +810,10 @@ void Config::load_config_cmd_args(cmdline::parser& options)  {
 
     if(options.exist("api-port")) {
         this->api_port = options.get<uint32_t>("api-port");
+    }
+
+    if(options.exist("request-timeout-ms")) {
+        this->request_timeout_ms = options.get<uint32_t>("request-timeout-ms");
     }
 
     if(options.exist("enable-cors")) {

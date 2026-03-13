@@ -52,6 +52,7 @@ struct NuRaftHttpServerOptions {
     NuRaftPrototypeOptions startup_options;
     std::string listen_address = "127.0.0.1";
     uint32_t listen_port = 8108;
+    uint32_t request_timeout_ms = 60000;
     std::string api_key = "xyz";
     NuRaftRaftParams raft_params;
 };

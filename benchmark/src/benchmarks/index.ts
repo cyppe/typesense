@@ -4,7 +4,6 @@ import type { Params } from "k6/http";
 import type { Options } from "k6/options";
 
 import { check, sleep } from "k6";
-import { SharedArray } from "k6/data";
 import http from "k6/http";
 import { Trend } from "k6/metrics";
 
@@ -12,23 +11,14 @@ import { validateK6Environment } from "./k6-utils.ts";
 
 const importDuration = new Trend("import_duration");
 const indexSummaryPrefix = "K6_INDEX_SUMMARY_JSON:";
-const defaultClientChunkSize = 5_000;
 const responseSnippetLength = 500;
-const acceptedImportStatuses = new Set([200, 201]);
+const acceptedImportStatuses = new Set([200]);
 const collectionSummaryTimeoutMs = "10000";
 const collectionSummaryPollAttempts = 8;
 const collectionSummaryPollIntervalSeconds = 3;
-const configuredClientChunkSize = Number.parseInt(__ENV.INDEX_CHUNK_SIZE ?? "", 10);
 const indexMaxDuration = __ENV.INDEX_MAX_DURATION ?? "10m";
-const clientChunkSize =
-  Number.isFinite(configuredClientChunkSize) && configuredClientChunkSize > 0
-    ? configuredClientChunkSize
-    : defaultClientChunkSize;
-const allLines = new SharedArray("index-data", () => {
-  const raw = open("../../data/data.json");
-  return raw.split("\n").filter((line: string) => line.trim().length > 0);
-});
-const expectedDocumentCount = allLines.length;
+const fileContent = open("../../data/data.json", "b");
+const expectedDocumentCount = 10 ** 6;
 
 function summarizeImportResponse(body: string): {
   lineCount: number;
@@ -149,62 +139,36 @@ export default function () {
   };
 
   const benchmarkStart = new Date().getTime();
-  let failedChunkStart = -1;
-  let failedChunkStatus = 0;
-  let failedChunkPayloadBytes = 0;
-  let failedChunkSummary = {
-    lineCount: 0,
-    successCount: 0,
-    errorCount: 0,
-    snippet: "",
-  };
-  let responseContractWarnings = 0;
+  const res = http.post(url, fileContent, params);
+  const importSummary =
+    typeof res.body === "string"
+      ? summarizeImportResponse(res.body)
+      : {
+          lineCount: 0,
+          successCount: 0,
+          errorCount: 0,
+          snippet: "<non-string body>",
+        };
 
-  for (let start = 0; start < allLines.length; start += clientChunkSize) {
-    const chunk = allLines.slice(start, Math.min(start + clientChunkSize, allLines.length)).join("\n");
-    const expectedChunkDocumentCount = Math.min(clientChunkSize, allLines.length - start);
-    const res = http.post(url, chunk, params);
-    const summary =
-      typeof res.body === "string"
-        ? summarizeImportResponse(res.body)
-        : {
-            lineCount: 0,
-            successCount: 0,
-            errorCount: 0,
-            snippet: "<non-string body>",
-          };
+  const responseContractWarnings =
+    res.status === 200 &&
+    importSummary.lineCount === expectedDocumentCount &&
+    importSummary.successCount === expectedDocumentCount
+      ? 0
+      : 1;
 
-    if (!acceptedImportStatuses.has(res.status)) {
-      failedChunkStart = start;
-      failedChunkStatus = res.status;
-      failedChunkPayloadBytes = chunk.length;
-      failedChunkSummary = summary;
-      break;
-    }
-
-    if (
-      res.status !== 200 ||
-      summary.lineCount !== expectedChunkDocumentCount ||
-      summary.successCount !== expectedChunkDocumentCount
-    ) {
-      responseContractWarnings += 1;
-
-      if (responseContractWarnings === 1) {
-        console.warn(
-          [
-            `Index benchmark import response contract drift for ${url}`,
-            `chunk_start=${start}`,
-            `status=${res.status}`,
-            `expected_chunk_docs=${expectedChunkDocumentCount}`,
-            `response_line_count=${summary.lineCount}`,
-            `success_count=${summary.successCount}`,
-            `error_count=${summary.errorCount}`,
-            `response_snippet=${summary.snippet}`,
-            `client_chunk_size=${clientChunkSize}`,
-          ].join(" "),
-        );
-      }
-    }
+  if (responseContractWarnings !== 0) {
+    console.warn(
+      [
+        `Index benchmark import response contract drift for ${url}`,
+        `status=${res.status}`,
+        `expected_docs=${expectedDocumentCount}`,
+        `response_line_count=${importSummary.lineCount}`,
+        `success_count=${importSummary.successCount}`,
+        `error_count=${importSummary.errorCount}`,
+        `response_snippet=${importSummary.snippet}`,
+      ].join(" "),
+    );
   }
 
   const importOnlyDuration = new Date().getTime() - benchmarkStart;
@@ -233,9 +197,7 @@ export default function () {
 
   const benchmarkSummary = {
     importedDocumentCount,
-    failedChunkPayloadBytes,
-    failedChunkStart,
-    failedChunkStatus,
+    importStatus: res.status,
     responseContractWarnings,
     summaryError: lastCollectionSummary.error,
     summarySnippet: lastCollectionSummary.bodySnippet,
@@ -243,7 +205,7 @@ export default function () {
   };
 
   const checksPassed = check(benchmarkSummary, {
-    "status is 200": (summary) => summary.failedChunkStart === -1,
+    "status is 200": (summary) => acceptedImportStatuses.has(summary.importStatus),
     "operation successful": (summary) =>
       summary.summaryStatus === 200 &&
       summary.importedDocumentCount === expectedDocumentCount,
@@ -252,22 +214,20 @@ export default function () {
   if (!checksPassed) {
     console.error(
       [
-        `Index benchmark import failed after chunk_start=${failedChunkStart} for ${url}`,
-        `status=${failedChunkStatus}`,
+        `Index benchmark import failed for ${url}`,
+        `status=${res.status}`,
         `import_duration_ms=${importOnlyDuration}`,
         `total_duration_ms=${duration}`,
         `expected_docs=${expectedDocumentCount}`,
-        `client_chunk_size=${clientChunkSize}`,
         `imported_docs=${importedDocumentCount}`,
         `collection_summary_status=${lastCollectionSummary.status}`,
         `collection_summary_error=${lastCollectionSummary.error}`,
         `collection_summary_snippet=${lastCollectionSummary.bodySnippet}`,
         `response_contract_warnings=${responseContractWarnings}`,
-        `failed_chunk_payload_bytes=${failedChunkPayloadBytes}`,
-        `failed_chunk_response_line_count=${failedChunkSummary.lineCount}`,
-        `failed_chunk_success_count=${failedChunkSummary.successCount}`,
-        `failed_chunk_error_count=${failedChunkSummary.errorCount}`,
-        `failed_chunk_response_snippet=${failedChunkSummary.snippet}`,
+        `response_line_count=${importSummary.lineCount}`,
+        `response_success_count=${importSummary.successCount}`,
+        `response_error_count=${importSummary.errorCount}`,
+        `response_snippet=${importSummary.snippet}`,
       ].join(" "),
     );
   }
@@ -279,7 +239,7 @@ export default function () {
       `total_duration_ms=${duration}`,
       `expected_docs=${expectedDocumentCount}`,
       `imported_docs=${importedDocumentCount}`,
-      `client_chunk_size=${clientChunkSize}`,
+      `status=${res.status}`,
       `response_contract_warnings=${responseContractWarnings}`,
     ].join(" "),
   );

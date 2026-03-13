@@ -5,7 +5,7 @@ This directory contains the benchmark CLI and dashboard assets used for fork-vs-
 For most repo work, the supported entrypoint is the root wrapper script:
 
 ```bash
-scripts/benchmark_vs_upstream.sh --build --profile standard
+TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core
 ```
 
 Use the CLI in `benchmark/` directly only when you are developing the benchmark tool itself or need custom invocations beyond the wrapper.
@@ -25,16 +25,16 @@ From the repo root:
 
 ```bash
 # Standard comparison against upstream release
-scripts/benchmark_vs_upstream.sh --build --profile standard
+TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core
 
 # Faster feedback loop
-scripts/benchmark_vs_upstream.sh --build --profile quick
+TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile quick --scope core
 
 # Mixed read/write stress validation
-scripts/benchmark_vs_upstream.sh --build --profile write-stress
+TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile write-stress --scope extended
 
 # Reproduce the benchmark lane locally against the same freshly built binary
-scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick
+TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick --scope core
 ```
 
 See `benchmark/BENCHMARK_RESULTS.md` for the meaning of each profile and the accepted default tuning posture.
@@ -78,6 +78,7 @@ Options:
   --binaries <paths...>         Paths to pre-built binaries to compare
   --batch-size <num>            Batch size for indexing (default: 100)
   --duration <time>             Duration for search tests (e.g., "30s", "1m")
+  --scope <scope>               core (index + search) or extended (core + stress/concurrent/metrics)
   --port <port>                 Base port for benchmark runs
   --server-args <args...>       Extra server arguments passed through to Typesense
   --fail <percentage>           Regression threshold percentage (default: 50)
@@ -90,6 +91,7 @@ Options:
 The tool can be configured through command-line options or environment variables:
 
 - `OPENAI_API_KEY`: Your OpenAI API key for embedding tests
+- `TYPESENSE_REQUEST_TIMEOUT_MS`: forwarded by the wrapper/launcher into benchmark server containers when one-shot imports need more than the default `60000ms`
 
 Key files:
 

@@ -41,6 +41,7 @@ std::string runtime_usage(const char* program_name) {
            "  --listen-address <host>        HTTP listen address (default: 127.0.0.1)\n"
            "  --listen-port <port>           HTTP listen port (default: --api-port)\n"
            "  --api-port <port>              API identity port / server_id (default: 8108)\n"
+           "  --request-timeout-ms <ms>      HTTP request/read timeout for bulk requests (default: 60000)\n"
            "  --peering-port <port>          Peer identity port (default: 8107)\n"
            "  --nodes <list>                 Comma-separated host:peer_port:api_port list\n"
            "  --api-key <value>              API key for HTTP auth (default: xyz)\n"
@@ -132,6 +133,17 @@ void apply_raft_env_overrides(NuRaftRaftParams& rp) {
     if (!val.empty()) rp.asio_thread_pool_size = static_cast<uint32_t>(std::stoul(val));
 }
 
+bool apply_server_env_overrides(NuRaftHttpServerOptions& options, std::string& error) {
+    std::string value = get_env("TYPESENSE_REQUEST_TIMEOUT_MS");
+    if (!value.empty() && !parse_uint32(value, options.request_timeout_ms, error)) {
+        error = "invalid value for TYPESENSE_REQUEST_TIMEOUT_MS: " + error;
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
 bool parse_options(int argc,
                    char** argv,
                    NuRaftHttpServerOptions& options,
@@ -150,6 +162,9 @@ bool parse_options(int argc,
 
     // Apply ENV overrides first (CLI args take priority over ENV).
     apply_raft_env_overrides(options.raft_params);
+    if (!apply_server_env_overrides(options, error)) {
+        return false;
+    }
 
     bool listen_port_explicit = false;
     for (int i = 1; i < argc; ++i) {
@@ -203,6 +218,11 @@ bool parse_options(int argc,
             }
             if (!listen_port_explicit) {
                 options.listen_port = options.startup_options.api_port;
+            }
+        } else if (option_name == "request-timeout-ms") {
+            if (!parse_uint32(option_value, options.request_timeout_ms, error)) {
+                error = "invalid value for --request-timeout-ms: " + error;
+                return false;
             }
         } else if (option_name == "peering-port") {
             if (!parse_uint32(option_value, options.startup_options.peer_port, error)) {
@@ -300,6 +320,7 @@ int main(int argc, char** argv) {
     config.set_data_dir(options.startup_options.data_dir);
     config.set_listen_address(options.listen_address);
     config.set_listen_port(static_cast<int>(options.listen_port));
+    config.set_request_timeout_ms(options.request_timeout_ms);
     config.set_enable_search_analytics(true);
     config.set_analytics_dir(options.startup_options.data_dir + "/analytics_db");
     config.set_analytics_minute_rate_limit(1000);
@@ -327,6 +348,7 @@ int main(int argc, char** argv) {
         "",
         "",
         8 * 60 * 60 * 1000,
+        options.request_timeout_ms,
         true,
         std::set<std::string>{},
         &server_thread_pool

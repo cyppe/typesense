@@ -24,6 +24,7 @@ private:
 
     std::string api_address;
     uint32_t api_port;
+    std::atomic<uint32_t> request_timeout_ms;
 
     std::string peering_address;
     uint32_t peering_port;
@@ -137,6 +138,7 @@ protected:
     Config() {
         this->api_address = "0.0.0.0";
         this->api_port = 8108;
+        this->request_timeout_ms = 60000;
         this->peering_port = 8107;
         this->enable_cors = true;
         this->max_memory_ratio = 1.0f;
@@ -369,6 +371,10 @@ public:
         this->api_port = listen_port;
     }
 
+    void set_request_timeout_ms(uint32_t request_timeout_ms) {
+        this->request_timeout_ms = request_timeout_ms;
+    }
+
     void set_master(const std::string & master) {
         this->master = master;
     }
@@ -483,6 +489,10 @@ public:
 
     int get_api_port() const {
         return this->api_port;
+    }
+
+    uint32_t get_request_timeout_ms() const {
+        return this->request_timeout_ms;
     }
 
     std::string get_master() const {

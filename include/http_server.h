@@ -125,7 +125,7 @@ private:
     h2o_socket_t* listener_socket;
 
     static const size_t ACTIVE_STREAM_WINDOW_SIZE = 196605;
-    static const size_t REQ_TIMEOUT_MS = 60000;
+    static constexpr uint64_t DEFAULT_REQUEST_TIMEOUT_MS = 60000;
 
     const uint64_t SSL_REFRESH_INTERVAL_MS;
 
@@ -149,6 +149,8 @@ private:
     const std::string listen_address;
 
     const uint32_t listen_port;
+
+    const uint64_t request_timeout_ms;
 
     std::string ssl_cert_path;
 
@@ -209,6 +211,7 @@ public:
                const std::string & ssl_cert_path,
                const std::string & ssl_cert_key_path,
                const uint64_t ssl_refresh_interval_ms,
+               const uint64_t request_timeout_ms,
                bool cors_enabled, const std::set<std::string>& cors_domains,
                ThreadPool* thread_pool);
 

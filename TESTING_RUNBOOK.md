@@ -81,10 +81,10 @@ scripts/bazel_in_docker.sh test --cache_test_results=no --runs_per_test=5 --test
 for i in $(seq 1 3); do TYPESENSE_DATA_DIR="$PWD/tmp/test-$i" scripts/run_api_tests.sh -- --no-secrets; done
 
 # benchmark-testing.yml
-scripts/benchmark_vs_upstream.sh --build --profile standard
+TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core
 
 # local benchmark repro against the same latest local binary
-scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick
+TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick --scope core
 ```
 
 The workflow YAML also layers GitHub-specific cache and artifact plumbing on top of these commands, but the wrappers above are the primary repro paths.

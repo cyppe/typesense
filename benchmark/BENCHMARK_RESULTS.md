@@ -1,13 +1,62 @@
 # Typesense Fork Benchmark Results
 
 Tracking benchmark results across tuning iterations.
-Fork branch: `rocksdb-upgrade-v10.10.1`
+Fork branch: `v32`
 Dataset: MusicBrainz 1M songs
-Tool: k6 via benchmark CLI, 30s per scenario
+Tool: k6 via benchmark CLI; scenario duration varies by profile (`quick` 15s, `standard` 30s by default)
 
 ---
 
 Historical note: Runs 14-26 below are archival pre-cutover measurements from when this branch still carried both the old `braft` runtime and the new NuRaft runtime. They remain useful as migration evidence, but those comparison lanes are now retired because this branch is NuRaft-only. Any per-run recommendation to "keep" or "not remove" `braft` is superseded by the later cutover decision on this branch.
+
+---
+
+## Run 27: One-Shot Import Parity Reset For The Core Benchmark Lane (NuRaft runtime, 2026-03-13)
+
+**Commit:** `HEAD` at run time
+**Scenario:** prove whether the NuRaft runtime was paying Raft overhead per transport chunk on `/documents/import`, then reset the default benchmark lane to the upstream-comparable one-shot import shape.
+
+### Proof Summary
+
+| Check | Pre-fix runtime | Post-fix runtime |
+|---|---:|---:|
+| Throttled single POST response | connection reset after `3570/12000` lines | HTTP `200`, `12000/12000` lines |
+| Final collection count | `3570` | `12000` |
+| `/status.committed_index` delta | `+1` for the partial body fragment | `+1` for the full logical import |
+| Runtime route shape | `/documents/import` registered with `async_req=true` | `/documents/import` registered with `async_req=false` |
+| Request timeout | hardcoded `60000ms` | configurable via `--request-timeout-ms` / `TYPESENSE_REQUEST_TIMEOUT_MS` |
+
+### Interpretation
+
+- The regression was real and architectural, not just benchmark CLI drift: under a slow single POST, the old runtime path could still split one logical import across H2O body aggregation boundaries before Raft.
+- The smallest replay-safe fix was to keep the existing import handler and response contract, but buffer one full logical import request before `NuRaftHttpRuntimeService::write()` appends it through Raft.
+- That restores parity with the upstream benchmark shape without inventing a new import code path.
+
+### Decision
+
+- The benchmark `core` scope now uses the upstream-comparable shape again: one large import POST, then search.
+- `extended` remains the opt-in lane for stress import, concurrent search+import, and extra RocksDB/metrics collection.
+- Hosted/manual benchmark runs that need more than the inherited `60s` request deadline should use `TYPESENSE_REQUEST_TIMEOUT_MS=300000`. The benchmark launcher now forwards that env var into Dockerized benchmark containers, which keeps transition-era comparisons safe because older binaries simply ignore the env override.
+
+### Core Lane Validation
+
+| Run | Command | Result |
+|---|---|---|
+| `quick/core` | `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --self-compare --profile quick --scope core` | Passed. Archive: `~/.cache/typesense/benchmark/archives/20260313-155910-quick-core` |
+| `standard/core` | `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core` | Passed. Archive: `~/.cache/typesense/benchmark/archives/20260313-163814-standard-core` |
+
+### Standard/Core Import Summary
+
+| Commit lane | Import duration | Docs imported | HTTP status | Response warnings |
+|---|---:|---:|---:|---:|
+| `upstream-30.1` | `31832ms` | `1000000/1000000` | `200` | `0` |
+| `e697233e` | `23279ms` | `1000000/1000000` | `200` | `0` |
+
+### Benchmark Harness Note
+
+- `standard/core` initially tripped a benchmark-harness-only failure after the server emitted a very large volume of `threadpool exhaustion detected` stderr during long search runs.
+- The fix was to launch the long-lived Typesense Docker process with execa `buffer: false`. The harness already consumes stdout/stderr incrementally, so internal buffering only created a Bun/get-stream failure mode without adding value.
+- Keep that setting. Long benchmark lanes should not depend on buffering all server logs in memory.
 
 ---
 
@@ -1196,14 +1245,21 @@ Within each batch:
 | `write-stress` | 60s | Import + parallel stress | Focus on write/import performance |
 | `full` | 60s | All scenarios + stress + metrics | Comprehensive analysis |
 
-### Hosted CI Import Chunking
+### Available Scopes
 
-- The standard indexing benchmark uses a smaller client-side import chunk size on hosted CI (`500` docs) than in local/manual runs (`5000` docs).
-- Reason: upstream `v31` and this fork both inherit a hardcoded `60s` H2O HTTP request/request-I/O timeout, and GitHub's smaller runners can cross that limit on a single `5000`-doc import request.
-- This keeps the benchmark workflow stable without changing product behavior or masking the still-open server timeout limitation for long-running bulk imports.
-- Hosted CI also uses a larger explicit k6 indexing `maxDuration` (`60m`) than the default executor ceiling, because the smaller CI chunking makes the single import iteration long enough to hit k6's default `10m` cap on GitHub's hosted runners. The earlier `20m` and `30m` attempts both still timed out before the single iteration completed on GitHub's hosted runners, so the manual benchmark lane now prefers headroom over repeated executor-limit churn.
-- Hosted CI also cannot rely solely on Influx for the single-point `import_duration` metric. The benchmark harness now uses k6's `handleSummary()` hook in the indexing lane to emit a machine-readable `import_duration` payload directly to stderr, and falls back to that direct value if the post-run Influx query returns no `import_duration` rows. This keeps benchmark reporting honest when the workload itself succeeded but Influx did not surface the index Trend in time, and avoids Docker bind-mount permission issues from file-based summary export.
-- Hosted CI benchmark selection is now pinned to the workflow's own `github.sha` by default. If the current workflow SHA does not yet have a successful `tests.yml` artifact, the workflow fails fast instead of silently benchmarking the previous successful branch tip. This avoids stale comparisons when a manual benchmark dispatch races a push on the same branch.
+| Scope | Scenarios | Use Case |
+|---|---|---|
+| `core` | One large import POST + search | Default, upstream-comparable lane |
+| `extended` | `core` + stress import + concurrent search/import + extra metrics | Manual deep-dive and regression hunting |
+
+### Current Core Lane Policy
+
+- The indexing benchmark sends the full dataset as one logical POST again. The old hosted `500`-doc client chunking workaround is retired.
+- The product default request timeout is still `60000ms`, but benchmark lanes can raise it explicitly with `TYPESENSE_REQUEST_TIMEOUT_MS=300000` when they need more headroom for one-shot imports.
+- `benchmark-testing.yml` now runs `--scope core` and exports `TYPESENSE_REQUEST_TIMEOUT_MS=300000`; the benchmark process launcher forwards that env var into the Dockerized server containers so new binaries honor it and older comparison artifacts ignore it safely.
+- Hosted CI still keeps the larger explicit k6 indexing `maxDuration` (`60m`) because a one-shot 1M-doc import can exceed k6's default executor ceiling on smaller runners even when the server-side HTTP timeout is no longer the limiting factor.
+- Hosted CI also cannot rely solely on Influx for the single-point `import_duration` metric. The benchmark harness uses k6's `handleSummary()` hook in the indexing lane to emit a machine-readable `import_duration` payload directly to stderr, and falls back to that direct value if the post-run Influx query returns no `import_duration` rows.
+- Hosted CI benchmark selection is pinned to the workflow's own `github.sha` by default. If the current workflow SHA does not yet have a successful `tests.yml` artifact, the workflow fails fast instead of silently benchmarking the previous successful branch tip.
 
 ### Monitoring Endpoints
 

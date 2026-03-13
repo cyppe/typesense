@@ -15,10 +15,11 @@
 
 HttpServer::HttpServer(const std::string & version, const std::string & listen_address,
                        uint32_t listen_port, const std::string & ssl_cert_path, const std::string & ssl_cert_key_path,
-                       const uint64_t ssl_refresh_interval_ms, bool cors_enabled,
+                       const uint64_t ssl_refresh_interval_ms, const uint64_t request_timeout_ms, bool cors_enabled,
                        const std::set<std::string>& cors_domains, ThreadPool* thread_pool):
         SSL_REFRESH_INTERVAL_MS(ssl_refresh_interval_ms),
         exit_loop(false), version(version), listen_address(listen_address), listen_port(listen_port),
+        request_timeout_ms(request_timeout_ms),
         ssl_cert_path(ssl_cert_path), ssl_cert_key_path(ssl_cert_key_path),
         cors_enabled(cors_enabled), cors_domains(cors_domains), thread_pool(thread_pool) {
     accept_ctx = new h2o_accept_ctx_t();
@@ -260,11 +261,11 @@ int HttpServer::create_listener() {
 
     ctx.globalconf->server_name = h2o_strdup(nullptr, "", SIZE_MAX);
     ctx.globalconf->http2.active_stream_window_size = ACTIVE_STREAM_WINDOW_SIZE;
-    ctx.globalconf->http2.idle_timeout = REQ_TIMEOUT_MS;
+    ctx.globalconf->http2.idle_timeout = request_timeout_ms;
     ctx.globalconf->max_request_entity_size = (size_t(10) * 1024 * 1024 * 1024); // 10 GB
 
-    ctx.globalconf->http1.req_timeout = REQ_TIMEOUT_MS;
-    ctx.globalconf->http1.req_io_timeout = REQ_TIMEOUT_MS;
+    ctx.globalconf->http1.req_timeout = request_timeout_ms;
+    ctx.globalconf->http1.req_io_timeout = request_timeout_ms;
 
     accept_ctx->ctx = &ctx;
     accept_ctx->hosts = config.hosts;

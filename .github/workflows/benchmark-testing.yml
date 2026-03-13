@@ -131,15 +131,18 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           BENCHMARK_WORK_DIR: ${{ github.workspace }}/benchmark/benchmark-workdir
+          TYPESENSE_REQUEST_TIMEOUT_MS: 300000
         run: |
           echo "Latest SHA: ${{ steps.get-runs.outputs.latest_sha }}"
           echo "Previous SHA: ${{ steps.get-runs.outputs.previous_sha }}"
+          echo "Request timeout override: ${TYPESENSE_REQUEST_TIMEOUT_MS} ms"
           scripts/benchmark_vs_upstream.sh \
             --baseline-binary "${{ github.workspace }}/base-binary/typesense-server" \
             --baseline-label "${{ steps.get-runs.outputs.previous_sha }}" \
             --fork-binary "${{ github.workspace }}/current-binary/typesense-server" \
             --fork-label "${{ steps.get-runs.outputs.latest_sha }}" \
             --work-dir "${{ github.workspace }}/benchmark/benchmark-workdir" \
+            --scope core \
             --duration 1m \
             --no-flush
 

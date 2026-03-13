@@ -49,7 +49,7 @@ Use these short defaults unless a task explicitly needs a different lane:
 - Build server: `scripts/bazel_in_docker.sh build //:typesense-server`
 - Run API suite: `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`
 - Replay one C++ test: `test/scripts/replay_typesense_test.sh FilterTest.FilterTreeIteratorTimeout`
-- Benchmark comparison: `scripts/benchmark_vs_upstream.sh --build --profile standard`
+- Benchmark comparison: `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core`
 
 `run_api_tests.sh` defaults to Dockerized Bun via the repo's Ubuntu-based API image so agents do not need Bun installed on the host; use `--host-bun` only as an escape hatch.
 

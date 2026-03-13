@@ -212,6 +212,7 @@ const benchmarkOptionSchema = z.object({
     },
     { message: "Duration must be in the format of <number><s/m/h/d>" },
   ),
+  scope: z.enum(["core", "extended"]).default("core"),
   serverArgs: z.array(z.string()).optional(),
 });
 
@@ -263,6 +264,7 @@ class Benchmarks {
   private readonly percentagesForFailure: BenchmarkConfig["failureThresholds"];
   private readonly port: number;
   private readonly spinner: Ora;
+  private readonly scope: "core" | "extended";
   private readonly benchmarkGroupsByCommitHash: Record<string, BenchmarkGroup>;
   private readonly reproductionService: ReproductionService;
   private readonly fallbackIndexResultsByCommitHash = new Map<string, number>();
@@ -278,12 +280,14 @@ class Benchmarks {
     workingDirectory: string;
     commitHashes: [string, string];
     failAtPercentage: BenchmarkConfig["failureThresholds"];
+    scope: "core" | "extended";
   }) {
     this.typesenseProcessManagers = options.typesenseProcessManagers;
     this.batchSize = options.batchSize;
     this.duration = options.duration;
     this.apiKey = options.apiKey;
     this.spinner = options.spinner;
+    this.scope = options.scope;
     this.services = options.services;
     this.port = options.port;
     this.workingDirectory = options.workingDirectory;
@@ -1004,6 +1008,10 @@ class Benchmarks {
     return this.createDataDirectories()
       .andThen(() => this.services.get("fs").downloadTypesenseDataset(K6Benchmarks.DATASET_URL))
       .andThen(() => {
+        if (this.scope !== "extended") {
+          return okAsync(undefined);
+        }
+
         // Start continuous metrics collector in background using first commit's k6 instance
         const firstGroup = this.benchmarkGroupsByCommitHash[commitHashes[0]!];
         if (!firstGroup) {
@@ -1033,48 +1041,52 @@ class Benchmarks {
                     this.fallbackIndexResultsByCommitHash.set(commitHash, indexResult.importDurationMs);
                     return indexResult;
                   })
-                  .andThen(() => this.collectRocksDBMetrics(commitHash))
                   .andThen(() => benchmarkGroup.k6Benchmark.performSearchBenchmark())
-                  .andThen(() => this.collectRocksDBMetrics(commitHash))
-                  // Stress import: parallel chunked writes at different chunk sizes
                   .andThen(() => {
-                    this.spinner.start(`Running stress import for ${commitHash}...`);
-                    return benchmarkGroup.k6Benchmark.performStressImportBenchmark({
-                      vus: 4,
-                      chunkSize: 1000,
-                      duration: "30s",
-                    });
-                  })
-                  .andThen(() =>
-                    benchmarkGroup.k6Benchmark.performStressImportBenchmark({
-                      vus: 4,
-                      chunkSize: 5000,
-                      duration: "30s",
-                    }),
-                  )
-                  .andThen(() =>
-                    benchmarkGroup.k6Benchmark.performStressImportBenchmark({
-                      vus: 8,
-                      chunkSize: 5000,
-                      duration: "30s",
-                    }),
-                  )
-                  // Concurrent search + import: measures search latency during active writes
-                  // Non-fatal — this benchmark is experimental and should not block the main results
-                  .andThen(() => {
-                    this.spinner.start(`Running concurrent search+import for ${commitHash}...`);
-                    return benchmarkGroup.k6Benchmark.performConcurrentBenchmark({
-                      searchVus: 50,
-                      importVus: 4,
-                      chunkSize: 1000,
-                      duration: "30s",
-                    }).orElse((e) => {
-                      logger.warn(`Concurrent benchmark failed (non-fatal): ${e.message}`);
-                      this.spinner.warn("Concurrent benchmark failed — continuing with remaining benchmarks");
+                    if (this.scope !== "extended") {
                       return okAsync(undefined);
-                    });
+                    }
+
+                    return this.collectRocksDBMetrics(commitHash)
+                      .andThen(() => {
+                        this.spinner.start(`Running stress import for ${commitHash}...`);
+                        return benchmarkGroup.k6Benchmark.performStressImportBenchmark({
+                          vus: 4,
+                          chunkSize: 1000,
+                          duration: "30s",
+                        });
+                      })
+                      .andThen(() =>
+                        benchmarkGroup.k6Benchmark.performStressImportBenchmark({
+                          vus: 4,
+                          chunkSize: 5000,
+                          duration: "30s",
+                        }),
+                      )
+                      .andThen(() =>
+                        benchmarkGroup.k6Benchmark.performStressImportBenchmark({
+                          vus: 8,
+                          chunkSize: 5000,
+                          duration: "30s",
+                        }),
+                      )
+                      // Concurrent search + import: measures search latency during active writes.
+                      // Non-fatal so the main comparison table still lands if this lane flakes.
+                      .andThen(() => {
+                        this.spinner.start(`Running concurrent search+import for ${commitHash}...`);
+                        return benchmarkGroup.k6Benchmark.performConcurrentBenchmark({
+                          searchVus: 50,
+                          importVus: 4,
+                          chunkSize: 1000,
+                          duration: "30s",
+                        }).orElse((e) => {
+                          logger.warn(`Concurrent benchmark failed (non-fatal): ${e.message}`);
+                          this.spinner.warn("Concurrent benchmark failed — continuing with remaining benchmarks");
+                          return okAsync(undefined);
+                        });
+                      })
+                      .andThen(() => this.collectRocksDBMetrics(commitHash));
                   })
-                  .andThen(() => this.collectRocksDBMetrics(commitHash))
                   .map(() => {
                     this.spinner.succeed(`Benchmarks complete for ${commitHash}`);
 
@@ -1138,6 +1150,7 @@ const benchmark = new Command()
   .option("--config <path>", "Path for config file")
   .option("--batch-size <num>", "Batch size for indexing operations", "100")
   .option("--duration <num>", "Duration for each search benchmark", "1s")
+  .option("--scope <scope>", "Benchmark scope: core (index + search) or extended (core + stress/concurrent/metrics)", "core")
   .option(
     "--server-args <arg>",
     "Additional argument to pass to typesense-server (repeatable, e.g. --server-args --max-indexing-concurrency=16 --server-args --db-block-size=4096)",
@@ -1205,6 +1218,7 @@ const benchmark = new Command()
           typesenseProcessManagers,
           workingDirectory: options.workingDirectory,
           failAtPercentage: options.failureThresholds,
+          scope: options.scope,
         });
 
         return ok(benchmark);

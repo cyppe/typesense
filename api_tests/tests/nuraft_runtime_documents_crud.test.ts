@@ -10,6 +10,72 @@ const DocumentSchema = z.object({
   country: z.string(),
 });
 
+function singleNodeBaseUrl(path: string): string {
+  const host = process.env.TYPESENSE_API_HOST ?? "localhost";
+  const port = Number.parseInt(process.env.TYPESENSE_SINGLE_API_PORT ?? "8108", 10);
+  return `http://${host}:${port}${path}`;
+}
+
+function singleNodeApiKey(): string {
+  return process.env.TYPESENSE_API_KEY ?? "xyz";
+}
+
+async function fetchSingleNodeStatus(): Promise<{ committed_index: number }> {
+  const res = await fetchSingleNode("/status");
+  if (!res.ok) {
+    throw new Error(`Expected /status to succeed, got HTTP ${res.status}`);
+  }
+
+  return (await res.json()) as { committed_index: number };
+}
+
+async function waitForSingleNodeDocumentCount(collection: string, expected: number, timeoutMs = 10000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const res = await fetchSingleNode(`/collections/${collection}`);
+    if (res.ok) {
+      const body = (await res.json()) as { num_documents?: number };
+      if (body.num_documents === expected) {
+        return;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(`Timed out waiting for ${expected} documents in collection ${collection}`);
+}
+
+async function streamedImport(path: string, body: string, chunkCount = 3): Promise<Response> {
+  const encoder = new TextEncoder();
+  const chunkSize = Math.ceil(body.length / chunkCount);
+  const chunks = Array.from({ length: chunkCount }, (_, index) =>
+    body.slice(index * chunkSize, Math.min((index + 1) * chunkSize, body.length)),
+  ).filter((chunk) => chunk.length > 0);
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(encoder.encode(chunk));
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      controller.close();
+    },
+  });
+
+  return fetch(singleNodeBaseUrl(path), {
+    method: "POST",
+    body: stream,
+    duplex: "half",
+    headers: {
+      "Content-Type": "text/plain",
+      "X-TYPESENSE-API-KEY": singleNodeApiKey(),
+    },
+    signal: AbortSignal.timeout(120000),
+  } as RequestInit & { duplex: "half" });
+}
+
 describe(Phases.SINGLE_FRESH, () => {
   it("supports bounded document CRUD and import flows", async () => {
     let res = await fetchSingleNode("/collections", {
@@ -104,6 +170,59 @@ describe(Phases.SINGLE_FRESH, () => {
     document = DocumentSchema.safeParse(await res.json());
     expect(document.success).toBe(true);
     expect(document.data?.company_name).toBe("Umbrella Corp");
+  });
+
+  it("buffers streamed bulk imports into one committed NuRaft write", async () => {
+    const collectionName = "companies_docs_streamed_import";
+    let res = await fetchSingleNode("/collections", {
+      method: "POST",
+      body: JSON.stringify({
+        name: collectionName,
+        fields: [
+          { name: "id", type: "string" },
+          { name: "company_name", type: "string" },
+          { name: "num_employees", type: "int32" },
+          { name: "country", type: "string", facet: true },
+        ],
+      }),
+    });
+    expect(res.ok).toBe(true);
+
+    const beforeStatus = await fetchSingleNodeStatus();
+    const documents = Array.from({ length: 6000 }, (_, index) =>
+      JSON.stringify({
+        id: `stream-${index}`,
+        company_name: `Streamed Company ${index}`,
+        num_employees: 1000 + index,
+        country: index % 2 === 0 ? "US" : "DE",
+      }),
+    );
+    const jsonl = documents.join("\n");
+
+    res = await streamedImport(
+      `/collections/${collectionName}/documents/import?action=upsert&batch_size=100`,
+      jsonl,
+    );
+    expect(res.ok).toBe(true);
+    expect(res.status).toBe(200);
+
+    const lines = (await res.text()).trim().split("\n");
+    expect(lines).toHaveLength(documents.length);
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as { success?: boolean };
+      expect(parsed.success).toBe(true);
+    }
+
+    await waitForSingleNodeDocumentCount(collectionName, documents.length);
+
+    const afterStatus = await fetchSingleNodeStatus();
+    expect(afterStatus.committed_index).toBe(beforeStatus.committed_index + 1);
+
+    res = await fetchSingleNode(`/collections/${collectionName}/documents/stream-5999`);
+    expect(res.ok).toBe(true);
+    const document = DocumentSchema.safeParse(await res.json());
+    expect(document.success).toBe(true);
+    expect(document.data?.company_name).toBe("Streamed Company 5999");
   });
 });
 

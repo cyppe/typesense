@@ -50,6 +50,9 @@ void init_cmdline_options(cmdline::parser& options, int argc, char** argv) {
 
     options.add<std::string>("api-address", '\0', "Address to which Typesense API service binds.", false, "0.0.0.0");
     options.add<uint32_t>("api-port", '\0', "Port on which Typesense API service listens.", false, 8108);
+    options.add<uint32_t>("request-timeout-ms", '\0',
+                          "HTTP request timeout in milliseconds for HTTP/1 request/read and HTTP/2 idle timeouts.",
+                          false, 60000);
 
     options.add<std::string>("peering-address", '\0', "Internal IP address to which Typesense peering service binds.", false, "");
     options.add<uint32_t>("peering-port", '\0', "Port on which Typesense peering service listens.", false, 8107);
