@@ -18,65 +18,62 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Get run IDs and SHAs
+      - name: Report workflow SHA
+        run: |
+          echo "Workflow ref: ${{ github.ref }}"
+          echo "Workflow SHA: ${{ github.sha }}"
+          echo "Checked out SHA: $(git rev-parse HEAD)"
+
+      - name: Select candidate and baseline test runs
         id: get-runs
         run: |
-          # First determine if we're on a fork
-          REPO_INFO=$(gh api /repos/${{ github.repository }})
-          IS_FORK=$(echo "$REPO_INFO" | jq -r '.fork')
-          PARENT_REPO=$(echo "$REPO_INFO" | jq -r '.parent.full_name // empty')
           CURRENT_BRANCH="${{ github.ref_name }}"
-          
-          echo "Is fork: $IS_FORK"
+          CURRENT_SHA="${{ github.sha }}"
+
           echo "Current branch: $CURRENT_BRANCH"
-          if [ "$IS_FORK" = "true" ]; then
-            echo "This is a fork of $PARENT_REPO"
-            # For forks, compare against successful runs from the same branch in the current repo.
-          else
-            echo "This is the main repo"
-          fi
-          REPO_TO_CHECK="${{ github.repository }}"
+          echo "Current workflow SHA: $CURRENT_SHA"
 
-          echo "Fetching workflow runs from $REPO_TO_CHECK..."
+          echo "Fetching successful tests.yml runs from ${{ github.repository }}..."
           RUNS_INFO=$(gh api -H "Accept: application/vnd.github+json" \
-            /repos/$REPO_TO_CHECK/actions/workflows/tests.yml/runs \
-            -q ".workflow_runs[] | select(.conclusion == \"success\" and .head_branch == \"$CURRENT_BRANCH\") | {id: .id, sha: .head_sha, branch: .head_branch, conclusion: .conclusion}" \
-            --paginate | head -n 2)
-          
-          echo "Found runs info:"
-          echo "$RUNS_INFO"
-          
+            /repos/${{ github.repository }}/actions/workflows/tests.yml/runs \
+            -q ".workflow_runs[] | select(.conclusion == \"success\" and .head_branch == \"$CURRENT_BRANCH\") | {id: .id, sha: .head_sha}" \
+            --paginate)
+
           if [ -z "$RUNS_INFO" ]; then
-            echo "No successful tests.yml runs found on branch $CURRENT_BRANCH"
+            echo "No successful tests.yml runs found on branch $CURRENT_BRANCH."
             exit 1
           fi
 
-          RUN_COUNT=$(printf '%s\n' "$RUNS_INFO" | sed '/^$/d' | wc -l | tr -d ' ')
-          if [ "$RUN_COUNT" -lt 2 ]; then
-            echo "Need at least two successful tests.yml runs on branch $CURRENT_BRANCH to benchmark a candidate against a baseline."
+          echo "Successful runs on branch:"
+          echo "$RUNS_INFO"
+
+          CANDIDATE_RUN=$(printf '%s\n' "$RUNS_INFO" | jq -c "select(.sha == \"$CURRENT_SHA\")" | head -n 1)
+          if [ -z "$CANDIDATE_RUN" ]; then
+            echo "No successful tests.yml artifact exists yet for workflow SHA $CURRENT_SHA."
+            echo "Wait for the push workflow on this SHA to finish green, then rerun benchmark-testing."
             exit 1
           fi
-          
-          # Extract the latest run info (first line)
-          LATEST_RUN=$(echo "$RUNS_INFO" | head -n 1)
-          LATEST_ID=$(echo "$LATEST_RUN" | jq -r '.id')
-          LATEST_SHA=$(echo "$LATEST_RUN" | jq -r '.sha')
-          
-          # Extract the previous run info (second line)
-          PREVIOUS_RUN=$(echo "$RUNS_INFO" | tail -n 1)
-          PREVIOUS_ID=$(echo "$PREVIOUS_RUN" | jq -r '.id')
-          PREVIOUS_SHA=$(echo "$PREVIOUS_RUN" | jq -r '.sha')
-          
-          echo "Latest run ID: $LATEST_ID"
-          echo "Latest SHA: $LATEST_SHA"
-          echo "Previous run ID: $PREVIOUS_ID"
-          echo "Previous SHA: $PREVIOUS_SHA"
-          
-          # Set outputs
-          echo "latest_run=$LATEST_ID" >> $GITHUB_OUTPUT
-          echo "previous_run=$PREVIOUS_ID" >> $GITHUB_OUTPUT
-          echo "latest_sha=$LATEST_SHA" >> $GITHUB_OUTPUT
-          echo "previous_sha=$PREVIOUS_SHA" >> $GITHUB_OUTPUT
+
+          BASELINE_RUN=$(printf '%s\n' "$RUNS_INFO" | jq -c "select(.sha != \"$CURRENT_SHA\")" | head -n 1)
+          if [ -z "$BASELINE_RUN" ]; then
+            echo "Need at least one earlier successful tests.yml run on branch $CURRENT_BRANCH to use as a baseline."
+            exit 1
+          fi
+
+          CANDIDATE_ID=$(echo "$CANDIDATE_RUN" | jq -r '.id')
+          CANDIDATE_SHA=$(echo "$CANDIDATE_RUN" | jq -r '.sha')
+          BASELINE_ID=$(echo "$BASELINE_RUN" | jq -r '.id')
+          BASELINE_SHA=$(echo "$BASELINE_RUN" | jq -r '.sha')
+
+          echo "Selected candidate run ID: $CANDIDATE_ID"
+          echo "Selected candidate SHA: $CANDIDATE_SHA"
+          echo "Selected baseline run ID: $BASELINE_ID"
+          echo "Selected baseline SHA: $BASELINE_SHA"
+
+          echo "latest_run=$CANDIDATE_ID" >> $GITHUB_OUTPUT
+          echo "previous_run=$BASELINE_ID" >> $GITHUB_OUTPUT
+          echo "latest_sha=$CANDIDATE_SHA" >> $GITHUB_OUTPUT
+          echo "previous_sha=$BASELINE_SHA" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ github.token }}
 
