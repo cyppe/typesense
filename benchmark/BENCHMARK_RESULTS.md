@@ -1279,6 +1279,9 @@ Within each batch:
 - Hosted CI still keeps the larger explicit k6 indexing `maxDuration` (`60m`) because a one-shot 1M-doc import can exceed k6's default executor ceiling on smaller runners even when the server-side HTTP timeout is no longer the limiting factor.
 - Hosted CI also cannot rely solely on Influx for the single-point `import_duration` metric. The benchmark harness uses k6's `handleSummary()` hook in the indexing lane to emit a machine-readable `import_duration` payload directly to stderr, and falls back to that direct value if the post-run Influx query returns no `import_duration` rows.
 - Hosted CI benchmark selection is pinned to the workflow's own `github.sha` by default. If the current workflow SHA does not yet have a successful `tests.yml` artifact, the workflow fails fast instead of silently benchmarking the previous successful branch tip.
+- Hosted `Benchmark Testing` on `27bb2bff` is green after the final replay-model fix. Important interpretation: that workflow compared the current fork SHA `27bb2bff` against the previous successful same-branch fork SHA `985acb45`, not against upstream `typesense/typesense`.
+- Hosted run `23085170081` finished in `43m55s`. The same-branch guardrail numbers were mixed but inside current regression thresholds: import `59.498s -> 64.033s` (`+7.62%`), `facet` p95 `333ms -> 467/469ms`, `group` p95 `1562/1581ms -> 1591/1589ms`, and `sort_simple` p95 `204/205ms -> 203/200ms`.
+- The stronger semantic/perf control for this sprint remains the local upstream compare: upstream classic `v30.1` vs the final runtime build on the same machine/workload shape. That local run stayed green with faster one-shot import (`29.383s -> 26.906s`) and materially faster heavy search scenarios.
 
 ### Monitoring Endpoints
 
