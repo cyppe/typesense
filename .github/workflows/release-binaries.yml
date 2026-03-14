@@ -170,6 +170,19 @@ jobs:
           cp bazel-bin/typesense-server "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server"
           chmod +x "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server"
 
+      - name: Split linux debug symbols
+        if: matrix.target_os == 'linux'
+        run: |
+          RELEASE_DIR="${{ github.workspace }}/release/${{ matrix.artifact_name }}"
+          DEBUG_DIR="${{ github.workspace }}/artifacts/debug"
+          DEBUG_FILE="typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug"
+          mkdir -p "${DEBUG_DIR}"
+          chmod u+w "${RELEASE_DIR}/typesense-server"
+          objcopy --only-keep-debug "${RELEASE_DIR}/typesense-server" "${DEBUG_DIR}/${DEBUG_FILE}"
+          chmod u+w "${DEBUG_DIR}/${DEBUG_FILE}"
+          strip --strip-debug "${RELEASE_DIR}/typesense-server"
+          objcopy --add-gnu-debuglink="${DEBUG_DIR}/${DEBUG_FILE}" "${RELEASE_DIR}/typesense-server"
+
       - name: Write binary checksum manifest
         run: |
           python - <<'PY'
@@ -208,6 +221,21 @@ jobs:
           Path(str(archive) + ".sha256.txt").write_text(f"{digest}  {archive.name}\n")
           PY
 
+      - name: Package linux debug symbols
+        if: matrix.target_os == 'linux'
+        run: |
+          DEBUG_BASENAME="typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug"
+          DEBUG_ARCHIVE="${{ github.workspace }}/artifacts/${DEBUG_BASENAME}.tar.gz"
+          tar -czf "${DEBUG_ARCHIVE}" -C "${{ github.workspace }}/artifacts/debug" "${DEBUG_BASENAME}"
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          archive = Path(r"${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug.tar.gz")
+          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+          Path(str(archive) + ".sha256.txt").write_text(f"{digest}  {archive.name}\n")
+          PY
+
       - name: Verify packaged artifact contents
         run: |
           python - <<'PY'
@@ -228,6 +256,14 @@ jobs:
               if digest != md5_bytes:
                   raise SystemExit(f"binary md5 mismatch: expected {md5_bytes}, got {digest}")
           PY
+
+      - name: Verify linux debug symbol artifact
+        if: matrix.target_os == 'linux'
+        run: |
+          DEBUG_BASENAME="typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug"
+          DEBUG_ARCHIVE="${{ github.workspace }}/artifacts/${DEBUG_BASENAME}.tar.gz"
+          tar -tzf "${DEBUG_ARCHIVE}" | grep -Fx "${DEBUG_BASENAME}"
+          readelf -S "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server" | grep -q '\.gnu_debuglink'
 
       - name: Install Linux packaging tools
         if: matrix.target_os == 'linux' && inputs.build_linux_packages
@@ -252,6 +288,16 @@ jobs:
             ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz.sha256.txt
           retention-days: 14
 
+      - name: Upload Linux debug symbols
+        if: matrix.target_os == 'linux' && inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-debug
+          path: |
+            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug.tar.gz
+            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug.tar.gz.sha256.txt
+          retention-days: 14
+
       - name: Upload Linux package artifacts
         if: matrix.target_os == 'linux' && inputs.build_linux_packages && inputs.upload_artifacts
         uses: actions/upload-artifact@v7
@@ -266,5 +312,6 @@ jobs:
 # - This is a draft manual workflow for core binary artifacts only.
 # - It follows GitHub Actions best practices for native multi-platform builds: matrix fan-out, named artifacts, and separation of artifact build from any future publishing workflow.
 # - It does not yet automate GPU dependency artifacts, lg-page16 variants, Docker image publishing, or Homebrew tap updates.
+# - Linux release tarballs/packages now ship the stripped runtime binary plus a separate `.debug` tarball sidecar that keeps split debug info keyed by the same BuildID.
 # - Linux lanes now build DEB/RPM packages from the workflow-produced tarballs, but these package outputs still need real cross-platform workflow validation before this draft should be considered production-ready.
 # - Windows support in upstream docs is via WSL, not a native Windows server binary, so no native Windows artifact is produced here.
