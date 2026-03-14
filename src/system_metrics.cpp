@@ -36,12 +36,17 @@ void SystemMetrics::get(const std::string &data_dir_path, nlohmann::json &result
 
     // MEMORY METRICS
 
-    size_t sz, active = 1, allocated = 1, resident, metadata, mapped, retained;
-    sz = sizeof(size_t);
-    uint64_t epoch = 1;
+    size_t active = 0;
+    size_t allocated = 0;
+    size_t resident = 0;
+    size_t metadata = 0;
+    size_t mapped = 0;
+    size_t retained = 0;
 
 #ifndef NO_JEMALLOC
     // See: http://jemalloc.net/jemalloc.3.html#stats.active
+    size_t sz = sizeof(size_t);
+    uint64_t epoch = 1;
 
     impl_mallctl("thread.tcache.flush", nullptr, nullptr, nullptr, 0);
     impl_mallctl("epoch", &epoch, &sz, &epoch, sz);
@@ -56,14 +61,15 @@ void SystemMetrics::get(const std::string &data_dir_path, nlohmann::json &result
 
     result["typesense_memory_active_bytes"] = std::to_string(active);
     result["typesense_memory_allocated_bytes"] = std::to_string(allocated);
-    result["typesense_memory_resident_bytes"] = std::to_string(active);
+    result["typesense_memory_resident_bytes"] = std::to_string(resident);
     result["typesense_memory_metadata_bytes"] = std::to_string(metadata);
     result["typesense_memory_mapped_bytes"] = std::to_string(mapped);
     result["typesense_memory_retained_bytes"] = std::to_string(retained);
 
     // Fragmentation ratio is calculated very similar to how Redis does it:
     // https://github.com/redis/redis/blob/d6180c8c8674ffdae3d6efa5f946d85fe9163464/src/defrag.c#L900
-    std::string frag_ratio = format_dp(1.0f - ((float)allocated / active));
+    const float frag_ratio_value = active == 0 ? 0.0f : 1.0f - (static_cast<float>(allocated) / active);
+    std::string frag_ratio = format_dp(frag_ratio_value);
     result["typesense_memory_fragmentation_ratio"] = frag_ratio;
 
     result["system_memory_total_bytes"] = std::to_string(get_memory_total_bytes());
@@ -163,10 +169,9 @@ mallctl_stats_t SystemMetrics::get_cached_mallctl_stats() {
     uint64_t seconds_since_last = (now - mallctl_stats_last_access);
 
     if(seconds_since_last > MALLCTL_STATS_UPDATE_INTERVAL_SECONDS) {
+#ifndef NO_JEMALLOC
         size_t sz = sizeof(size_t);
         uint64_t epoch = 1;
-
-#ifndef NO_JEMALLOC
         impl_mallctl("epoch", &epoch, &sz, &epoch, sz);
         impl_mallctl("stats.mapped", &mallctl_stats.memory_mapped_bytes, &sz, nullptr, 0);
         impl_mallctl("stats.retained", &mallctl_stats.memory_retained_bytes, &sz, nullptr, 0);

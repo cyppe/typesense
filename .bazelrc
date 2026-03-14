@@ -6,10 +6,17 @@ build --action_env=BAZEL_CXXOPTS="-std=gnu++20"
 build --define=TYPESENSE_VERSION=\"nightly\"
 build --cxxopt="-std=gnu++20"
 build --cxxopt="-include" --cxxopt="cstdint"
-# Scope deprecation-noise suppression to third-party Protobuf sources only.
+# Scope deprecation/diagnostic-noise suppression to third-party Protobuf sources only.
 build --per_file_copt=external/protobuf\+.*@-Wno-deprecated-declarations
-build --per_file_copt=external/protobuf\+.*@-Wno-deprecated-this-capture
+build --per_file_copt=external/protobuf\+.*/map\.cc@-Wno-deprecated
+build --per_file_copt=external/protobuf\+.*@-Wno-sign-compare
+build --per_file_copt=external/protobuf\+.*@-Wno-maybe-uninitialized
 build --host_per_file_copt=external/protobuf\+.*@-Wno-deprecated-declarations
+build --host_per_file_copt=external/protobuf\+.*/map\.cc@-Wno-deprecated
+build --host_per_file_copt=external/protobuf\+.*@-Wno-sign-compare
+build --host_per_file_copt=external/protobuf\+.*@-Wno-maybe-uninitialized
+build:macos --per_file_copt=external/protobuf\+.*/map\.cc@-Wno-deprecated-this-capture
+build:macos --host_per_file_copt=external/protobuf\+.*/map\.cc@-Wno-deprecated-this-capture
 # Scope heavy third-party warning buckets to their dependency boundaries.
 build --per_file_copt=external/\+new_git_repository\+lrucache/.*@-Wno-deprecated-declarations
 build --per_file_copt=external/\+new_git_repository\+onnx_runtime_extensions/.*@-Wno-pessimizing-move
