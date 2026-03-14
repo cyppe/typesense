@@ -13,6 +13,7 @@ BAZELISK_HOME_DIR="${TYPESENSE_BAZELISK_HOME:-${OUTPUT_ROOT}/bazelisk}"
 DOCKERFILE_PATH="${TYPESENSE_BAZEL_DOCKERFILE:-docker/ci-bazel.Dockerfile}"
 DOCKER_CONTEXT="${TYPESENSE_BAZEL_DOCKER_CONTEXT:-docker}"
 REPO_ENV_CONLYOPTS="${TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS:--std=gnu17}"
+SKIP_DEFAULT_GCC_CONFIG="${TYPESENSE_BAZEL_SKIP_DEFAULT_GCC_CONFIG:-}"
 
 usage() {
 	cat <<'EOF'
@@ -36,6 +37,8 @@ Environment:
   TYPESENSE_BAZEL_DOCKERFILE          Override Dockerfile path
   TYPESENSE_BAZEL_DOCKER_CONTEXT      Override Docker build context
   TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS  Override C-only repo env opts
+  TYPESENSE_BAZEL_SKIP_DEFAULT_GCC_CONFIG
+                                      Disable the wrapper's default --config=gcc
 EOF
 }
 
@@ -68,7 +71,25 @@ if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
 	build_image
 fi
 
-bazel_args=(--batch "$@")
+default_to_gcc_config=0
+if [[ -z "${SKIP_DEFAULT_GCC_CONFIG}" ]] && [[ "${1}" =~ ^(build|test|run|coverage)$ ]]; then
+	default_to_gcc_config=1
+	for arg in "$@"; do
+		case "${arg}" in
+			--config=gcc|--repo_env=CC=*clang*|--repo_env=CXX=*clang*|--config=clang)
+				default_to_gcc_config=0
+				break
+				;;
+		esac
+	done
+fi
+
+if ((default_to_gcc_config)); then
+	bazel_args=(--batch "${1}" "--config=gcc" "${@:2}")
+else
+	bazel_args=(--batch "$@")
+fi
+
 if [[ "${1}" =~ ^(build|test|run|coverage|fetch|query|aquery|cquery)$ ]]; then
 	bazel_args=("${bazel_args[0]}" "${bazel_args[1]}" "--disk_cache=${DISK_CACHE}" "--repository_cache=${REPOSITORY_CACHE}" "${bazel_args[@]:2}")
 fi
