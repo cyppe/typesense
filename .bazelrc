@@ -49,6 +49,10 @@ build:asan --linkopt -fsanitize=address
 build:asan --copt -DASAN_BUILD
 build:asan --copt -DNO_JEMALLOC
 build:asan --copt -DADDRESS_SANITIZER=1
+# GCC 14/libstdc++ can emit std::regex false positives under ASAN in a narrow set
+# of regex-heavy first-party translation units and the external clip tokenizer.
+build:asan --per_file_copt=src/(auth_manager|collection|collection_manager|conversation_model|core_api|field|filter|http_server|join|natural_language_search_model)\.cpp@-Wno-maybe-uninitialized
+build:asan --per_file_copt=.*clip_tokenizer.*@-Wno-maybe-uninitialized
 build:asan --test_env=ASAN_OPTIONS=detect_leaks=1:detect_odr_violation=0:color=always
 build:asan --test_env=LSAN_OPTIONS=suppressions=test/lsan_suppressions.txt
 build:asan --test_env=UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1
@@ -59,6 +63,9 @@ build:tsan --copt -fsanitize=thread
 build:tsan --linkopt -fsanitize=thread
 build:tsan --copt -DTSAN_BUILD
 build:tsan --copt -DNO_JEMALLOC
+# GCC warns on Abseil's atomic_thread_fence under TSAN even though the code is in
+# external Abseil and not actionable inside this repo.
+build:tsan --per_file_copt=external/abseil-cpp\+.*@-Wno-tsan
 build:tsan --test_env=TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1:history_size=4:suppressions=test/tsan_suppressions.txt
 
 # Static linking of libstdc++/libgcc is handled by linkopts in BUILD file
