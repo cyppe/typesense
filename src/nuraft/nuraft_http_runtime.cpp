@@ -25,6 +25,11 @@ namespace {
 
 constexpr const char* kCollectionPrefix = "state/collections/";
 constexpr const char* kDocumentPrefix = "state/documents/";
+constexpr size_t kDocumentImportRaftChunkMaxDocs = 5000;
+constexpr size_t kDocumentImportRaftChunkMaxBytes = 4 * 1024 * 1024;
+// Keep this aligned with HttpServer::ACTIVE_STREAM_WINDOW_SIZE so the buffered
+// replay follows the same handler cadence as the old async import path.
+constexpr size_t kDocumentImportHandlerReplayChunkBytes = 196605;
 
 nlohmann::json normalize_collection_field(const nlohmann::json& field) {
     nlohmann::json normalized = field;
@@ -153,6 +158,86 @@ bool apply_typesense_write_handler(const std::shared_ptr<http_req>& request,
     return false;
 }
 
+std::shared_ptr<http_req> build_request_copy(const http_req& source) {
+    auto request = std::make_shared<http_req>();
+    request->http_method = source.http_method;
+    request->path_without_query = source.path_without_query;
+    request->route_hash = source.route_hash;
+    request->params = source.params;
+    request->embedded_params_vec = source.embedded_params_vec;
+    request->api_auth_key = source.api_auth_key;
+    request->metadata = source.metadata;
+    request->start_ts = source.start_ts;
+    request->conn_ts = source.conn_ts;
+    request->overloaded = source.overloaded;
+    request->log_index = source.log_index;
+    request->client_ip = source.client_ip;
+    request->is_binary_body = source.is_binary_body;
+    request->is_write = source.is_write.load();
+    request->async_res_set_headers_callback = source.async_res_set_headers_callback;
+    request->async_res_write_callback = source.async_res_write_callback;
+    request->async_res_done_callback = source.async_res_done_callback;
+    return request;
+}
+
+std::shared_ptr<http_req> build_import_chunk_request(const http_req& source,
+                                                     std::string body,
+                                                     bool first_chunk,
+                                                     bool last_chunk) {
+    auto request = build_request_copy(source);
+    request->first_chunk_aggregate = first_chunk;
+    request->last_chunk_aggregate = last_chunk;
+    request->chunk_len = body.size();
+    request->body = std::move(body);
+    return request;
+}
+
+template <typename ConsumeChunk>
+bool for_each_import_body_chunk(const std::string& body,
+                                ConsumeChunk&& consume_chunk,
+                                std::string& error) {
+    if (body.empty()) {
+        return consume_chunk(std::string(), true, true, error);
+    }
+
+    bool first_chunk = true;
+    size_t chunk_start = 0;
+    size_t cursor = 0;
+    size_t docs_in_chunk = 0;
+    size_t chunk_bytes = 0;
+
+    while (cursor < body.size()) {
+        const size_t line_start = cursor;
+        const size_t newline = body.find('\n', cursor);
+        const size_t next_cursor = newline == std::string::npos ? body.size() : newline + 1;
+        const size_t line_bytes = next_cursor - line_start;
+
+        if (docs_in_chunk > 0 &&
+            (docs_in_chunk >= kDocumentImportRaftChunkMaxDocs ||
+             chunk_bytes + line_bytes > kDocumentImportRaftChunkMaxBytes)) {
+            if (!consume_chunk(body.substr(chunk_start, line_start - chunk_start), first_chunk, false, error)) {
+                return false;
+            }
+            first_chunk = false;
+            chunk_start = line_start;
+            docs_in_chunk = 0;
+            chunk_bytes = 0;
+            continue;
+        }
+
+        cursor = next_cursor;
+        docs_in_chunk += 1;
+        chunk_bytes += line_bytes;
+    }
+
+    if (docs_in_chunk == 0) {
+        error = "NuRaft import chunking produced an empty final chunk.";
+        return false;
+    }
+
+    return consume_chunk(body.substr(chunk_start, cursor - chunk_start), first_chunk, true, error);
+}
+
 bool find_registered_route(HttpServer* server,
                            uint64_t route_hash,
                            route_path*& route,
@@ -193,6 +278,60 @@ bool invoke_registered_handler(HttpServer* server,
 
     error.clear();
     return false;
+}
+
+bool replay_buffered_import_handler(HttpServer* server,
+                                    const std::shared_ptr<http_req>& source_request,
+                                    std::string& aggregated_response_body,
+                                    std::string& response_content_type,
+                                    uint32_t& response_status_code,
+                                    std::string& error) {
+    auto replay_request = build_request_copy(*source_request);
+    replay_request->body.clear();
+    replay_request->chunk_len = 0;
+    replay_request->first_chunk_aggregate = false;
+    replay_request->last_chunk_aggregate = false;
+
+    auto replay_response = std::make_shared<http_res>(nullptr);
+    const std::string& source_body = source_request->body;
+
+    size_t offset = 0;
+    const bool has_body = !source_body.empty();
+    do {
+        const size_t bytes_to_append =
+            has_body ? std::min(kDocumentImportHandlerReplayChunkBytes, source_body.size() - offset) : 0;
+        if (bytes_to_append > 0) {
+            replay_request->body.append(source_body, offset, bytes_to_append);
+            offset += bytes_to_append;
+        }
+
+        replay_request->chunk_len = bytes_to_append;
+        replay_request->last_chunk_aggregate = !has_body || offset >= source_body.size();
+
+        const bool handler_ok = invoke_registered_handler(server, replay_request, replay_response, error);
+        if (!handler_ok && replay_response->status_code == 0) {
+            return false;
+        }
+
+        if (!replay_response->content_type_header.empty()) {
+            response_content_type = replay_response->content_type_header;
+        }
+        if (replay_response->status_code != 0) {
+            response_status_code = replay_response->status_code;
+        }
+        if (!replay_response->body.empty()) {
+            aggregated_response_body += replay_response->body;
+        }
+
+        if (replay_response->status_code >= 400) {
+            aggregated_response_body = replay_response->body;
+            error.clear();
+            return false;
+        }
+    } while (offset < source_body.size());
+
+    error.clear();
+    return true;
 }
 
 bool should_replay_live_product_state(const NuRaftAppliedRequest& applied_request) {
@@ -623,6 +762,21 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
 
     uint64_t committed_index = 0;
     bool forwarded_to_leader = false;
+    if (delegates_to_registered_import_handler) {
+        if (!process_document_import_write(request, response, committed_index, forwarded_to_leader, error)) {
+            if (response->status_code == 0) {
+                response->set_500(error);
+            }
+            send_response(request, response);
+            return;
+        }
+        if (committed_index > live_product_state_applied_index_) {
+            live_product_state_applied_index_ = committed_index;
+        }
+        send_response(request, response);
+        return;
+    }
+
     const std::string request_json = request->to_json();
     if (!append_via_raft(request_json, *request, committed_index, forwarded_to_leader, error)) {
         response->set_500(error);
@@ -630,7 +784,7 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         return;
     }
 
-    if (supports_generic_registered_write || delegates_to_registered_import_handler) {
+    if (supports_generic_registered_write) {
         error.clear();
         const bool handler_ok = invoke_registered_handler(server_, request, response, error);
         if (!handler_ok && response->status_code == 0) {
@@ -752,6 +906,63 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     }
 
     send_response(request, response);
+}
+
+bool NuRaftHttpRuntimeService::process_document_import_write(
+    const std::shared_ptr<http_req>& request,
+    const std::shared_ptr<http_res>& response,
+    uint64_t& committed_index,
+    bool& forwarded_to_leader,
+    std::string& error) {
+    committed_index = 0;
+    forwarded_to_leader = false;
+
+    std::string aggregated_response_body;
+    std::string response_content_type = "text/plain; charset=utf-8";
+    uint32_t response_status_code = 200;
+
+    const auto consume_chunk = [&](std::string chunk_body,
+                                   bool first_chunk,
+                                   bool last_chunk,
+                                   std::string& chunk_error) -> bool {
+        auto chunk_request = build_import_chunk_request(*request, std::move(chunk_body), first_chunk, last_chunk);
+        const std::string request_json = chunk_request->to_json();
+
+        uint64_t chunk_committed_index = 0;
+        bool chunk_forwarded_to_leader = false;
+        if (!append_via_raft(request_json,
+                             *chunk_request,
+                             chunk_committed_index,
+                             chunk_forwarded_to_leader,
+                             chunk_error)) {
+            return false;
+        }
+
+        committed_index = chunk_committed_index;
+        forwarded_to_leader = forwarded_to_leader || chunk_forwarded_to_leader;
+        return true;
+    };
+
+    // Buffer the HTTP request once, then feed raft bounded logical import chunks
+    // keyed by the same request start_ts. This avoids per-transport-chunk raft
+    // commits without storing the full 1M-document body in one raft entry.
+    if (!for_each_import_body_chunk(request->body, consume_chunk, error)) {
+        return false;
+    }
+
+    if (!replay_buffered_import_handler(server_,
+                                        request,
+                                        aggregated_response_body,
+                                        response_content_type,
+                                        response_status_code,
+                                        error)) {
+        response->set_content(response_status_code, response_content_type, error.empty() ? aggregated_response_body : error, true);
+        return false;
+    }
+
+    response->set_content(response_status_code, response_content_type, aggregated_response_body, true);
+    error.clear();
+    return true;
 }
 
 bool NuRaftHttpRuntimeService::is_read_caught_up() const {

@@ -98,6 +98,11 @@ public:
 
 private:
     bool initialize_raft_server(std::string& error);
+    bool process_document_import_write(const std::shared_ptr<http_req>& request,
+                                       const std::shared_ptr<http_res>& response,
+                                       uint64_t& committed_index,
+                                       bool& forwarded_to_leader,
+                                       std::string& error);
     bool append_via_raft(const std::string& request_json,
                          const http_req& request,
                          uint64_t& committed_index,

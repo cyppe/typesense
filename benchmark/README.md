@@ -39,6 +39,9 @@ TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --s
 
 See `benchmark/BENCHMARK_RESULTS.md` for the meaning of each profile and the accepted default tuning posture.
 
+Live benchmark output still forwards server stdout/stderr, but the harness now collapses repeated
+`Threadpool exhaustion detected` stderr bursts into periodic summaries so CI logs stay readable.
+
 ## CLI Development
 
 Install dependencies and build the CLI:

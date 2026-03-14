@@ -11,51 +11,70 @@ Historical note: Runs 14-26 below are archival pre-cutover measurements from whe
 
 ---
 
-## Run 27: One-Shot Import Parity Reset For The Core Benchmark Lane (NuRaft runtime, 2026-03-13)
+## Run 27: NuRaft Bulk-Import Parity Finalized For The Core Benchmark Lane (NuRaft runtime, 2026-03-14)
 
-**Commit:** `HEAD` at run time
-**Scenario:** prove whether the NuRaft runtime was paying Raft overhead per transport chunk on `/documents/import`, then reset the default benchmark lane to the upstream-comparable one-shot import shape.
+**Commit:** local working tree on top of `985acb45` at run time
+**Scenario:** prove whether the NuRaft runtime can keep one-shot bulk-import semantics without turning the whole request into one oversized Raft entry, then rerun the upstream-comparable `core` lane.
 
 ### Proof Summary
 
-| Check | Pre-fix runtime | Post-fix runtime |
+| Check | Pre-fix runtime | Final runtime |
 |---|---:|---:|
-| Throttled single POST response | connection reset after `3570/12000` lines | HTTP `200`, `12000/12000` lines |
-| Final collection count | `3570` | `12000` |
-| `/status.committed_index` delta | `+1` for the partial body fragment | `+1` for the full logical import |
-| Runtime route shape | `/documents/import` registered with `async_req=true` | `/documents/import` registered with `async_req=false` |
-| Request timeout | hardcoded `60000ms` | configurable via `--request-timeout-ms` / `TYPESENSE_REQUEST_TIMEOUT_MS` |
+| Throttled `12k` single POST | connection reset after `3570/12000` lines | HTTP `200`, `12000/12000` lines |
+| Direct `1M` single POST | not safe for the benchmark lane | HTTP `200`, `1000000/1000000` lines in `28s` |
+| Final collection count | `3570` | `12000` / `1000000` |
+| Runtime write model | H2O body aggregation could still reach `append_via_raft()` mid-request | buffer one logical request, replicate bounded logical chunks (`5000` docs / `4 MiB`), then replay the buffered body through `post_import_documents()` in H2O-sized slices |
+| Committed-index behavior | partial body fragment still committed | bounded by logical chunking: `+2` for the `6k` API test, `202` entries for the direct `1M` proof |
+| Request timeout | hardcoded `60000ms` | default `60000ms`, configurable via `--request-timeout-ms` / `TYPESENSE_REQUEST_TIMEOUT_MS` |
 
 ### Interpretation
 
-- The regression was real and architectural, not just benchmark CLI drift: under a slow single POST, the old runtime path could still split one logical import across H2O body aggregation boundaries before Raft.
-- The smallest replay-safe fix was to keep the existing import handler and response contract, but buffer one full logical import request before `NuRaftHttpRuntimeService::write()` appends it through Raft.
-- That restores parity with the upstream benchmark shape without inventing a new import code path.
+- The regression was real and architectural, not benchmark CLI drift: under a slow single POST, the old runtime path could still let transport/body aggregation boundaries dictate when Raft work happened.
+- A first route-only buffering refactor was not sufficient. It restored one-shot POST completion, but it still changed the live import execution model enough to distort storage/search behavior.
+- The final design is the one to keep: H2O still buffers one logical request before the runtime write path, but the runtime now keeps Raft entries bounded while replaying the buffered request through the existing import-handler cadence. That preserves the documented import response contract and the live engine's batching behavior together.
 
 ### Decision
 
-- The benchmark `core` scope now uses the upstream-comparable shape again: one large import POST, then search.
+- Keep the benchmark `core` scope on the upstream-comparable shape: one large import POST, then search.
+- Keep the NuRaft import implementation as bounded logical chunking plus one logical handler replay; do not regress to per-transport-chunk Raft work or to a chunk-per-handler execution model.
 - `extended` remains the opt-in lane for stress import, concurrent search+import, and extra RocksDB/metrics collection.
-- Hosted/manual benchmark runs that need more than the inherited `60s` request deadline should use `TYPESENSE_REQUEST_TIMEOUT_MS=300000`. The benchmark launcher now forwards that env var into Dockerized benchmark containers, which keeps transition-era comparisons safe because older binaries simply ignore the env override.
+- Hosted/manual benchmark runs that need more than the inherited `60s` request deadline should use `TYPESENSE_REQUEST_TIMEOUT_MS=300000`. The benchmark launcher forwards that env var into Dockerized benchmark containers, so older comparison binaries safely ignore it.
 
 ### Core Lane Validation
 
 | Run | Command | Result |
 |---|---|---|
-| `quick/core` | `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --self-compare --profile quick --scope core` | Passed. Archive: `~/.cache/typesense/benchmark/archives/20260313-155910-quick-core` |
-| `standard/core` | `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core` | Passed. Archive: `~/.cache/typesense/benchmark/archives/20260313-163814-standard-core` |
+| `quick/core` self-compare | `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --self-compare --profile quick --scope core` | Passed on the final replay-model build. Import `27090ms -> 25689ms`, search checks `100%` for both halves, archive snapshot `20260314-080257-quick-core` under explicit work dir `/tmp/self-bench-rerun.ccjGHS` |
+| `standard/core` upstream compare | `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core` | Passed. Archive: `~/.cache/typesense/benchmark/archives/20260314-082629-standard-core` |
 
-### Standard/Core Import Summary
+### Standard/Core Summary
 
-| Commit lane | Import duration | Docs imported | HTTP status | Response warnings |
-|---|---:|---:|---:|---:|
-| `upstream-30.1` | `31832ms` | `1000000/1000000` | `200` | `0` |
-| `e697233e` | `23279ms` | `1000000/1000000` | `200` | `0` |
+| Commit lane | Import duration | Docs imported | HTTP status | Response warnings | Benchmark data dir |
+|---|---:|---:|---:|---:|---:|
+| `upstream-30.1` | `29383ms` | `1000000/1000000` | `200` | `0` | `893M` |
+| final local runtime build | `26906ms` | `1000000/1000000` | `200` | `0` | `489M` |
+
+### Representative Search p95 Summary
+
+| Scenario | Upstream p95 (`50vu / 100vu`) | Final runtime p95 (`50vu / 100vu`) |
+|---|---:|---:|
+| `facet` | `365 / 837 ms` | `133 / 133 ms` |
+| `filter_simple` | `93 / 302 ms` | `15 / 15 ms` |
+| `group` | `2182 / 4467 ms` | `379 / 380 ms` |
+| `sort_eval_score` | `261 / 583 ms` | `66 / 65 ms` |
+| `sort_simple` | `209 / 516 ms` | `55 / 54 ms` |
+
+### Benchmark Verdict
+
+- The final runtime build beat upstream classic on import (`29.383s -> 26.906s`) and on every meaningful non-zero search scenario in this `standard/core` replay.
+- The only visible regression was `just_q (50vu)` moving from `4ms` to `5ms`, which is below the benchmark lane's own `7ms` significance floor for that scenario.
+- The earlier storage/search regression from the discarded chunk-per-handler prototype is no longer present. Against upstream classic, the final runtime build now produces a smaller benchmark data directory while also winning the mixed `index + search` lane.
 
 ### Benchmark Harness Note
 
 - `standard/core` initially tripped a benchmark-harness-only failure after the server emitted a very large volume of `threadpool exhaustion detected` stderr during long search runs.
 - The fix was to launch the long-lived Typesense Docker process with execa `buffer: false`. The harness already consumes stdout/stderr incrementally, so internal buffering only created a Bun/get-stream failure mode without adding value.
+- The harness now also keeps the first `threadpool exhaustion detected` line but collapses the repeated burst into periodic summaries with the max observed queue depth. That preserves the saturation signal without burying the benchmark verdict in log spam.
 - Keep that setting. Long benchmark lanes should not depend on buffering all server logs in memory.
 
 ---

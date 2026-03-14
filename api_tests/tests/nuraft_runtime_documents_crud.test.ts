@@ -172,7 +172,7 @@ describe(Phases.SINGLE_FRESH, () => {
     expect(document.data?.company_name).toBe("Umbrella Corp");
   });
 
-  it("buffers streamed bulk imports into one committed NuRaft write", async () => {
+  it("buffers streamed bulk imports into bounded logical NuRaft chunks", async () => {
     const collectionName = "companies_docs_streamed_import";
     let res = await fetchSingleNode("/collections", {
       method: "POST",
@@ -216,7 +216,7 @@ describe(Phases.SINGLE_FRESH, () => {
     await waitForSingleNodeDocumentCount(collectionName, documents.length);
 
     const afterStatus = await fetchSingleNodeStatus();
-    expect(afterStatus.committed_index).toBe(beforeStatus.committed_index + 1);
+    expect(afterStatus.committed_index).toBe(beforeStatus.committed_index + 2);
 
     res = await fetchSingleNode(`/collections/${collectionName}/documents/stream-5999`);
     expect(res.ok).toBe(true);

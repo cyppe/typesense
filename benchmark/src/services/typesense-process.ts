@@ -26,6 +26,150 @@ interface AddressError {
   type: "address";
 }
 
+type StreamName = "stdout" | "stderr";
+
+interface BenchmarkProcessLoggerLike {
+  info: (...args: unknown[]) => void;
+}
+
+interface ThreadpoolExhaustionWindow {
+  firstSeenAtMs: number;
+  lastSeenAtMs: number;
+  maxQueueLen: number;
+  suppressedCount: number;
+  threadPoolLen: number;
+}
+
+const THREADPOOL_EXHAUSTION_PATTERN =
+  /threadpool\.h:\d+\] Threadpool exhaustion detected, task_queue_len: (\d+), thread_pool_len: (\d+)/i;
+const THREADPOOL_EXHAUSTION_SUMMARY_INTERVAL_MS = 5_000;
+
+export class TypesenseProcessLogReducer {
+  private readonly partialLines: Record<StreamName, string> = {
+    stderr: "",
+    stdout: "",
+  };
+
+  private threadpoolExhaustionWindow: ThreadpoolExhaustionWindow | null = null;
+
+  constructor(
+    private readonly http: number,
+    private readonly processLogger: BenchmarkProcessLoggerLike = logger,
+    private readonly now: () => number = () => Date.now(),
+  ) {}
+
+  public handleStdoutChunk(data: unknown): void {
+    this.consumeStreamChunk("stdout", data, (line) => {
+      this.logStreamLine("stdout", line);
+    });
+  }
+
+  public handleStderrChunk(data: unknown): void {
+    this.consumeStreamChunk("stderr", data, (line) => {
+      this.handleStderrLine(line);
+    });
+  }
+
+  public flush(): void {
+    this.flushBufferedLine("stdout");
+    this.flushBufferedLine("stderr");
+    this.flushThreadpoolExhaustionSummary();
+  }
+
+  private consumeStreamChunk(
+    stream: StreamName,
+    data: unknown,
+    onLine: (line: string) => void,
+  ): void {
+    const message = isStringifiable(data) ? data.toString() : "Not a stringifiable object";
+    const lines = `${this.partialLines[stream]}${message}`.split(/\r?\n/);
+    this.partialLines[stream] = lines.pop() ?? "";
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (line.length > 0) {
+        onLine(line);
+      }
+    }
+  }
+
+  private flushBufferedLine(stream: StreamName): void {
+    const line = this.partialLines[stream].trim();
+    this.partialLines[stream] = "";
+
+    if (line.length === 0) {
+      return;
+    }
+
+    if (stream === "stderr") {
+      this.handleStderrLine(line);
+      return;
+    }
+
+    this.logStreamLine(stream, line);
+  }
+
+  private handleStderrLine(line: string): void {
+    const match = line.match(THREADPOOL_EXHAUSTION_PATTERN);
+    if (!match) {
+      this.flushThreadpoolExhaustionSummary();
+      this.logStreamLine("stderr", line);
+      return;
+    }
+
+    const taskQueueLen = Number(match[1]);
+    const threadPoolLen = Number(match[2]);
+    const nowMs = this.now();
+
+    if (this.threadpoolExhaustionWindow == null) {
+      this.threadpoolExhaustionWindow = {
+        firstSeenAtMs: nowMs,
+        lastSeenAtMs: nowMs,
+        maxQueueLen: taskQueueLen,
+        suppressedCount: 0,
+        threadPoolLen,
+      };
+      this.logStreamLine("stderr", line);
+      return;
+    }
+
+    this.threadpoolExhaustionWindow.lastSeenAtMs = nowMs;
+    this.threadpoolExhaustionWindow.maxQueueLen = Math.max(
+      this.threadpoolExhaustionWindow.maxQueueLen,
+      taskQueueLen,
+    );
+    this.threadpoolExhaustionWindow.suppressedCount += 1;
+    this.threadpoolExhaustionWindow.threadPoolLen = threadPoolLen;
+
+    if ((nowMs - this.threadpoolExhaustionWindow.firstSeenAtMs) >= THREADPOOL_EXHAUSTION_SUMMARY_INTERVAL_MS) {
+      this.flushThreadpoolExhaustionSummary();
+    }
+  }
+
+  private flushThreadpoolExhaustionSummary(): void {
+    if (this.threadpoolExhaustionWindow == null) {
+      return;
+    }
+
+    if (this.threadpoolExhaustionWindow.suppressedCount > 0) {
+      const durationSeconds =
+        (this.threadpoolExhaustionWindow.lastSeenAtMs - this.threadpoolExhaustionWindow.firstSeenAtMs) / 1000;
+      this.processLogger.info(
+        `[Node on port ${this.http}] stderr: suppressed ${this.threadpoolExhaustionWindow.suppressedCount}` +
+          ` repeated threadpool exhaustion warnings over ${durationSeconds.toFixed(1)}s` +
+          ` (max_queue_len=${this.threadpoolExhaustionWindow.maxQueueLen},` +
+          ` thread_pool_len=${this.threadpoolExhaustionWindow.threadPoolLen})`,
+      );
+    }
+
+    this.threadpoolExhaustionWindow = null;
+  }
+
+  private logStreamLine(stream: StreamName, line: string): void {
+    this.processLogger.info(`[Node on port ${this.http}] ${stream}: ${line}`);
+  }
+}
+
 export interface SetupNodesOptions {
   skipCleanup?: boolean;
 }
@@ -433,15 +577,26 @@ export class TypesenseProcessManager {
           logger.info(`[Node on port ${http}] Command: docker ${dockerArgs.join(" ")}`);
 
           const typesenseProcess = execa("docker", dockerArgs, execaOptions);
+          const processLogReducer = new TypesenseProcessLogReducer(http);
 
           typesenseProcess.stdout?.on("data", (data) => {
-            const message = isStringifiable(data) ? data.toString().trim() : "Not a stringifiable object";
-            logger.info(`[Node on port ${http}] stdout: ${message}`);
+            processLogReducer.handleStdoutChunk(data);
           });
 
           typesenseProcess.stderr?.on("data", (data) => {
-            const message = isStringifiable(data) ? data.toString().trim() : "Not a stringifiable object";
-            logger.info(`[Node on port ${http}] stderr: ${message}`);
+            processLogReducer.handleStderrChunk(data);
+          });
+
+          typesenseProcess.on("close", () => {
+            processLogReducer.flush();
+          });
+
+          typesenseProcess.on("exit", () => {
+            processLogReducer.flush();
+          });
+
+          typesenseProcess.on("error", () => {
+            processLogReducer.flush();
           });
 
           const typesenseInfo = new TypesenseProcessController(typesenseProcess, http, this.apiKey, node);
