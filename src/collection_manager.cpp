@@ -2440,9 +2440,9 @@ void CollectionManager::process_embedding_field_delete(const std::string& model_
     }
 
     if(!found) {
-        TS_LOG(INFO) << "Deleting text embedder: " << model_name;
-        EmbedderManager::get_instance().delete_text_embedder(model_name);
+        TS_LOG(INFO) << "Deleting image/text embedders: " << model_name;
         EmbedderManager::get_instance().delete_image_embedder(model_name);
+        EmbedderManager::get_instance().delete_text_embedder(model_name);
     }
 }
 

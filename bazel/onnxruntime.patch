@@ -2,7 +2,7 @@ diff --git a/cmake/external/extensions.cmake b/cmake/external/extensions.cmake
 index bd3c47d..55bc17c 100644
 --- a/cmake/external/extensions.cmake
 +++ b/cmake/external/extensions.cmake
-@@ -45,6 +45,18 @@ if (NOT onnxruntime_EXTENSIONS_OVERRIDDEN)
+@@ -45,6 +45,21 @@ if (NOT onnxruntime_EXTENSIONS_OVERRIDDEN)
      EXCLUDE_FROM_ALL
    )
    onnxruntime_fetchcontent_makeavailable(extensions)
@@ -12,12 +12,14 @@ index bd3c47d..55bc17c 100644
 +    string(REPLACE "#if ZLIB_VERNUM != 0x12b0" "#if ZLIB_VERNUM != 0x12b0 && ZLIB_VERNUM != 0x1300 && ZLIB_VERNUM != 0x1310" ORT_EXT_IMAGE_ENCODER_HPP "${ORT_EXT_IMAGE_ENCODER_HPP}")
 +    file(WRITE "${onnxruntime_EXTENSIONS_PATH}/operators/vision/image_encoder.hpp" "${ORT_EXT_IMAGE_ENCODER_HPP}")
 +  endif()
-+  if (EXISTS "${onnxruntime_EXTENSIONS_PATH}/operators/vision/vision.cc")
-+    file(READ "${onnxruntime_EXTENSIONS_PATH}/operators/vision/vision.cc" ORT_EXT_VISION_CC)
-+    string(REPLACE "  static OrtOpLoader op_loader(" "  static auto* op_loader = new OrtOpLoader(" ORT_EXT_VISION_CC "${ORT_EXT_VISION_CC}")
-+    string(REPLACE "  return op_loader.GetCustomOps();" "  return op_loader->GetCustomOps();" ORT_EXT_VISION_CC "${ORT_EXT_VISION_CC}")
-+    file(WRITE "${onnxruntime_EXTENSIONS_PATH}/operators/vision/vision.cc" "${ORT_EXT_VISION_CC}")
-+  endif()
++  file(GLOB_RECURSE ORT_EXT_CUSTOM_OP_LOADER_SOURCES
++       "${onnxruntime_EXTENSIONS_PATH}/operators/*.cc")
++  foreach(ORT_EXT_CUSTOM_OP_LOADER_SOURCE ${ORT_EXT_CUSTOM_OP_LOADER_SOURCES})
++    file(READ "${ORT_EXT_CUSTOM_OP_LOADER_SOURCE}" ORT_EXT_CUSTOM_OP_LOADER_CONTENTS)
++    string(REPLACE "static OrtOpLoader op_loader(" "static auto* op_loader = new OrtOpLoader(" ORT_EXT_CUSTOM_OP_LOADER_CONTENTS "${ORT_EXT_CUSTOM_OP_LOADER_CONTENTS}")
++    string(REPLACE "return op_loader.GetCustomOps();" "return op_loader->GetCustomOps();" ORT_EXT_CUSTOM_OP_LOADER_CONTENTS "${ORT_EXT_CUSTOM_OP_LOADER_CONTENTS}")
++    file(WRITE "${ORT_EXT_CUSTOM_OP_LOADER_SOURCE}" "${ORT_EXT_CUSTOM_OP_LOADER_CONTENTS}")
++  endforeach()
  else()
    # when onnxruntime-extensions is not a subdirectory of onnxruntime,
    # output binary directory must be explicitly specified.
