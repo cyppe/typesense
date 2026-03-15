@@ -211,6 +211,11 @@ BENCHMARK_DIR="${REPO_DIR}/benchmark"
 UPSTREAM_URL="https://dl.typesense.org/releases/${UPSTREAM_VERSION}/typesense-server-${UPSTREAM_VERSION}-linux-amd64.tar.gz"
 export COMPOSE_PROJECT_NAME="benchmark"
 export BENCHMARK_WORK_DIR="${WORK_DIR}"
+export BENCHMARK_HOST_DIR="${BENCHMARK_DIR}"
+HOST_UID="$(id -u)"
+HOST_GID="$(id -g)"
+DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
+export HOST_UID HOST_GID DOCKER_GID
 
 if [[ -n "${BASELINE_BINARY_OVERRIDE}" ]] && [[ ! -x "${BASELINE_BINARY_OVERRIDE}" ]]; then
 	echo "Error: baseline binary is not executable: ${BASELINE_BINARY_OVERRIDE}" >&2
@@ -241,7 +246,7 @@ if [[ "${CLEAN}" == "true" ]]; then
 	rm -rf "${BENCHMARK_DIR}/influxdb-data" 2>/dev/null || sudo rm -rf "${BENCHMARK_DIR}/influxdb-data" 2>/dev/null || true
 fi
 
-mkdir -p "${WORK_DIR}"
+mkdir -p "${WORK_DIR}" "${WORK_DIR}/benchmark-node_modules"
 
 if [[ "${BUILD}" == "true" ]]; then
 	echo "=== Building fork binary ==="

@@ -28,6 +28,7 @@ if [[ "${ARCH}" == "amd64" ]]; then
 elif [[ "${ARCH}" == "arm64" ]]; then
   RPM_ARCH="aarch64"
 fi
+RPM_FILE_BASENAME="typesense-gpu-deps-${TSV}-1${RPM_RELEASE_SUFFIX}.${RPM_ARCH}.rpm"
 
 set -x
 
@@ -72,12 +73,23 @@ while IFS= read -r -d '' spec_file; do
   sed -i "s/^Release: 1/Release: 1${RPM_RELEASE_SUFFIX}/" "${spec_file}"
 done < <(find "${RPM_BUILD_DIR}" -maxdepth 10 -type f -name '*.spec' -print0)
 
-SPEC_BUILD_DIR="${RPM_BUILD_DIR}/typesense-gpu-deps-${TSV}"
-SPEC_FILE="${SPEC_BUILD_DIR}/typesense-gpu-deps-${TSV}-1.spec"
+mapfile -t spec_files < <(find "${RPM_BUILD_DIR}" -maxdepth 10 -type f -name '*.spec')
+if [[ "${#spec_files[@]}" -eq 0 ]]; then
+  echo "Unable to locate generated RPM spec file under ${RPM_BUILD_DIR}" >&2
+  exit 1
+fi
+
+SPEC_FILE="${spec_files[0]}"
+SPEC_BUILD_DIR="$(dirname "${SPEC_FILE}")"
 (
   cd "${SPEC_BUILD_DIR}"
   rpmbuild --target="${RPM_ARCH}" --buildroot "${SPEC_BUILD_DIR}" -bb "${SPEC_FILE}"
 )
 
 cp "${RPM_BUILD_DIR}/${DEB_FILE_BASENAME}" "${BAZEL_BIN_DIR}"
-cp "${RPM_BUILD_DIR}/typesense-gpu-deps-${TSV}-1${RPM_RELEASE_SUFFIX}.${RPM_ARCH}.rpm" "${BAZEL_BIN_DIR}"
+GENERATED_RPM="$(find "${RPM_BUILD_DIR}" /root/rpmbuild/RPMS -type f -name 'typesense-gpu-deps-*.rpm' 2>/dev/null | head -n 1 || true)"
+if [[ -z "${GENERATED_RPM}" ]]; then
+  echo "Unable to locate generated GPU RPM artifact." >&2
+  exit 1
+fi
+cp "${GENERATED_RPM}" "${BAZEL_BIN_DIR}/${RPM_FILE_BASENAME}"

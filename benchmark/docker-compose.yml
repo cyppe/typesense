@@ -67,16 +67,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.cli
-    networks:
-      - k6
+    user: "${HOST_UID:-0}:${HOST_GID:-0}"
+    group_add:
+      - "${DOCKER_GID:-0}"
+    working_dir: ${BENCHMARK_HOST_DIR:-/app}
+    network_mode: host
     environment:
       - COMPOSE_PROJECT_NAME=${COMPOSE_PROJECT_NAME:-benchmark}
       - OPENAI_API_KEY
       - TYPESENSE_REQUEST_TIMEOUT_MS
       - CI
     volumes:
-      - ./:/app
-      - /app/node_modules
+      - ${BENCHMARK_HOST_DIR:-.}:${BENCHMARK_HOST_DIR:-/app}
+      - ${BENCHMARK_WORK_DIR:-/tmp/typesense-benchmark}/benchmark-node_modules:${BENCHMARK_HOST_DIR:-/app}/node_modules
       # Docker socket — so CLI can spawn Typesense containers
       - /var/run/docker.sock:/var/run/docker.sock
       # Benchmark work directory (binaries + data)
