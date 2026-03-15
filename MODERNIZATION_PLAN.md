@@ -582,6 +582,8 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 29 | Explicit compiler-config topology audit | P2 Hygiene | queued | Investigation-first sprint. Decide whether wrapper-selected `--config=gcc` should remain the repo contract or be replaced by more explicit compiler configs and entrypoints. |
 | 30 | NuRaft post-cutover benchmark baseline refresh | P2 Perf | queued | Investigation-first sprint. Decide whether a fresh hosted/local baseline would materially change benchmark policy or simply reconfirm the current NuRaft posture. |
 | 31 | Container-first tooling coverage audit | P2 DX | queued | Investigation-first sprint. Review repo-owned scripts and workflows to containerize any remaining host-tool-dependent flow where Docker/CI-parity can replace it without sacrificing reproducibility. |
+| 32 | Upstream arm64 lg-page16 release parity | P2 Release | queued | Investigation-first sprint. Prove a canonical `linux-arm64-lg-page16` server tarball/DEB/RPM path using the repo's existing suffix-aware packaging hooks, then decide whether it belongs in `release-binaries` or a sibling workflow. |
+| 33 | GPU deps artifact automation boundary | P2 Release | queued | Investigation-first sprint. Validate whether `typesense-gpu-deps` tarball/DEB/RPM artifacts can be built reproducibly in containerized CI and keep any CUDA-capable release flow separate from core `release-binaries` unless that boundary collapses cleanly. |
 
 ### 25) Release workflow promotion and repo-owned replay extraction
 
@@ -779,11 +781,53 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 
 - [ ] The repo has an explicit plan for remaining host-tool dependencies instead of vague "Docker-first in principle" intent.
 
+### 32) Upstream arm64 lg-page16 release parity
+
+**Why this sprint exists now**
+
+- Upstream install docs advertise `linux-arm64-lg-page16` server artifacts as first-class download targets.
+- This fork's release workflow currently ships only the default page-size server matrix, even though package naming already supports release suffixes and jemalloc has a `lg_page16` build setting.
+
+**Sprint goal**
+
+- Decide whether the fork should publish `linux-arm64-lg-page16` server tarball/DEB/RPM artifacts and, if yes, wire one canonical build + packaging path without duplicating the core release assembly contract.
+
+**Guardrails**
+
+- Keep this investigation focused on the server artifacts first; do not bundle Docker/Homebrew channel automation into the same sprint.
+- Prefer extending the existing Linux release wrapper/package script surface over adding a parallel release script family.
+
+**Exit criteria**
+
+- [ ] A local proof exists for building and packaging the `linux-arm64-lg-page16` server variant.
+- [ ] The plan records whether the variant should join `release-binaries` directly or live in a sibling release workflow.
+
+### 33) GPU deps artifact automation boundary
+
+**Why this sprint exists now**
+
+- Upstream install docs advertise `typesense-gpu-deps` artifacts for Linux tarball/DEB/RPM installs, but this fork's `release-binaries` workflow does not produce them.
+- The repo already contains `debian-pkg/gpu_generate_deb_rpm.sh` and CUDA-aware Bazel hooks, so the missing piece is release-path proof and CI boundary design, not zero starting point.
+
+**Sprint goal**
+
+- Determine whether GPU dependency artifacts can be built reproducibly in containerized CI and, if so, define a release boundary that does not overload the core CPU-only `release-binaries` flow.
+
+**Guardrails**
+
+- Treat CUDA-capable release work as a separate artifact class unless there is strong evidence it can share the same workflow contract cleanly.
+- Do not conflate GPU artifact automation with Docker image publishing or Homebrew tap updates; those remain separate delivery-channel concerns.
+
+**Exit criteria**
+
+- [ ] A containerized local proof exists for the GPU deps tarball/package path or the blocker is explicitly documented.
+- [ ] The plan records whether GPU deps should use a sibling workflow, reusable workflow, or stay manual for now.
+
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now:** item **25** (`Release workflow promotion and repo-owned replay extraction`) is the recommended next lane. Items **26** through **31** are investigation-first follow-ups queued behind it in priority order.
+- **Active now:** item **25** (`Release workflow promotion and repo-owned replay extraction`) is the recommended next lane. Items **26** through **33** are investigation-first follow-ups queued behind it in priority order.
 - **Recently finished:** item **24** (`Release artifact debug-info policy`) — Linux release artifacts now use split debug info: stripped runtime tarball/package path plus a separate `.debug.tar.gz` sidecar, implemented directly in `release-binaries.yml` and measured locally at `427M -> 151M + 297M`. Item **23** (`Compile warning audit / cleanup`) — normal, ASAN, and TSAN local warning audits are now clean apart from the known Bazel/OpenJDK banner after scoping sanitizer-only suppressions to GCC 14/libstdc++ regex false positives and TSAN Abseil `-Wtsan` noise. Item **22** (`Release workflow promotion / current-tip full-matrix replay`) — run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`; the matching publish dry-run on version label `0.0.0-a2832b63` logged all `12` expected uploads after the RPM-glob fix. Item **20** (`Sanitizer lane stabilization + ORT extensions boundary audit`) — default ASAN is green again after removing `new_delete_type_mismatch=0` from `.bazelrc`, and the remaining ORT issue was resolved by rewriting fetched `OrtOpLoader` statics to process lifetime inside `bazel/onnxruntime.patch`. Item **21** (`NuRaft import/runtime parity + benchmark refactor sprint`) — hosted `benchmark-testing` is green on `27bb2bff` after the final replay-model fix. Item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
 - **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule. NuRaft async/streaming parity verified against upstream (both synchronous, full match).
 - **Later (planned but not started):** Replace patch-only forks with released upstream versions where possible (`bazel/PATCH_DEBT.md` is the owner). Monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep any suppression file-scoped and dependency-scoped rather than broad. Mine `TODO.md` only when an item clearly aligns with the modernization queue above.

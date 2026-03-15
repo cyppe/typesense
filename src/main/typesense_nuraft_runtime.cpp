@@ -325,6 +325,11 @@ int main(int argc, char** argv) {
     config.set_analytics_dir(options.startup_options.data_dir + "/analytics_db");
     config.set_analytics_minute_rate_limit(1000);
 
+    const int logger_init = init_root_logger(config, TS_STRINGIFY(TYPESENSE_VERSION));
+    if (logger_init != 0) {
+        return logger_init;
+    }
+
     curl_global_init(CURL_GLOBAL_SSL);
     HttpClient::get_instance().init(options.api_key);
 
