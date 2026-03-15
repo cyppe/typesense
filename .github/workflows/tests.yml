@@ -255,7 +255,7 @@ jobs:
         if: failure()
         run: docker logs tei-container || echo "No logs found"
 
-      - name: Detect embedding secret availability
+      - name: Detect all secret-gated API env availability
         id: embedding_secrets
         env:
           OPEN_AI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -268,7 +268,7 @@ jobs:
             echo "has_secrets=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Run API tests with secrets
+      - name: Run secret-gated API tests (all 3 vars required)
         if: steps.embedding_secrets.outputs.has_secrets == 'true'
         env:
           TYPESENSE_RUNTIME_BUNDLE_DIR: ${{ github.workspace }}/typesense-server-binary

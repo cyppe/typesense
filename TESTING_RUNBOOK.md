@@ -66,7 +66,7 @@ Use these before pushing or before manually dispatching the heavier GitHub workf
 # tests.yml
 scripts/bazel_in_docker.sh build //:typesense-server
 scripts/bazel_in_docker.sh test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=1200 --flaky_test_attempts=2 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
-scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
+scripts/run_api_tests.sh -- --no-secrets
 
 # sanitizer-testing.yml
 scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors --test_summary=detailed --flaky_test_attempts=2 //:typesense-test --test_timeout=1800 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
@@ -128,7 +128,7 @@ When API tests fail in CI (especially startup/runtime linker issues), use the AP
 
 ```bash
 scripts/bazel_in_docker.sh build //:typesense-server
-scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
+scripts/run_api_tests.sh -- --no-secrets
 ```
 
 To replay a single lane/file quickly, append the test path:
@@ -136,6 +136,32 @@ To replay a single lane/file quickly, append the test path:
 ```bash
 scripts/run_api_tests.sh -- --no-secrets tests/health.test.ts
 ```
+
+Env-dependent API lanes use explicit inputs:
+
+```bash
+# Secret-gated lane: mirror CI's all-or-nothing policy and provide all 3 vars together.
+OPEN_AI_API_KEY=... \
+AZURE_OPENAI_API_KEY=... \
+AZURE_OPENAI_URL=... \
+scripts/run_api_tests.sh -- tests/embedding.test.ts
+
+OPEN_AI_API_KEY=... \
+AZURE_OPENAI_API_KEY=... \
+AZURE_OPENAI_URL=... \
+scripts/run_api_tests.sh -- tests/conversation.test.ts
+
+# TEI lane: start a local TEI endpoint, then point the API harness at it.
+docker rm -f tei-container || true
+docker run -d --name tei-container --runtime=runc -p 8080:80 \
+  ghcr.io/huggingface/text-embeddings-inference:cpu-latest \
+  --model-id sentence-transformers/all-MiniLM-L6-v2
+TYPESENSE_TEST_TEI_URL=http://localhost:8080 \
+scripts/run_api_tests.sh -- --no-secrets tests/tei-integration.test.ts
+docker rm -f tei-container
+```
+
+Legacy migration replay from pre-NuRaft binaries is currently unsupported in this Bun harness. Do not rely on the removed `--download-migration-binary` flow until a dedicated migration lane is reintroduced.
 
 To replay the current NuRaft HTTP runtime through the same wrapper:
 

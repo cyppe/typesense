@@ -28,7 +28,7 @@ Completed and historical migration notes are tracked in git history and PRs.
 - Bazel plus Bzlmod baseline is now `9.0.0` (`.bazelversion`, `MODULE.bazel`) with local Dockerized CI-parity validation green.
 - `WORKSPACE` is a stub and module-based dependency resolution is active.
 - C++ suite `//:typesense-test` is passing in CI-parity Docker after deterministic tie-breaker fixes in grouping tests.
-- API no-secrets suite is healthy across all harness phases with migration auto-download; dedicated TEI lane is green when `TYPESENSE_TEST_TEI_URL` is configured.
+- API no-secrets suite is healthy across the supported Bun harness phases. Env-dependent coverage is now explicit: secret-gated embedding/conversation stays all-or-nothing on `OPENAI_API_KEY` + `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_URL`, the dedicated TEI lane is green when `TYPESENSE_TEST_TEI_URL` is configured, and legacy migration replay from pre-NuRaft binaries is intentionally unsupported in the current harness.
 - Parallel stress validation now shows isolated temp/model paths per process after helper migration; no active shared-path collision failure is known.
 - Heavy auxiliary workflows are now manual-only by policy; `tests.yml` is the only automatic GitHub Actions gate and the local wrapper commands in `TESTING_RUNBOOK.md` are the preferred pre-push validation path.
 
@@ -37,7 +37,7 @@ Completed and historical migration notes are tracked in git history and PRs.
 `TESTING_RUNBOOK.md` is the canonical owner for build/test/replay/API command lines.
 
 - Build server: `scripts/bazel_in_docker.sh build //:typesense-server`
-- Run API suite: `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`
+- Run API suite: `scripts/run_api_tests.sh -- --no-secrets`
 - Run benchmarks: `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core`
 
 Keep this section short and point to the owning docs instead of duplicating the full command matrix here.
@@ -566,18 +566,18 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 13 | ~~RocksDB perf tuning Phase 3 (data-driven)~~ | P2.13 | **done** | Runs 9-13 complete: observability, sweeps, read-path optimizations, `max-indexing-concurrency` validation, and import `batch_size` A/B check. Final policy keeps conservative defaults with hardware-based tuning guidance. |
 | 14 | ~~Benchmark observability: full metrics collection + Grafana dashboard~~ | P2.13 | **done** | Core observability is in place: benchmark runs collect system/API/RocksDB metrics continuously and dashboard includes concurrent search+import visibility. Tuning-specific counter extraction is tracked under item 13. |
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
-| 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
+| 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes, and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
 | 18 | ~~Dependency refresh audit (current vs latest)~~ | P1 Build/Deps | **done** | All actionable deps refreshed: magic_enum 0.9.7, libarchive 3.8.5, snappy 1.2.2, ORT 1.24.3, typesense-js 3.0.2, protobuf 34.0.bcr.1, abseil-cpp 20260107.1. Core infra deps (curl 8.18.0, openssl 3.6.1, jemalloc 5.3.0, zstd 1.5.7, lz4 1.10.0) all confirmed at latest. Patch debt: 5 active patches at minimum, h2o reduced to 48 lines. ORT now reuses the repo's external Abseil source via BUILD-level `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP`, so no new `bazel/onnxruntime.patch` hunk was needed. whisper.cpp upgraded to v1.8.3 (patch down to 1 hunk). |
 | 19 | ~~NuRaft replacement cutover and hardening~~ | P1.7d | **done** | Real NuRaft consensus is the only path. All 120/120 API tests pass (0 failures). Prototype code deleted, CLI/ENV config exposed, analytics counter bugs fixed, snapshot identity fixed. Follow-on env-dependent suites and benchmark-refresh work now live under items **27** and **30** instead of as stale unchecked tails in P1.7d. |
 | 20 | ~~Sanitizer lane stabilization + ORT extensions boundary audit~~ | Known Issues | **done** | Broad GitHub stabilization is green on `v32` (`tests`, `sanitizer-testing`, `nightly-extended`, `flake-detection`, plus the earlier narrow `release-binaries` linux-amd64 replay), and the final local blocker was closed on March 14, 2026. The ORT audit confirmed `EnableOrtCustomOps()` is only used by `CLIPImageProcessor`; `CollectionManager::dispose()` already clears image/text embedders, and `process_embedding_field_delete()` now matches that image-before-text teardown order. The remaining ASAN red was third-party ONNX Runtime Extensions static custom-op loader teardown, not first-party ownership: `bazel/onnxruntime.patch` now rewrites fetched `static OrtOpLoader` operator-loader singletons to process lifetime before ORT builds `libocos_operators.a`, so `.bazelrc` no longer needs `ASAN_OPTIONS=new_delete_type_mismatch=0`. Local proof on March 14, 2026: `scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=3600 '--test_arg=--gtest_filter=CollectionVectorTest.TestImageEmbedding:CollectionVectorTest.TestUnloadingModelsOnCollectionDelete' --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models` passed under the default repo ASAN config, and `scripts/bazel_in_docker.sh build //:typesense-server` also passed on the same tip. |
-| 21 | ~~NuRaft import/runtime parity + benchmark refactor sprint~~ | P1 Runtime/Perf | **done** | Final replay-model runtime parity is in: one logical import request is buffered once, replicated as bounded logical NuRaft chunks, then replayed through the existing import handler cadence. The direct `1M` single-POST gate is green, local `quick/core` self-compare and `standard/core` upstream compare are green, the broad `--no-secrets --download-migration-binary` API gate is green, and hosted `benchmark-testing` also passed on `27bb2bff` against the previous same-branch baseline `985acb45` in `43m55s`. |
+| 21 | ~~NuRaft import/runtime parity + benchmark refactor sprint~~ | P1 Runtime/Perf | **done** | Final replay-model runtime parity is in: one logical import request is buffered once, replicated as bounded logical NuRaft chunks, then replayed through the existing import handler cadence. The direct `1M` single-POST gate is green, local `quick/core` self-compare and `standard/core` upstream compare are green, the broad `--no-secrets` API gate is green, and hosted `benchmark-testing` also passed on `27bb2bff` against the previous same-branch baseline `985acb45` in `43m55s`. |
 | 22 | ~~Release workflow promotion / current-tip full-matrix replay~~ | Known Issues | **done** | Current-tip release proof is now refreshed on the final pre-release SHA `a2832b63c2a701e08fc5b571ee9507473df991c8`: `release-binaries` run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64` on March 14, 2026. The follow-up versioned publish dry-run used that run's artifacts with label `0.0.0-a2832b63`; it exposed one real release-path bug in `publish_release.sh` (RPM uploads were skipped because generated files are named `typesense-server-<version>.<arch>.rpm`, not `typesense-server-<version>-<arch>.rpm`). After fixing the RPM glob, the same dry-run recorded the full `12` mocked `aws s3 cp` uploads (`4` tarballs, `4` tarball `.sha256.txt` sidecars, `2` `.deb`, `2` `.rpm`), so the draft workflow is now technically release-ready and only needs naming/promotion cleanup. |
 | 23 | ~~Compile warning audit / cleanup~~ | P1 Hygiene | **done** | Completed March 14, 2026. Home-cache sanitizer replays are now closed locally: `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/asan-cache scripts/bazel_in_docker.sh build --config=asan //:typesense-server` and `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/tsan-cache scripts/bazel_in_docker.sh build --config=tsan //:typesense-server` both pass warning-clean apart from the known Bazel/OpenJDK startup banner. The remaining buckets were audited as toolchain/third-party noise, not first-party bugs: GCC 14/libstdc++ `std::regex` `-Wmaybe-uninitialized` false positives under ASAN from regex-heavy first-party TUs plus `clip_tokenizer`, GCC-only protobuf `-Wmaybe-uninitialized` false positives, and GCC TSAN `-Wtsan` warnings from external Abseil `atomic_thread_fence`. `.bazelrc` now keeps compiler-specific suppressions behind `build:gcc` and sanitizer-specific suppressions behind `build:asan` / `build:tsan`, while `scripts/bazel_in_docker.sh` auto-applies `--config=gcc` only for non-clang `build`/`test`/`run`/`coverage` lanes so the clang warning guardrail stays fully visible. |
 | 24 | ~~Release artifact debug-info policy~~ | Known Issues | **done** | Completed March 14, 2026. Policy is now explicit for Linux release artifacts: ship a stripped runtime binary in the normal tarball/DEB/RPM path, and publish split debug symbols as a separate `.debug.tar.gz` sidecar keyed to the same BuildID via `.gnu_debuglink`. Local proof from `bazel-bin/typesense-server`: current unstripped binary is `427M` with embedded debug info; a split-debug copy measured `151M` stripped runtime plus `297M` debug file and the stripped binary still passed the `--help` smoke check. `.github/workflows/release-binaries.yml` now performs the split before checksum/tarball/package assembly and uploads the debug-symbol sidecar artifact for Linux lanes. |
 | 25 | ~~Release workflow promotion and repo-owned replay extraction~~ | Known Issues | **done** | Completed March 15, 2026. Story A landed on promote-with-extraction, the Linux release lane now uses a repo-owned container-backed wrapper, and hosted run `23107397373` validated the extracted path across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`. |
 | 26 | ~~ORT external Abseil injection and upgrade unblock~~ | P1 Build/Deps | **done** | Completed March 15, 2026. Story A said go: ORT's upstream Abseil CMake flow can be cleanly repointed at the repo's module source with `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` in `bazel/onnxruntime.BUILD`, so `abseil-cpp` was bumped to `20260107.1` without growing `bazel/onnxruntime.patch`. Proof: canonical Docker build, `health.test.ts`, and `CollectionVectorTest.TestUnloadingModelsOnCollectionDelete` all passed; `ldd bazel-bin/typesense-server` still shows no shared `onnxruntime`, `absl`, or `protobuf` dependency. |
-| 27 | Env-dependent suite enablement and hosted-proof audit | P1 Test Infra | queued | Investigation-first sprint. Inventory the real prerequisites for migration replay, TEI/embedding suites, and secret-gated conversation flows before adding or changing any workflow lane. |
+| 27 | ~~Env-dependent suite enablement and hosted-proof audit~~ | P1 Test Infra | **done** | Completed March 15, 2026. The supported matrix is now explicit: keep secret-gated API coverage all-or-nothing on `OPENAI_API_KEY` + `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_URL`, keep TEI as a separate documented lane, and retire the stale `--download-migration-binary` story because pre-NuRaft migration replay is unsupported in the current Bun harness. Story B also closed two real gaps: `scripts/run_api_tests.sh` now forwards TEI/secret env vars through Dockerized Bun, and the NuRaft runtime auth hook now reuses `handle_authentication(...)` so `post_multi_search` gets the same embedded-param preprocessing as the classic server. |
 | 28 | Cross-platform debug-symbol policy parity | P2 Release | queued | Investigation-first sprint. Decide whether Linux-only split debug info is the correct long-term steady state or whether Darwin should also ship explicit symbol sidecars. |
 | 29 | Explicit compiler-config topology audit | P2 Hygiene | queued | Investigation-first sprint. Decide whether wrapper-selected `--config=gcc` should remain the repo contract or be replaced by more explicit compiler configs and entrypoints. |
 | 30 | NuRaft post-cutover benchmark baseline refresh | P2 Perf | queued | Investigation-first sprint. Decide whether a fresh hosted/local baseline would materially change benchmark policy or simply reconfirm the current NuRaft posture. |
@@ -661,29 +661,39 @@ Completed March 15, 2026. The clean fix was smaller than the initial protobuf-st
 
 ### 27) Env-dependent suite enablement and hosted-proof audit
 
-**Why this sprint exists now**
-
-- Core no-secrets and hosted API lanes are green, but env-dependent suites still sit in an ambiguous "supported in principle, not fully standardized" state.
-- The next step should be to define what is realistically supportable, not to add more ad hoc commands or undocumented secrets handling.
-
-**Sprint goal**
-
-- Decide which env-dependent suites deserve a first-class documented path and make that path reproducible.
+Completed March 15, 2026.
 
 **Story A - Investigation**
 
-- [ ] Inventory the exact prerequisites for migration replay with a legacy binary, TEI/embedding suites, and secret-gated conversation flows.
-- [ ] Decide the minimum supported matrix: what belongs in local docs only, what belongs in a manual GitHub workflow lane, and what is still not worth supporting.
-- [ ] Produce a setup plan that reuses existing wrappers and workflows instead of creating shadow entrypoints.
+- [x] Inventory the exact prerequisites for migration replay with a legacy binary, TEI/embedding suites, and secret-gated conversation flows.
+- [x] Decide the minimum supported matrix: what belongs in local docs only, what belongs in a manual GitHub workflow lane, and what is still not worth supporting.
+- [x] Produce a setup plan that reuses existing wrappers and workflows instead of creating shadow entrypoints.
 
-**Story B - Enablement (only if Story A says go)**
+**Story A findings (Mar 15, 2026)**
 
-- [ ] Update docs/workflows/secrets handling to support the chosen env-dependent lanes with one obvious command per lane.
-- [ ] Run the selected suites and record outcomes so they stop living as vague follow-up work.
+- Secret-gated API coverage should remain all-or-nothing in CI. Keep the current `OPENAI_API_KEY` + `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_URL` requirement instead of splitting partial lanes.
+- TEI is the only env-dependent suite with a fully reproducible local proof path that does not depend on external hosted secrets. It belongs in the documented local matrix and in the existing `tests.yml` lane, not in a new workflow.
+- The old migration replay wording was stale. The current Bun harness no longer supports legacy-binary replay from the removed `--download-migration-binary` flow, and the downloader-script path no longer exists. That is an explicit unsupported lane now, not an implied "still wired somewhere" feature.
+- The audit surfaced two real enablement bugs instead of a documentation-only gap:
+  - `scripts/run_api_tests.sh` documented TEI and secret-gated lanes but did not forward those env vars into the Dockerized Bun container.
+  - `nuraft_http_runtime_auth()` only compared the master API key and skipped the shared `handle_authentication(...)` preprocessing, so NuRaft `post_multi_search` requests saw an empty `embedded_params_vec` and returned `400 Missing embedded params array.` for env-dependent vector search lanes.
+- Story A conclusion: **go**. The supported matrix was clear enough to standardize, and the enablement fixes were small and repo-local.
+
+**Story B - Enablement**
+
+- [x] Update docs/workflows/secrets handling to support the chosen env-dependent lanes with one obvious command per lane.
+- [x] Run the selected suites and record outcomes so they stop living as vague follow-up work.
+
+**Proof (Mar 15, 2026)**
+
+- `scripts/bazel_in_docker.sh build //:typesense-server`
+- Direct TEI repro before the runtime-auth fix returned `400 {"message":"Missing embedded params array."}` on `POST /multi_search`, proving the failure was in the server path, not the TEI container or the wrapper.
+- After wiring NuRaft auth through `handle_authentication(...)`, the same direct TEI repro returned `200` with vector-search hits.
+- `TYPESENSE_TEST_TEI_URL=http://localhost:8080 scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/tei-integration.test.ts`
 
 **Exit criteria**
 
-- [ ] No env-dependent suite remains in a hand-wavy "not yet tried" state without an explicit reason.
+- [x] No env-dependent suite remains in a hand-wavy "not yet tried" state without an explicit reason.
 
 ### 28) Cross-platform debug-symbol policy parity
 
@@ -835,8 +845,8 @@ Completed March 15, 2026. The clean fix was smaller than the initial protobuf-st
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now:** item **27** (`Env-dependent suite enablement and hosted-proof audit`) is the recommended next lane. Items **28** through **33** remain investigation-first follow-ups queued behind it in priority order.
-- **Recently finished:** item **26** (`ORT external Abseil injection and upgrade unblock`) — Story A landed on go with a BUILD-level `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` override on ORT's one-protobuf static lane, `abseil-cpp` is now `20260107.1`, and the canonical build + API health replay + targeted ORT-backed C++ replay all passed without growing `bazel/onnxruntime.patch`. Item **24** (`Release artifact debug-info policy`) — Linux release artifacts now use split debug info: stripped runtime tarball/package path plus a separate `.debug.tar.gz` sidecar, implemented directly in `release-binaries.yml` and measured locally at `427M -> 151M + 297M`. Item **23** (`Compile warning audit / cleanup`) — normal, ASAN, and TSAN local warning audits are now clean apart from the known Bazel/OpenJDK banner after scoping sanitizer-only suppressions to GCC 14/libstdc++ regex false positives and TSAN Abseil `-Wtsan` noise. Item **22** (`Release workflow promotion / current-tip full-matrix replay`) — run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`; the matching publish dry-run on version label `0.0.0-a2832b63` logged all `12` expected uploads after the RPM-glob fix. Item **20** (`Sanitizer lane stabilization + ORT extensions boundary audit`) — default ASAN is green again after removing `new_delete_type_mismatch=0` from `.bazelrc`, and the remaining ORT issue was resolved by rewriting fetched `OrtOpLoader` statics to process lifetime inside `bazel/onnxruntime.patch`. Item **21** (`NuRaft import/runtime parity + benchmark refactor sprint`) — hosted `benchmark-testing` is green on `27bb2bff` after the final replay-model fix. Item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
+- **Active now:** item **28** (`Cross-platform debug-symbol policy parity`) is the recommended next lane. Items **29** through **33** remain investigation-first follow-ups queued behind it in priority order.
+- **Recently finished:** item **27** (`Env-dependent suite enablement and hosted-proof audit`) — the supported env-dependent matrix is now explicit, secret-gated API coverage stays all-or-nothing on the three existing repo secrets, TEI keeps its dedicated lane, and the stale migration-download story is retired as unsupported in the current Bun harness. Story B also closed the hidden NuRaft `post_multi_search` auth regression and the Dockerized Bun env-forwarding gap. Item **26** (`ORT external Abseil injection and upgrade unblock`) — Story A landed on go with a BUILD-level `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` override on ORT's one-protobuf static lane, `abseil-cpp` is now `20260107.1`, and the canonical build + API health replay + targeted ORT-backed C++ replay all passed without growing `bazel/onnxruntime.patch`. Item **24** (`Release artifact debug-info policy`) — Linux release artifacts now use split debug info: stripped runtime tarball/package path plus a separate `.debug.tar.gz` sidecar, implemented directly in `release-binaries.yml` and measured locally at `427M -> 151M + 297M`. Item **23** (`Compile warning audit / cleanup`) — normal, ASAN, and TSAN local warning audits are now clean apart from the known Bazel/OpenJDK banner after scoping sanitizer-only suppressions to GCC 14/libstdc++ regex false positives and TSAN Abseil `-Wtsan` noise. Item **22** (`Release workflow promotion / current-tip full-matrix replay`) — run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`; the matching publish dry-run on version label `0.0.0-a2832b63` logged all `12` expected uploads after the RPM-glob fix. Item **20** (`Sanitizer lane stabilization + ORT extensions boundary audit`) — default ASAN is green again after removing `new_delete_type_mismatch=0` from `.bazelrc`, and the remaining ORT issue was resolved by rewriting fetched `OrtOpLoader` statics to process lifetime inside `bazel/onnxruntime.patch`. Item **21** (`NuRaft import/runtime parity + benchmark refactor sprint`) — hosted `benchmark-testing` is green on `27bb2bff` after the final replay-model fix. Item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
 - **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule. NuRaft async/streaming parity verified against upstream (both synchronous, full match).
 - **Later (planned but not started):** Replace patch-only forks with released upstream versions where possible (`bazel/PATCH_DEBT.md` is the owner). Monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep any suppression file-scoped and dependency-scoped rather than broad. Mine `TODO.md` only when an item clearly aligns with the modernization queue above.
 - **Archival/reference (not immediate execution lanes):**
@@ -871,7 +881,7 @@ Use this to decide what to pick next without scanning multiple files.
   - `standard/core` archived at `~/.cache/typesense/benchmark/archives/20260314-082629-standard-core`
   - `standard/core` one-shot import summaries: upstream `29383ms`, current runtime build `26906ms`, both `1000000/1000000` docs with `status=200` and `response_contract_warnings=0`
   - representative `100vu` search p95s: `facet 837ms -> 133ms`, `group 4467ms -> 380ms`, `sort_simple 516ms -> 54ms`
-- The broad canonical API gate is green again: `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`.
+- The broad canonical API gate is green again: `scripts/run_api_tests.sh -- --no-secrets`.
 - A benchmark-only hardening fix was needed after those reruns started producing long search-phase stderr bursts: the harness now launches the long-lived Typesense Docker process with execa `buffer: false`, so Bun/get-stream no longer aborts `standard/core` while buffering server logs that are already being consumed incrementally.
 - Hosted confirmation is now green too: `Benchmark Testing` run `23085170081` completed successfully in `43m55s` on `27bb2bff`, comparing that workflow SHA against the previous successful same-branch `tests.yml` artifact `985acb45`. That hosted lane is a fork-vs-fork guardrail on GitHub runners, not the upstream-vs-fork control.
 
@@ -892,7 +902,7 @@ Use this to decide what to pick next without scanning multiple files.
 
 - [x] Refactor runtime import so transport chunking does not become Raft log-entry granularity for one logical bulk import request.
 - [x] Preserve the documented import response contract: `200` and newline-delimited per-document result lines when no per-document errors are expected.
-- [x] Verify follower/leader behavior remains correct and deterministic after the refactor; do not regress the earlier local fix that routed `kDocumentImport` through the real registered handler. *(Targeted API suites `documents`, `nuraft_runtime_documents_crud`, and `nuraft_replication_edges` passed during development, and the broad `--no-secrets --download-migration-binary` API gate is green on the final replay-model build.)*
+- [x] Verify follower/leader behavior remains correct and deterministic after the refactor; do not regress the earlier local fix that routed `kDocumentImport` through the real registered handler. *(Targeted API suites `documents`, `nuraft_runtime_documents_crud`, and `nuraft_replication_edges` passed during development, and the broad `--no-secrets` API gate is green on the final replay-model build.)*
 - [x] Prefer a design that is explicit and replay-safe: aggregate one logical import request on the leader, replicate one logical import mutation, then execute/import with the existing product handler semantics.
 - [x] Do the implementation and large single-POST replay locally first; do **not** re-enable full benchmark comparisons until this runtime path is proven with a direct local one-shot import against the latest built binary.
 
@@ -918,7 +928,7 @@ Use this to decide what to pick next without scanning multiple files.
   - `tests/nuraft_replication_edges.test.ts`
 - [x] Canonical build/test gates after runtime changes:
   - `scripts/bazel_in_docker.sh build //:typesense-server`
-  - `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`
+  - `scripts/run_api_tests.sh -- --no-secrets`
 - [x] Hosted confirmation after local green:
   - `tests`
   - `benchmark-testing`
@@ -1061,9 +1071,9 @@ Latest one-Protobuf research and execution notes (Mar 2026):
 - `ldd bazel-bin/typesense-server` now shows no `libonnxruntime.so.1` dependency. The main local Linux artifact is now self-contained by default.
 - Runtime validation now includes:
   - `scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/health.test.ts` passing all single-node + multi-node health/restart/snapshot phases.
-  - `scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets --download-migration-binary` passing the broader no-secrets API suite, including migration replay from the v29 source binary.
+  - `scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets` passing the broader no-secrets API suite.
   - a direct probe-binary smoke that prewarms `ts/e5-small`, creates an embedding collection, indexes a document, observes a populated embedding (`384` dims), and returns a vector-search hit.
-- After promotion, the same validations also pass on the real `typesense-server` target: `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`, `ldd bazel-bin/typesense-server`, and a direct local `ts/e5-small` embedding/vector-search smoke.
+- After promotion, the same validations also pass on the real `typesense-server` target: `scripts/run_api_tests.sh -- --no-secrets`, `ldd bazel-bin/typesense-server`, and a direct local `ts/e5-small` embedding/vector-search smoke.
 - `api_tests/scripts/prepare_runtime_bundle.sh` is now binary-shape-aware: it copies `libonnxruntime.so.1` only when `ldd` shows the tested binary actually needs it. `scripts/run_api_tests.sh` also accepts `--server-binary` / `TYPESENSE_SERVER_BINARY_PATH`, so the API harness can validate either shared-ORT or self-contained binaries without manual bundle surgery.
 - `.github/workflows/tests.yml` no longer uploads `libonnxruntime.so*` as a required build artifact, because the promoted server bundle may legitimately be just the binary.
 - `.github/workflows/tests.yml` and the draft `.github/workflows/release-binaries.yml` now include `ldd` guardrails that fail if `typesense-server` silently regresses back to a `libonnxruntime.so.1` dependency on Linux.
@@ -1100,7 +1110,7 @@ If a new agent takes over mid-stream, assume the following:
   - The exact-pinned-commit patch now applies cleanly, `//:typesense-server` builds successfully, and `ldd` confirms the promoted binary has no `libonnxruntime.so.1` dependency.
   - The canonical `scripts/bazel_in_docker.sh build //:typesense-server` now uses the one-Protobuf static ORT path and `ldd` confirms it has no `libonnxruntime.so.1` dependency.
   - API runtime smoke now passes against the probe via `scripts/run_api_tests.sh --server-binary ... tests/health.test.ts`.
-  - The full no-secrets API suite, including migration replay, now passes against the probe via `scripts/run_api_tests.sh --server-binary ... -- --no-secrets --download-migration-binary`.
+  - The full no-secrets API suite now passes against the probe via `scripts/run_api_tests.sh --server-binary ... -- --no-secrets`.
   - Direct local embedding smoke now passes against the probe using public model `ts/e5-small` (embedding created and vector search succeeds).
   - The full no-secrets API suite and direct local embedding smoke also pass against the promoted main `typesense-server` target.
 - Historical next coding tasks (now completed on this branch):
@@ -1193,6 +1203,7 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 
 29. **Use a RocksDB checkpoint for live prototype KV snapshots when a sink handle is available.** Recursive directory copies are acceptable as a cold fallback, but the closer prototype path is to reuse the open `NuRaftKvStateMachineSink` DB handle and export a checkpointed materialized-state tree, matching the real snapshot direction more closely.
 30. **Do not silently rewrite persisted self identity for a multi-node NuRaft prototype.** Refreshing peer lists from `--nodes` is acceptable metadata churn, and single-node self-address drift is a real recovery case, but changing a persisted node's own peer endpoint inside a multi-node bootstrap is the same class of unsafe escape hatch as `reset_peers()` and should fail loudly.
+31. **NuRaft runtime auth must reuse the shared authentication preprocessing, not just the master-key check.** `post_multi_search` and other collection-aware routes depend on `handle_authentication(...)` to populate `embedded_params_vec`; bypassing that path makes env-dependent vector-search lanes fail with `400 Missing embedded params array.` even when the API key itself is valid.
 31. **Prototype follower catch-up should reject divergent history, not auto-heal it.** If a follower log no longer matches the leader prefix, the feasibility prototype should fail loudly so the migration decision sees the real repair gap instead of hiding it behind implicit truncation or overwrite behavior.
 39. **Keep heavyweight CI lanes manual unless they are the main gate.** GitHub's `workflow_dispatch` and reusable-workflow guidance fit this repo better than always-on cron for sanitizer, flake, stress, and benchmark lanes. Prefer the documented local wrapper commands first, then dispatch the corresponding heavy workflow only when you want GitHub-hosted confirmation.
 40. **The ORT Extensions ASAN teardown bug was in fetched `OrtOpLoader` statics, not first-party embedder ownership.** If a future ORT/extensions bump reintroduces `new_delete_type_mismatch`, audit the fetched operator loader sources first and keep the fix in `bazel/onnxruntime.patch` / fetched-source rewrite logic instead of restoring a global ASAN suppression or shared-library boundary.

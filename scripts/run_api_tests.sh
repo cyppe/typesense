@@ -31,6 +31,8 @@ Defaults:
 Examples:
   scripts/run_api_tests.sh -- --no-secrets
   scripts/run_api_tests.sh -- tests/health.test.ts
+  OPEN_AI_API_KEY=... AZURE_OPENAI_API_KEY=... AZURE_OPENAI_URL=... scripts/run_api_tests.sh -- tests/embedding.test.ts
+  TYPESENSE_TEST_TEI_URL=http://localhost:8080 scripts/run_api_tests.sh -- --no-secrets tests/tei-integration.test.ts
   scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/nuraft_runtime_smoke.test.ts
   scripts/run_api_tests.sh --runtime-bundle-dir ./typesense-server-binary -- --no-secrets
   scripts/run_api_tests.sh --host-bun -- --no-secrets tests/health.test.ts
@@ -40,6 +42,10 @@ Environment:
   TYPESENSE_RUNTIME_BUNDLE_DIR  Reuse an existing runtime bundle instead of preparing one in typesense-runtime-bundle
   TYPESENSE_SERVER_BINARY_PATH  Use a custom server binary when preparing the runtime bundle
   TYPESENSE_API_HOST            Set internally to 127.0.0.1 for reliable Dockerized health checks
+  OPEN_AI_API_KEY              Optional OpenAI key for secret-gated API tests
+  AZURE_OPENAI_API_KEY         Optional Azure OpenAI key for secret-gated API tests
+  AZURE_OPENAI_URL             Optional Azure OpenAI endpoint for secret-gated API tests
+  TYPESENSE_TEST_TEI_URL       Optional TEI endpoint for tei-integration.test.ts
 EOF
 }
 
@@ -93,6 +99,15 @@ ENV_VARS=(
 	"TYPESENSE_SERVER_FLAVOR=${SERVER_BINARY_FLAVOR}"
 )
 
+OPTIONAL_API_ENV_KEYS=(
+	"OPEN_AI_API_KEY"
+	"AZURE_OPENAI_API_KEY"
+	"AZURE_OPENAI_URL"
+	"TYPESENSE_TEST_TEI_URL"
+	"TYPESENSE_TEST_TEI_API_KEY"
+	"TYPESENSE_TEST_TEI_MODEL_NAME"
+)
+
 if [[ "${USE_HOST_BUN}" == "true" ]]; then
 	if [[ "${SKIP_INSTALL}" != "true" ]]; then
 		(cd "${API_TESTS_DIR}" && bun install --frozen-lockfile)
@@ -114,6 +129,13 @@ fi
 
 printf -v QUOTED_ARGS ' %q' "${API_TEST_ARGS[@]}"
 
+DOCKER_ENV_ARGS=()
+for key in "${OPTIONAL_API_ENV_KEYS[@]}"; do
+	if [[ -n "${!key+x}" ]]; then
+		DOCKER_ENV_ARGS+=(-e "${key}=${!key}")
+	fi
+done
+
 docker run \
 	--rm \
 	--init \
@@ -125,6 +147,7 @@ docker run \
 	-e "TYPESENSE_DATA_DIR=${DATA_DIR}" \
 	-e "TYPESENSE_API_HOST=127.0.0.1" \
 	-e "TYPESENSE_SERVER_FLAVOR=${SERVER_BINARY_FLAVOR}" \
+	"${DOCKER_ENV_ARGS[@]}" \
 	-v "${REPO_ROOT}:${REPO_ROOT}" \
 	-w "${API_TESTS_DIR}" \
 	"${BUN_IMAGE}" \

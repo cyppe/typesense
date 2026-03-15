@@ -1469,10 +1469,6 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
                               const std::string& body,
                               const route_path& rpath,
                               const std::string& auth_key) {
-    static_cast<void>(params);
-    static_cast<void>(embedded_params_vec);
-    static_cast<void>(body);
-
     if (rpath.handler == get_health) {
         return true;
     }
@@ -1491,8 +1487,7 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
         }
     }
 
-    const std::string configured_api_key = Config::get_instance().get_api_key();
-    return configured_api_key.empty() || configured_api_key == auth_key;
+    return handle_authentication(params, embedded_params_vec, body, rpath, auth_key);
 }
 
 void register_nuraft_http_runtime_routes(HttpServer* server) {

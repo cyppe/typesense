@@ -22,8 +22,9 @@ The phases within a given path run **sequentially** because each later phase reâ
 
 - `TYPESENSE_BINARY_PATH`: current Typesense binary under test.
 - `TYPESENSE_DATA_DIR`: root test data directory (each run uses an isolated subdirectory).
-- `TYPESENSE_MIGRATION_SOURCE_BINARY_PATH`: older Typesense binary used by migration tests.
-- `TYPESENSE_MIGRATION_SOURCE_API_PORT` and `TYPESENSE_MIGRATION_SOURCE_PEERING_PORT`: optional fixed ports for migration tests.
+- `OPEN_AI_API_KEY`: OpenAI key for secret-gated embedding and conversation suites.
+- `AZURE_OPENAI_API_KEY`: Azure OpenAI key for secret-gated embedding suites.
+- `AZURE_OPENAI_URL`: Azure OpenAI endpoint URL for secret-gated embedding suites.
 - `TYPESENSE_TEST_TEI_URL`: optional TEI endpoint used by `tei-integration.test.ts` (suite is skipped when unset).
 - `TYPESENSE_TEST_TEI_API_KEY`: optional API key for TEI requests (defaults to test value when unset).
 - `TYPESENSE_TEST_TEI_MODEL_NAME`: optional TEI model name (default: `openai/sentence-transformers/all-MiniLM-L6-v2`).
@@ -35,46 +36,44 @@ Recommended repo-level entrypoint:
 
 ```bash
 scripts/bazel_in_docker.sh build //:typesense-server
-scripts/run_api_tests.sh -- --no-secrets --download-migration-binary
+scripts/run_api_tests.sh -- --no-secrets
 ```
 
 This wrapper prepares the runtime bundle automatically and runs Bun in Docker by default, so the host does not need Bun installed. Use `--host-bun` only as an escape hatch.
 
 `TESTING_RUNBOOK.md` owns the broader build/test/replay command matrix; keep this README focused on API-suite-specific behavior.
 
+## Supported env-dependent lanes
+
+- Default supported lane: `scripts/run_api_tests.sh -- --no-secrets`
+- Secret-gated lane:
+  - CI enables it only when all 3 inputs are present together: `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_URL`.
+  - Local replay uses the same all-or-nothing policy:
+
+```bash
+OPEN_AI_API_KEY=... \
+AZURE_OPENAI_API_KEY=... \
+AZURE_OPENAI_URL=... \
+scripts/run_api_tests.sh -- tests/embedding.test.ts
+
+OPEN_AI_API_KEY=... \
+AZURE_OPENAI_API_KEY=... \
+AZURE_OPENAI_URL=... \
+scripts/run_api_tests.sh -- tests/conversation.test.ts
+```
+
+- TEI lane:
+
+```bash
+TYPESENSE_TEST_TEI_URL=http://localhost:8080 \
+scripts/run_api_tests.sh -- --no-secrets tests/tei-integration.test.ts
+```
+
 > [!NOTE]
-> Migration tests are only meaningful when `TYPESENSE_MIGRATION_SOURCE_BINARY_PATH` points to a legacy binary that is different from `TYPESENSE_BINARY_PATH`. If not, migration tests are skipped.
+> Local TEI replays are meaningful only when a TEI server is already reachable at `TYPESENSE_TEST_TEI_URL`. `tests.yml` starts a local container-backed TEI service automatically for its dedicated lane.
 
-> [!NOTE]
-> Rollback validation to v29 is intentionally not part of this suite, since migrated snapshot storage is not readable by the older v29 binary.
-
-### Downloading migration source binary
-
-You can ask the API test CLI to download and wire the migration source binary automatically:
-
-```bash
-cd api_tests
-typesense-api-tests --download-migration-binary
-```
-
-By default this downloads `v29.0` `linux-amd64` to `api_tests/artifacts/v29` and sets `TYPESENSE_MIGRATION_SOURCE_BINARY_PATH` for the current run.
-
-You can also customize version/target/output:
-
-```bash
-cd api_tests
-typesense-api-tests --download-migration-binary --migration-version 30.0 --migration-target linux-amd64 --migration-output-dir ./artifacts/v30
-```
-
-The downloader reuses an existing `typesense-server` binary in the output directory. Set `TYPESENSE_FORCE_DOWNLOAD_MIGRATION_BINARY=1` to force a fresh download.
-
-If you want to pre-download manually (same behavior used internally):
-
-```bash
-cd api_tests
-bash ./scripts/download_migration_binary.sh 29.0 linux-amd64 ./artifacts/v29
-export TYPESENSE_MIGRATION_SOURCE_BINARY_PATH="$PWD/artifacts/v29/typesense-server"
-```
+> [!IMPORTANT]
+> Legacy migration replay from pre-NuRaft binaries is currently unsupported in this Bun harness. The old `--download-migration-binary` flow and downloader-script path are intentionally not part of the supported matrix on `v32`.
 
 ## Writing a New Test Suite
 

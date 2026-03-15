@@ -35,7 +35,6 @@ If your task changes modernization status, benchmark policy, or the canonical wo
 - API test runner: `scripts/run_api_tests.sh`
 - Linux release replay: `scripts/release_linux_artifacts.sh`
 - API runtime bundle prep: `api_tests/scripts/prepare_runtime_bundle.sh`
-- API migration binary download: `api_tests/scripts/download_migration_binary.sh`
 - C++ suite replay: `test/scripts/replay_typesense_test.sh`
 - Model prewarm: `test/scripts/prewarm_e5_small_model.sh`
 
@@ -48,11 +47,12 @@ Before adding a new helper script, check whether one of these should become the 
 Use these short defaults unless a task explicitly needs a different lane:
 
 - Build server: `scripts/bazel_in_docker.sh build //:typesense-server`
-- Run API suite: `scripts/run_api_tests.sh -- --no-secrets --download-migration-binary`
+- Run API suite: `scripts/run_api_tests.sh -- --no-secrets`
 - Replay one C++ test: `test/scripts/replay_typesense_test.sh FilterTest.FilterTreeIteratorTimeout`
 - Benchmark comparison: `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core`
 
 `run_api_tests.sh` defaults to Dockerized Bun via the repo's Ubuntu-based API image so agents do not need Bun installed on the host; use `--host-bun` only as an escape hatch.
+Secret-gated API coverage remains all-or-nothing in CI: require `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_URL` together. TEI coverage is a separate explicit lane via `TYPESENSE_TEST_TEI_URL`. Legacy migration replay from pre-NuRaft binaries is currently unsupported in this harness.
 
 ## Docs Ownership
 
