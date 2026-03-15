@@ -3,12 +3,12 @@
 # TSV is passed as an environment variable to the script
 
 if [ -z "${TSV:-}" ]; then
-	echo '$TSV is not provided. Quitting.'
+	echo "\$TSV is not provided. Quitting."
 	exit 1
 fi
 
 if [ -z "${ARCH:-}" ]; then
-	echo '$ARCH is not provided. Quitting.'
+	echo "\$ARCH is not provided. Quitting."
 	exit 1
 fi
 
@@ -61,29 +61,32 @@ if [ -f "${RELEASE_SHA256_PATH}" ]; then
 fi
 
 rm -rf /tmp/typesense-deb-build && mkdir /tmp/typesense-deb-build
-cp -r $CURR_DIR/typesense-server /tmp/typesense-deb-build
+cp -r "${CURR_DIR}/typesense-server" /tmp/typesense-deb-build
 
 # Download Typesense, extract and make it executable
 
 #curl -o /tmp/typesense-server-$TSV.tar.gz https://dl.typesense.org/releases/$TSV/typesense-server-$TSV-linux-${ARCH}.tar.gz
-rm -rf /tmp/typesense-server-$TSV && mkdir /tmp/typesense-server-$TSV
-tar -xzf "${RELEASE_TARBALL}" -C /tmp/typesense-server-$TSV
+rm -rf "/tmp/typesense-server-${TSV}" && mkdir "/tmp/typesense-server-${TSV}"
+tar -xzf "${RELEASE_TARBALL}" -C "/tmp/typesense-server-${TSV}"
 
-downloaded_hash=$(md5sum /tmp/typesense-server-$TSV/typesense-server | cut -d' ' -f1)
-original_hash=$(cat /tmp/typesense-server-$TSV/typesense-server.md5.txt)
+downloaded_hash=$(md5sum "/tmp/typesense-server-${TSV}/typesense-server" | cut -d' ' -f1)
+original_hash=$(cat "/tmp/typesense-server-${TSV}/typesense-server.md5.txt")
 
 if [ "$downloaded_hash" == "$original_hash" ]; then
 	mkdir -p /tmp/typesense-deb-build/typesense-server/usr/bin
-	cp /tmp/typesense-server-$TSV/typesense-server /tmp/typesense-deb-build/typesense-server/usr/bin
+	cp "/tmp/typesense-server-${TSV}/typesense-server" /tmp/typesense-deb-build/typesense-server/usr/bin
 else
 	>&2 echo "Typesense server binary is corrupted. Quitting."
 	exit 1
 fi
 
-rm -rf /tmp/typesense-server-$TSV /tmp/typesense-server-$TSV.tar.gz
+rm -rf "/tmp/typesense-server-${TSV}" "/tmp/typesense-server-${TSV}.tar.gz"
 
-sed -i "s/\$VERSION/${PACKAGE_VERSION}/g" $(find /tmp/typesense-deb-build -maxdepth 10 -type f)
-sed -i "s/\$ARCH/$ARCH/g" $(find /tmp/typesense-deb-build -maxdepth 10 -type f)
+mapfile -t deb_build_files < <(find /tmp/typesense-deb-build -maxdepth 10 -type f)
+if [ "${#deb_build_files[@]}" -gt 0 ]; then
+	sed -i "s/\$VERSION/${PACKAGE_VERSION}/g" "${deb_build_files[@]}"
+	sed -i "s/\$ARCH/$ARCH/g" "${deb_build_files[@]}"
+fi
 
 dpkg-deb -Zgzip -z6 \
 	-b /tmp/typesense-deb-build/typesense-server "/tmp/typesense-deb-build/typesense-server-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb"
@@ -92,12 +95,15 @@ dpkg-deb -Zgzip -z6 \
 
 rm -rf /tmp/typesense-rpm-build && mkdir /tmp/typesense-rpm-build
 cp "/tmp/typesense-deb-build/typesense-server-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb" /tmp/typesense-rpm-build
-cd /tmp/typesense-rpm-build && alien --scripts -k -r -g -v /tmp/typesense-rpm-build/typesense-server-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb
+cd /tmp/typesense-rpm-build && alien --scripts -k -r -g -v "/tmp/typesense-rpm-build/typesense-server-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb"
 
-sed -i 's#%dir "/"##' $(find /tmp/typesense-rpm-build/*/*.spec -maxdepth 10 -type f)
-sed -i 's#%dir "/usr/bin/"##' $(find /tmp/typesense-rpm-build/*/*.spec -maxdepth 10 -type f)
-sed -i 's/%config/%config(noreplace)/g' $(find /tmp/typesense-rpm-build/*/*.spec -maxdepth 10 -type f)
-sed -i "s/^Release: 1/Release: 1${ARTIFACT_SUFFIX//-/.}/" $(find /tmp/typesense-rpm-build/*/*.spec -maxdepth 10 -type f)
+mapfile -t spec_files < <(find /tmp/typesense-rpm-build -maxdepth 10 -type f -name '*.spec')
+if [ "${#spec_files[@]}" -gt 0 ]; then
+	sed -i 's#%dir "/"##' "${spec_files[@]}"
+	sed -i 's#%dir "/usr/bin/"##' "${spec_files[@]}"
+	sed -i 's/%config/%config(noreplace)/g' "${spec_files[@]}"
+	sed -i "s/^Release: 1/Release: 1${ARTIFACT_SUFFIX//-/.}/" "${spec_files[@]}"
+fi
 
 SPEC_FILE=$(find /tmp/typesense-rpm-build -maxdepth 3 -type f -name '*.spec' | head -n 1)
 if [ -z "${SPEC_FILE}" ]; then
@@ -110,36 +116,38 @@ cp -a "${SPEC_ROOT}/." "${RPM_BUILDROOT}/"
 find "${RPM_BUILDROOT}" -maxdepth 1 -type f -name '*.spec' -delete
 SPEC_FILE_COPY="${SPEC_FILE%.spec}-copy.spec"
 
-cp $SPEC_FILE $SPEC_FILE_COPY
+cp "${SPEC_FILE}" "${SPEC_FILE_COPY}"
 
-PRE_LINE=$(grep -n "%pre" $SPEC_FILE_COPY | cut -f1 -d: || true)
+PRE_LINE=$(grep -n "%pre" "${SPEC_FILE_COPY}" | cut -f1 -d: || true)
 if [ -n "${PRE_LINE}" ]; then
-	START_LINE=$(expr $PRE_LINE - 1)
-	head -$START_LINE $SPEC_FILE_COPY >$SPEC_FILE
+	START_LINE=$((PRE_LINE - 1))
+	head -"${START_LINE}" "${SPEC_FILE_COPY}" >"${SPEC_FILE}"
 else
-	cp $SPEC_FILE_COPY $SPEC_FILE
+	cp "${SPEC_FILE_COPY}" "${SPEC_FILE}"
 fi
 
-echo "%prep" >>$SPEC_FILE
-echo "cat >/tmp/find_requires.sh <<EOF
-#!/bin/sh
-%{__find_requires} | grep -v GLIBC_PRIVATE
-exit 0
-EOF" >>$SPEC_FILE
-
-echo "chmod +x /tmp/find_requires.sh" >>$SPEC_FILE
-echo "%define _use_internal_dependency_generator 0" >>$SPEC_FILE
-echo "%define __find_requires /tmp/find_requires.sh" >>$SPEC_FILE
+{
+	echo "%prep"
+	printf '%s\n' \
+		'cat >/tmp/find_requires.sh <<EOF' \
+		'#!/bin/sh' \
+		'%{__find_requires} | grep -v GLIBC_PRIVATE' \
+		'exit 0' \
+		'EOF'
+	echo "chmod +x /tmp/find_requires.sh"
+	echo "%define _use_internal_dependency_generator 0"
+	echo "%define __find_requires /tmp/find_requires.sh"
+} >>"${SPEC_FILE}"
 
 if [ -n "${PRE_LINE}" ]; then
-	tail -n+$START_LINE $SPEC_FILE_COPY >>$SPEC_FILE
+	tail -n+"${START_LINE}" "${SPEC_FILE_COPY}" >>"${SPEC_FILE}"
 fi
 
-rm $SPEC_FILE_COPY
+rm "${SPEC_FILE_COPY}"
 
 cd "${SPEC_ROOT}" &&
-	rpmbuild --target=${RPM_ARCH} --buildroot "${RPM_BUILDROOT}" -bb \
-		$SPEC_FILE
+	rpmbuild --target="${RPM_ARCH}" --buildroot "${RPM_BUILDROOT}" -bb \
+		"${SPEC_FILE}"
 
 cp "/tmp/typesense-deb-build/typesense-server-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb" "${RELEASE_PACKAGE_DIR}"
 GENERATED_RPM=$(find /tmp/typesense-rpm-build /root/rpmbuild/RPMS -type f -name '*.rpm' 2>/dev/null | head -n 1)

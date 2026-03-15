@@ -33,6 +33,7 @@ If your task changes modernization status, benchmark policy, or the canonical wo
 - Local toolchain check: `scripts/check_local_toolchain.sh`
 - Benchmark comparison: `scripts/benchmark_vs_upstream.sh`
 - API test runner: `scripts/run_api_tests.sh`
+- Linux release replay: `scripts/release_linux_artifacts.sh`
 - API runtime bundle prep: `api_tests/scripts/prepare_runtime_bundle.sh`
 - API migration binary download: `api_tests/scripts/download_migration_binary.sh`
 - C++ suite replay: `test/scripts/replay_typesense_test.sh`

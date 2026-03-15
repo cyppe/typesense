@@ -575,12 +575,13 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 22 | ~~Release workflow promotion / current-tip full-matrix replay~~ | Known Issues | **done** | Current-tip release proof is now refreshed on the final pre-release SHA `a2832b63c2a701e08fc5b571ee9507473df991c8`: `release-binaries` run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64` on March 14, 2026. The follow-up versioned publish dry-run used that run's artifacts with label `0.0.0-a2832b63`; it exposed one real release-path bug in `publish_release.sh` (RPM uploads were skipped because generated files are named `typesense-server-<version>.<arch>.rpm`, not `typesense-server-<version>-<arch>.rpm`). After fixing the RPM glob, the same dry-run recorded the full `12` mocked `aws s3 cp` uploads (`4` tarballs, `4` tarball `.sha256.txt` sidecars, `2` `.deb`, `2` `.rpm`), so the draft workflow is now technically release-ready and only needs naming/promotion cleanup. |
 | 23 | ~~Compile warning audit / cleanup~~ | P1 Hygiene | **done** | Completed March 14, 2026. Home-cache sanitizer replays are now closed locally: `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/asan-cache scripts/bazel_in_docker.sh build --config=asan //:typesense-server` and `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/tsan-cache scripts/bazel_in_docker.sh build --config=tsan //:typesense-server` both pass warning-clean apart from the known Bazel/OpenJDK startup banner. The remaining buckets were audited as toolchain/third-party noise, not first-party bugs: GCC 14/libstdc++ `std::regex` `-Wmaybe-uninitialized` false positives under ASAN from regex-heavy first-party TUs plus `clip_tokenizer`, GCC-only protobuf `-Wmaybe-uninitialized` false positives, and GCC TSAN `-Wtsan` warnings from external Abseil `atomic_thread_fence`. `.bazelrc` now keeps compiler-specific suppressions behind `build:gcc` and sanitizer-specific suppressions behind `build:asan` / `build:tsan`, while `scripts/bazel_in_docker.sh` auto-applies `--config=gcc` only for non-clang `build`/`test`/`run`/`coverage` lanes so the clang warning guardrail stays fully visible. |
 | 24 | ~~Release artifact debug-info policy~~ | Known Issues | **done** | Completed March 14, 2026. Policy is now explicit for Linux release artifacts: ship a stripped runtime binary in the normal tarball/DEB/RPM path, and publish split debug symbols as a separate `.debug.tar.gz` sidecar keyed to the same BuildID via `.gnu_debuglink`. Local proof from `bazel-bin/typesense-server`: current unstripped binary is `427M` with embedded debug info; a split-debug copy measured `151M` stripped runtime plus `297M` debug file and the stripped binary still passed the `--help` smoke check. `.github/workflows/release-binaries.yml` now performs the split before checksum/tarball/package assembly and uploads the debug-symbol sidecar artifact for Linux lanes. |
-| 25 | Release workflow promotion and repo-owned replay extraction | Known Issues | **active** | Investigation-first sprint. Decide whether `release-binaries` is ready to lose the draft posture and whether Linux packaging/debug-sidecar assembly should move from workflow-only shell into one repo-owned wrapper for better local/CI parity. |
+| 25 | Release workflow promotion and repo-owned replay extraction | Known Issues | **active** | Story A is now complete: recommend promote-with-extraction, not keep-draft. Linux release assembly has a new container-backed repo wrapper for local/CI parity; the remaining closeout is a post-extraction hosted `target_scope=all` replay on pushed changes. |
 | 26 | ORT external Abseil injection and upgrade unblock | P1 Build/Deps | queued | Investigation-first sprint. Re-check whether ORT can be forced onto external Abseil with acceptable patch growth, then only bump `abseil-cpp` if the prototype is technically clean. |
 | 27 | Env-dependent suite enablement and hosted-proof audit | P1 Test Infra | queued | Investigation-first sprint. Inventory the real prerequisites for migration replay, TEI/embedding suites, and secret-gated conversation flows before adding or changing any workflow lane. |
 | 28 | Cross-platform debug-symbol policy parity | P2 Release | queued | Investigation-first sprint. Decide whether Linux-only split debug info is the correct long-term steady state or whether Darwin should also ship explicit symbol sidecars. |
 | 29 | Explicit compiler-config topology audit | P2 Hygiene | queued | Investigation-first sprint. Decide whether wrapper-selected `--config=gcc` should remain the repo contract or be replaced by more explicit compiler configs and entrypoints. |
 | 30 | NuRaft post-cutover benchmark baseline refresh | P2 Perf | queued | Investigation-first sprint. Decide whether a fresh hosted/local baseline would materially change benchmark policy or simply reconfirm the current NuRaft posture. |
+| 31 | Container-first tooling coverage audit | P2 DX | queued | Investigation-first sprint. Review repo-owned scripts and workflows to containerize any remaining host-tool-dependent flow where Docker/CI-parity can replace it without sacrificing reproducibility. |
 
 ### 25) Release workflow promotion and repo-owned replay extraction
 
@@ -596,19 +597,29 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 
 **Story A - Investigation**
 
-- [ ] Audit the current `release-binaries.yml` shell blocks against existing repo scripts and list exactly which Linux packaging steps are still workflow-only.
-- [ ] Verify the latest successful `release-binaries` run on the current branch tip and enumerate the remaining blockers to removing the "draft" posture (naming, docs, inputs, artifact layout, manual steps).
-- [ ] Produce a go/no-go recommendation: promote as-is, promote with script extraction, or keep draft for now.
+- [x] Audit the current `release-binaries.yml` shell blocks against existing repo scripts and list exactly which Linux packaging steps are still workflow-only.
+- [x] Verify the latest successful `release-binaries` run on the current branch tip and enumerate the remaining blockers to removing the "draft" posture (naming, docs, inputs, artifact layout, manual steps).
+- [x] Produce a go/no-go recommendation: promote as-is, promote with script extraction, or keep draft for now.
+
+**Story A findings (Mar 15, 2026):**
+
+- Latest successful full hosted `release-binaries` proof on `cyppe/typesense` is run `23095183201` from March 14, 2026 on SHA `b03f9a9af1283549d5f066e5e322c4a90f4a46a6`; all four lanes (`linux-amd64`, `linux-arm64`, `darwin-arm64`, `darwin-amd64`) passed, and the run uploaded 8 artifacts (4 platform tarball artifacts, 2 Linux debug-sidecar artifacts, 2 Linux package artifacts).
+- The current remote branch tip is SHA `b03dc546d6f404ca7875213be6191b74953a427f` on March 15, 2026. It has a green `tests` run (`23096631988`) but no post-`b03dc546` `release-binaries` replay yet. The code delta since `23095183201` is limited to `.bazelrc`, `scripts/bazel_in_docker.sh`, and `MODERNIZATION_PLAN.md`; no release helper or packaging file changed in that tip-only diff.
+- Existing repo-owned helpers already covered three core boundaries: runtime bundle prep (`api_tests/scripts/prepare_runtime_bundle.sh`), DEB/RPM generation (`debian-pkg/generate_deb_rpm.sh`), and publish-path artifact discovery/upload (`publish_release.sh`).
+- The Linux workflow-only shell still owned the artifact-shape contract itself: `ldd` guardrail, split debug extraction, embedded MD5 manifest, tarball SHA256 sidecars, `--help` smoke test, tarball/debug verification, and the orchestration glue that tied bundle prep to package generation.
+- Local proof showed real value in extraction, not just cleanup. Replaying the Linux release lane required a Dockerized Bazel build plus an extra Ubuntu 24.04 container for `alien`/`rpm`/`dpkg-dev`; leaving that orchestration only in YAML kept the canonical local replay as a long manual transcription and risked host-tool drift.
+- Recommendation: **promote with script extraction**. The real blockers to dropping the old "draft" posture are no longer technical artifact failures; they are (1) moving the Linux assembly contract into one repo-owned, container-backed wrapper and (2) running one post-extraction hosted `target_scope=all` replay on the pushed workflow/script changes.
+- One extra workflow-only bug surfaced during the extraction replay: artifact upload globs must not assume alien preserves the exact version-label punctuation in RPM filenames. The workflow now uploads `typesense-server-*.${rpm_arch}.rpm`, while `publish_release.sh` keeps version-aware filtering for the actual publish step.
 
 **Story B - Implementation (only if Story A says go)**
 
-- [ ] If extraction is justified, add or extend one canonical repo-owned wrapper for Linux tarball/package/debug-sidecar assembly and make the workflow call it.
-- [ ] Update workflow names/comments/docs so the promoted release path and local replay command are obvious.
+- [x] If extraction is justified, add or extend one canonical repo-owned wrapper for Linux tarball/package/debug-sidecar assembly and make the workflow call it.
+- [x] Update workflow names/comments/docs so the promoted release path and local replay command are obvious.
 - [ ] Re-run `release-binaries` on `target_scope=all` and confirm Linux and Darwin artifacts still pass.
 
 **Exit criteria**
 
-- [ ] A written promotion decision exists with local and GitHub proof.
+- [x] A written promotion decision exists with local and GitHub proof.
 - [ ] If the workflow is promoted, the docs and local replay path match the workflow behavior.
 
 ### 26) ORT external Abseil injection and upgrade unblock
@@ -741,11 +752,38 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 
 - [ ] Benchmark docs either gain a new NuRaft baseline with rationale, or explicitly record why the refresh was not worth doing.
 
+### 31) Container-first tooling coverage audit
+
+**Why this sprint exists now**
+
+- The repo is intentionally Docker-first, but some helper flows still assume host package installs or host toolchains.
+- Recent release-lane work confirmed that even a technically working flow is still weaker than it should be if the local replay requires hand-assembling extra containers or installing packaging tools on the host.
+- This should be handled as an audit-first modernization sprint, not as ad hoc one-off script edits.
+
+**Sprint goal**
+
+- Identify which remaining repo-owned flows can be containerized cleanly, then recommend the smallest set of canonical wrappers needed to make host-tool installation the exception instead of the norm.
+
+**Story A - Investigation**
+
+- [ ] Inventory repo-owned scripts and workflow-mapped commands that still rely on host-only tools beyond Docker/GitHub-hosted runners.
+- [ ] Separate real constraints from accidental ones: native macOS-only build requirements, licensing/runtime constraints, and genuinely host-specific debugging should not be forced through containers.
+- [ ] Produce a ranked recommendation for which flows should gain container-backed wrappers, which should stay host-capable escape hatches, and which are already in the right state.
+
+**Story B - Implementation (only if Story A says go)**
+
+- [ ] Containerize the highest-value remaining flow(s) using existing canonical entrypoints where possible.
+- [ ] Update runbooks/workflows/help text so the container-backed path is the obvious default and host-only mode is clearly labeled as an escape hatch.
+
+**Exit criteria**
+
+- [ ] The repo has an explicit plan for remaining host-tool dependencies instead of vague "Docker-first in principle" intent.
+
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now:** item **25** (`Release workflow promotion and repo-owned replay extraction`) is the recommended next lane. Items **26** through **30** are investigation-first follow-ups queued behind it in priority order.
+- **Active now:** item **25** (`Release workflow promotion and repo-owned replay extraction`) is the recommended next lane. Items **26** through **31** are investigation-first follow-ups queued behind it in priority order.
 - **Recently finished:** item **24** (`Release artifact debug-info policy`) — Linux release artifacts now use split debug info: stripped runtime tarball/package path plus a separate `.debug.tar.gz` sidecar, implemented directly in `release-binaries.yml` and measured locally at `427M -> 151M + 297M`. Item **23** (`Compile warning audit / cleanup`) — normal, ASAN, and TSAN local warning audits are now clean apart from the known Bazel/OpenJDK banner after scoping sanitizer-only suppressions to GCC 14/libstdc++ regex false positives and TSAN Abseil `-Wtsan` noise. Item **22** (`Release workflow promotion / current-tip full-matrix replay`) — run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`; the matching publish dry-run on version label `0.0.0-a2832b63` logged all `12` expected uploads after the RPM-glob fix. Item **20** (`Sanitizer lane stabilization + ORT extensions boundary audit`) — default ASAN is green again after removing `new_delete_type_mismatch=0` from `.bazelrc`, and the remaining ORT issue was resolved by rewriting fetched `OrtOpLoader` statics to process lifetime inside `bazel/onnxruntime.patch`. Item **21** (`NuRaft import/runtime parity + benchmark refactor sprint`) — hosted `benchmark-testing` is green on `27bb2bff` after the final replay-model fix. Item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
 - **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule. NuRaft async/streaming parity verified against upstream (both synchronous, full match).
 - **Later (planned but not started):** Replace patch-only forks with released upstream versions where possible (`bazel/PATCH_DEBT.md` is the owner). Monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep any suppression file-scoped and dependency-scoped rather than broad. Mine `TODO.md` only when an item clearly aligns with the modernization queue above.
@@ -992,7 +1030,12 @@ Latest one-Protobuf research and execution notes (Mar 2026):
 - Full draft multi-arch validation is now green via run `22825402217`: `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64` all succeeded, with Linux package generation/upload and Darwin tarball validation both passing.
 - The March 12, 2026 rerun on commit `749f003e` (`disable whisper ggml blas auto-detection`) closed the remaining Darwin whisper doubt: `release-binaries` run `23009183654` succeeded across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, so the `GGML_BLAS=OFF` whisper fix is validated on the real release packaging path.
 - The March 14, 2026 current-tip rerun on commit `a2832b63` closed the last release-promotion gap: `release-binaries` run `23088513187` succeeded across the full matrix, and a matching versioned publish dry-run on `0.0.0-a2832b63` confirmed all `12` expected uploads after fixing the RPM glob in `publish_release.sh`.
+- Linux release assembly is now also owned by `scripts/release_linux_artifacts.sh`, a container-backed wrapper that replays the workflow's `ldd` guardrail, runtime-bundle prep, split debug-info packaging, checksum generation, smoke test, tarball verification, and optional DEB/RPM generation without requiring host `alien`/`rpm`/`dpkg-dev`.
 - Upstream still has open build-packaging friction for downstream consumers (for example ONNX Runtime issue `microsoft/onnxruntime#7150` about modern CMake/vcpkg/external-project support), so do not assume the remaining productionization work will be patch-free.
+
+### Container-first workflow follow-up
+
+This branch is already Docker-first for build/test/benchmark/API flows, but some maintenance helpers still assume host tools. Treat "containerize any flow that can be containerized without losing reproducibility" as the default direction for future tooling cleanups; prefer repo-owned wrappers that hide packaging/toolchain prerequisites behind Docker rather than documenting host package installation.
 
 ### Takeover snapshot for item 17
 
@@ -1118,7 +1161,9 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 53. **On NuRaft-backed bulk routes, `async_req=true` can accidentally turn H2O body aggregation into Raft log granularity.** The old `/documents/import` runtime registration allowed a slow single POST to reach `append_via_raft(...)` at transport-aggregate boundaries instead of at one logical request boundary. For bulk import parity, buffer one logical request before entering the Raft write path.
 54. **When a benchmark lane compares new binaries against older same-branch artifacts, prefer env overrides over new CLI flags.** `benchmark-testing.yml` can compare a just-built runtime against an older artifact that does not know a new server flag yet. Forwarding `TYPESENSE_REQUEST_TIMEOUT_MS` through the Dockerized process launcher kept the raised timeout available without breaking older binaries that simply ignore the env var.
 55. **Manual workflow greens are only as broad as their `target_scope`.** `release-binaries` can be dispatched for one lane, one platform family, or the full matrix. The March 12, 2026 success on `70ef49e7` was linux-only, while the first full-matrix confirmation of the whisper `GGML_BLAS=OFF` fix was run `23009183654` on `749f003e`. Check both `headSha` and selected jobs before advancing the plan.
-56. **Publish dry-runs must use the workflow's real package filenames, not guessed naming conventions.** The March 14, 2026 current-tip release replay showed that tarballs and DEBs followed the expected `typesense-server-<version>-...` pattern, but RPMs came out as `typesense-server-<version>.<arch>.rpm`. Keep `publish_release.sh` aligned with the files the workflow actually uploads, or a dry-run can look mostly green while silently dropping one package family.
+56. **Publish dry-runs must use the workflow's real package filenames, not guessed naming conventions.** The March 14, 2026 current-tip release replay showed that tarballs and DEBs followed the expected `typesense-server-<version>-...` pattern, but RPMs came out as `typesense-server-<version>.<arch>.rpm`; later local containerized replays also showed that some alien-generated RPM labels normalize the first version hyphen to `_` (for example `0.0.0-local` -> `0.0.0_local`). Keep `publish_release.sh` aligned with the files the workflow actually uploads, or a dry-run can look mostly green while silently dropping one package family.
+57. **Container-backed wrappers are worth the indirection when the alternative is host-only release tooling.** The Linux release replay already needed Docker for the build and an Ubuntu 24.04 environment for `alien`/`rpm`/`dpkg-dev`; moving the full assembly contract into `scripts/release_linux_artifacts.sh` keeps the local path CI-parity and avoids teaching future agents to install packaging tools on the host.
+58. **Artifact upload globs should be looser than publish-time discovery when third-party packagers normalize filenames.** `alien` can preserve or normalize version-label punctuation in RPM output depending on the label shape, so workflow artifact collection should match the package family broadly (`typesense-server-*.rpm`) while repo-owned publish logic keeps the stricter version-aware filtering.
 32. **Timed snapshot policy is part of the recovery contract, not just a scheduler detail.** If snapshots are blocked on follower health, a lagging follower can be trapped behind a permanently stale recovery point. Keep a test lane that distinguishes "require healthy peers" from "leader-only snapshot" policy so this deadlock class stays visible.
 33. **Do not misuse the existing HTTP benchmark wrapper as NuRaft evidence.** `scripts/benchmark_vs_upstream.sh` measures full server binaries behind the normal API/runtime surface. Until NuRaft has either a thin HTTP-facing adapter or a dedicated prototype benchmark harness, Story E needs its own measurement lane.
 34. **Prototype benchmarking should stay explicitly separate from the normal HTTP benchmark wrapper until the runtime surfaces actually match.** A dedicated NuRaft microbenchmark target is useful for Story E, but it is still measuring isolated replication/storage paths, not a drop-in server replacement. Treat it as evidence for feasibility, not as a substitute for a later apples-to-apples runtime comparison.

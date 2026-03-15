@@ -151,18 +151,6 @@ jobs:
             exit 1
           fi
 
-      - name: Verify linux self-contained binary shape
-        if: matrix.target_os == 'linux'
-        run: |
-          if ldd bazel-bin/typesense-server | grep -q 'libonnxruntime\.so\.1'; then
-            echo "typesense-server unexpectedly depends on libonnxruntime.so.1" >&2
-            exit 1
-          fi
-
-      - name: Prepare linux runtime bundle
-        if: matrix.target_os == 'linux'
-        run: bash api_tests/scripts/prepare_runtime_bundle.sh "${{ github.workspace }}/release/${{ matrix.artifact_name }}"
-
       - name: Prepare darwin artifact staging
         if: matrix.target_os == 'darwin'
         run: |
@@ -170,20 +158,17 @@ jobs:
           cp bazel-bin/typesense-server "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server"
           chmod +x "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server"
 
-      - name: Split linux debug symbols
+      - name: Assemble Linux release artifacts
         if: matrix.target_os == 'linux'
         run: |
-          RELEASE_DIR="${{ github.workspace }}/release/${{ matrix.artifact_name }}"
-          DEBUG_DIR="${{ github.workspace }}/artifacts/debug"
-          DEBUG_FILE="typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug"
-          mkdir -p "${DEBUG_DIR}"
-          chmod u+w "${RELEASE_DIR}/typesense-server"
-          objcopy --only-keep-debug "${RELEASE_DIR}/typesense-server" "${DEBUG_DIR}/${DEBUG_FILE}"
-          chmod u+w "${DEBUG_DIR}/${DEBUG_FILE}"
-          strip --strip-debug "${RELEASE_DIR}/typesense-server"
-          objcopy --add-gnu-debuglink="${DEBUG_DIR}/${DEBUG_FILE}" "${RELEASE_DIR}/typesense-server"
+          args=(--version-label "${{ inputs.version_label }}" --target-arch "${{ matrix.target_arch }}")
+          if [ "${{ inputs.build_linux_packages }}" != "true" ]; then
+            args+=(--skip-packages)
+          fi
+          bash scripts/release_linux_artifacts.sh "${args[@]}"
 
       - name: Write binary checksum manifest
+        if: matrix.target_os == 'darwin'
         run: |
           python - <<'PY'
           import hashlib
@@ -196,6 +181,7 @@ jobs:
           PY
 
       - name: Smoke-test staged binary
+        if: matrix.target_os == 'darwin'
         run: |
           HELP_OUTPUT="${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server-help.txt"
           set +e
@@ -209,6 +195,7 @@ jobs:
           grep -Eq '^usage:|^Command line usage:' "${HELP_OUTPUT}"
 
       - name: Package tarball
+        if: matrix.target_os == 'darwin'
         run: |
           mkdir -p "${{ github.workspace }}/artifacts"
           tar -czf "${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz" -C "${{ github.workspace }}/release/${{ matrix.artifact_name }}" .
@@ -221,22 +208,8 @@ jobs:
           Path(str(archive) + ".sha256.txt").write_text(f"{digest}  {archive.name}\n")
           PY
 
-      - name: Package linux debug symbols
-        if: matrix.target_os == 'linux'
-        run: |
-          DEBUG_BASENAME="typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug"
-          DEBUG_ARCHIVE="${{ github.workspace }}/artifacts/${DEBUG_BASENAME}.tar.gz"
-          tar -czf "${DEBUG_ARCHIVE}" -C "${{ github.workspace }}/artifacts/debug" "${DEBUG_BASENAME}"
-          python - <<'PY'
-          import hashlib
-          from pathlib import Path
-
-          archive = Path(r"${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug.tar.gz")
-          digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-          Path(str(archive) + ".sha256.txt").write_text(f"{digest}  {archive.name}\n")
-          PY
-
       - name: Verify packaged artifact contents
+        if: matrix.target_os == 'darwin'
         run: |
           python - <<'PY'
           import hashlib
@@ -256,27 +229,6 @@ jobs:
               if digest != md5_bytes:
                   raise SystemExit(f"binary md5 mismatch: expected {md5_bytes}, got {digest}")
           PY
-
-      - name: Verify linux debug symbol artifact
-        if: matrix.target_os == 'linux'
-        run: |
-          DEBUG_BASENAME="typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug"
-          DEBUG_ARCHIVE="${{ github.workspace }}/artifacts/${DEBUG_BASENAME}.tar.gz"
-          tar -tzf "${DEBUG_ARCHIVE}" | grep -Fx "${DEBUG_BASENAME}"
-          readelf -S "${{ github.workspace }}/release/${{ matrix.artifact_name }}/typesense-server" | grep -q '\.gnu_debuglink'
-
-      - name: Install Linux packaging tools
-        if: matrix.target_os == 'linux' && inputs.build_linux_packages
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends alien rpm dpkg-dev
-
-      - name: Build Linux DEB/RPM packages
-        if: matrix.target_os == 'linux' && inputs.build_linux_packages
-        env:
-          TSV: ${{ inputs.version_label }}
-          ARCH: ${{ matrix.target_arch }}
-          RELEASE_ARTIFACT_DIR: ${{ github.workspace }}/artifacts
-          RELEASE_PACKAGE_DIR: ${{ github.workspace }}/artifacts/packages
-        run: bash debian-pkg/generate_deb_rpm.sh
 
       - name: Upload platform artifact
         if: inputs.upload_artifacts
@@ -305,13 +257,13 @@ jobs:
           name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-packages
           path: |
             ${{ github.workspace }}/artifacts/packages/typesense-server-${{ inputs.version_label }}-${{ matrix.target_arch }}.deb
-            ${{ github.workspace }}/artifacts/packages/typesense-server-${{ inputs.version_label }}*.${{ matrix.rpm_arch }}.rpm
+            ${{ github.workspace }}/artifacts/packages/typesense-server-*.${{ matrix.rpm_arch }}.rpm
           retention-days: 14
 
 # Notes:
-# - This is a draft manual workflow for core binary artifacts only.
+# - This is the manual workflow for core binary artifacts only.
 # - It follows GitHub Actions best practices for native multi-platform builds: matrix fan-out, named artifacts, and separation of artifact build from any future publishing workflow.
 # - It does not yet automate GPU dependency artifacts, lg-page16 variants, Docker image publishing, or Homebrew tap updates.
 # - Linux release tarballs/packages now ship the stripped runtime binary plus a separate `.debug` tarball sidecar that keeps split debug info keyed by the same BuildID.
-# - Linux lanes now build DEB/RPM packages from the workflow-produced tarballs, but these package outputs still need real cross-platform workflow validation before this draft should be considered production-ready.
+# - Linux lanes now use `scripts/release_linux_artifacts.sh` so local replay and workflow assembly stay container-backed and share one canonical artifact path.
 # - Windows support in upstream docs is via WSL, not a native Windows server binary, so no native Windows artifact is produced here.

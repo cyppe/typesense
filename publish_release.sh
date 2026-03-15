@@ -44,5 +44,9 @@ fi
 if [ -d "${RELEASE_PACKAGE_DIR}" ]; then
 	while IFS= read -r -d '' package_file; do
 		upload_if_present "${package_file}"
-	done < <(find "${RELEASE_PACKAGE_DIR}" -maxdepth 1 -type f \( -name "typesense-server-${TYPESENSE_VERSION}-*.deb" -o -name "typesense-server-${TYPESENSE_VERSION}*.rpm" \) -print0 | sort -z)
+	done < <(find "${RELEASE_PACKAGE_DIR}" -maxdepth 1 -type f \( \
+		-name "typesense-server-${TYPESENSE_VERSION}-*.deb" -o \
+		-name "typesense-server-${TYPESENSE_VERSION}*.rpm" -o \
+		-name "typesense-server-${TYPESENSE_VERSION/-/_}*.rpm" \
+	\) -print0 | sort -z)
 fi

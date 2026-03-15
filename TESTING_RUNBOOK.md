@@ -85,9 +85,13 @@ TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --p
 
 # local benchmark repro against the same latest local binary
 TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick --scope core
+
+# release-binaries.yml (local Linux replay)
+scripts/release_linux_artifacts.sh --build --version-label 0.0.0-local
 ```
 
 The workflow YAML also layers GitHub-specific cache and artifact plumbing on top of these commands, but the wrappers above are the primary repro paths.
+The Linux release wrapper keeps packaging tools inside containers, so the host does not need `alien`, `rpm`, `dpkg-dev`, `objcopy`, or `strip` installed separately.
 
 ## 8) Sanitizer lanes
 
