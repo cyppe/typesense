@@ -6,6 +6,7 @@ BUILD=false
 CLEAN=false
 FLUSH_DB=true
 SELF_COMPARE=false
+USE_HOST_BUN=false
 UPSTREAM_VERSION="30.1"
 DURATION="30s"
 PORT="12108"
@@ -40,6 +41,7 @@ Scopes:
 Options:
   --build                  Build the fork binary first via bazel_in_docker.sh
   --self-compare           Compare the same staged fork binary against itself for local repro/debug
+  --host-bun               Use host Bun instead of the Dockerized benchmark CLI escape hatch
   --upstream VER           Upstream version to compare against (default: 30.1)
   --baseline-binary PATH   Explicit baseline binary path
   --baseline-label LABEL   Label for baseline binary (default: upstream-<ver> or file basename)
@@ -78,6 +80,10 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--self-compare)
 		SELF_COMPARE=true
+		shift
+		;;
+	--host-bun)
+		USE_HOST_BUN=true
 		shift
 		;;
 	--clean)
@@ -130,9 +136,16 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--server-args)
 		shift
-		while [[ $# -gt 0 && "$1" != "--build" && "$1" != "--self-compare" && "$1" != "--clean" && "$1" != "--no-flush" && "$1" != "--upstream" && "$1" != "--duration" && "$1" != "--port" && "$1" != "--work-dir" && "$1" != "--profile" && "$1" != "-h" && "$1" != "--help" ]]; do
-			SERVER_ARGS+=("$1")
-			shift
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--build | --self-compare | --host-bun | --clean | --no-flush | --upstream | --baseline-binary | --baseline-label | --fork-binary | --fork-label | --duration | --port | --work-dir | --profile | --scope | -h | --help)
+				break
+				;;
+			*)
+				SERVER_ARGS+=("$1")
+				shift
+				;;
+			esac
 		done
 		;;
 	-h | --help)
@@ -196,6 +209,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BENCHMARK_DIR="${REPO_DIR}/benchmark"
 UPSTREAM_URL="https://dl.typesense.org/releases/${UPSTREAM_VERSION}/typesense-server-${UPSTREAM_VERSION}-linux-amd64.tar.gz"
+export COMPOSE_PROJECT_NAME="benchmark"
+export BENCHMARK_WORK_DIR="${WORK_DIR}"
 
 if [[ -n "${BASELINE_BINARY_OVERRIDE}" ]] && [[ ! -x "${BASELINE_BINARY_OVERRIDE}" ]]; then
 	echo "Error: baseline binary is not executable: ${BASELINE_BINARY_OVERRIDE}" >&2
@@ -278,20 +293,19 @@ resolve_fork_binary() {
 	cp "${found}" "${fork_dir}/typesense-server"
 	chmod +x "${fork_dir}/typesense-server"
 
-	local cache_root
-	cache_root="$(dirname "$(dirname "$(dirname "$(dirname "${found}")")")")"
-	for lib in libonnxruntime.so.1; do
+		local cache_root
+		local lib="libonnxruntime.so.1"
 		local lib_path
+		cache_root="$(dirname "$(dirname "$(dirname "$(dirname "${found}")")")")"
 		lib_path=$(find "${cache_root}" -name "${lib}" -type f 2>/dev/null | head -1 || true)
 		if [[ -n "${lib_path}" ]]; then
 			echo "Staging shared lib: ${lib}"
 			chmod u+w "${fork_dir}/${lib}" 2>/dev/null || true
 			cp "${lib_path}" "${fork_dir}/"
 		fi
-	done
 
-	FORK_BINARY="${fork_dir}/typesense-server"
-	FORK_LABEL="${FORK_LABEL_OVERRIDE:-$(git -C "${REPO_DIR}" rev-parse --short HEAD)}"
+		FORK_BINARY="${fork_dir}/typesense-server"
+		FORK_LABEL="${FORK_LABEL_OVERRIDE:-$(git -C "${REPO_DIR}" rev-parse --short HEAD)}"
 }
 
 resolve_baseline_binary() {
@@ -380,8 +394,12 @@ fi
 
 echo "=== Building benchmark CLI ==="
 cd "${BENCHMARK_DIR}"
-bun install --frozen-lockfile
-bun run build
+SERVER_ARGS_CMD=()
+if [[ ${#SERVER_ARGS[@]} -gt 0 ]]; then
+	for arg in "${SERVER_ARGS[@]}"; do
+		SERVER_ARGS_CMD+=(--server-args "$arg")
+	done
+fi
 
 echo ""
 echo "========================================="
@@ -397,23 +415,30 @@ fi
 echo "========================================="
 echo ""
 
-SERVER_ARGS_CMD=()
-if [[ ${#SERVER_ARGS[@]} -gt 0 ]]; then
-	for arg in "${SERVER_ARGS[@]}"; do
-		SERVER_ARGS_CMD+=(--server-args "$arg")
-	done
-fi
-
-bun dist/index.js \
-	benchmark \
-	--binaries "${BASELINE_BINARY}" "${FORK_BINARY}" \
-	-c "${BASELINE_LABEL}" "${FORK_LABEL}" \
-	-d "${WORK_DIR}/data" \
-	--duration "${DURATION}" \
-	--scope "${SCOPE}" \
-	--port "${PORT}" \
-	"${SERVER_ARGS_CMD[@]}" \
+BENCHMARK_CLI_ARGS=(
+	benchmark
+	--binaries "${BASELINE_BINARY}" "${FORK_BINARY}"
+	-c "${BASELINE_LABEL}" "${FORK_LABEL}"
+	-d "${WORK_DIR}/data"
+	--duration "${DURATION}"
+	--scope "${SCOPE}"
+	--port "${PORT}"
+	"${SERVER_ARGS_CMD[@]}"
 	-y -v
+)
+
+if [[ "${USE_HOST_BUN}" == "true" ]]; then
+	echo "=== Building benchmark CLI on host (escape hatch) ==="
+	bun install --frozen-lockfile
+	bun run build
+	bun dist/index.js "${BENCHMARK_CLI_ARGS[@]}"
+else
+	echo "=== Building benchmark CLI container ==="
+	docker compose --profile cli build cli >/dev/null
+	printf -v QUOTED_BENCHMARK_ARGS ' %q' "${BENCHMARK_CLI_ARGS[@]}"
+	docker compose --profile cli run --rm --no-deps --entrypoint sh cli \
+		-lc "bun install --frozen-lockfile && bun run build && bun dist/index.js${QUOTED_BENCHMARK_ARGS}"
+fi
 
 echo ""
 echo "========================================="

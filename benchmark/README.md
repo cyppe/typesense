@@ -8,16 +8,21 @@ For most repo work, the supported entrypoint is the root wrapper script:
 TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core
 ```
 
+The wrapper builds and runs the benchmark CLI in Docker by default, so the host only needs Docker. Use `--host-bun` only when you intentionally want to iterate on the benchmark CLI outside its container.
+
 Use the CLI in `benchmark/` directly only when you are developing the benchmark tool itself or need custom invocations beyond the wrapper.
 
 `benchmark/BENCHMARK_RESULTS.md` owns benchmark policy and accepted tuning decisions. Keep this README focused on benchmark-tool usage.
 
 ## Prerequisites
 
+Default wrapper path:
 - Docker
+- A built `typesense-server` binary when you are not using `scripts/benchmark_vs_upstream.sh --build`
+
+Direct CLI development:
 - Node.js 24 LTS
 - Bun 1.3.10
-- A built `typesense-server` binary when you are not using `scripts/benchmark_vs_upstream.sh --build`
 
 ## Default Workflow
 
@@ -50,6 +55,12 @@ Install dependencies and build the CLI:
 cd benchmark
 bun install
 bun run build
+```
+
+If you want the root wrapper to use host Bun instead of the default Dockerized CLI, pass:
+
+```bash
+TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --host-bun --build --profile quick --scope core
 ```
 
 ## Usage

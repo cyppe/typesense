@@ -52,6 +52,7 @@ Use these short defaults unless a task explicitly needs a different lane:
 - Benchmark comparison: `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core`
 
 `run_api_tests.sh` defaults to Dockerized Bun via the repo's Ubuntu-based API image so agents do not need Bun installed on the host; use `--host-bun` only as an escape hatch.
+`benchmark_vs_upstream.sh` defaults to the Dockerized benchmark CLI via `benchmark/docker-compose.yml`, so agents do not need Bun installed on the host for the canonical benchmark lane; use `--host-bun` only as an escape hatch.
 Secret-gated API coverage remains all-or-nothing in CI: require `OPENAI_API_KEY`, `AZURE_OPENAI_API_KEY`, and `AZURE_OPENAI_URL` together. TEI coverage is a separate explicit lane via `TYPESENSE_TEST_TEI_URL`. Legacy migration replay from pre-NuRaft binaries is currently unsupported in this harness.
 
 ## Docs Ownership

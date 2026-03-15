@@ -1,65 +1,83 @@
 #!/bin/bash
 
-# TSV is passed as an environment variable to the script
+set -euo pipefail
 
-if [ -z "$TSV" ]
-then
-  echo '$TSV is not provided. Quitting.'
+if [[ -z "${TSV:-}" ]]; then
+  echo "\$TSV is not provided. Quitting." >&2
   exit 1
 fi
 
-if [ -z "$ARCH" ]
-then
-  echo '$ARCH is not provided. Quitting.'
+if [[ -z "${ARCH:-}" ]]; then
+  echo "\$ARCH is not provided. Quitting." >&2
   exit 1
 fi
 
-if [ -z "$ARTIFACT_SUFFIX" ]
-then
-  ARTIFACT_SUFFIX=""
-fi
+ARTIFACT_SUFFIX="${ARTIFACT_SUFFIX:-}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BAZEL_BIN_DIR="${SCRIPT_DIR}/../bazel-bin"
+DEB_BUILD_DIR="/tmp/typesense-gpu-deb-build"
+EXTRACT_DIR="/tmp/typesense-gpu-deps-${TSV}"
+RPM_BUILD_DIR="/tmp/typesense-gpu-rpm-build"
+DEB_FILE_BASENAME="typesense-gpu-deps-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb"
+RPM_RELEASE_SUFFIX="${ARTIFACT_SUFFIX//-/.}"
+TARBALL_PATH="${BAZEL_BIN_DIR}/typesense-gpu-deps-${TSV}-linux-${ARCH}${ARTIFACT_SUFFIX}.tar.gz"
 
-RPM_ARCH=$ARCH
-if [ "$ARCH" == "amd64" ]; then
+RPM_ARCH="${ARCH}"
+if [[ "${ARCH}" == "amd64" ]]; then
   RPM_ARCH="x86_64"
-elif [ "$ARCH" == "arm64" ]; then
+elif [[ "${ARCH}" == "arm64" ]]; then
   RPM_ARCH="aarch64"
 fi
 
-set -ex
-CURR_DIR=`dirname $0 | while read a; do cd $a && pwd && break; done`
+set -x
 
-rm -rf /tmp/typesense-gpu-deb-build && mkdir /tmp/typesense-gpu-deb-build
-cp -r $CURR_DIR/typesense-gpu-deps /tmp/typesense-gpu-deb-build
+rm -rf "${DEB_BUILD_DIR}"
+mkdir -p "${DEB_BUILD_DIR}"
+cp -r "${SCRIPT_DIR}/typesense-gpu-deps" "${DEB_BUILD_DIR}"
 
-rm -rf /tmp/typesense-gpu-deps-$TSV && mkdir /tmp/typesense-gpu-deps-$TSV
-tar -xzf $CURR_DIR/../bazel-bin/typesense-gpu-deps-$TSV-linux-${ARCH}${ARTIFACT_SUFFIX}.tar.gz -C /tmp/typesense-gpu-deps-$TSV
-mkdir -p /tmp/typesense-gpu-deb-build/typesense-gpu-deps/usr/lib/
-cp /tmp/typesense-gpu-deps-$TSV/*.so /tmp/typesense-gpu-deb-build/typesense-gpu-deps/usr/lib/
+rm -rf "${EXTRACT_DIR}"
+mkdir -p "${EXTRACT_DIR}"
+tar -xzf "${TARBALL_PATH}" -C "${EXTRACT_DIR}"
+mkdir -p "${DEB_BUILD_DIR}/typesense-gpu-deps/usr/lib/"
 
-rm -rf /tmp/typesense-gpu-deps-$TSV /tmp/typesense-gpu-deps-$TSV.tar.gz
+shared_objects=("${EXTRACT_DIR}"/*.so)
+if [[ ! -e "${shared_objects[0]}" ]]; then
+  echo "No shared libraries found under ${EXTRACT_DIR}" >&2
+  exit 1
+fi
+cp "${shared_objects[@]}" "${DEB_BUILD_DIR}/typesense-gpu-deps/usr/lib/"
 
-sed -i "s/\$VERSION/$TSV/g" `find /tmp/typesense-gpu-deb-build -maxdepth 10 -type f`
-sed -i "s/\$ARCH/$ARCH/g" `find /tmp/typesense-gpu-deb-build -maxdepth 10 -type f`
+rm -rf "${EXTRACT_DIR}" "${EXTRACT_DIR}.tar.gz"
+
+while IFS= read -r -d '' file; do
+  sed -i "s/\$VERSION/${TSV}/g" "${file}"
+  sed -i "s/\$ARCH/${ARCH}/g" "${file}"
+done < <(find "${DEB_BUILD_DIR}" -maxdepth 10 -type f -print0)
 
 dpkg-deb -Zgzip -z6 \
-         -b /tmp/typesense-gpu-deb-build/typesense-gpu-deps "/tmp/typesense-gpu-deb-build/typesense-gpu-deps-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb"
+         -b "${DEB_BUILD_DIR}/typesense-gpu-deps" "${DEB_BUILD_DIR}/${DEB_FILE_BASENAME}"
 
-# Generate RPM
+rm -rf "${RPM_BUILD_DIR}"
+mkdir -p "${RPM_BUILD_DIR}"
+cp "${DEB_BUILD_DIR}/${DEB_FILE_BASENAME}" "${RPM_BUILD_DIR}"
+(
+  cd "${RPM_BUILD_DIR}"
+  alien --scripts -k -r -g -v "${RPM_BUILD_DIR}/${DEB_FILE_BASENAME}"
+)
 
-rm -rf /tmp/typesense-gpu-rpm-build && mkdir /tmp/typesense-gpu-rpm-build
-cp "/tmp/typesense-gpu-deb-build/typesense-gpu-deps-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb" /tmp/typesense-gpu-rpm-build
-cd /tmp/typesense-gpu-rpm-build && alien --scripts -k -r -g -v /tmp/typesense-gpu-rpm-build/typesense-gpu-deps-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb
+while IFS= read -r -d '' spec_file; do
+  sed -i 's#%dir "/"##' "${spec_file}"
+  sed -i 's#%dir "/usr/bin/"##' "${spec_file}"
+  sed -i 's/%config/%config(noreplace)/g' "${spec_file}"
+  sed -i "s/^Release: 1/Release: 1${RPM_RELEASE_SUFFIX}/" "${spec_file}"
+done < <(find "${RPM_BUILD_DIR}" -maxdepth 10 -type f -name '*.spec' -print0)
 
-sed -i 's#%dir "/"##' `find /tmp/typesense-gpu-rpm-build/*/*.spec -maxdepth 10 -type f`
-sed -i 's#%dir "/usr/bin/"##' `find /tmp/typesense-gpu-rpm-build/*/*.spec -maxdepth 10 -type f`
-sed -i 's/%config/%config(noreplace)/g' `find /tmp/typesense-gpu-rpm-build/*/*.spec -maxdepth 10 -type f`
-sed -i "s/^Release: 1/Release: 1${ARTIFACT_SUFFIX//-/.}/" `find /tmp/typesense-gpu-rpm-build/*/*.spec -maxdepth 10 -type f`
+SPEC_BUILD_DIR="${RPM_BUILD_DIR}/typesense-gpu-deps-${TSV}"
+SPEC_FILE="${SPEC_BUILD_DIR}/typesense-gpu-deps-${TSV}-1.spec"
+(
+  cd "${SPEC_BUILD_DIR}"
+  rpmbuild --target="${RPM_ARCH}" --buildroot "${SPEC_BUILD_DIR}" -bb "${SPEC_FILE}"
+)
 
-SPEC_FILE="/tmp/typesense-gpu-rpm-build/typesense-gpu-deps-${TSV}/typesense-gpu-deps-${TSV}-1.spec"
-cd /tmp/typesense-gpu-rpm-build/typesense-gpu-deps-${TSV} && \
-  rpmbuild --target=${RPM_ARCH} --buildroot /tmp/typesense-gpu-rpm-build/typesense-gpu-deps-${TSV} -bb \
-  $SPEC_FILE
-
-cp "/tmp/typesense-gpu-rpm-build/typesense-gpu-deps-${TSV}-${ARCH}${ARTIFACT_SUFFIX}.deb" $CURR_DIR/../bazel-bin
-cp "/tmp/typesense-gpu-rpm-build/typesense-gpu-deps-${TSV}-1${ARTIFACT_SUFFIX//-/.}.${RPM_ARCH}.rpm" $CURR_DIR/../bazel-bin
+cp "${RPM_BUILD_DIR}/${DEB_FILE_BASENAME}" "${BAZEL_BIN_DIR}"
+cp "${RPM_BUILD_DIR}/typesense-gpu-deps-${TSV}-1${RPM_RELEASE_SUFFIX}.${RPM_ARCH}.rpm" "${BAZEL_BIN_DIR}"
