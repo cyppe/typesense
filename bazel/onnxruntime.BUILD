@@ -384,6 +384,7 @@ cmake(
             onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LITE_LIBRARY = "$$EXT_BUILD_DEPS/lib/libprotobuf_lite.a",
             onnxruntime_TYPESENSE_EXTERNAL_PROTOC_EXECUTABLE = "$(execpath @com_google_protobuf//:protoc)",
             ONNX_CUSTOM_PROTOC_EXECUTABLE = "$(execpath @com_google_protobuf//:protoc)",
+            FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP = "$$EXT_BUILD_ROOT/external/abseil-cpp+",
             CMAKE_CXX_FLAGS = "-I$$EXT_BUILD_ROOT/external/abseil-cpp+ -I$$EXT_BUILD_ROOT/external/protobuf+/third_party/utf8_range",
         ),
         "//conditions:default": dict(
@@ -398,6 +399,7 @@ cmake(
             onnxruntime_TYPESENSE_EXTERNAL_PROTOBUF_LITE_LIBRARY = "$$EXT_BUILD_DEPS/lib/libprotobuf_lite.a",
             onnxruntime_TYPESENSE_EXTERNAL_PROTOC_EXECUTABLE = "$(execpath @com_google_protobuf//:protoc)",
             ONNX_CUSTOM_PROTOC_EXECUTABLE = "$(execpath @com_google_protobuf//:protoc)",
+            FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP = "$$EXT_BUILD_ROOT/external/abseil-cpp+",
             CMAKE_CXX_FLAGS = "-I$$EXT_BUILD_ROOT/external/abseil-cpp+ -I$$EXT_BUILD_ROOT/external/protobuf+/third_party/utf8_range",
         ),
     }),

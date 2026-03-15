@@ -2,7 +2,7 @@
 
 This file tracks custom patches used by Bazel external dependencies.
 
-Last audited: 2026-03-14
+Last audited: 2026-03-15
 
 ## Scope
 
@@ -26,7 +26,7 @@ Last audited: 2026-03-14
 
 | Patch | External dep | Class | Why it exists | Owner | Reference | Next action |
 |---|---|---|---|---|---|---|
-| `bazel/onnxruntime.patch` | `onnx_runtime` | keep (medium-term) | Re-audited on ORT `1.24.3`: still needed to set `onnxruntime_EXTENSIONS_PATH`, patch the fetched extensions zlib 1.3.x guard/static image codec export behavior, rewrite fetched `OrtOpLoader` statics to process lifetime so ASAN no longer trips on ORT Extensions teardown, and inject imported external protobuf targets for the one-protobuf static build. | Build modernization (P1.7) | [cmake/external@3a728b7](https://github.com/microsoft/onnxruntime/tree/3a728b75062256951b6e19ce718907cf1a1d4cf0/cmake/external) | Re-check on the next ORT + extensions bump; drop only when upstream covers path export, static codec install/export, the custom-op teardown path, and a supported external-protobuf path. |
+| `bazel/onnxruntime.patch` | `onnx_runtime` | keep (medium-term) | Re-audited on ORT `1.24.3`: still needed to set `onnxruntime_EXTENSIONS_PATH`, patch the fetched extensions zlib 1.3.x guard/static image codec export behavior, rewrite fetched `OrtOpLoader` statics to process lifetime so ASAN no longer trips on ORT Extensions teardown, and inject imported external protobuf targets for the one-protobuf static build. External Abseil version sync is now handled patch-free in `bazel/onnxruntime.BUILD` via `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` for that same one-protobuf lane. | Build modernization (P1.7) | [cmake/external@3a728b7](https://github.com/microsoft/onnxruntime/tree/3a728b75062256951b6e19ce718907cf1a1d4cf0/cmake/external) | Re-check on the next ORT + extensions bump; drop only when upstream covers path export, static codec install/export, the custom-op teardown path, and a supported external-protobuf path. Keep the BUILD-level Abseil source override unless upstream exposes a cleaner version-sync hook. |
 | `bazel/onnx_ext.patch` | `onnx_runtime_extensions` | keep (short-term) | Trims tokenizer/operator surface and header deps to build selected operators under current toolchain. | Build modernization (P1.7) | [tokenizer headers@1f9d7ee](https://github.com/microsoft/onnxruntime-extensions/tree/1f9d7ee0c80b4f94946ee5650cb242aa01dd6278/operators/tokenizer) | Revisit with newer extensions release; prefer upstream/stable API include layout. |
 | `bazel/whisper.patch` | `whisper.cpp` | keep (minimal) | Non-speech token expansion only (1 hunk, 1 file). Pin `2eeeba56` = v1.8.3. Upgraded from `022756a8` (pre-v1.7.x). All CUDA dlopen/dlsym hunks eliminated by upgrade. | Build modernization (P1.7) | [whisper.cpp@2eeeba5](https://github.com/ggml-org/whisper.cpp/tree/2eeeba56e9edd762b4b38467bab96c2517163158) | Patch is at minimum. Non-speech token list is Typesense-specific (punctuation suppression for voice queries). Monitor upstream for inclusion. |
 | `bazel/h2o/h2o_725e54bc932fbe0c6e208db4e71eb1df79ec43ff.patch` | `h2o` | keep (medium-term) | Now reduced to CMakeLists.txt-only delta: removes CONFIGURE_FILE for .pc files and strips INSTALL targets for binaries/pkg-config. The nine conflicting `deps/brotli/**/BUILD` files are now removed via `MODULE.bazel` `patch_cmds` (same pattern as ICU). Reduced from 774 lines to 48 lines. | Build modernization (P1.7b) | [h2o CMakeLists@725e54b](https://github.com/h2o/h2o/blob/725e54bc932fbe0c6e208db4e71eb1df79ec43ff/CMakeLists.txt) | Re-test with newer h2o tag; the remaining CMakeLists.txt delta is the minimum needed for rules_foreign_cc. |
@@ -36,6 +36,6 @@ Last audited: 2026-03-14
 ## Immediate Follow-ups
 
 1. ~~**whisper.cpp v1.8.x upgrade:**~~ **Done.** Upgraded to v1.8.3. Patch reduced from 7 hunks/4 files to 1 hunk/1 file.
-2. `bazel/icu/icu.patch` is at minimum (AR fix only). `bazel/onnxruntime.patch` re-audited on ORT `1.24.3` — still non-droppable, now including the fetched ORT Extensions custom-op teardown fix needed for clean ASAN exits.
+2. `bazel/icu/icu.patch` is at minimum (AR fix only). `bazel/onnxruntime.patch` re-audited on ORT `1.24.3` — still non-droppable, now including the fetched ORT Extensions custom-op teardown fix needed for clean ASAN exits. External Abseil version sync is now handled without patch growth via `bazel/onnxruntime.BUILD`'s `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` override on the one-protobuf static lane.
 3. `bazel/h2o` patch is at minimum (48 lines, CMakeLists.txt-only). Re-test with newer h2o tag.
 4. Re-audit this file after any dependency version bump in `MODULE.bazel`.
