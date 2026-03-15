@@ -223,14 +223,14 @@ Build a deliberate next-wave upgrade shortlist instead of bumping opportunistica
 - [x] High-priority audit findings so far:
   - Vendored `magic_enum` `0.7.2` -> `0.9.7` is now done; the full header refresh replaces the temporary AppleClang-only backport and keeps the compiler fix aligned with upstream.
   - Protobuf `33.5` -> `34.0.bcr.1` is now done; clean build, 120/120 API tests pass, all unit tests pass.
-- [ ] Medium-priority candidates worth evaluating next:
+- [x] Medium-priority candidate review completed for the current shortlist:
   - ONNX Runtime `1.24.2` -> `1.24.3` is now done; canonical Docker build passed, `ldd bazel-bin/typesense-server` still shows no `libonnxruntime.so.1` dependency, and the Dockerized API `tests/health.test.ts` replay passed against the promoted binary.
   - `libarchive` `3.7.7` -> `3.8.5` is now done.
   - `snappy` `1.1.7` -> `1.2.x` for compiler/perf hygiene. *(Now done on `1.2.2`.)*
   - `typesense-js` in `tests/` `2.0.3` -> `3.0.2` is now done to match the benchmark toolchain client line; `bun run check` passes in `tests/` after the bump.
   - JS tooling baseline is now aligned on Bun `1.3.10` plus Node `24.14.0` LTS for optional host-side flows. `tests/` no longer carries pnpm metadata, benchmark wrapper invocations use Bun, and shared package pins were refreshed to the current stable lines (`eslint 10.0.3`, `typescript-eslint 8.57.0`, `vitest 4.1.0`, `openai 6.27.0`, `zod 4.3.6`, `@types/node 25.4.0`). `tests/src/error.ts` needed the expected Zod 4 compatibility fix (`error.errors` -> `error.issues`), and `bun outdated` is now clean in `api_tests/`, `benchmark/`, and `tests/`.
   - `abseil-cpp` `20250814.1` -> `20260107.1` attempted but **blocked by ORT ABI mismatch**: ORT internally builds `re2` against its own fetched abseil (lts_20250814), so linking fails when the external abseil uses a different LTS namespace tag. Fix requires injecting external abseil into ORT's CMake build (same pattern as the protobuf injection in `onnxruntime.patch`). Defer until ORT's abseil injection is implemented.
-- [ ] Keep treating patch-debt reduction as at least as important as raw version bumps; some deps (for example `whisper.cpp`, `h2o`) matter more because of maintenance surface than because they are numerically old.
+- Keep treating patch-debt reduction as at least as important as raw version bumps; some deps (for example `whisper.cpp`, `h2o`) matter more because of maintenance surface than because they are numerically old.
 - [x] **whisper.cpp major upgrade (v1.8.3):** Upgraded from `022756a8` (pre-v1.7.x) to `2eeeba56` (v1.8.3). Complete `whisper.BUILD` rewrite (now uses `rules_foreign_cc` cmake rule instead of hand-rolled cc_library). Patch reduced from 7 hunks/4 files to 1 hunk/1 file (only non-speech token expansion remains). API change: `suppress_non_speech_tokens` renamed to `suppress_nst`. OpenMP disabled (`GGML_OPENMP=OFF`) since Typesense runs whisper single-threaded. All 141 API tests pass.
 - [x] `h2o` patch reduced from 774 to 48 lines by moving 9 conflicting brotli `BUILD` file deletions to `MODULE.bazel` `patch_cmds`. Remaining delta is CMakeLists.txt-only (CONFIGURE_FILE + INSTALL target stripping).
 
@@ -393,11 +393,8 @@ This section is now partly archival. The feasibility sprint is over on this bran
 - [x] ~~Revisit the current synchronous write/snapshot HTTP path.~~ **Verified Mar 2026:** upstream Typesense also uses fully synchronous blocking writes through raft (`request->to_json()` → single raft entry → block until quorum commit). Our NuRaft implementation matches exactly. No async design needed — this is upstream parity.
 - [x] ~~Add import-streaming and long-running response parity.~~ **Verified Mar 2026:** upstream also buffers the full import body into a single raft log entry (not streamed through raft). HTTP-level chunked receipt (`async_req=true`) is already supported in our route registration. Follower forwarding uses NuRaft auto_forwarding (internal RPC) which is equivalent to upstream's HTTP proxy. Full parity confirmed.
 - [x] Audit the central NuRaft route table against the old Typesense surface. *(Done Mar 2026: all 119 HTTP endpoints from `core_api.h` are registered in `register_nuraft_http_runtime_routes()`. Zero gaps found — aliases, keys, presets, stopwords, rate limits, config, conversations, personalization, nl_search_models, proxy/streaming all present.)*
-- [ ] Once the no-secrets wrapper is green, rerun the env-dependent suites with the correct setup instead of leaving them as “not yet tried”:
-  - migration replay with a legacy binary,
-  - TEI/embedding suites with the required model/service env,
-  - secret-gated conversation flows.
-- [ ] **Benchmark validation on NuRaft-only server (planned):** Run the existing k6 benchmark profiles (`benchmark/scenarios/`) against the NuRaft-backed `typesense-server` to establish a baseline. Compare against the historical braft numbers in `benchmark/BENCHMARK_RESULTS.md`. Focus on: write throughput (single-node), search latency under write load (mixed), import throughput, and multi-node write forwarding latency. Document results as the new NuRaft baseline in `BENCHMARK_RESULTS.md`. Keep historical braft data for reference but stop using old side-by-side lanes.
+- Follow-on env-dependent suite enablement is now tracked in sprint **27** (`Env-dependent suite enablement and hosted-proof audit`) so the post-cutover cleanup work is investigation-first instead of a stale unchecked tail on this completed sprint.
+- Post-cutover benchmark-baseline revalidation is now tracked in sprint **30** (`NuRaft post-cutover benchmark baseline refresh`) rather than leaving it as an unowned planned checkbox here.
 - [x] **Expose NuRaft configuration as CLI args and ENV overrides.** *(Done Mar 2026: all NuRaft `raft_params` are exposed as `--raft-*` CLI args and `TYPESENSE_RAFT_*` ENV vars in `typesense_nuraft_runtime.cpp`. Covered: heartbeat interval, election timeout bounds, reserved log items, client request timeout, auto-forwarding toggle and timeout, snapshot distance, leadership expiry, and Asio thread pool size. Defaults are production-sensible; ENV is applied first with CLI taking priority.)*
 
 **Story F - Decision record**
@@ -428,7 +425,7 @@ Done. Backend swapped from glog to Abseil Logging. Key artifacts:
 - [x] CI enforces guardrails via `scripts/check_clang_warning_guardrail.sh` and `scripts/check_gcc_warning_guardrail.sh` with failure-artifact upload.
 - [x] First-party C++ test signedness cleanup committed (`e9bea816`); all `-Wsign-compare` warnings resolved.
 - [x] Unused-variable warnings across test files and src cleaned up (`8420f815`).
-- [ ] **Audit visible build warnings across normal and sanitizer builds:** Goal: zero warnings visible during any build config without hiding new regressions. Triage each warning bucket as one of: first-party fix, third-party scoped suppression, or unavoidable toolchain/startup noise. Known sources:
+- [x] **Audit visible build warnings across normal and sanitizer builds:** Done Mar 2026. Normal, GCC, Clang, ASAN, and TSAN lanes were audited locally with Dockerized replays; first-party fixes landed in `src/system_metrics.cpp`, and the remaining noise buckets are now constrained to the narrowest justified compiler/config/dependency scopes.
   - `protobuf`: `-Wsign-compare` and `-Wmaybe-uninitialized` in generated/upb sources; `.bazelrc` now scopes these suppressions to `external/protobuf+.*` for local GCC builds, but sanitizer coverage still needs a full replay to confirm nothing broader is required
   - `abseil-cpp`: deprecated C++20 implicit lambda capture of `this` in `container_internal` headers
   - `abseil-cpp`: TSAN `atomic_thread_fence` warning in `synchronization/internal/graphcycles.cc`
@@ -436,10 +433,10 @@ Done. Backend swapped from glog to Abseil Logging. Key artifacts:
   - first-party `src/system_metrics.cpp`: fixed locally on March 14, 2026 by initializing jemalloc stats safely, scoping jemalloc-only locals under `#ifndef NO_JEMALLOC`, guarding the fragmentation ratio divide, and correcting `typesense_memory_resident_bytes` to report `resident` instead of `active`
   - Bazel/JVM startup: deprecated `-Xverify:none` / `-noverify` banner from the Java runtime used under Bazel/Bazelisk
   - Approach: fix real first-party issues in source. For third-party or toolchain-only noise, use the narrowest possible suppression or config fix for each source. Prefer per-file or per-external-target compiler flags, or tool-specific startup config, over global `-w` / broad `-Wno-*` flags. Keep new-warning visibility intact so future first-party regressions and unaudited external warnings still show up.
-  - Current local proof on March 14, 2026: `scripts/bazel_in_docker.sh build //:typesense-server` and a cold-cache `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/cache scripts/bazel_in_docker.sh build //:typesense-test` both completed without visible compiler warnings beyond the known Bazel/OpenJDK startup banner. The earlier `src/collection.cpp` / `std::regex` noise did not reproduce in that replay, so keep it as an audited bucket to re-check under sanitizer configs instead of suppressing it blindly.
+  - Current local proof on March 14, 2026: `scripts/bazel_in_docker.sh build //:typesense-server`, a cold-cache `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/cache scripts/bazel_in_docker.sh build //:typesense-test`, plus sanitizer replays under `--config=asan` and `--config=tsan`, all completed without visible compiler warnings beyond the known Bazel/OpenJDK startup banner. The earlier `src/collection.cpp` / `std::regex` noise was audited and is now suppressed only in the narrow GCC sanitizer buckets where it is a reproducible libstdc++ false positive.
 - Done when:
   - [x] Warning debt trend is downward and enforced by CI.
-  - [ ] Zero warnings visible in normal, ASAN, and TSAN builds.
+  - [x] Zero warnings visible in normal, ASAN, and TSAN builds apart from the known Bazel/OpenJDK startup banner.
 
 ## Priority 2 - CI And Developer Experience
 
@@ -562,31 +559,196 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 6 | ~~CI hygiene backlog (remaining)~~ | P2.11 | **done** | Bazel disk cache via `actions/cache@v4` in all workflows. |
 | 7 | ~~Benchmark infrastructure audit~~ | P2.13 | **done** | Stack audited, local execution documented, cross-fork comparison feasible. |
 | 8 | ~~Fix pre-existing test warnings~~ | Known Issues | **done** | Narrowing + trigraph warnings fixed. |
-| 9 | Protobuf 34 upgrade | P1.6b | **done** | Upgraded from 33.5 to 34.0.bcr.1. Updated MODULE.bazel and onnxruntime.BUILD version strings. Clean build, 120/120 API tests pass, all 4 NuRaft unit tests pass. No code changes required — protobuf is only an indirect dependency via OnnxRuntime and SentencePiece. |
+| 9 | ~~Protobuf 34 upgrade~~ | P1.6b | **done** | Upgraded from 33.5 to 34.0.bcr.1. Updated MODULE.bazel and onnxruntime.BUILD version strings. Clean build, 120/120 API tests pass, all 4 NuRaft unit tests pass. No code changes required — protobuf is only an indirect dependency via OnnxRuntime and SentencePiece. |
 | 10 | ~~Cross-fork benchmark script~~ | P2.13 | **done** | `scripts/benchmark_vs_upstream.sh` for upstream comparison. |
 | 11 | ~~Definition of Done audit~~ | DoD | **done** | All 6 checkboxes verified and marked complete. |
 | 12 | ~~Fix Bazel 9.0.0 not running in Docker~~ | P1.6 | **done** | Verified with `scripts/bazel_in_docker.sh version` and `TYPESENSE_BAZEL_IMAGE=typesense/ci-bazel:ci scripts/bazel_in_docker.sh version`: Bazelisk `v1.28.1`, Bazel `9.0.0`. CI workflows already run `--build-image-only`; stale local images were the mismatch source. |
-| 13 | RocksDB perf tuning Phase 3 (data-driven) | P2.13 | **done** | Runs 9-13 complete: observability, sweeps, read-path optimizations, `max-indexing-concurrency` validation, and import `batch_size` A/B check. Final policy keeps conservative defaults with hardware-based tuning guidance. |
+| 13 | ~~RocksDB perf tuning Phase 3 (data-driven)~~ | P2.13 | **done** | Runs 9-13 complete: observability, sweeps, read-path optimizations, `max-indexing-concurrency` validation, and import `batch_size` A/B check. Final policy keeps conservative defaults with hardware-based tuning guidance. |
 | 14 | ~~Benchmark observability: full metrics collection + Grafana dashboard~~ | P2.13 | **done** | Core observability is in place: benchmark runs collect system/API/RocksDB metrics continuously and dashboard includes concurrent search+import visibility. Tuning-specific counter extraction is tracked under item 13. |
 | 15 | ~~JS/Docker workflow consolidation~~ | P2 DX | **done** | Benchmark/API tooling is Bun-first, benchmark CI now uses the shared wrapper, and API tests have a Dockerized wrapper entrypoint. |
 | 16 | ~~Static ONNX Runtime linkage probe~~ | Known Issues | **done** | Promoted `typesense-server` to the one-Protobuf static ORT path. `ldd bazel-bin/typesense-server` shows no `libonnxruntime.so.1`, the no-secrets API suite passes (including migration replay), and direct local `ts/e5-small` embedding/vector-search smoke succeeds. |
 | 17 | ~~Release packaging / multi-arch workflow hardening~~ | Known Issues | **done** | Full draft workflow validation is now green across `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`, including Linux DEB/RPM generation and Darwin tarball validation. The workflow still says `draft`, but the remaining work is promotion/cleanup, not technical break-fixing. |
-| 18 | Dependency refresh audit (current vs latest) | P1 Build/Deps | **done** | All actionable deps refreshed: magic_enum 0.9.7, libarchive 3.8.5, snappy 1.2.2, ORT 1.24.3, typesense-js 3.0.2, protobuf 34.0.bcr.1. Core infra deps (curl 8.18.0, openssl 3.6.1, jemalloc 5.3.0, zstd 1.5.7, lz4 1.10.0) all confirmed at latest. Patch debt: 5 active patches at minimum, h2o reduced to 48 lines. Abseil upgrade blocked by ORT ABI. whisper.cpp upgraded to v1.8.3 (patch down to 1 hunk). |
-| 19 | NuRaft replacement cutover and hardening | P1.7d | **done** | Real NuRaft consensus is the only path. All 120/120 API tests pass (0 failures). Prototype code deleted, CLI/ENV config exposed, analytics counter bugs fixed, snapshot identity fixed. Remaining follow-ups (async/streaming, route audit, env-dependent suites) tracked as unchecked items in P1.7d. |
-| 20 | Sanitizer lane stabilization + ORT extensions boundary audit | Known Issues | **done** | Broad GitHub stabilization is green on `v32` (`tests`, `sanitizer-testing`, `nightly-extended`, `flake-detection`, plus the earlier narrow `release-binaries` linux-amd64 replay), and the final local blocker was closed on March 14, 2026. The ORT audit confirmed `EnableOrtCustomOps()` is only used by `CLIPImageProcessor`; `CollectionManager::dispose()` already clears image/text embedders, and `process_embedding_field_delete()` now matches that image-before-text teardown order. The remaining ASAN red was third-party ONNX Runtime Extensions static custom-op loader teardown, not first-party ownership: `bazel/onnxruntime.patch` now rewrites fetched `static OrtOpLoader` operator-loader singletons to process lifetime before ORT builds `libocos_operators.a`, so `.bazelrc` no longer needs `ASAN_OPTIONS=new_delete_type_mismatch=0`. Local proof on March 14, 2026: `scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=3600 '--test_arg=--gtest_filter=CollectionVectorTest.TestImageEmbedding:CollectionVectorTest.TestUnloadingModelsOnCollectionDelete' --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models` passed under the default repo ASAN config, and `scripts/bazel_in_docker.sh build //:typesense-server` also passed on the same tip. |
+| 18 | ~~Dependency refresh audit (current vs latest)~~ | P1 Build/Deps | **done** | All actionable deps refreshed: magic_enum 0.9.7, libarchive 3.8.5, snappy 1.2.2, ORT 1.24.3, typesense-js 3.0.2, protobuf 34.0.bcr.1. Core infra deps (curl 8.18.0, openssl 3.6.1, jemalloc 5.3.0, zstd 1.5.7, lz4 1.10.0) all confirmed at latest. Patch debt: 5 active patches at minimum, h2o reduced to 48 lines. Abseil upgrade blocked by ORT ABI. whisper.cpp upgraded to v1.8.3 (patch down to 1 hunk). |
+| 19 | ~~NuRaft replacement cutover and hardening~~ | P1.7d | **done** | Real NuRaft consensus is the only path. All 120/120 API tests pass (0 failures). Prototype code deleted, CLI/ENV config exposed, analytics counter bugs fixed, snapshot identity fixed. Follow-on env-dependent suites and benchmark-refresh work now live under items **27** and **30** instead of as stale unchecked tails in P1.7d. |
+| 20 | ~~Sanitizer lane stabilization + ORT extensions boundary audit~~ | Known Issues | **done** | Broad GitHub stabilization is green on `v32` (`tests`, `sanitizer-testing`, `nightly-extended`, `flake-detection`, plus the earlier narrow `release-binaries` linux-amd64 replay), and the final local blocker was closed on March 14, 2026. The ORT audit confirmed `EnableOrtCustomOps()` is only used by `CLIPImageProcessor`; `CollectionManager::dispose()` already clears image/text embedders, and `process_embedding_field_delete()` now matches that image-before-text teardown order. The remaining ASAN red was third-party ONNX Runtime Extensions static custom-op loader teardown, not first-party ownership: `bazel/onnxruntime.patch` now rewrites fetched `static OrtOpLoader` operator-loader singletons to process lifetime before ORT builds `libocos_operators.a`, so `.bazelrc` no longer needs `ASAN_OPTIONS=new_delete_type_mismatch=0`. Local proof on March 14, 2026: `scripts/bazel_in_docker.sh test --config=asan --cache_test_results=no --test_output=errors //:typesense-test --test_timeout=3600 '--test_arg=--gtest_filter=CollectionVectorTest.TestImageEmbedding:CollectionVectorTest.TestUnloadingModelsOnCollectionDelete' --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models` passed under the default repo ASAN config, and `scripts/bazel_in_docker.sh build //:typesense-server` also passed on the same tip. |
 | 21 | ~~NuRaft import/runtime parity + benchmark refactor sprint~~ | P1 Runtime/Perf | **done** | Final replay-model runtime parity is in: one logical import request is buffered once, replicated as bounded logical NuRaft chunks, then replayed through the existing import handler cadence. The direct `1M` single-POST gate is green, local `quick/core` self-compare and `standard/core` upstream compare are green, the broad `--no-secrets --download-migration-binary` API gate is green, and hosted `benchmark-testing` also passed on `27bb2bff` against the previous same-branch baseline `985acb45` in `43m55s`. |
-| 22 | Release workflow promotion / current-tip full-matrix replay | Known Issues | **done** | Current-tip release proof is now refreshed on the final pre-release SHA `a2832b63c2a701e08fc5b571ee9507473df991c8`: `release-binaries` run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64` on March 14, 2026. The follow-up versioned publish dry-run used that run's artifacts with label `0.0.0-a2832b63`; it exposed one real release-path bug in `publish_release.sh` (RPM uploads were skipped because generated files are named `typesense-server-<version>.<arch>.rpm`, not `typesense-server-<version>-<arch>.rpm`). After fixing the RPM glob, the same dry-run recorded the full `12` mocked `aws s3 cp` uploads (`4` tarballs, `4` tarball `.sha256.txt` sidecars, `2` `.deb`, `2` `.rpm`), so the draft workflow is now technically release-ready and only needs naming/promotion cleanup. |
-| 23 | Compile warning audit / cleanup | P1 Hygiene | **done** | Completed March 14, 2026. Home-cache sanitizer replays are now closed locally: `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/asan-cache scripts/bazel_in_docker.sh build --config=asan //:typesense-server` and `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/tsan-cache scripts/bazel_in_docker.sh build --config=tsan //:typesense-server` both pass warning-clean apart from the known Bazel/OpenJDK startup banner. The remaining buckets were audited as toolchain/third-party noise, not first-party bugs: GCC 14/libstdc++ `std::regex` `-Wmaybe-uninitialized` false positives under ASAN from regex-heavy first-party TUs plus `clip_tokenizer`, GCC-only protobuf `-Wmaybe-uninitialized` false positives, and GCC TSAN `-Wtsan` warnings from external Abseil `atomic_thread_fence`. `.bazelrc` now keeps compiler-specific suppressions behind `build:gcc` and sanitizer-specific suppressions behind `build:asan` / `build:tsan`, while `scripts/bazel_in_docker.sh` auto-applies `--config=gcc` only for non-clang `build`/`test`/`run`/`coverage` lanes so the clang warning guardrail stays fully visible. |
-| 24 | Release artifact debug-info policy | Known Issues | **done** | Completed March 14, 2026. Policy is now explicit for Linux release artifacts: ship a stripped runtime binary in the normal tarball/DEB/RPM path, and publish split debug symbols as a separate `.debug.tar.gz` sidecar keyed to the same BuildID via `.gnu_debuglink`. Local proof from `bazel-bin/typesense-server`: current unstripped binary is `427M` with embedded debug info; a split-debug copy measured `151M` stripped runtime plus `297M` debug file and the stripped binary still passed the `--help` smoke check. `.github/workflows/release-binaries.yml` now performs the split before checksum/tarball/package assembly and uploads the debug-symbol sidecar artifact for Linux lanes. |
+| 22 | ~~Release workflow promotion / current-tip full-matrix replay~~ | Known Issues | **done** | Current-tip release proof is now refreshed on the final pre-release SHA `a2832b63c2a701e08fc5b571ee9507473df991c8`: `release-binaries` run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64` on March 14, 2026. The follow-up versioned publish dry-run used that run's artifacts with label `0.0.0-a2832b63`; it exposed one real release-path bug in `publish_release.sh` (RPM uploads were skipped because generated files are named `typesense-server-<version>.<arch>.rpm`, not `typesense-server-<version>-<arch>.rpm`). After fixing the RPM glob, the same dry-run recorded the full `12` mocked `aws s3 cp` uploads (`4` tarballs, `4` tarball `.sha256.txt` sidecars, `2` `.deb`, `2` `.rpm`), so the draft workflow is now technically release-ready and only needs naming/promotion cleanup. |
+| 23 | ~~Compile warning audit / cleanup~~ | P1 Hygiene | **done** | Completed March 14, 2026. Home-cache sanitizer replays are now closed locally: `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/asan-cache scripts/bazel_in_docker.sh build --config=asan //:typesense-server` and `TYPESENSE_BAZEL_CACHE_DIR=/home/cyppe/tmp/typesense-warning-audit/tsan-cache scripts/bazel_in_docker.sh build --config=tsan //:typesense-server` both pass warning-clean apart from the known Bazel/OpenJDK startup banner. The remaining buckets were audited as toolchain/third-party noise, not first-party bugs: GCC 14/libstdc++ `std::regex` `-Wmaybe-uninitialized` false positives under ASAN from regex-heavy first-party TUs plus `clip_tokenizer`, GCC-only protobuf `-Wmaybe-uninitialized` false positives, and GCC TSAN `-Wtsan` warnings from external Abseil `atomic_thread_fence`. `.bazelrc` now keeps compiler-specific suppressions behind `build:gcc` and sanitizer-specific suppressions behind `build:asan` / `build:tsan`, while `scripts/bazel_in_docker.sh` auto-applies `--config=gcc` only for non-clang `build`/`test`/`run`/`coverage` lanes so the clang warning guardrail stays fully visible. |
+| 24 | ~~Release artifact debug-info policy~~ | Known Issues | **done** | Completed March 14, 2026. Policy is now explicit for Linux release artifacts: ship a stripped runtime binary in the normal tarball/DEB/RPM path, and publish split debug symbols as a separate `.debug.tar.gz` sidecar keyed to the same BuildID via `.gnu_debuglink`. Local proof from `bazel-bin/typesense-server`: current unstripped binary is `427M` with embedded debug info; a split-debug copy measured `151M` stripped runtime plus `297M` debug file and the stripped binary still passed the `--help` smoke check. `.github/workflows/release-binaries.yml` now performs the split before checksum/tarball/package assembly and uploads the debug-symbol sidecar artifact for Linux lanes. |
+| 25 | Release workflow promotion and repo-owned replay extraction | Known Issues | **active** | Investigation-first sprint. Decide whether `release-binaries` is ready to lose the draft posture and whether Linux packaging/debug-sidecar assembly should move from workflow-only shell into one repo-owned wrapper for better local/CI parity. |
+| 26 | ORT external Abseil injection and upgrade unblock | P1 Build/Deps | queued | Investigation-first sprint. Re-check whether ORT can be forced onto external Abseil with acceptable patch growth, then only bump `abseil-cpp` if the prototype is technically clean. |
+| 27 | Env-dependent suite enablement and hosted-proof audit | P1 Test Infra | queued | Investigation-first sprint. Inventory the real prerequisites for migration replay, TEI/embedding suites, and secret-gated conversation flows before adding or changing any workflow lane. |
+| 28 | Cross-platform debug-symbol policy parity | P2 Release | queued | Investigation-first sprint. Decide whether Linux-only split debug info is the correct long-term steady state or whether Darwin should also ship explicit symbol sidecars. |
+| 29 | Explicit compiler-config topology audit | P2 Hygiene | queued | Investigation-first sprint. Decide whether wrapper-selected `--config=gcc` should remain the repo contract or be replaced by more explicit compiler configs and entrypoints. |
+| 30 | NuRaft post-cutover benchmark baseline refresh | P2 Perf | queued | Investigation-first sprint. Decide whether a fresh hosted/local baseline would materially change benchmark policy or simply reconfirm the current NuRaft posture. |
+
+### 25) Release workflow promotion and repo-owned replay extraction
+
+**Why this sprint exists now**
+
+- `release-binaries` is technically green across Linux and Darwin, but the workflow is still effectively in a "draft but working" posture.
+- Linux tarball/package/debug-sidecar assembly now has real policy behind it, but too much of that knowledge still lives in workflow-only shell.
+- The next agent should prove whether a repo-owned wrapper meaningfully improves local/CI parity before doing extraction work by reflex.
+
+**Sprint goal**
+
+- Decide whether the release workflow is ready for promotion/cleanup, and extract packaging logic into one canonical repo entrypoint only if that clearly improves reproducibility.
+
+**Story A - Investigation**
+
+- [ ] Audit the current `release-binaries.yml` shell blocks against existing repo scripts and list exactly which Linux packaging steps are still workflow-only.
+- [ ] Verify the latest successful `release-binaries` run on the current branch tip and enumerate the remaining blockers to removing the "draft" posture (naming, docs, inputs, artifact layout, manual steps).
+- [ ] Produce a go/no-go recommendation: promote as-is, promote with script extraction, or keep draft for now.
+
+**Story B - Implementation (only if Story A says go)**
+
+- [ ] If extraction is justified, add or extend one canonical repo-owned wrapper for Linux tarball/package/debug-sidecar assembly and make the workflow call it.
+- [ ] Update workflow names/comments/docs so the promoted release path and local replay command are obvious.
+- [ ] Re-run `release-binaries` on `target_scope=all` and confirm Linux and Darwin artifacts still pass.
+
+**Exit criteria**
+
+- [ ] A written promotion decision exists with local and GitHub proof.
+- [ ] If the workflow is promoted, the docs and local replay path match the workflow behavior.
+
+### 26) ORT external Abseil injection and upgrade unblock
+
+**Why this sprint exists now**
+
+- `abseil-cpp 20260107.1` is the most meaningful remaining dependency hygiene item that is still blocked.
+- The blocker is specific and technical: ORT fetches its own Abseil and creates an LTS namespace mismatch during linking.
+- This is worth revisiting only if the required patch surface stays controlled.
+
+**Sprint goal**
+
+- Determine whether ORT can be switched to the repo's external Abseil cleanly enough to justify the upgrade.
+
+**Story A - Investigation**
+
+- [ ] Audit ORT's current Abseil fetch path and compare it with the existing external-Protobuf injection pattern already carried in `bazel/onnxruntime.patch`.
+- [ ] Build the smallest possible prototype that forces ORT onto external Abseil and measure the patch delta, link stability, and maintenance cost.
+- [ ] Produce a go/no-go recommendation for the Abseil bump based on that prototype rather than on theory.
+
+**Story B - Implementation (only if Story A says go)**
+
+- [ ] Inject external Abseil into the ORT foreign_cc build, remove any superseded patch hunks, bump Abseil, and run canonical build/test/API proof.
+- [ ] Update `bazel/PATCH_DEBT.md` and the dependency-refresh notes with the new steady state or the sharper blocker description.
+
+**Exit criteria**
+
+- [ ] Either Abseil is upgraded with proof, or the blocker is documented precisely enough that future agents stop retrying blind.
+
+### 27) Env-dependent suite enablement and hosted-proof audit
+
+**Why this sprint exists now**
+
+- Core no-secrets and hosted API lanes are green, but env-dependent suites still sit in an ambiguous "supported in principle, not fully standardized" state.
+- The next step should be to define what is realistically supportable, not to add more ad hoc commands or undocumented secrets handling.
+
+**Sprint goal**
+
+- Decide which env-dependent suites deserve a first-class documented path and make that path reproducible.
+
+**Story A - Investigation**
+
+- [ ] Inventory the exact prerequisites for migration replay with a legacy binary, TEI/embedding suites, and secret-gated conversation flows.
+- [ ] Decide the minimum supported matrix: what belongs in local docs only, what belongs in a manual GitHub workflow lane, and what is still not worth supporting.
+- [ ] Produce a setup plan that reuses existing wrappers and workflows instead of creating shadow entrypoints.
+
+**Story B - Enablement (only if Story A says go)**
+
+- [ ] Update docs/workflows/secrets handling to support the chosen env-dependent lanes with one obvious command per lane.
+- [ ] Run the selected suites and record outcomes so they stop living as vague follow-up work.
+
+**Exit criteria**
+
+- [ ] No env-dependent suite remains in a hand-wavy "not yet tried" state without an explicit reason.
+
+### 28) Cross-platform debug-symbol policy parity
+
+**Why this sprint exists now**
+
+- Linux now has an explicit stripped-runtime plus debug-sidecar policy.
+- Darwin artifacts are working, but symbol handling there is still implicit rather than policy-driven.
+
+**Sprint goal**
+
+- Decide whether Linux-only split debug is enough or whether macOS should also ship explicit symbol sidecars.
+
+**Story A - Investigation**
+
+- [ ] Measure the current Darwin artifact/debug-symbol shape and compare the size/debuggability trade-off of the status quo versus explicit `dSYM` sidecars.
+- [ ] Decide the steady-state symbol policy per platform, including whether asymmetric Linux-only handling is acceptable.
+- [ ] Produce a go/no-go recommendation before changing the workflow.
+
+**Story B - Implementation (only if Story A says go)**
+
+- [ ] Implement the chosen Darwin symbol policy and update workflow/docs/validation accordingly.
+- [ ] Re-run the release workflow on the affected architectures and verify artifact usability.
+
+**Exit criteria**
+
+- [ ] The debug-symbol policy is explicit, documented, and validated for every shipped platform.
+
+### 29) Explicit compiler-config topology audit
+
+**Why this sprint exists now**
+
+- The repo now intentionally keeps GCC-only suppressions behind `build:gcc`, with the Docker wrapper auto-selecting that config for default non-clang lanes.
+- That is a reasonable short-term contract, but if compiler diversity grows it may become too implicit.
+
+**Sprint goal**
+
+- Decide whether the current wrapper-driven compiler selection is the right long-term contract or whether more explicit compiler configs and entrypoints would be clearer.
+
+**Story A - Investigation**
+
+- [ ] Audit how compiler selection currently works across the wrapper, GCC guardrail, clang guardrail, sanitizer lanes, docs, and workflows.
+- [ ] Identify where wrapper inference is helpful versus where it could hide policy or surprise future agents.
+- [ ] Produce a recommendation: keep the current model, or move to explicit compiler configs and entrypoints.
+
+**Story B - Implementation (only if Story A says go)**
+
+- [ ] Add the explicit compiler configs/scripts/workflow invocations needed by the chosen model.
+- [ ] Update docs and warning-policy notes so future warning work has one obvious place to land.
+
+**Exit criteria**
+
+- [ ] The compiler-config contract is explicit enough that future warning-policy changes do not drift silently.
+
+### 30) NuRaft post-cutover benchmark baseline refresh
+
+**Why this sprint exists now**
+
+- The NuRaft cutover is complete and working, but the branch still leans on a mixture of historical braft reference data and newer hosted confirmation runs.
+- A fresh post-cutover baseline may be worthwhile, but only if it changes benchmark policy or simplifies future comparisons.
+
+**Sprint goal**
+
+- Determine whether a focused benchmark refresh is worth the runner time and documentation churn.
+
+**Story A - Investigation**
+
+- [ ] Decide whether a new hosted/local benchmark baseline would materially change current benchmark policy or simply reconfirm the existing posture.
+- [ ] Define the smallest command/profile matrix that answers that question without recreating broad historical side-by-side noise.
+- [ ] Choose the comparison strategy for a fair NuRaft-only baseline.
+
+**Story B - Benchmark replay (only if Story A says go)**
+
+- [ ] Run the selected benchmark matrix and update `benchmark/BENCHMARK_RESULTS.md` only if the results become the new canonical post-cutover baseline or change a policy decision.
+
+**Exit criteria**
+
+- [ ] Benchmark docs either gain a new NuRaft baseline with rationale, or explicitly record why the refresh was not worth doing.
 
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now:** no open Priority Queue item remains after items **23** and **24** were closed locally on March 14, 2026. Pick the next unblocked candidate from the Later backlog or add a new explicit queue item before starting unrelated modernization work.
+- **Active now:** item **25** (`Release workflow promotion and repo-owned replay extraction`) is the recommended next lane. Items **26** through **30** are investigation-first follow-ups queued behind it in priority order.
 - **Recently finished:** item **24** (`Release artifact debug-info policy`) — Linux release artifacts now use split debug info: stripped runtime tarball/package path plus a separate `.debug.tar.gz` sidecar, implemented directly in `release-binaries.yml` and measured locally at `427M -> 151M + 297M`. Item **23** (`Compile warning audit / cleanup`) — normal, ASAN, and TSAN local warning audits are now clean apart from the known Bazel/OpenJDK banner after scoping sanitizer-only suppressions to GCC 14/libstdc++ regex false positives and TSAN Abseil `-Wtsan` noise. Item **22** (`Release workflow promotion / current-tip full-matrix replay`) — run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`; the matching publish dry-run on version label `0.0.0-a2832b63` logged all `12` expected uploads after the RPM-glob fix. Item **20** (`Sanitizer lane stabilization + ORT extensions boundary audit`) — default ASAN is green again after removing `new_delete_type_mismatch=0` from `.bazelrc`, and the remaining ORT issue was resolved by rewriting fetched `OrtOpLoader` statics to process lifetime inside `bazel/onnxruntime.patch`. Item **21** (`NuRaft import/runtime parity + benchmark refactor sprint`) — hosted `benchmark-testing` is green on `27bb2bff` after the final replay-model fix. Item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
 - **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule. NuRaft async/streaming parity verified against upstream (both synchronous, full match).
-- **Later (planned but not started):** Monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep sanitizer-only suppressions file-scoped and dependency-scoped rather than broad. Env-dependent test suites (blocked on infrastructure). Abseil `20260107.1` upgrade (blocked by ORT ABI mismatch). Release workflow follow-up: keep local Linux replay as the first validation step, because stale smoke-test assertions like the old `Command line usage:` grep can break packaging even when the binary itself is healthy, and consider extracting Linux tarball/package assembly into a repo-owned wrapper so CI and local replay stop depending on workflow-only shell blocks.
+- **Later (planned but not started):** Replace patch-only forks with released upstream versions where possible (`bazel/PATCH_DEBT.md` is the owner). Monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep any suppression file-scoped and dependency-scoped rather than broad. Mine `TODO.md` only when an item clearly aligns with the modernization queue above.
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
   - `TODO.md` upstream product backlog (not the modernization source of truth; mine opportunistically only when an item aligns with current modernization goals).
