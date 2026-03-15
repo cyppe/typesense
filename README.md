@@ -130,8 +130,8 @@ You'll also see a list of user logos on the [Typesense Cloud](https://cloud.type
 
 ## Install
 
-**Option 1:** You can download the [binary packages](https://typesense.org/downloads) that we publish for 
-Linux (x86_64 & arm64) and Mac (x86_64).
+**Option 1:** You can download the [binary packages](https://typesense.org/downloads) that we publish for
+Linux (x86_64, arm64, and arm64 `lg-page16`) and macOS (x86_64 and arm64).
 
 **Option 2:** You can also run Typesense from our [official Docker image](https://hub.docker.com/r/typesense/typesense).
 

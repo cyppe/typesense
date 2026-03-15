@@ -12,6 +12,7 @@ REPOSITORY_CACHE="${TYPESENSE_BAZEL_REPOSITORY_CACHE:-${OUTPUT_ROOT}/repository-
 BAZELISK_HOME_DIR="${TYPESENSE_BAZELISK_HOME:-${OUTPUT_ROOT}/bazelisk}"
 DOCKERFILE_PATH="${TYPESENSE_BAZEL_DOCKERFILE:-docker/ci-bazel.Dockerfile}"
 DOCKER_CONTEXT="${TYPESENSE_BAZEL_DOCKER_CONTEXT:-docker}"
+DOCKER_PLATFORM="${TYPESENSE_DOCKER_PLATFORM:-}"
 REPO_ENV_CONLYOPTS="${TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS:--std=gnu17}"
 SKIP_DEFAULT_GCC_CONFIG="${TYPESENSE_BAZEL_SKIP_DEFAULT_GCC_CONFIG:-}"
 
@@ -36,18 +37,43 @@ Environment:
   TYPESENSE_BAZEL_CACHE_DIR           Override host cache/output root
   TYPESENSE_BAZEL_DOCKERFILE          Override Dockerfile path
   TYPESENSE_BAZEL_DOCKER_CONTEXT      Override Docker build context
+  TYPESENSE_DOCKER_PLATFORM           Override Docker build/run platform (for example linux/arm64)
   TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS  Override C-only repo env opts
   TYPESENSE_BAZEL_SKIP_DEFAULT_GCC_CONFIG
                                       Disable the wrapper's default --config=gcc
 EOF
 }
 
+platform_arch() {
+	case "$1" in
+		linux/amd64)
+			echo "amd64"
+			;;
+		linux/arm64)
+			echo "arm64"
+			;;
+		"")
+			return 1
+			;;
+		*)
+			echo "Unsupported TYPESENSE_DOCKER_PLATFORM: $1" >&2
+			exit 1
+			;;
+	esac
+}
+
 build_image() {
-	docker build \
+	local build_args=(
+		docker build
 		--pull \
 		--file "${PROJECT_DIR}/${DOCKERFILE_PATH}" \
 		--tag "${IMAGE}" \
-		"${PROJECT_DIR}/${DOCKER_CONTEXT}"
+	)
+	if [[ -n "${DOCKER_PLATFORM}" ]]; then
+		build_args+=(--platform "${DOCKER_PLATFORM}")
+	fi
+	build_args+=("${PROJECT_DIR}/${DOCKER_CONTEXT}")
+	"${build_args[@]}"
 }
 
 if [[ "${1:-}" == "--help" ]] || [[ "${1:-}" == "-h" ]]; then
@@ -67,7 +93,18 @@ fi
 
 mkdir -p "${CACHE_DIR}" "${DISK_CACHE}" "${REPOSITORY_CACHE}" "${BAZELISK_HOME_DIR}"
 
+image_needs_build=0
 if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+	image_needs_build=1
+elif [[ -n "${DOCKER_PLATFORM}" ]]; then
+	requested_arch="$(platform_arch "${DOCKER_PLATFORM}")"
+	actual_arch="$(docker image inspect --format '{{.Architecture}}' "${IMAGE}")"
+	if [[ "${actual_arch}" != "${requested_arch}" ]]; then
+		image_needs_build=1
+	fi
+fi
+
+if ((image_needs_build)); then
 	build_image
 fi
 
@@ -111,13 +148,24 @@ if [[ -n "${BAZELISK_GITHUB_TOKEN:-}" ]]; then
 	docker_env_args+=("-e" "BAZELISK_GITHUB_TOKEN=${BAZELISK_GITHUB_TOKEN}")
 fi
 
-docker run \
-	--rm \
-	--user "$(id -u):$(id -g)" \
-	"${docker_env_args[@]}" \
-	-v "${PROJECT_DIR}:${WORKDIR}" \
-	-v "${CACHE_DIR}:${OUTPUT_ROOT}" \
-	-w "${WORKDIR}" \
-	"${IMAGE}" \
-	--output_user_root="${OUTPUT_ROOT}" \
+docker_run_args=(
+	docker run
+	--rm
+	--user "$(id -u):$(id -g)"
+	"${docker_env_args[@]}"
+	-v "${PROJECT_DIR}:${WORKDIR}"
+	-v "${CACHE_DIR}:${OUTPUT_ROOT}"
+	-w "${WORKDIR}"
+)
+
+if [[ -n "${DOCKER_PLATFORM}" ]]; then
+	docker_run_args+=(--platform "${DOCKER_PLATFORM}")
+fi
+
+docker_run_args+=(
+	"${IMAGE}"
+	--output_user_root="${OUTPUT_ROOT}"
 	"${bazel_args[@]}"
+)
+
+"${docker_run_args[@]}"

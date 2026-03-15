@@ -88,11 +88,13 @@ TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --s
 
 # release-binaries.yml (local Linux replay)
 scripts/release_linux_artifacts.sh --build --version-label 0.0.0-local
+scripts/release_linux_artifacts.sh --build --target-arch arm64 --jemalloc-lg-page16 --version-label 0.0.0-local
 ```
 
 The workflow YAML also layers GitHub-specific cache and artifact plumbing on top of these commands, but the wrappers above are the primary repro paths.
 The benchmark wrapper now builds and runs its Bun CLI in Docker by default, so the host does not need Bun installed unless you intentionally use `--host-bun`.
 The Linux release wrapper keeps packaging tools inside containers, so the host does not need `alien`, `rpm`, `dpkg-dev`, `objcopy`, or `strip` installed separately.
+Cross-arch local replays of `linux-arm64` or `linux-arm64-lg-page16` from an x86_64 host require Docker arm64 emulation to be enabled.
 Darwin release lanes still require native macOS runners. Their current artifact contract is the unstripped `typesense-server` tarball with embedded DWARF plus `typesense-server.md5.txt`; the repo does not currently produce a `.dSYM` sidecar.
 
 ## 8) Sanitizer lanes

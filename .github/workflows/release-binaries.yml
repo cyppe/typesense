@@ -31,6 +31,7 @@ on:
           - linux
           - linux-amd64
           - linux-arm64
+          - linux-arm64-lg-page16
           - darwin
           - darwin-amd64
           - darwin-arm64
@@ -61,7 +62,10 @@ jobs:
                   "runner": "ubuntu-24.04",
                   "target_os": "linux",
                   "target_arch": "amd64",
+                  "docker_platform": "linux/amd64",
+                  "release_suffix": "",
                   "rpm_arch": "x86_64",
+                  "enable_jemalloc_lg_page16": False,
                   "uses_docker_bazel": True,
               },
               {
@@ -69,7 +73,21 @@ jobs:
                   "runner": "ubuntu-24.04-arm",
                   "target_os": "linux",
                   "target_arch": "arm64",
+                  "docker_platform": "linux/arm64",
+                  "release_suffix": "",
                   "rpm_arch": "aarch64",
+                  "enable_jemalloc_lg_page16": False,
+                  "uses_docker_bazel": True,
+              },
+              {
+                  "artifact_name": "linux-arm64-lg-page16",
+                  "runner": "ubuntu-24.04-arm",
+                  "target_os": "linux",
+                  "target_arch": "arm64",
+                  "docker_platform": "linux/arm64",
+                  "release_suffix": "-lg-page16",
+                  "rpm_arch": "aarch64",
+                  "enable_jemalloc_lg_page16": True,
                   "uses_docker_bazel": True,
               },
               {
@@ -77,6 +95,9 @@ jobs:
                   "runner": "macos-14",
                   "target_os": "darwin",
                   "target_arch": "arm64",
+                  "docker_platform": "",
+                  "release_suffix": "",
+                  "enable_jemalloc_lg_page16": False,
                   "uses_docker_bazel": False,
                   "openssl_prefix": "/opt/homebrew/opt/openssl@3",
                   "icu_prefix": "/opt/homebrew/opt/icu4c",
@@ -86,6 +107,9 @@ jobs:
                   "runner": "macos-15-intel",
                   "target_os": "darwin",
                   "target_arch": "amd64",
+                  "docker_platform": "",
+                  "release_suffix": "",
+                  "enable_jemalloc_lg_page16": False,
                   "uses_docker_bazel": False,
                   "openssl_prefix": "/usr/local/opt/openssl@3",
                   "icu_prefix": "/usr/local/opt/icu4c",
@@ -124,7 +148,11 @@ jobs:
 
       - name: Build CI Bazel image
         if: matrix.uses_docker_bazel
-        run: scripts/bazel_in_docker.sh --build-image-only
+        run: |
+          if [ -n "${{ matrix.docker_platform }}" ]; then
+            export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
+          fi
+          scripts/bazel_in_docker.sh --build-image-only
 
       - name: Install macOS build dependencies
         if: ${{ !matrix.uses_docker_bazel }}
@@ -132,7 +160,15 @@ jobs:
 
       - name: Build Typesense server in Docker
         if: matrix.uses_docker_bazel
-        run: scripts/bazel_in_docker.sh build //:typesense-server
+        run: |
+          if [ -n "${{ matrix.docker_platform }}" ]; then
+            export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
+          fi
+          args=(build //:typesense-server)
+          if [ "${{ matrix.enable_jemalloc_lg_page16 }}" = "true" ]; then
+            args+=(--define=enable_jemalloc_lg_page16=1)
+          fi
+          scripts/bazel_in_docker.sh "${args[@]}"
 
       - name: Build Typesense server on macOS
         if: ${{ !matrix.uses_docker_bazel }}
@@ -162,6 +198,9 @@ jobs:
         if: matrix.target_os == 'linux'
         run: |
           args=(--version-label "${{ inputs.version_label }}" --target-arch "${{ matrix.target_arch }}")
+          if [ "${{ matrix.enable_jemalloc_lg_page16 }}" = "true" ]; then
+            args+=(--jemalloc-lg-page16)
+          fi
           if [ "${{ inputs.build_linux_packages }}" != "true" ]; then
             args+=(--skip-packages)
           fi
@@ -198,12 +237,12 @@ jobs:
         if: matrix.target_os == 'darwin'
         run: |
           mkdir -p "${{ github.workspace }}/artifacts"
-          tar -czf "${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz" -C "${{ github.workspace }}/release/${{ matrix.artifact_name }}" .
+          tar -czf "${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}.tar.gz" -C "${{ github.workspace }}/release/${{ matrix.artifact_name }}" .
           python - <<'PY'
           import hashlib
           from pathlib import Path
 
-          archive = Path(r"${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz")
+          archive = Path(r"${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}.tar.gz")
           digest = hashlib.sha256(archive.read_bytes()).hexdigest()
           Path(str(archive) + ".sha256.txt").write_text(f"{digest}  {archive.name}\n")
           PY
@@ -216,7 +255,7 @@ jobs:
           import tarfile
           from pathlib import Path
 
-          archive = Path(r"${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz")
+          archive = Path(r"${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}.tar.gz")
           with tarfile.open(archive, "r:gz") as tf:
               members = {member.name.lstrip("./"): member for member in tf.getmembers() if member.isfile()}
               if "typesense-server" not in members:
@@ -234,36 +273,36 @@ jobs:
         if: inputs.upload_artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}
+          name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}
           path: |
-            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz
-            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.tar.gz.sha256.txt
+            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}.tar.gz
+            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}.tar.gz.sha256.txt
           retention-days: 14
 
       - name: Upload Linux debug symbols
         if: matrix.target_os == 'linux' && inputs.upload_artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-debug
+          name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}-debug
           path: |
-            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug.tar.gz
-            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}.debug.tar.gz.sha256.txt
+            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}.debug.tar.gz
+            ${{ github.workspace }}/artifacts/typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}.debug.tar.gz.sha256.txt
           retention-days: 14
 
       - name: Upload Linux package artifacts
         if: matrix.target_os == 'linux' && inputs.build_linux_packages && inputs.upload_artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}-packages
+          name: typesense-server-${{ inputs.version_label }}-${{ matrix.target_os }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}-packages
           path: |
-            ${{ github.workspace }}/artifacts/packages/typesense-server-${{ inputs.version_label }}-${{ matrix.target_arch }}.deb
+            ${{ github.workspace }}/artifacts/packages/typesense-server-${{ inputs.version_label }}-${{ matrix.target_arch }}${{ matrix.release_suffix }}.deb
             ${{ github.workspace }}/artifacts/packages/typesense-server-*.${{ matrix.rpm_arch }}.rpm
           retention-days: 14
 
 # Notes:
 # - This is the manual workflow for core binary artifacts only.
 # - It follows GitHub Actions best practices for native multi-platform builds: matrix fan-out, named artifacts, and separation of artifact build from any future publishing workflow.
-# - It does not yet automate GPU dependency artifacts, lg-page16 variants, Docker image publishing, or Homebrew tap updates.
+# - It now includes the upstream-style linux-arm64-lg-page16 server lane, but it does not yet automate GPU dependency artifacts, Docker image publishing, or Homebrew tap updates.
 # - Linux release tarballs/packages now ship the stripped runtime binary plus a separate `.debug` tarball sidecar that keeps split debug info keyed by the same BuildID.
 # - Linux lanes now use `scripts/release_linux_artifacts.sh` so local replay and workflow assembly stay container-backed and share one canonical artifact path.
 # - Darwin lanes intentionally ship the current unstripped `typesense-server` tarball with embedded DWARF and no `.dSYM` sidecar; revisit only when there is a concrete size/symbolication need plus a macOS-native validation lane.

@@ -10,6 +10,9 @@ VERSION_LABEL="snapshot"
 TARGET_ARCH=""
 BUILD_BEFORE_ASSEMBLY=0
 BUILD_LINUX_PACKAGES=1
+ENABLE_JEMALLOC_LG_PAGE16=0
+ARTIFACT_SUFFIX=""
+DOCKER_PLATFORM=""
 
 usage() {
 	cat <<'EOF'
@@ -18,6 +21,7 @@ Usage:
 
 Options:
   --build                    Build //:typesense-server first via scripts/bazel_in_docker.sh
+  --jemalloc-lg-page16       Build/package the arm64 lg-page16 server variant
   --skip-packages            Skip DEB/RPM generation
   --version-label <label>    Version label used in artifact names (default: snapshot)
   --target-arch <arch>       Target arch label (amd64 or arm64; default: host arch)
@@ -26,11 +30,13 @@ Options:
 Examples:
   scripts/release_linux_artifacts.sh --build --version-label 0.0.0-local
   scripts/release_linux_artifacts.sh --version-label 0.0.0-b03f9a9a --target-arch amd64
+  scripts/release_linux_artifacts.sh --build --target-arch arm64 --jemalloc-lg-page16 --version-label 0.0.0-local
 
 Notes:
   - This is the canonical local Linux replay for release-binaries.yml.
   - It keeps release assembly container-backed so the host only needs Docker.
-  - Output paths match the workflow: release/linux-<arch> and artifacts/.
+  - Cross-arch local replay requires Docker arm64 emulation when host and target differ.
+  - Output paths match the workflow: release/linux-<arch><suffix> and artifacts/.
 EOF
 }
 
@@ -53,6 +59,10 @@ while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--build)
 			BUILD_BEFORE_ASSEMBLY=1
+			shift
+			;;
+		--jemalloc-lg-page16)
+			ENABLE_JEMALLOC_LG_PAGE16=1
 			shift
 			;;
 		--skip-packages)
@@ -96,12 +106,50 @@ case "${TARGET_ARCH}" in
 		;;
 esac
 
-if ((BUILD_BEFORE_ASSEMBLY)); then
-	"${PROJECT_DIR}/scripts/bazel_in_docker.sh" build //:typesense-server
+if ((ENABLE_JEMALLOC_LG_PAGE16)); then
+	if [[ "${TARGET_ARCH}" != "arm64" ]]; then
+		echo "--jemalloc-lg-page16 is only supported with --target-arch arm64" >&2
+		exit 1
+	fi
+	ARTIFACT_SUFFIX="-lg-page16"
 fi
 
+DOCKER_PLATFORM="linux/${TARGET_ARCH}"
+
+if ((BUILD_BEFORE_ASSEMBLY)); then
+	build_args=(build //:typesense-server)
+	if ((ENABLE_JEMALLOC_LG_PAGE16)); then
+		build_args+=(--define=enable_jemalloc_lg_page16=1)
+	fi
+	TYPESENSE_DOCKER_PLATFORM="${DOCKER_PLATFORM}" \
+		"${PROJECT_DIR}/scripts/bazel_in_docker.sh" "${build_args[@]}"
+fi
+
+image_needs_build=0
 if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
-	"${PROJECT_DIR}/scripts/bazel_in_docker.sh" --build-image-only
+	image_needs_build=1
+else
+	actual_arch="$(docker image inspect --format '{{.Architecture}}' "${IMAGE}")"
+	case "${DOCKER_PLATFORM}" in
+		linux/amd64)
+			expected_arch="amd64"
+			;;
+		linux/arm64)
+			expected_arch="arm64"
+			;;
+		*)
+			echo "Unsupported Docker platform: ${DOCKER_PLATFORM}" >&2
+			exit 1
+			;;
+	esac
+	if [[ "${actual_arch}" != "${expected_arch}" ]]; then
+		image_needs_build=1
+	fi
+fi
+
+if ((image_needs_build)); then
+	TYPESENSE_DOCKER_PLATFORM="${DOCKER_PLATFORM}" \
+		"${PROJECT_DIR}/scripts/bazel_in_docker.sh" --build-image-only
 fi
 
 mkdir -p "${CACHE_DIR}"
@@ -111,29 +159,34 @@ if ((BUILD_LINUX_PACKAGES)); then
 	BUILD_PACKAGES_ENV=1
 fi
 
-docker run \
-	--rm \
-	--user 0:0 \
-	--entrypoint /bin/bash \
-	-e "VERSION_LABEL=${VERSION_LABEL}" \
-	-e "TARGET_ARCH=${TARGET_ARCH}" \
-	-e "BUILD_LINUX_PACKAGES=${BUILD_PACKAGES_ENV}" \
-	-e "TYPESENSE_BAZEL_CACHE_DIR=${CACHE_DIR}" \
-	-e "HOST_UID=$(id -u)" \
-	-e "HOST_GID=$(id -g)" \
-	-v "${PROJECT_DIR}:${WORKDIR}" \
-	-v "${CACHE_DIR}:${CACHE_DIR}" \
-	-w "${WORKDIR}" \
-	"${IMAGE}" \
-	-lc '
+# shellcheck disable=SC2016
+docker_run_args=(
+	docker run
+	--rm
+	--user 0:0
+	--entrypoint /bin/bash
+	-e "VERSION_LABEL=${VERSION_LABEL}"
+	-e "TARGET_ARCH=${TARGET_ARCH}"
+	-e "ARTIFACT_SUFFIX=${ARTIFACT_SUFFIX}"
+	-e "BUILD_LINUX_PACKAGES=${BUILD_PACKAGES_ENV}"
+	-e "TYPESENSE_BAZEL_CACHE_DIR=${CACHE_DIR}"
+	-e "HOST_UID=$(id -u)"
+	-e "HOST_GID=$(id -g)"
+	-v "${PROJECT_DIR}:${WORKDIR}"
+	-v "${CACHE_DIR}:${CACHE_DIR}"
+	-w "${WORKDIR}"
+	--platform "${DOCKER_PLATFORM}"
+	"${IMAGE}"
+	-lc
+	'
 set -euo pipefail
 
-RELEASE_DIR="${PWD}/release/linux-${TARGET_ARCH}"
+RELEASE_DIR="${PWD}/release/linux-${TARGET_ARCH}${ARTIFACT_SUFFIX}"
 ARTIFACT_DIR="${PWD}/artifacts"
 DEBUG_DIR="${ARTIFACT_DIR}/debug"
 PACKAGE_DIR="${ARTIFACT_DIR}/packages"
 SERVER_BINARY="${PWD}/bazel-bin/typesense-server"
-ARTIFACT_BASENAME="typesense-server-${VERSION_LABEL}-linux-${TARGET_ARCH}"
+ARTIFACT_BASENAME="typesense-server-${VERSION_LABEL}-linux-${TARGET_ARCH}${ARTIFACT_SUFFIX}"
 DEBUG_BASENAME="${ARTIFACT_BASENAME}.debug"
 TARBALL="${ARTIFACT_DIR}/${ARTIFACT_BASENAME}.tar.gz"
 DEBUG_TARBALL="${ARTIFACT_DIR}/${DEBUG_BASENAME}.tar.gz"
@@ -143,6 +196,17 @@ if [[ ! -f "${SERVER_BINARY}" ]]; then
 	echo "Build it first with scripts/bazel_in_docker.sh build //:typesense-server or pass --build." >&2
 	exit 1
 fi
+
+ACTUAL_BINARY_DESCRIPTION="$(file -b "${SERVER_BINARY}")"
+echo "${ACTUAL_BINARY_DESCRIPTION}"
+case "${TARGET_ARCH}" in
+	amd64)
+		echo "${ACTUAL_BINARY_DESCRIPTION}" | grep -q "x86-64"
+		;;
+	arm64)
+		echo "${ACTUAL_BINARY_DESCRIPTION}" | grep -q "ARM aarch64"
+		;;
+esac
 
 if [[ "${BUILD_LINUX_PACKAGES}" == "1" ]]; then
 	apt-get update >/tmp/release-linux-artifacts.apt-update.log
@@ -229,6 +293,7 @@ readelf -S "${RELEASE_DIR}/typesense-server" | grep -q "\\.gnu_debuglink"
 if [[ "${BUILD_LINUX_PACKAGES}" == "1" ]]; then
 	TSV="${VERSION_LABEL}" \
 	ARCH="${TARGET_ARCH}" \
+	ARTIFACT_SUFFIX="${ARTIFACT_SUFFIX}" \
 	RELEASE_ARTIFACT_DIR="${ARTIFACT_DIR}" \
 	RELEASE_PACKAGE_DIR="${PACKAGE_DIR}" \
 	bash debian-pkg/generate_deb_rpm.sh
@@ -241,3 +306,6 @@ if [[ "${BUILD_LINUX_PACKAGES}" == "1" ]]; then
 	find "${PACKAGE_DIR}" -maxdepth 1 -type f \( -name "typesense-server-${VERSION_LABEL}-*.deb" -o -name "typesense-server-*.rpm" \) -print0 | xargs -0 ls -lh
 fi
 '
+)
+
+"${docker_run_args[@]}"
