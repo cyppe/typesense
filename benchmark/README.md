@@ -113,19 +113,8 @@ Key files:
 bun test
 ```
 
-## NuRaft Prototype Benchmark
-
-The NuRaft feasibility sprint uses a separate Bazel target instead of this HTTP benchmark CLI:
-
-```bash
-scripts/bazel_in_docker.sh build //:nuraft-prototype-benchmark
-scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=all --docs=1000 --post-snapshot-docs=100
-scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-pressure --docs=1000 --post-snapshot-docs=200 --snapshot-rounds=3
-scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-policy-compare --docs=1000 --post-snapshot-docs=200 --snapshot-rounds=3
-```
-
-This target measures the isolated prototype's append/apply path, snapshot-install/recovery path, repeated timed-snapshot pressure during follower outage, and direct comparison between leader-only and `require-healthy-peers` timed-snapshot policy. It is intentionally separate from `scripts/benchmark_vs_upstream.sh`, which still benchmarks the normal HTTP server binaries.
-
 ## Historical Raft Comparison Notes
 
-The old `raft-recovery`, `raft-api-replay`, and `raft-runtime-contention` wrapper profiles were retired when this branch removed the in-tree `braft`/`brpc` runtime. Historical side-by-side results still live in `benchmark/BENCHMARK_RESULTS.md` as archival decision evidence for the cutover.
+The old `//:nuraft-prototype-benchmark` target and the `raft-recovery`, `raft-api-replay`, and `raft-runtime-contention` wrapper profiles were retired when this branch removed the in-tree `braft`/`brpc` runtime. Historical side-by-side results still live in `benchmark/BENCHMARK_RESULTS.md` as archival decision evidence for the cutover.
+
+On `v32`, Run 27 in `benchmark/BENCHMARK_RESULTS.md` remains the canonical post-cutover benchmark baseline. Do not recreate the deleted prototype target just to refresh dates; rerun `scripts/benchmark_vs_upstream.sh` only when benchmark-sensitive import/search/runtime changes need fresh evidence.

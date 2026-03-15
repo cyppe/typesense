@@ -207,18 +207,11 @@ You can still append extra Bazel test options after the filter when needed, for 
 test/scripts/replay_typesense_test.sh FilterTest.FilterTreeIteratorTimeout --runs_per_test=20
 ```
 
-## 11) NuRaft prototype microbenchmark
+## 11) Historical NuRaft prototype note
 
-Use this only for the isolated NuRaft feasibility sprint. It does not replace the normal HTTP benchmark wrapper in `scripts/benchmark_vs_upstream.sh`.
+The old `//:nuraft-prototype-benchmark` target was deleted when this branch became NuRaft-only. Do not use it for routine benchmark refreshes.
 
-```bash
-scripts/bazel_in_docker.sh build //:nuraft-prototype-benchmark
-scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=all --docs=1000 --post-snapshot-docs=100
-scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-pressure --docs=1000 --post-snapshot-docs=200 --snapshot-rounds=3
-scripts/bazel_in_docker.sh run //:nuraft-prototype-benchmark -- --mode=snapshot-policy-compare --docs=1000 --post-snapshot-docs=200 --snapshot-rounds=3
-```
-
-The binary emits JSON for append/apply throughput, snapshot-recovery timing, repeated timed-snapshot pressure while a follower stays unhealthy, and direct leader-only vs `require-healthy-peers` outage comparison, so Story E can measure the prototype without pretending the normal HTTP benchmark lane already covers NuRaft.
+Current benchmark work stays on `scripts/benchmark_vs_upstream.sh`, and Run 27 in `benchmark/BENCHMARK_RESULTS.md` remains the canonical post-cutover baseline until benchmark-sensitive HTTP import/search/runtime changes justify a fresh replay.
 
 ## 12) NuRaft HTTP runtime smoke
 
