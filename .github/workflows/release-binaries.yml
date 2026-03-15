@@ -266,4 +266,5 @@ jobs:
 # - It does not yet automate GPU dependency artifacts, lg-page16 variants, Docker image publishing, or Homebrew tap updates.
 # - Linux release tarballs/packages now ship the stripped runtime binary plus a separate `.debug` tarball sidecar that keeps split debug info keyed by the same BuildID.
 # - Linux lanes now use `scripts/release_linux_artifacts.sh` so local replay and workflow assembly stay container-backed and share one canonical artifact path.
+# - Darwin lanes intentionally ship the current unstripped `typesense-server` tarball with embedded DWARF and no `.dSYM` sidecar; revisit only when there is a concrete size/symbolication need plus a macOS-native validation lane.
 # - Windows support in upstream docs is via WSL, not a native Windows server binary, so no native Windows artifact is produced here.
