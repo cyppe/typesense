@@ -43,7 +43,7 @@ bazel test --cache_test_results=no --test_output=all //:typesense-test --test_ti
 ## 4) GitHub trigger policy
 
 - `tests.yml` is the only automatic CI gate. It runs on `push` and can also be started manually with `workflow_dispatch`.
-- `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, `release-binaries.yml`, and `release-gpu-deps.yml` are manual-only workflows.
+- `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, and `release-binaries.yml` are manual-only workflows.
 - Prefer replaying the matching local wrapper command before dispatching a heavy manual workflow. This repo's wrappers are the canonical local equivalents of the GitHub lanes.
 
 ## 5) Known gotcha: GCC 15 + rules_foreign_cc pkgconfig
@@ -86,12 +86,12 @@ TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --p
 # local benchmark repro against the same latest local binary
 TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick --scope core
 
-# release-binaries.yml (local Linux replay; Linux server artifacts are built with CUDA-capable ORT)
+# release-binaries.yml (local release replay; use these two wrappers for the Linux server artifact class and the optional Linux GPU deps artifact class)
 scripts/release_linux_artifacts.sh --build --with-cuda --version-label 0.0.0-local
 scripts/release_linux_artifacts.sh --build --with-cuda --target-arch arm64 --version-label 0.0.0-local
 scripts/release_linux_artifacts.sh --build --with-cuda --target-arch arm64 --jemalloc-lg-page16 --version-label 0.0.0-local
 
-# release-gpu-deps.yml (local Linux GPU deps replay; ONNX Runtime embeddings/personalization only)
+# optional Linux GPU deps replay used by release-binaries.yml's gpu-deps job
 scripts/release_linux_gpu_deps.sh --build --version-label 0.0.0-local
 scripts/release_linux_gpu_deps.sh --build --target-arch arm64 --emit-lg-page16-alias --version-label 0.0.0-local
 ```

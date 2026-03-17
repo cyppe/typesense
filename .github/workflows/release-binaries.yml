@@ -16,6 +16,16 @@ on:
         required: false
         default: true
         type: boolean
+      build_server_artifacts:
+        description: Build the regular typesense-server release artifacts
+        required: false
+        default: true
+        type: boolean
+      build_gpu_deps:
+        description: Build the optional Linux typesense-gpu-deps artifacts
+        required: false
+        default: true
+        type: boolean
       build_linux_packages:
         description: Build DEB and RPM artifacts for Linux lanes
         required: false
@@ -45,18 +55,23 @@ jobs:
     name: select-targets
     runs-on: ubuntu-24.04
     outputs:
-      matrix: ${{ steps.select.outputs.matrix }}
+      core_matrix: ${{ steps.select.outputs.core_matrix }}
+      core_enabled: ${{ steps.select.outputs.core_enabled }}
+      gpu_matrix: ${{ steps.select.outputs.gpu_matrix }}
+      gpu_enabled: ${{ steps.select.outputs.gpu_enabled }}
     steps:
       - name: Select target matrix
         id: select
         env:
           TARGET_SCOPE: ${{ inputs.target_scope }}
+          BUILD_SERVER_ARTIFACTS: ${{ inputs.build_server_artifacts }}
+          BUILD_GPU_DEPS: ${{ inputs.build_gpu_deps }}
         run: |
           python3 - <<'PY'
           import json
           import os
 
-          targets = [
+          core_targets = [
               {
                   "artifact_name": "linux-amd64",
                   "runner": "ubuntu-24.04",
@@ -116,26 +131,61 @@ jobs:
               },
           ]
 
+          gpu_targets = [
+              {
+                  "artifact_name": "linux-amd64",
+                  "runner": "ubuntu-24.04",
+                  "target_arch": "amd64",
+                  "docker_platform": "linux/amd64",
+                  "rpm_arch": "x86_64",
+                  "emit_lg_page16_alias": False,
+              },
+              {
+                  "artifact_name": "linux-arm64",
+                  "runner": "ubuntu-24.04-arm",
+                  "target_arch": "arm64",
+                  "docker_platform": "linux/arm64",
+                  "rpm_arch": "aarch64",
+                  "emit_lg_page16_alias": True,
+              },
+          ]
+
           scope = os.environ["TARGET_SCOPE"] or "all"
-          selected = [
-              target for target in targets
+          build_server_artifacts = os.environ["BUILD_SERVER_ARTIFACTS"].lower() == "true"
+          build_gpu_deps = os.environ["BUILD_GPU_DEPS"].lower() == "true"
+
+          selected_core = [
+              target for target in core_targets
               if scope in ("all", target["target_os"], target["artifact_name"])
           ]
-          if not selected:
-              raise SystemExit(f"No release targets matched target_scope={scope!r}")
+
+          selected_gpu = []
+          for target in gpu_targets:
+              if scope in ("all", "linux", target["artifact_name"]):
+                  selected_gpu.append(target)
+                  continue
+              if scope == "linux-arm64-lg-page16" and target["target_arch"] == "arm64":
+                  selected_gpu.append(target)
+
+          if build_server_artifacts and not selected_core:
+              raise SystemExit(f"No core release targets matched target_scope={scope!r}")
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-              fh.write(f"matrix={json.dumps({'include': selected})}\n")
+              fh.write(f"core_matrix={json.dumps({'include': selected_core if build_server_artifacts else []})}\n")
+              fh.write(f"core_enabled={'true' if build_server_artifacts and selected_core else 'false'}\n")
+              fh.write(f"gpu_matrix={json.dumps({'include': selected_gpu if build_gpu_deps else []})}\n")
+              fh.write(f"gpu_enabled={'true' if build_gpu_deps and selected_gpu else 'false'}\n")
           PY
 
   core-binaries:
+    if: needs.select_targets.outputs.core_enabled == 'true'
     needs: select_targets
     name: ${{ matrix.artifact_name }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       max-parallel: 2
-      matrix: ${{ fromJSON(needs.select_targets.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.select_targets.outputs.core_matrix) }}
     env:
       TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel-cuda:ci
       TYPESENSE_BAZEL_DOCKERFILE: docker/ci-bazel-cuda.Dockerfile
@@ -301,10 +351,88 @@ jobs:
             ${{ github.workspace }}/artifacts/packages/typesense-server-*.${{ matrix.rpm_arch }}.rpm
           retention-days: 14
 
+  gpu-deps:
+    if: needs.select_targets.outputs.gpu_enabled == 'true'
+    needs: select_targets
+    name: gpu-${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.select_targets.outputs.gpu_matrix) }}
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel-cuda:ci
+      TYPESENSE_BAZEL_DOCKERFILE: docker/ci-bazel-cuda.Dockerfile
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+
+      - name: Build CI Bazel image
+        run: |
+          export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
+          scripts/bazel_in_docker.sh --build-image-only
+
+      - name: Build GPU deps artifacts
+        run: |
+          args=(--build --version-label "${{ inputs.version_label }}" --target-arch "${{ matrix.target_arch }}")
+          if [ "${{ matrix.emit_lg_page16_alias }}" = "true" ]; then
+            args+=(--emit-lg-page16-alias)
+          fi
+          if [ "${{ inputs.build_linux_packages }}" != "true" ]; then
+            args+=(--skip-packages)
+          fi
+          export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
+          bash scripts/release_linux_gpu_deps.sh "${args[@]}"
+
+      - name: Upload primary GPU deps artifact
+        if: inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: typesense-gpu-deps-${{ inputs.version_label }}-${{ matrix.artifact_name }}
+          path: |
+            ${{ github.workspace }}/artifacts/typesense-gpu-deps-${{ inputs.version_label }}-linux-${{ matrix.target_arch }}.tar.gz
+            ${{ github.workspace }}/artifacts/typesense-gpu-deps-${{ inputs.version_label }}-linux-${{ matrix.target_arch }}.tar.gz.sha256.txt
+          retention-days: 14
+
+      - name: Upload lg-page16 GPU deps artifact
+        if: matrix.emit_lg_page16_alias && inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: typesense-gpu-deps-${{ inputs.version_label }}-linux-arm64-lg-page16
+          path: |
+            ${{ github.workspace }}/artifacts/typesense-gpu-deps-${{ inputs.version_label }}-linux-arm64-lg-page16.tar.gz
+            ${{ github.workspace }}/artifacts/typesense-gpu-deps-${{ inputs.version_label }}-linux-arm64-lg-page16.tar.gz.sha256.txt
+          retention-days: 14
+
+      - name: Upload primary GPU deps packages
+        if: inputs.build_linux_packages && inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: typesense-gpu-deps-${{ inputs.version_label }}-${{ matrix.artifact_name }}-packages
+          path: |
+            ${{ github.workspace }}/artifacts/packages/typesense-gpu-deps-${{ inputs.version_label }}-${{ matrix.target_arch }}.deb
+            ${{ github.workspace }}/artifacts/packages/typesense-gpu-deps-${{ inputs.version_label }}-1.${{ matrix.rpm_arch }}.rpm
+          retention-days: 14
+
+      - name: Upload lg-page16 GPU deps packages
+        if: matrix.emit_lg_page16_alias && inputs.build_linux_packages && inputs.upload_artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: typesense-gpu-deps-${{ inputs.version_label }}-linux-arm64-lg-page16-packages
+          path: |
+            ${{ github.workspace }}/artifacts/packages/typesense-gpu-deps-${{ inputs.version_label }}-arm64-lg-page16.deb
+            ${{ github.workspace }}/artifacts/packages/typesense-gpu-deps-${{ inputs.version_label }}-1.lg.page16.aarch64.rpm
+          retention-days: 14
+
 # Notes:
-# - This is the manual workflow for core binary artifacts only.
+# - This is the single manual workflow entrypoint for release artifact builds.
+# - Core server artifacts and optional Linux GPU deps stay separate jobs and separate artifact classes, but one dispatch can build the full release set.
 # - It follows GitHub Actions best practices for native multi-platform builds: matrix fan-out, named artifacts, and separation of artifact build from any future publishing workflow.
-# - Linux server lanes build the regular typesense-server artifact with CUDA-aware ONNX Runtime support; publish the optional provider sidecars separately via release-gpu-deps.yml.
+# - Linux server lanes build the regular typesense-server artifact with CUDA-aware ONNX Runtime support, and the Linux-only gpu-deps job packages the optional ORT provider sidecars from the same repo-owned toolchain.
 # - Linux release tarballs/packages now ship the stripped runtime binary plus a separate `.debug` tarball sidecar that keeps split debug info keyed by the same BuildID.
 # - Linux lanes now use `scripts/release_linux_artifacts.sh` so local replay and workflow assembly stay container-backed and share one canonical artifact path.
 # - Darwin lanes intentionally ship the current unstripped `typesense-server` tarball with embedded DWARF and no `.dSYM` sidecar; revisit only when there is a concrete size/symbolication need plus a macOS-native validation lane.
