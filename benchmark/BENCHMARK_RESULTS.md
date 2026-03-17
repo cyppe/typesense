@@ -11,6 +11,52 @@ Historical note: Runs 14-26 below are archival pre-cutover measurements from whe
 
 ---
 
+## Run 28: USearch Vector Backend Closeout (repo-owned `vector_index_t`, 2026-03-17)
+
+**Commit:** local working tree on top of `c1a50e23` at run time
+**Command:** `scripts/bazel_in_docker.sh run //:usearch-vector-backend-benchmark -- --docs 20000 --dims 384 --cycles 10 --updates-per-cycle 400 --replacements-per-cycle 100 --searches-per-cycle 200 --k 20 --ef 80 --kernel-samples 4096 --kernel-repeats 64 --seed 42`
+**Scenario:** close out item 36 with a focused vector-backend benchmark that compares distance kernels and then drives the production USearch backend through repeated update, replacement, and search traffic.
+
+### Kernel Summary (2 reruns)
+
+| Kernel | Run 1 | Run 2 | Relative result |
+|---|---:|---:|---|
+| `usearch_builtin_ip_normalized` | `35.93 ms` | `35.92 ms` | Winner in both runs (`+1.77%` / `+3.28%` vs scalar baseline) |
+| `parity_scalar_normalized_ip` | `36.58 ms` | `37.14 ms` | Old parity-first scalar baseline |
+| `usearch_builtin_cos_raw` | `48.68 ms` | `50.28 ms` | Rejected (`-33.09%` / `-35.36%` vs scalar baseline) |
+
+All three kernels produced the same checksum (`65341.51`) on the benchmark corpus, so the winning path is a semantically equivalent faster implementation, not a different scoring target.
+
+### Mixed Update/Search Summary (2 reruns)
+
+| Measure | Run 1 | Run 2 |
+|---|---:|---:|
+| Initial index build (`20k` docs) | `28.476 s` | `25.756 s` |
+| Write-side ops (`4k` in-place upserts + `1k` delete/insert replacements) | `5000` | `5000` |
+| Write throughput | `534.29 ops/s` | `543.20 ops/s` |
+| Write p50 / p95 | `1820.93 / 2461.06 us` | `1786.45 / 2481.36 us` |
+| Search ops | `2000` | `2000` |
+| Search throughput | `1195.73 ops/s` | `1218.69 ops/s` |
+| Search p50 / p95 | `854.72 / 1353.24 us` | `843.19 / 1317.62 us` |
+| Final live elements | `20000` | `20000` |
+| Final deleted count | `0` | `0` |
+| Search checksum | `21272624` | `21272624` |
+
+### Interpretation
+
+- The supported production vector path now behaves like a real USearch backend, not a thin `hnswlib` impersonation layer. The mixed workload kept `deleted_count=0` at the end of both reruns, so Typesense-owned tombstones plus free-slot reuse held steady under repeated update/replacement traffic.
+- The old parity-first scalar distance shim is no longer the best choice. USearch's builtin normalized inner-product kernel won both reruns, while builtin raw cosine was materially slower with no checksum/quality gain on this corpus.
+- One focused replay test did surface a tiny observable float drift (`0.095856309` vs `0.095856249`, about `6e-8`) in `HybridSearchAuxScoreTest`. This was investigated against USearch's upstream metric path and is consistent with SIMD/autovec accumulation order for the same `1 - dot` math, not a ranking change or a different distance definition.
+
+### Decision
+
+- Keep the supported production backend on USearch `index_gt` behind the repo-owned `vector_index_t` seam.
+- Remove the remaining `hnswlib` runtime/Bazel baggage from the supported path. The only surviving hnsw-shaped surface is schema `hnsw_params`, kept intentionally for API compatibility and mapped onto backend construction settings.
+- Use USearch's builtin inner-product metric on normalized vectors as the production distance kernel. It is the fastest semantically equivalent option tested here, and it lets the backend stay USearch-native instead of carrying a permanent Typesense-owned scalar shim.
+- Do **not** switch the production default to raw builtin cosine. On this benchmark it was substantially slower and did not buy a different checksum or a quality signal strong enough to justify divergence.
+
+---
+
 ## Run 27: NuRaft Bulk-Import Parity Finalized For The Core Benchmark Lane (NuRaft runtime, 2026-03-14)
 
 **Commit:** local working tree on top of `985acb45` at run time

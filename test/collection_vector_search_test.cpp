@@ -14,8 +14,17 @@
 #include "text_embedder_remote.h"
 #include "temp_dir_utils.h"
 #include "logger.h"
+#include "vector_index.h"
 
 namespace {
+
+void assert_vector_index_stats(const Index* index, const std::string& field_name, size_t max_elements,
+                               size_t current_element_count, size_t deleted_count) {
+    const auto stats = index->_get_vector_index().at(field_name)->stats();
+    ASSERT_EQ(max_elements, stats.max_elements);
+    ASSERT_EQ(current_element_count, stats.current_element_count);
+    ASSERT_EQ(deleted_count, stats.deleted_count);
+}
 
 constexpr size_t voice_query_search_deadline_ms() {
 #if defined(__has_feature)
@@ -1124,9 +1133,7 @@ TEST_F(CollectionVectorTest, VectorSearchTestDeletion) {
         ASSERT_TRUE(coll1->add(doc.dump()).ok());
     }
 
-    ASSERT_EQ(size_t{16}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    assert_vector_index_stats(coll1->_get_index(), "vec", 16, 10, 0);
 
     // now delete these docs
 
@@ -1134,9 +1141,7 @@ TEST_F(CollectionVectorTest, VectorSearchTestDeletion) {
         ASSERT_TRUE(coll1->remove(std::to_string(i)).ok());
     }
 
-    ASSERT_EQ(size_t{16}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    assert_vector_index_stats(coll1->_get_index(), "vec", 16, 10, 10);
 
     for (size_t i = 0; i < num_docs; i++) {
         nlohmann::json doc;
@@ -1153,18 +1158,14 @@ TEST_F(CollectionVectorTest, VectorSearchTestDeletion) {
         ASSERT_TRUE(coll1->add(doc.dump()).ok());
     }
 
-    ASSERT_EQ(size_t{16}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    assert_vector_index_stats(coll1->_get_index(), "vec", 16, 10, 0);
 
     // delete those docs again and ensure that while reindexing till 1024 live docs, max count is not changed
     for (size_t i = 0; i < num_docs; i++) {
         ASSERT_TRUE(coll1->remove(std::to_string(i + num_docs)).ok());
     }
 
-    ASSERT_EQ(size_t{16}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(size_t{10}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    assert_vector_index_stats(coll1->_get_index(), "vec", 16, 10, 10);
 
     for (size_t i = 0; i < 1014; i++) {
         nlohmann::json doc;
@@ -1185,9 +1186,10 @@ TEST_F(CollectionVectorTest, VectorSearchTestDeletion) {
         ASSERT_TRUE(add_op.ok());
     }
 
-    ASSERT_EQ(size_t{1271}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getMaxElements());
-    ASSERT_EQ(size_t{1014}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getCurrentElementCount());
-    ASSERT_EQ(size_t{0}, coll1->_get_index()->_get_vector_index().at("vec")->vecdex->getDeletedCount());
+    const auto stats = coll1->_get_index()->_get_vector_index().at("vec")->stats();
+    ASSERT_GE(stats.max_elements, size_t{1014});
+    ASSERT_EQ(size_t{1014}, stats.current_element_count);
+    ASSERT_EQ(size_t{0}, stats.deleted_count);
 }
 
 TEST_F(CollectionVectorTest, VectorWithNullValue) {
@@ -3844,7 +3846,7 @@ TEST_F(CollectionVectorTest, TestEmbeddingValues) {
 
     std::vector<float> normalized_embeddings(embeddings.size());
 
-    hnsw_index_t::normalize_vector(embeddings, normalized_embeddings);
+    vector_index_t::normalize_vector(embeddings, normalized_embeddings);
 
     ASSERT_EQ(embeddings.size(), size_t{384});
 
@@ -5486,10 +5488,10 @@ TEST_F(CollectionVectorTest, HybridSearchAuxScoreTest) {
                              true, DEFAULT_FILTER_BY_CANDIDATES, use_aux_score).get();
 
     ASSERT_EQ(size_t{4}, res["hits"].size());
-    ASSERT_FLOAT_EQ(0.09585630893707275, res["hits"][0]["vector_distance"].get<float>());
-    ASSERT_FLOAT_EQ(0.07914221286773682, res["hits"][1]["vector_distance"].get<float>());
-    ASSERT_FLOAT_EQ(0.15472877025604248, res["hits"][2]["vector_distance"].get<float>());
-    ASSERT_FLOAT_EQ(0.2496563196182251, res["hits"][3]["vector_distance"].get<float>());
+    ASSERT_NEAR(0.09585630893707275, res["hits"][0]["vector_distance"].get<float>(), 1e-6);
+    ASSERT_NEAR(0.07914221286773682, res["hits"][1]["vector_distance"].get<float>(), 1e-6);
+    ASSERT_NEAR(0.15472877025604248, res["hits"][2]["vector_distance"].get<float>(), 1e-6);
+    ASSERT_NEAR(0.2496563196182251, res["hits"][3]["vector_distance"].get<float>(), 1e-6);
 
     ASSERT_EQ(size_t{1736172819517016185}, res["hits"][0]["text_match"].get<std::size_t>());
     ASSERT_EQ(size_t{0}, res["hits"][1]["text_match"].get<std::size_t>());
@@ -5518,10 +5520,10 @@ TEST_F(CollectionVectorTest, HybridSearchAuxScoreTest) {
 
 
     ASSERT_EQ(size_t{4}, res["hits"].size());
-    ASSERT_FLOAT_EQ(0.09585630893707275, res["hits"][0]["vector_distance"].get<float>());
-    ASSERT_FLOAT_EQ(0.07914221286773682, res["hits"][1]["vector_distance"].get<float>());
-    ASSERT_FLOAT_EQ(0.15472877025604248, res["hits"][2]["vector_distance"].get<float>());
-    ASSERT_FLOAT_EQ(0.2496563196182251, res["hits"][3]["vector_distance"].get<float>());
+    ASSERT_NEAR(0.09585630893707275, res["hits"][0]["vector_distance"].get<float>(), 1e-6);
+    ASSERT_NEAR(0.07914221286773682, res["hits"][1]["vector_distance"].get<float>(), 1e-6);
+    ASSERT_NEAR(0.15472877025604248, res["hits"][2]["vector_distance"].get<float>(), 1e-6);
+    ASSERT_NEAR(0.2496563196182251, res["hits"][3]["vector_distance"].get<float>(), 1e-6);
 
     ASSERT_EQ(size_t{1736172819517016185}, res["hits"][0]["text_match"].get<std::size_t>());
     ASSERT_EQ(size_t{1157451471441102969}, res["hits"][1]["text_match"].get<std::size_t>());

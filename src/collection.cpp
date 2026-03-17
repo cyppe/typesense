@@ -30,6 +30,7 @@
 #include "analytics_manager.h"
 #include "analytics_manager.h"
 #include "field.h"
+#include "vector_index.h"
 #include "join.h"
 #include "sole.hpp"
 #include "synonym_index_manager.h"
@@ -454,7 +455,7 @@ nlohmann::json Collection::get_summary_json() const {
             field_json[fields::range_index] = coll_field.range_index;
         }
 
-        // no need to sned hnsw_params for text fields
+        // Only vector fields expose the schema-compat tuning object.
         if(coll_field.num_dim > 0) {
             field_json[fields::hnsw_params] = coll_field.hnsw_params;
         }
@@ -1641,12 +1642,6 @@ Option<bool> Collection::validate_and_standardize_sort_fields(const std::vector<
                 }
 
                 sort_field_std.vector_query.vector_index = vector_index_map.at(sort_field_std.vector_query.query.field_name);
-
-                if(sort_field_std.vector_query.vector_index->distance_type == cosine) {
-                    std::vector<float> normalized_values(sort_field_std.vector_query.query.values.size());
-                    hnsw_index_t::normalize_vector(sort_field_std.vector_query.query.values, normalized_values);
-                    sort_field_std.vector_query.query.values = normalized_values;
-                }
 
                 sort_field_std.name = actual_field_name;
                 sort_field_std.type = sort_by::vector_search;
@@ -8322,7 +8317,7 @@ tsl::htrie_map<char, field> Collection::get_embedding_fields_unsafe() {
 }
 
 void Collection::do_housekeeping() {
-    index->repair_hnsw_index();
+    index->repair_vector_indexes();
 }
 
 Option<bool> Collection::parse_and_validate_vector_query(const std::string& vector_query_str,

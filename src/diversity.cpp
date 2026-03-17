@@ -3,6 +3,7 @@
 #include "logger.h"
 #include "string_utils.h"
 #include "index.h"
+#include "vector_index.h"
 
 Option<bool> diversity_t::parse(const nlohmann::json& json, diversity_t& diversity) {
     // format:
@@ -93,7 +94,7 @@ void diversity_t::to_json(const diversity_t &diversity, nlohmann::json& json) {
 Option<double> similarity_t::calculate(uint32_t seq_id_i, uint32_t seq_id_j, const diversity_t& diversity,
                                        const spp::sparse_hash_map<std::string, spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*>& sort_index,
                                        const facet_index_t* facet_index_v4,
-                                       const spp::sparse_hash_map<std::string, hnsw_index_t*>& vector_index) {
+                                       const spp::sparse_hash_map<std::string, vector_index_t*>& vector_index) {
     double similarity = 0;
     for (const auto& metric: diversity.similarity_equation) {
 
@@ -194,21 +195,15 @@ Option<double> similarity_t::calculate(uint32_t seq_id_i, uint32_t seq_id_j, con
             }
 
             const auto& field_vector_index = it->second;
-            std::vector<float> values_i, values_j;
-            try {
-                values_i = field_vector_index->vecdex->getDataByLabel<float>(seq_id_i);
-                values_j = field_vector_index->vecdex->getDataByLabel<float>(seq_id_j);
-            } catch (...) {
-                // likely not found
+            const auto dist = field_vector_index->distance_between(seq_id_i, seq_id_j);
+            if (!dist.has_value()) {
                 continue;
             }
 
             // Distance can be [0, 2]. 0 represents that embeddings are identical.
-            const auto dist = field_vector_index->space->get_dist_func()(values_i.data(), values_j.data(),
-                                                                            &field_vector_index->num_dim);
             // Doing 2-dist since dist 0 means the documents are most similar. We need to return the maximum value for
             // most similar documents from this function.
-            similarity += metric.weight * (2 - dist);
+            similarity += metric.weight * (2 - dist.value());
         }
 
         else {

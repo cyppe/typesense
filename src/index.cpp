@@ -21,6 +21,7 @@
 #include <collection_manager.h>
 #include "personalization_model_manager.h"
 #include "synonym_index_manager.h"
+#include "vector_index.h"
 
 #define RETURN_CIRCUIT_BREAKER if((std::chrono::duration_cast<std::chrono::microseconds>( \
                   std::chrono::system_clock::now().time_since_epoch()).count() - search_begin_us) > search_stop_us) { \
@@ -52,6 +53,53 @@ spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::vector_distance_sentine
 spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::vector_query_sentinel_value;
 spp::sparse_hash_map<uint32_t, int64_t, Hasher32> Index::union_search_index_sentinel_value;
 
+namespace {
+
+class VectorFilterFunctor {
+public:
+    explicit VectorFilterFunctor(filter_result_iterator_t* const filter_result_iterator,
+                                 const uint32_t* excluded_ids = nullptr, const uint32_t excluded_ids_length = 0):
+        filter_result_iterator_(filter_result_iterator),
+        excluded_ids_(excluded_ids),
+        excluded_ids_length_(excluded_ids_length) {
+    }
+
+    bool operator()(uint32_t id) const {
+        if (filter_result_iterator_->approx_filter_ids_length == 0 && excluded_ids_length_ == 0) {
+            return true;
+        }
+
+        if (excluded_ids_length_ > 0 && excluded_ids_ &&
+            std::binary_search(excluded_ids_, excluded_ids_ + excluded_ids_length_, id)) {
+            return false;
+        }
+
+        if (filter_result_iterator_->approx_filter_ids_length == 0) {
+            return true;
+        }
+
+        filter_result_iterator_->reset();
+        return filter_result_iterator_->is_valid(id) == 1;
+    }
+
+private:
+    filter_result_iterator_t* const filter_result_iterator_;
+    const uint32_t* excluded_ids_ = nullptr;
+    const uint32_t excluded_ids_length_ = 0;
+};
+
+vector_index_t* create_vector_index_for_field(const field& vector_field) {
+    return create_usearch_vector_index({
+        .num_dim = vector_field.num_dim,
+        .init_size = 16,
+        .distance_type = vector_field.vec_dist,
+        .M = vector_field.hnsw_params["M"].get<uint32_t>(),
+        .ef_construction = vector_field.hnsw_params["ef_construction"].get<uint32_t>(),
+    });
+}
+
+}  // namespace
+
 Index::Index(const std::string& name, const uint32_t collection_id, const Store* store,
             ThreadPool* thread_pool,
              const tsl::htrie_map<char, field> & search_schema,
@@ -68,8 +116,7 @@ Index::Index(const std::string& name, const uint32_t collection_id, const Store*
         }
 
         if(a_field.num_dim > 0) {
-            auto hnsw_index = new hnsw_index_t(a_field.num_dim, 16, a_field.vec_dist, a_field.hnsw_params["M"].get<uint32_t>(), a_field.hnsw_params["ef_construction"].get<uint32_t>());
-            vector_index.emplace(a_field.name, hnsw_index);
+            vector_index.emplace(a_field.name, create_vector_index_for_field(a_field));
             continue;
         }
 
@@ -1005,11 +1052,9 @@ void Index::index_field_in_memory(const std::string& collection_name, const fiel
         } else if(afield.is_array()) {
             // handle vector index first
             if(afield.type == field_types::FLOAT_ARRAY && afield.num_dim > 0) {
-                auto vec_index = vector_index[afield.name]->vecdex;
-                size_t curr_ele_count = vec_index->getCurrentElementCount();
-                if(curr_ele_count + iter_batch.size() > vec_index->getMaxElements()) {
-                    vec_index->resizeIndex((curr_ele_count + iter_batch.size()) * 1.3);
-                }
+                auto* vec_index = vector_index[afield.name];
+                const auto current_stats = vec_index->stats();
+                vec_index->ensure_capacity(current_stats.current_element_count + iter_batch.size());
 
                 const size_t num_threads = std::min<size_t>(4, iter_batch.size());
                 const size_t window_size = (num_threads == 0) ? 0 :
@@ -1051,13 +1096,7 @@ void Index::index_field_in_memory(const std::string& collection_name, const fiel
                                     }
                                     record.index_failure(400, "Vector size mismatch.");
                                 } else {
-                                    if(afield.vec_dist == cosine) {
-                                        std::vector<float> normalized_vals(afield.num_dim);
-                                        hnsw_index_t::normalize_vector(float_vals, normalized_vals);
-                                        vec_index->addPoint(normalized_vals.data(), (size_t)record.seq_id, true);
-                                    } else {
-                                        vec_index->addPoint(float_vals.data(), (size_t)record.seq_id, true);
-                                    }
+                                    vec_index->add_vector(record.seq_id, float_vals);
                                 }
                             } catch(const std::exception &e) {
                                 record.index_failure(400, e.what());
@@ -3366,53 +3405,28 @@ Option<bool> Index::search_infix(const std::string& query, const std::string& fi
 }
 
 void process_results_bruteforce(filter_result_iterator_t* filter_result_iterator, const vector_query_t& vector_query,
-                                    hnsw_index_t* field_vector_index, std::vector<std::pair<float, single_filter_result_t>>& dist_results) {
-
-    std::vector<float> normalized_q(vector_query.values.size());
-    if (field_vector_index->distance_type == cosine) {
-        hnsw_index_t::normalize_vector(vector_query.values, normalized_q);
-    }
+                                    vector_index_t* field_vector_index, std::vector<std::pair<float, single_filter_result_t>>& dist_results) {
     while (filter_result_iterator->validity == filter_result_iterator_t::valid) {
         auto seq_id = filter_result_iterator->seq_id;
         auto filter_result = single_filter_result_t(seq_id, std::move(filter_result_iterator->reference));
         filter_result_iterator->next();
-        std::vector<float> values;
 
-        try {
-            values = field_vector_index->vecdex->getDataByLabel<float>(seq_id);
-        } catch (...) {
-            // likely not found
+        auto dist = field_vector_index->distance_to_query(seq_id, vector_query.values);
+        if (!dist.has_value()) {
             continue;
         }
 
-        float dist;
-        if (field_vector_index->distance_type == cosine) {
-            dist = field_vector_index->space->get_dist_func()(normalized_q.data(), values.data(),
-                                                              &field_vector_index->num_dim);
-        } else {
-            dist = field_vector_index->space->get_dist_func()(vector_query.values.data(), values.data(),
-                                                              &field_vector_index->num_dim);
-        }
-
-        dist_results.emplace_back(dist, filter_result);
+        dist_results.emplace_back(dist.value(), filter_result);
     }
 }
 
-void process_results_hnsw_index(filter_result_iterator_t* filter_result_iterator, const vector_query_t& vector_query,
-                               hnsw_index_t* field_vector_index, VectorFilterFunctor& filterFunctor, size_t k,
+void process_results_vector_index(filter_result_iterator_t* filter_result_iterator, const vector_query_t& vector_query,
+                               vector_index_t* field_vector_index, const VectorFilterFunctor& filterFunctor, size_t k,
                                 std::vector<std::pair<float, single_filter_result_t>>& dist_results, bool is_wildcard_non_phrase_query = false) {
-
-    std::vector<std::pair<float, size_t>> pairs;
-    if(field_vector_index->distance_type == cosine) {
-        std::vector<float> normalized_q(vector_query.values.size());
-        hnsw_index_t::normalize_vector(vector_query.values, normalized_q);
-        pairs = field_vector_index->vecdex->searchKnnCloserFirst(normalized_q.data(), k, vector_query.ef, &filterFunctor);
-    } else {
-        pairs = field_vector_index->vecdex->searchKnnCloserFirst(vector_query.values.data(), k, vector_query.ef, &filterFunctor);
-    }
+    auto pairs = field_vector_index->search(vector_query.values, k, vector_query.ef, filterFunctor);
 
     std::sort(pairs.begin(), pairs.end(), [](auto& x, auto& y) {
-        return x.second < y.second;
+        return x.seq_id < y.seq_id;
     });
 
     filter_result_iterator->reset();
@@ -3426,14 +3440,14 @@ void process_results_hnsw_index(filter_result_iterator_t* filter_result_iterator
                 search_cutoff = true;
             }
 
-            auto const& seq_id = pair.second;
+            auto const& seq_id = pair.seq_id;
             if (filter_result_iterator->is_valid(seq_id, search_cutoff) != 1) {
                 continue;
             }
             // The seq_id must be valid otherwise it would've been filtered out upstream.
             auto filter_result = single_filter_result_t(seq_id,
                                                         std::move(filter_result_iterator->reference));
-            dist_results.emplace_back(pair.first, filter_result);
+            dist_results.emplace_back(pair.distance, filter_result);
         }
     } else {
 
@@ -3441,12 +3455,12 @@ void process_results_hnsw_index(filter_result_iterator_t* filter_result_iterator
                                          filter_result_iterator_t::timed_out;
 
         if(!is_wildcard_non_phrase_query) {
-            std::vector<std::pair<float, size_t>> vec_results;
+            std::vector<vector_index_search_result_t> vec_results;
 
             for(const auto& pair: pairs) {
-                auto vec_dist_score = (field_vector_index->distance_type == cosine)
-                                      ? std::abs(pair.first) :
-                                      pair.first;
+                auto vec_dist_score = (field_vector_index->distance_type() == cosine)
+                                      ? std::abs(pair.distance) :
+                                      pair.distance;
                 if (vec_dist_score > vector_query.distance_threshold) {
                     continue;
                 }
@@ -3456,15 +3470,15 @@ void process_results_hnsw_index(filter_result_iterator_t* filter_result_iterator
             // iteration needs to happen on sorted sequence ID but score wise sort needed for compute rank fusion
             std::sort(vec_results.begin(), vec_results.end(),
                       [](const auto &a, const auto &b) {
-                          return a.first < b.first;
+                          return a.distance < b.distance;
                       });
 
             pairs = std::move(vec_results);
         }
 
         for (const auto &pair: pairs) {
-            auto filter_result = single_filter_result_t(pair.second, {});
-            dist_results.emplace_back(pair.first, filter_result);
+            auto filter_result = single_filter_result_t(pair.seq_id, {});
+            dist_results.emplace_back(pair.distance, filter_result);
         }
     }
 }
@@ -3695,7 +3709,7 @@ Option<bool> Index::search(std::vector<query_tokens_t>& field_query_tokens, cons
             } else if(!no_group_filter_provided ||
                 (filter_id_count >= vector_query.flat_search_cutoff && filter_result_iterator_no_groups->validity == filter_result_iterator_t::valid)) {
                 dist_results.clear();
-                process_results_hnsw_index(filter_result_iterator_no_groups, vector_query, field_vector_index, filterFunctor, k, dist_results, true);
+                process_results_vector_index(filter_result_iterator_no_groups, vector_query, field_vector_index, filterFunctor, k, dist_results, true);
             }
 
             search_cutoff = search_cutoff || filter_result_iterator_no_groups->validity == filter_result_iterator_t::timed_out;
@@ -3725,7 +3739,7 @@ Option<bool> Index::search(std::vector<query_tokens_t>& field_query_tokens, cons
                     }
                 }
 
-                auto vec_dist_score = (field_vector_index->distance_type == cosine) ? std::abs(dist_result.first) :
+                auto vec_dist_score = (field_vector_index->distance_type() == cosine) ? std::abs(dist_result.first) :
                                       dist_result.first;
                                       
                 if(vec_dist_score > vector_query.distance_threshold) {
@@ -4094,7 +4108,7 @@ Option<bool> Index::search(std::vector<query_tokens_t>& field_query_tokens, cons
                 auto k = vector_query.k == 0 ? std::max<size_t>(fetch_size, default_k)
                                              : vector_query.k;
 
-                process_results_hnsw_index(filter_result_iterator_no_groups, vector_query, field_vector_index, filterFunctor, k, dist_results);
+                process_results_vector_index(filter_result_iterator_no_groups, vector_query, field_vector_index, filterFunctor, k, dist_results);
             }
 
             filter_result_iterator_no_groups->reset();
@@ -5789,17 +5803,20 @@ Option<bool> Index::compute_sort_scores(const std::vector<sort_by>& sort_fields,
         } else if(field_values[i] == &vector_query_sentinel_value) {
             scores[i] = float_to_int64_t(2.0f);
             try {
-                const auto& values = sort_fields[i].vector_query.vector_index->vecdex->getDataByLabel<float>(seq_id);
-                const auto& dist_func = sort_fields[i].vector_query.vector_index->space->get_dist_func();
-                float dist = dist_func(sort_fields[i].vector_query.query.values.data(), values.data(), &sort_fields[i].vector_query.vector_index->num_dim);
-
-                if(dist > sort_fields[i].vector_query.query.distance_threshold) {
-                    //if computed distance is more then distance_thershold then we set it to max float,
-                    //so that other sort conditions can execute
-                    dist = std::numeric_limits<float>::max();
+                const auto dist = sort_fields[i].vector_query.vector_index->distance_to_query(seq_id,
+                                                                                              sort_fields[i].vector_query.query.values);
+                if (!dist.has_value()) {
+                    continue;
                 }
 
-                scores[i] = float_to_int64_t(dist);
+                float dist_value = dist.value();
+                if(dist_value > sort_fields[i].vector_query.query.distance_threshold) {
+                    //if computed distance is more then distance_thershold then we set it to max float,
+                    //so that other sort conditions can execute
+                    dist_value = std::numeric_limits<float>::max();
+                }
+
+                scores[i] = float_to_int64_t(dist_value);
             } catch(...) {
                 // probably not found
                 // do nothing
@@ -7368,7 +7385,7 @@ void Index::remove_field(uint32_t seq_id, nlohmann::json& document, const std::s
     } else if(search_field.num_dim) {
         if(!is_update) {
             // since vector index supports upsert natively, we should not attempt to delete for update
-            vector_index[search_field.name]->vecdex->markDelete(seq_id);
+            vector_index[search_field.name]->mark_deleted(seq_id);
         }
     } else if(search_field.is_float()) {
         const std::vector<float>& values = search_field.is_single_float() ?
@@ -7542,7 +7559,7 @@ const spp::sparse_hash_map<std::string, array_mapped_infix_t>& Index::_get_infix
     return infix_index;
 };
 
-const spp::sparse_hash_map<std::string, hnsw_index_t*>& Index::_get_vector_index() const {
+const spp::sparse_hash_map<std::string, vector_index_t*>& Index::_get_vector_index() const {
     return vector_index;
 }
 
@@ -7561,8 +7578,7 @@ void Index::refresh_schemas(const std::vector<field>& new_fields, const std::vec
         search_schema.emplace(new_field.name, new_field);
 
         if(new_field.type == field_types::FLOAT_ARRAY && new_field.num_dim > 0) {
-            auto hnsw_index = new hnsw_index_t(new_field.num_dim, 16, new_field.vec_dist, new_field.hnsw_params["M"].get<uint32_t>(), new_field.hnsw_params["ef_construction"].get<uint32_t>());
-            vector_index.emplace(new_field.name, hnsw_index);
+            vector_index.emplace(new_field.name, create_vector_index_for_field(new_field));
             continue;
         }
 
@@ -7688,8 +7704,8 @@ void Index::refresh_schemas(const std::vector<field>& new_fields, const std::vec
         }
 
         if(del_field.num_dim) {
-            auto hnsw_index = vector_index[del_field.name];
-            delete hnsw_index;
+            auto* field_vector_index = vector_index[del_field.name];
+            delete field_vector_index;
             vector_index.erase(del_field.name);
         }
     }
@@ -8299,7 +8315,7 @@ void Index::process_embed_results(const std::vector<std::pair<index_record*, std
 }
 
 
-void Index::repair_hnsw_index() {
+void Index::repair_vector_indexes() {
     std::vector<std::string> vector_fields;
 
     // this lock ensures that the `vector_index` map is not mutated during read
@@ -8315,9 +8331,9 @@ void Index::repair_hnsw_index() {
         read_lock.lock();
         if(vector_index.count(vector_field) != 0) {
             // this lock ensures that the vector index is not dropped during repair
-            std::unique_lock lock(vector_index[vector_field]->repair_m);
+            std::unique_lock lock(vector_index[vector_field]->lifecycle_mutex());
             read_lock.unlock();  // release this lock since repair is a long running operation
-            vector_index[vector_field]->vecdex->repair_zero_indegree();
+            vector_index[vector_field]->repair();
         } else {
             read_lock.unlock();
         }
@@ -8807,30 +8823,12 @@ void Index::compute_aux_scores(Topster<KV>* topster, const std::vector<search_fi
             text_match_ids.push_back(kv.second);
         } else if (kv.second->vector_distance == -1.0f) {
             //only found via text_match, should compute vector distance
-            std::vector<float> values;
             auto &field_vector_index = vector_index.at(vector_query.field_name);
-
-            try {
-                values = field_vector_index->vecdex->getDataByLabel<float>(kv.second->key);
-            } catch (...) {
-                // likely not found
+            const auto dist = field_vector_index->distance_to_query(kv.second->key, vector_query.values);
+            if (!dist.has_value()) {
                 continue;
             }
-
-            float dist;
-            if (field_vector_index->distance_type == cosine) {
-                std::vector<float> normalized_q(vector_query.values.size());
-                hnsw_index_t::normalize_vector(vector_query.values, normalized_q);
-                dist = field_vector_index->space->get_dist_func()(normalized_q.data(),
-                                                                  values.data(),
-                                                                  &field_vector_index->num_dim);
-            } else {
-                dist = field_vector_index->space->get_dist_func()(vector_query.values.data(),
-                                                                  values.data(),
-                                                                  &field_vector_index->num_dim);
-            }
-
-            kv.second->vector_distance = dist;
+            kv.second->vector_distance = dist.value();
         }
     }
 
@@ -8919,7 +8917,7 @@ Option<bool> Index::populate_result_kvs(Topster<KV>* topster, std::vector<std::v
                                         const diversity_t& diversity,
                                         const spp::sparse_hash_map<std::string, spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*>& sort_index,
                                         const facet_index_t* facet_index_v4,
-                                        const spp::sparse_hash_map<std::string, hnsw_index_t*>& vector_index) {
+                                        const spp::sparse_hash_map<std::string, vector_index_t*>& vector_index) {
     if(topster->distinct && !is_group_by_first_pass) {
         // we have to pick top-K groups
         Topster<KV> gtopster(topster->MAX_SIZE);

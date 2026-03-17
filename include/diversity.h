@@ -5,6 +5,8 @@
 #include "field.h"
 #include "facet_index.h"
 
+class vector_index_t;
+
 struct Hasher32 {
     // Helps to spread the hash key and is used for sort index.
     // see: https://github.com/greg7mdp/sparsepp/issues/21#issuecomment-270816275
@@ -52,5 +54,5 @@ struct similarity_t {
     static Option<double> calculate(uint32_t seq_id_i, uint32_t seq_id_j, const diversity_t& diversity,
                                     const spp::sparse_hash_map<std::string, spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*>& sort_index,
                                     const facet_index_t* facet_index_v4,
-                                    const spp::sparse_hash_map<std::string, hnsw_index_t*>& vector_index);
+                                    const spp::sparse_hash_map<std::string, vector_index_t*>& vector_index);
 };

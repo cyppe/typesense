@@ -172,12 +172,12 @@ new_git_repository(
     remote = "https://github.com/typesense/kakasi.git",
 )
 
-http_archive(
-    name = "hnsw",
-    build_file = "//bazel:hnsw.BUILD",
-    sha256 = "3acb04f5789d5f707262edf939533f602810198dd802ebf1082e182d4bf9a7be",
-    strip_prefix = "hnswlib-687d981753f8bafcd16421cbd2a166d0b62bc520",
-    urls = ["https://github.com/nmslib/hnswlib/archive/687d981753f8bafcd16421cbd2a166d0b62bc520.tar.gz"],
+git_repository(
+    name = "usearch",
+    build_file = "//bazel:usearch.BUILD",
+    commit = "40d127f472e9073875566f0e9308c0302b89100a",
+    recursive_init_submodules = True,
+    remote = "https://github.com/unum-cloud/USearch.git",
 )
 
 new_git_repository(

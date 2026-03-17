@@ -30,24 +30,6 @@
 #include "curation.h"
 #include "vector_query_ops.h"
 #include "logger.h"
-#if defined(__clang__)
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wreorder-ctor"
-#pragma clang diagnostic ignored "-Wsign-compare"
-#pragma clang diagnostic ignored "-Wunused-function"
-#elif defined(__GNUC__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wreorder"
-#pragma GCC diagnostic ignored "-Wsign-compare"
-#pragma GCC diagnostic ignored "-Wtype-limits"
-#pragma GCC diagnostic ignored "-Wunused-function"
-#endif
-#include "hnswlib/hnswlib.h"
-#if defined(__clang__)
-#pragma clang diagnostic pop
-#elif defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
 #include "filter.h"
 #include "facet_index.h"
 #include "numeric_range_trie.h"
@@ -342,71 +324,7 @@ struct index_record {
     }
 };
 
-class VectorFilterFunctor: public hnswlib::BaseFilterFunctor {
-    filter_result_iterator_t* const filter_result_iterator;
-
-    const uint32_t* excluded_ids = nullptr;
-    const uint32_t excluded_ids_length = 0;
-
-public:
-
-    explicit VectorFilterFunctor(filter_result_iterator_t* const filter_result_iterator,
-                                 const uint32_t* excluded_ids = nullptr, const uint32_t excluded_ids_length = 0) :
-                                filter_result_iterator(filter_result_iterator),
-                                excluded_ids(excluded_ids), excluded_ids_length(excluded_ids_length) {}
-
-    bool operator()(hnswlib::labeltype id) override {
-        if (filter_result_iterator->approx_filter_ids_length == 0 && excluded_ids_length == 0) {
-            return true;
-        }
-
-        if(excluded_ids_length > 0 && excluded_ids && std::binary_search(excluded_ids, excluded_ids + excluded_ids_length, id)) {
-            return false;
-        }
-
-        if(filter_result_iterator->approx_filter_ids_length == 0) {
-            return true;
-        }
-
-        filter_result_iterator->reset();
-        return filter_result_iterator->is_valid(id) == 1;
-    }
-};
-
-struct hnsw_index_t {
-    hnswlib::InnerProductSpace* space;
-    hnswlib::HierarchicalNSW<float>* vecdex;
-    size_t num_dim;
-    vector_distance_type_t distance_type;
-
-    // ensures that this index is not dropped when it's being repaired
-    std::mutex repair_m;
-
-    hnsw_index_t(size_t num_dim, size_t init_size, vector_distance_type_t distance_type, size_t M = 16, size_t ef_construction = 200) :
-        space(new hnswlib::InnerProductSpace(num_dim)),
-        vecdex(new hnswlib::HierarchicalNSW<float>(space, init_size, M, ef_construction, 100, true)),
-        num_dim(num_dim), distance_type(distance_type) {
-
-    }
-
-    ~hnsw_index_t() {
-        std::lock_guard lk(repair_m);
-        delete vecdex;
-        delete space;
-    }
-
-    // needed for cosine similarity
-    static void normalize_vector(const std::vector<float>& src, std::vector<float>& norm_dest) {
-        float norm = 0.0f;
-        for (float i : src) {
-            norm += i * i;
-        }
-        norm = 1.0f / (sqrtf(norm) + 1e-30f);
-        for (size_t i = 0; i < src.size(); i++) {
-            norm_dest[i] = src[i] * norm;
-        }
-    }
-};
+class vector_index_t;
 
 struct group_by_field_it_t {
     std::string field_name;
@@ -470,7 +388,7 @@ private:
     spp::sparse_hash_map<std::string, array_mapped_infix_t> infix_index;
 
     // vector field => vector index
-    spp::sparse_hash_map<std::string, hnsw_index_t*> vector_index;
+    spp::sparse_hash_map<std::string, vector_index_t*> vector_index;
 
     // this is used for wildcard queries
     id_list_t* seq_ids;
@@ -737,7 +655,7 @@ public:
 
     const spp::sparse_hash_map<std::string, array_mapped_infix_t>& _get_infix_index() const;
 
-    const spp::sparse_hash_map<std::string, hnsw_index_t*>& _get_vector_index() const;
+    const spp::sparse_hash_map<std::string, vector_index_t*>& _get_vector_index() const;
 
     facet_index_t* _get_facet_index() const;
 
@@ -1184,7 +1102,7 @@ public:
 
     friend class filter_result_iterator_t;
 
-    void repair_hnsw_index();
+    void repair_vector_indexes();
 
     void aggregate_facet(const size_t group_limit, facet& this_facet, facet& acc_facet) const;
 
@@ -1222,7 +1140,7 @@ public:
                                             const diversity_t& diversity,
                                             const spp::sparse_hash_map<std::string, spp::sparse_hash_map<uint32_t, int64_t, Hasher32>*>& sort_index,
                                             const facet_index_t* facet_index_v4,
-                                            const spp::sparse_hash_map<std::string, hnsw_index_t*>& vector_index);
+                                            const spp::sparse_hash_map<std::string, vector_index_t*>& vector_index);
 
     GeoPolygonIndex* get_geopolygon_index(const std::string& field_name) const;
 

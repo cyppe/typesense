@@ -67,7 +67,7 @@ cc_library(
         "@lrucache",
         "@rocksdb",
         "@s2geometry",
-        "@hnsw",
+        "@usearch//:usearch",
         "@clip_tokenizer//:clip",
         "@whisper.cpp//:whisper",
         "@whisper.cpp//:whisper_headers",
@@ -143,6 +143,16 @@ cc_binary(
     srcs = [
         "src/main/benchmark.cpp",
         ":src_files",
+    ],
+    copts = COPTS,
+    deps = [":common_deps"],
+)
+
+cc_binary(
+    name = "usearch-vector-backend-benchmark",
+    srcs = [
+        "src/main/usearch_vector_backend_benchmark.cpp",
+        "src/vector_index.cpp",
     ],
     copts = COPTS,
     deps = [":common_deps"],
@@ -338,6 +348,18 @@ cc_test(
     ],
 )
 
+cc_test(
+    name = "usearch-vector-backend-prototype-test",
+    srcs = [
+        "test/usearch_vector_backend_prototype_test.cpp",
+    ],
+    copts = COPTS + ["-O0"],
+    deps = [
+        "@com_google_googletest//:gtest_main",
+        "@usearch//:usearch",
+    ],
+)
+
 filegroup(
     name = "test_src_files",
     srcs = glob(["test/*.cpp"]) + [
@@ -410,6 +432,7 @@ cc_test(
         ":nuraft_lib",
         ":nuraft_runtime_lib",
         "@com_google_googletest//:gtest",
+        "@usearch//:usearch",
     ],
     defines = [
         "ROOT_DIR="

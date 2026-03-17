@@ -93,6 +93,9 @@ TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --p
 # local benchmark repro against the same latest local binary
 TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick --scope core
 
+# focused USearch vector-backend replay: metric-kernel comparison + mixed update/search workload
+scripts/bazel_in_docker.sh run //:usearch-vector-backend-benchmark -- --docs 20000 --dims 384 --cycles 10 --updates-per-cycle 400 --replacements-per-cycle 100 --searches-per-cycle 200 --k 20 --ef 80 --kernel-samples 4096 --kernel-repeats 64 --seed 42
+
 # release-binaries.yml (local release replay; use these two wrappers for the Linux server artifact class and the optional Linux GPU deps artifact class)
 scripts/release_linux_artifacts.sh --build --with-cuda --version-label 0.0.0-local
 scripts/release_linux_artifacts.sh --build --with-cuda --target-arch arm64 --version-label 0.0.0-local

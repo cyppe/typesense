@@ -10,10 +10,6 @@
 # sparsepp hash map — concurrent batch_memory_index workers.
 race:spp::sparsegroup*::_sizing
 
-# hnswlib — shared random number generator accessed by concurrent
-# Index::index_field_in_memory worker threads during addPoint/updatePoint.
-race:hnswlib::
-
 # ONNX Runtime — heap-use-after-free in CustomOpKernel destructor during
 # InferenceSession teardown. Pre-existing upstream bug in ONNX Runtime's
 # session cleanup for custom op extensions (CLIP model path).
