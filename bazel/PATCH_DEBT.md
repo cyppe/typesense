@@ -15,11 +15,13 @@ Last audited: 2026-03-17
 
 | Dep | Current source | Status | Why it exists / next action |
 |---|---|---|---|
-| `kakasi` | `typesense/kakasi` fork commit `77f2d1ce` | keep for now | GitHub compare against parent `loretoparisi/kakasi` shows the fork is `ahead_by=5`, `behind_by=0`, and the parent repo has no GitHub release history recorded here, so this is not a drop-in upstream release swap yet. Audit those five commits before attempting an upstream move. |
-| `clip_tokenizer` | `typesense/clip_tokenizer_cpp` | keep for now | The repo is not a GitHub fork and no release history / upstream parent is recorded here yet, so there is no authoritative upstream release path to switch to today. Revisit only after identifying the real upstream project and release contract. |
+| `kakasi` | `typesense/kakasi` fork commit `77f2d1ce` | keep for now | GitHub compare against parent `loretoparisi/kakasi` still shows the fork is `ahead_by=5`, `behind_by=0`, and those fork-only commits are material on this branch: `bazel/kakasi.BUILD` depends on added `data/japanese_data.{h,cpp}`, while the remaining commits fix UTF-8 input handling, zero-init library buffers, and bad-unicode skip behavior. Parent repo still has no GitHub releases, so this is not a drop-in upstream swap yet. |
 
 ## Removed As Stale
 
+- `@clip_tokenizer` switched off the Typesense mirror on 2026-03-17.
+  - Reason: repo search identified the real upstream project as `ozanarmagan/clip_tokenizer_cpp`, and the pinned commit `0ca1e2e2e7418108725eaa7fb93e029516ae63fa` is identical in both repos (`git ls-remote` + GitHub compare).
+  - Note: neither repo currently publishes tags or GitHub releases, so the supported Bazel path now pins the upstream source commit directly rather than a release artifact.
 - `@hnsw` Bazel dependency removed on 2026-03-17.
   - Reason: item 36 finished the USearch production cutover and deleted the remaining in-tree `hnswlib` backend/runtime dependency from the supported Bazel path.
   - Note: schema-level `hnsw_params` remains for API compatibility only; it no longer implies a supported `hnswlib` runtime backend.
@@ -51,4 +53,4 @@ Last audited: 2026-03-17
 2. `bazel/icu/icu.patch` is at minimum (AR fix only). `bazel/onnxruntime.patch` re-audited on ORT `1.24.3` — still non-droppable, now including the fetched ORT Extensions custom-op teardown fix needed for clean ASAN exits. External Abseil version sync is now handled without patch growth via `bazel/onnxruntime.BUILD`'s `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` override on the one-protobuf static lane.
 3. `bazel/h2o` patch is at minimum (48 lines, CMakeLists.txt-only). Re-test with newer h2o tag.
 4. Re-audit this file after any dependency version bump in `MODULE.bazel`.
-5. Continue the remaining fork-backed audit: `kakasi` still carries 5 fork-only commits over its parent, and `clip_tokenizer_cpp` still needs an identified upstream release path before it can leave the Typesense org.
+5. Only `kakasi` remains fork-backed. Revisit it only after those 5 fork-only commits are upstreamed or a new upstream release/source materially changes the drop-in story.
