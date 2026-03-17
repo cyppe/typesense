@@ -215,12 +215,24 @@ jobs:
           if [ -n "${{ matrix.docker_platform }}" ]; then
             export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
           fi
+          export TYPESENSE_ORT_BUILD_JOBS="$(nproc)"
           args=(build //:typesense-server)
           args+=(--define=use_cuda=on)
           if [ "${{ matrix.enable_jemalloc_lg_page16 }}" = "true" ]; then
             args+=(--define=enable_jemalloc_lg_page16=1)
           fi
           scripts/bazel_in_docker.sh "${args[@]}"
+
+      - name: Upload Linux GPU provider build inputs
+        if: matrix.target_os == 'linux' && (matrix.release_suffix == '' || (inputs.target_scope == 'linux-arm64-lg-page16' && matrix.artifact_name == 'linux-arm64-lg-page16'))
+        uses: actions/upload-artifact@v7
+        with:
+          name: gpu-provider-build-inputs-linux-${{ matrix.target_arch }}
+          path: |
+            ${{ github.workspace }}/bazel-bin/external/+new_git_repository+onnx_runtime/onnxruntime_static_one_protobuf/lib/libonnxruntime_providers_shared.so
+            ${{ github.workspace }}/bazel-bin/external/+new_git_repository+onnx_runtime/onnxruntime_static_one_protobuf/lib/libonnxruntime_providers_cuda.so
+          if-no-files-found: error
+          retention-days: 1
 
       - name: Build Typesense server on macOS
         if: ${{ !matrix.uses_docker_bazel }}
@@ -352,8 +364,10 @@ jobs:
           retention-days: 14
 
   gpu-deps:
-    if: needs.select_targets.outputs.gpu_enabled == 'true'
-    needs: select_targets
+    if: always() && needs.select_targets.outputs.gpu_enabled == 'true' && (needs.core-binaries.result == 'success' || needs.core-binaries.result == 'skipped')
+    needs:
+      - select_targets
+      - core-binaries
     name: gpu-${{ matrix.artifact_name }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -376,9 +390,20 @@ jobs:
           export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
           scripts/bazel_in_docker.sh --build-image-only
 
+      - name: Download prebuilt GPU provider inputs
+        if: needs.core-binaries.result == 'success'
+        uses: actions/download-artifact@v5
+        with:
+          name: gpu-provider-build-inputs-linux-${{ matrix.target_arch }}
+          path: ${{ github.workspace }}/bazel-bin/external/+new_git_repository+onnx_runtime/onnxruntime_static_one_protobuf/lib
+
       - name: Build GPU deps artifacts
         run: |
-          args=(--build --version-label "${{ inputs.version_label }}" --target-arch "${{ matrix.target_arch }}")
+          args=(--version-label "${{ inputs.version_label }}" --target-arch "${{ matrix.target_arch }}")
+          if [ "${{ needs.core-binaries.result }}" = "skipped" ]; then
+            export TYPESENSE_ORT_BUILD_JOBS="$(nproc)"
+            args=(--build "${args[@]}")
+          fi
           if [ "${{ matrix.emit_lg_page16_alias }}" = "true" ]; then
             args+=(--emit-lg-page16-alias)
           fi
