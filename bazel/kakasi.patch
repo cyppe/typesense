@@ -1,0 +1,23 @@
+diff --git a/src/kakasi.c b/src/kakasi.c
+index f733b33..77f03df 100644
+--- a/src/kakasi.c
++++ b/src/kakasi.c
+@@ -338 +338 @@ kakasi_getopt_argv(argc, argv)
+-    Character c[KAKASIBUF], r[KAKASIBUF];
++    Character c[KAKASIBUF] = {0}, r[KAKASIBUF] = {0};
+diff --git a/src/kanjiio.c b/src/kanjiio.c
+index 3963cb7..4179736 100644
+--- a/src/kanjiio.c
++++ b/src/kanjiio.c
+@@ -47,0 +48 @@
++#include <errno.h>
+@@ -554 +555 @@ getkanji(c)
+-		utf8[i] = getchar();
++		utf8[i] = get1byte();
+@@ -558,0 +560 @@ getkanji(c)
++	    errno = 0;
+@@ -559,0 +562,4 @@ getkanji(c)
++	    if (errno == EILSEQ) {
++		getkanji(c);
++		return;
++	    }

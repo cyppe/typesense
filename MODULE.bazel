@@ -168,8 +168,14 @@ new_git_repository(
 new_git_repository(
     name = "kakasi",
     build_file = "//bazel:kakasi.BUILD",
-    commit = "77f2d1ce0146d15199ae0db1e61e0b699b0b55f6",
-    remote = "https://github.com/typesense/kakasi.git",
+    commit = "390c6d2eeac6c744da634866b68ea09830cac0a7",
+    patches = ["//bazel:kakasi.patch"],
+    patch_args = ["-p1"],
+    patch_tool = "patch",
+    patch_cmds = [
+        "rm -f lib/libkakasi.c lib/libkanjiio.c",
+    ],
+    remote = "https://github.com/loretoparisi/kakasi.git",
 )
 
 git_repository(

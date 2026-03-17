@@ -1,17 +1,8 @@
 load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make")
-load("@rules_cc//cc:defs.bzl", "cc_library")
 
 filegroup(
     name = "all_srcs",
     srcs = glob(["**"]),
-    visibility = ["//visibility:public"],
-)
-
-cc_library(
-    name = "kakasi_data",
-    srcs = ["data/japanese_data.cpp"],
-    hdrs = ["data/japanese_data.h"],
-    includes = ["data"],
     visibility = ["//visibility:public"],
 )
 
@@ -44,6 +35,5 @@ configure_make(
     visibility = ["//visibility:public"],
     deps = [
         "@iconv",
-        "@kakasi//:kakasi_data",
     ],
 )
