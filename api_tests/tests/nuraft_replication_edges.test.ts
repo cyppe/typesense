@@ -152,7 +152,7 @@ describe(Phases.MULTI_FRESH, () => {
 
   // --- Committed index convergence ---
 
-  it("all nodes converge to the same committed index", async () => {
+  it("all nodes converge to the same committed and readable applied index", async () => {
     const [s1, s2, s3] = await Promise.all([
       fetchMultiNodeRequest(1, "/status"),
       fetchMultiNodeRequest(2, "/status"),
@@ -169,6 +169,12 @@ describe(Phases.MULTI_FRESH, () => {
     expect(d1.committed_index).toBe(d2.committed_index);
     expect(d1.committed_index).toBe(d3.committed_index);
     expect(d1.committed_index).toBeGreaterThan(0);
+    expect(d1.known_applied_index).toBe(d1.committed_index);
+    expect(d2.known_applied_index).toBe(d2.committed_index);
+    expect(d3.known_applied_index).toBe(d3.committed_index);
+    expect(d1.read_caught_up).toBe(true);
+    expect(d2.read_caught_up).toBe(true);
+    expect(d3.read_caught_up).toBe(true);
   });
 });
 

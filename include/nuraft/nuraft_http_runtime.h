@@ -108,6 +108,9 @@ private:
                          uint64_t& committed_index,
                          bool& forwarded_to_leader,
                          std::string& error);
+    bool wait_for_local_state_machine_commit(uint64_t target_index,
+                                             size_t timeout_ms,
+                                             std::string& error) const;
     bool cache_enabled() const;
     bool read_last_local_applied_index(uint64_t& last_applied_index, std::string& error) const;
     bool read_materialized_value(const std::string& key,

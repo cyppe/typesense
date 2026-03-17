@@ -100,7 +100,21 @@ export async function checkCommitedIndex() {
 
     const data = await Promise.all(res.map((response) => response.json()));
     const committedIndexes = data.map((item: any) => item.committed_index);
-    return committedIndexes[0] === committedIndexes[1] && committedIndexes[0] === committedIndexes[2];
+    const appliedIndexes = data.map((item: any) => item.known_applied_index);
+    const allReadsCaughtUp = data.every((item: any) => item.read_caught_up === true);
+
+    const committedConverged =
+      committedIndexes[0] === committedIndexes[1] &&
+      committedIndexes[0] === committedIndexes[2];
+    const appliedConverged =
+      appliedIndexes[0] === appliedIndexes[1] &&
+      appliedIndexes[0] === appliedIndexes[2];
+    const readsVisible =
+      appliedIndexes[0] === committedIndexes[0] &&
+      appliedIndexes[1] === committedIndexes[1] &&
+      appliedIndexes[2] === committedIndexes[2];
+
+    return committedConverged && appliedConverged && readsVisible && allReadsCaughtUp;
   } catch {
     return false;
   }

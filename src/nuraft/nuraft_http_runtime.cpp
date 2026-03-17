@@ -619,15 +619,36 @@ bool replay_live_product_state(HttpServer* server,
 }
 
 bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
-    std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
-    if (!lock.owns_lock()) {
-        // A write is in progress; state will be consistent after it completes.
-        error.clear();
-        return true;
-    }
+    std::unique_lock<std::mutex> lock(mutex_);
     if (!initialized_.load()) {
         error.clear();
         return true;
+    }
+
+    if (raft_state_machine_ != nullptr && materialized_state_sink_ != nullptr) {
+        const uint64_t committed_index = raft_state_machine_->get_last_commit_index();
+        uint64_t last_applied_index = 0;
+        if (!read_last_local_applied_index(last_applied_index, error)) {
+            return false;
+        }
+
+        if (last_applied_index < committed_index) {
+            const size_t timeout_ms = std::max<size_t>(options_.request_timeout_ms, 1000);
+            lock.unlock();
+            const bool wait_ok = wait_for_local_state_machine_commit(committed_index, timeout_ms, error);
+            lock.lock();
+            if (!wait_ok) {
+                return false;
+            }
+            if (!read_last_local_applied_index(last_applied_index, error)) {
+                return false;
+            }
+            if (last_applied_index < committed_index) {
+                error = "NuRaft state machine commit watcher completed before local applied index caught up to " +
+                        std::to_string(committed_index) + ".";
+                return false;
+            }
+        }
     }
 
     if (materialized_state_sink_ != nullptr) {
@@ -987,6 +1008,11 @@ uint64_t NuRaftHttpRuntimeService::node_state() const {
 
 nlohmann::json NuRaftHttpRuntimeService::get_status() {
     std::lock_guard<std::mutex> lock(mutex_);
+    uint64_t state_machine_applied_index = 0;
+    std::string applied_index_error;
+    const bool has_state_machine_applied_index =
+        materialized_state_sink_ != nullptr &&
+        read_last_local_applied_index(state_machine_applied_index, applied_index_error);
     nlohmann::json status = {
         {"state", initialized_.load() ? "running" : "initializing"},
         {"server_id", identity_.server_id},
@@ -1003,10 +1029,18 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         uint64_t last_idx = raft_server_->get_last_log_idx();
         status["last_index"] = last_idx;
         status["committed_index"] = committed_idx;
-        status["known_applied_index"] = committed_idx;
+        status["known_applied_index"] = live_product_state_applied_index_;
+        status["read_caught_up"] = initialized_.load() && live_product_state_applied_index_ >= committed_idx;
         status["applying_index"] = 0;
         status["raft_leader_id"] = raft_server_->get_leader();
         status["raft_term"] = raft_server_->get_term();
+        if (has_state_machine_applied_index) {
+            status["state_machine_applied_index"] = state_machine_applied_index;
+        }
+    }
+
+    if (!has_state_machine_applied_index && !applied_index_error.empty()) {
+        status["state_machine_applied_index_error"] = applied_index_error;
     }
 
     return status;
@@ -1098,6 +1132,63 @@ bool NuRaftHttpRuntimeService::read_last_local_applied_index(uint64_t& last_appl
     }
 
     return materialized_state_sink_->read_last_applied_index(last_applied_index, error);
+}
+
+bool NuRaftHttpRuntimeService::wait_for_local_state_machine_commit(uint64_t target_index,
+                                                                   size_t timeout_ms,
+                                                                   std::string& error) const {
+    error.clear();
+    if (target_index == 0 || raft_server_ == nullptr) {
+        return true;
+    }
+
+    auto wait_result = raft_server_->wait_for_state_machine_commit(target_index);
+    if (wait_result == nullptr) {
+        error = "NuRaft did not return a state machine commit watcher.";
+        return false;
+    }
+
+    struct wait_state_t {
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool ready = false;
+        bool committed = false;
+        std::string error;
+    };
+    auto wait_state = std::make_shared<wait_state_t>();
+
+    wait_result->when_ready([wait_state](nuraft::cmd_result<bool>& result, nuraft::ptr<std::exception>& err) {
+        {
+            std::lock_guard<std::mutex> guard(wait_state->mutex);
+            wait_state->ready = true;
+            wait_state->committed = result.get_result_code() == nuraft::cmd_result_code::OK && result.get();
+            if (err != nullptr) {
+                wait_state->error = err->what();
+            } else if (!wait_state->committed) {
+                wait_state->error = result.get_result_str();
+            }
+        }
+        wait_state->cv.notify_all();
+    });
+
+    std::unique_lock<std::mutex> wait_lock(wait_state->mutex);
+    const bool finished = wait_state->cv.wait_for(wait_lock, std::chrono::milliseconds(timeout_ms), [&] {
+        return wait_state->ready;
+    });
+    if (!finished) {
+        error = "Timed out waiting for NuRaft state machine commit at index " + std::to_string(target_index) + ".";
+        return false;
+    }
+
+    if (!wait_state->committed) {
+        error = wait_state->error.empty()
+            ? "NuRaft state machine commit watcher failed for index " + std::to_string(target_index) + "."
+            : wait_state->error;
+        return false;
+    }
+
+    error.clear();
+    return true;
 }
 
 bool NuRaftHttpRuntimeService::read_materialized_value(const std::string& key,
