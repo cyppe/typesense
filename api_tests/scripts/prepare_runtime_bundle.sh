@@ -49,10 +49,10 @@ if ldd "${SERVER_BINARY}" 2>/dev/null | grep -q 'libonnxruntime\.so\.1'; then
 	chmod u+w "${LIB_DIR}/libonnxruntime.so" 2>/dev/null || true
 	cp "${ONNX_RUNTIME_LIB}" "${LIB_DIR}/libonnxruntime.so.1"
 	cp "$(dirname "${ONNX_RUNTIME_LIB}")/libonnxruntime.so" "${LIB_DIR}/libonnxruntime.so"
-	RUNTIME_LIB_MSG="Library dir: ${LIB_DIR} (includes libonnxruntime.so.1)"
+	RUNTIME_LIB_MSG="Library dir: ${LIB_DIR} (includes libonnxruntime.so.1; optional GPU provider sidecars are not managed by this helper)"
 else
 	rm -f "${LIB_DIR}/libonnxruntime.so.1" "${LIB_DIR}/libonnxruntime.so"
-	RUNTIME_LIB_MSG="Library dir: ${LIB_DIR} (no external ONNX Runtime shared library needed)"
+	RUNTIME_LIB_MSG="Library dir: ${LIB_DIR} (no external libonnxruntime.so.1 needed; optional GPU provider sidecars are packaged separately via typesense-gpu-deps)"
 fi
 
 echo "Prepared runtime bundle in ${OUTPUT_DIR}"

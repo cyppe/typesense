@@ -4,6 +4,7 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${TYPESENSE_BAZEL_IMAGE:-typesense/ci-bazel:local}"
+BAZEL_DOCKERFILE="${TYPESENSE_BAZEL_DOCKERFILE:-}"
 CACHE_DIR="${TYPESENSE_BAZEL_CACHE_DIR:-${HOME}/.cache/typesense/bazel-docker}"
 WORKDIR="/work"
 VERSION_LABEL="snapshot"
@@ -11,6 +12,7 @@ TARGET_ARCH=""
 BUILD_BEFORE_ASSEMBLY=0
 BUILD_LINUX_PACKAGES=1
 ENABLE_JEMALLOC_LG_PAGE16=0
+ENABLE_CUDA=0
 ARTIFACT_SUFFIX=""
 DOCKER_PLATFORM=""
 
@@ -21,6 +23,7 @@ Usage:
 
 Options:
   --build                    Build //:typesense-server first via scripts/bazel_in_docker.sh
+  --with-cuda                Build the Linux server binary with --define=use_cuda=on
   --jemalloc-lg-page16       Build/package the arm64 lg-page16 server variant
   --skip-packages            Skip DEB/RPM generation
   --version-label <label>    Version label used in artifact names (default: snapshot)
@@ -29,12 +32,14 @@ Options:
 
 Examples:
   scripts/release_linux_artifacts.sh --build --version-label 0.0.0-local
+  scripts/release_linux_artifacts.sh --build --with-cuda --version-label 0.0.0-local
   scripts/release_linux_artifacts.sh --version-label 0.0.0-b03f9a9a --target-arch amd64
-  scripts/release_linux_artifacts.sh --build --target-arch arm64 --jemalloc-lg-page16 --version-label 0.0.0-local
+  scripts/release_linux_artifacts.sh --build --with-cuda --target-arch arm64 --jemalloc-lg-page16 --version-label 0.0.0-local
 
 Notes:
   - This is the canonical local Linux replay for release-binaries.yml.
   - It keeps release assembly container-backed so the host only needs Docker.
+  - When --with-cuda is set, the regular Linux typesense-server artifact is built with optional CUDA-aware ONNX Runtime support and should be paired with the matching typesense-gpu-deps artifact at install time.
   - Cross-arch local replay requires Docker arm64 emulation when host and target differ.
   - Output paths match the workflow: release/linux-<arch><suffix> and artifacts/.
 EOF
@@ -55,10 +60,23 @@ detect_target_arch() {
 	esac
 }
 
+append_optional_repo_env() {
+	local -n out_ref=$1
+	local env_name="$2"
+	local env_value="${!env_name:-}"
+	if [[ -n "${env_value}" ]]; then
+		out_ref+=("--repo_env=${env_name}=${env_value}")
+	fi
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--build)
 			BUILD_BEFORE_ASSEMBLY=1
+			shift
+			;;
+		--with-cuda)
+			ENABLE_CUDA=1
 			shift
 			;;
 		--jemalloc-lg-page16)
@@ -116,13 +134,34 @@ fi
 
 DOCKER_PLATFORM="linux/${TARGET_ARCH}"
 
+if ((ENABLE_CUDA)); then
+	if [[ -z "${TYPESENSE_BAZEL_IMAGE:-}" ]]; then
+		IMAGE="typesense/ci-bazel-cuda:local"
+	fi
+	if [[ -z "${TYPESENSE_BAZEL_DOCKERFILE:-}" ]]; then
+		BAZEL_DOCKERFILE="docker/ci-bazel-cuda.Dockerfile"
+	fi
+fi
+
+wrapper_env=(
+	"TYPESENSE_BAZEL_IMAGE=${IMAGE}"
+	"TYPESENSE_DOCKER_PLATFORM=${DOCKER_PLATFORM}"
+)
+if [[ -n "${BAZEL_DOCKERFILE}" ]]; then
+	wrapper_env+=("TYPESENSE_BAZEL_DOCKERFILE=${BAZEL_DOCKERFILE}")
+fi
+
 if ((BUILD_BEFORE_ASSEMBLY)); then
 	build_args=(build //:typesense-server)
+	if ((ENABLE_CUDA)); then
+		build_args+=(--define=use_cuda=on)
+		append_optional_repo_env build_args "TYPESENSE_ORT_CUDA_ARCHITECTURES"
+		append_optional_repo_env build_args "TYPESENSE_ORT_BUILD_JOBS"
+	fi
 	if ((ENABLE_JEMALLOC_LG_PAGE16)); then
 		build_args+=(--define=enable_jemalloc_lg_page16=1)
 	fi
-	TYPESENSE_DOCKER_PLATFORM="${DOCKER_PLATFORM}" \
-		"${PROJECT_DIR}/scripts/bazel_in_docker.sh" "${build_args[@]}"
+	env "${wrapper_env[@]}" "${PROJECT_DIR}/scripts/bazel_in_docker.sh" "${build_args[@]}"
 fi
 
 image_needs_build=0
@@ -148,8 +187,7 @@ else
 fi
 
 if ((image_needs_build)); then
-	TYPESENSE_DOCKER_PLATFORM="${DOCKER_PLATFORM}" \
-		"${PROJECT_DIR}/scripts/bazel_in_docker.sh" --build-image-only
+	env "${wrapper_env[@]}" "${PROJECT_DIR}/scripts/bazel_in_docker.sh" --build-image-only
 fi
 
 mkdir -p "${CACHE_DIR}"

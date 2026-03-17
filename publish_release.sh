@@ -32,6 +32,13 @@ if [ -d "${RELEASE_ARTIFACT_DIR}" ]; then
 	done < <(find "${RELEASE_ARTIFACT_DIR}" -maxdepth 1 -type f -name "typesense-server-${TYPESENSE_VERSION}-*.tar.gz" -print0 | sort -z)
 fi
 
+if [ -d "${RELEASE_ARTIFACT_DIR}" ]; then
+	while IFS= read -r -d '' tarball; do
+		upload_if_present "${tarball}"
+		upload_if_present "${tarball}.sha256.txt"
+	done < <(find "${RELEASE_ARTIFACT_DIR}" -maxdepth 1 -type f -name "typesense-gpu-deps-${TYPESENSE_VERSION}-*.tar.gz" -print0 | sort -z)
+fi
+
 if [ "${found_tarballs}" = false ]; then
 	for legacy_tarball in \
 		"${CURR_DIR}/build-Linux/typesense-server-${TYPESENSE_VERSION}-linux-amd64.tar.gz" \
@@ -48,5 +55,15 @@ if [ -d "${RELEASE_PACKAGE_DIR}" ]; then
 		-name "typesense-server-${TYPESENSE_VERSION}-*.deb" -o \
 		-name "typesense-server-${TYPESENSE_VERSION}*.rpm" -o \
 		-name "typesense-server-${TYPESENSE_VERSION/-/_}*.rpm" \
+	\) -print0 | sort -z)
+fi
+
+if [ -d "${RELEASE_PACKAGE_DIR}" ]; then
+	while IFS= read -r -d '' package_file; do
+		upload_if_present "${package_file}"
+	done < <(find "${RELEASE_PACKAGE_DIR}" -maxdepth 1 -type f \( \
+		-name "typesense-gpu-deps-${TYPESENSE_VERSION}-*.deb" -o \
+		-name "typesense-gpu-deps-${TYPESENSE_VERSION}*.rpm" -o \
+		-name "typesense-gpu-deps-${TYPESENSE_VERSION/-/_}*.rpm" \
 	\) -print0 | sort -z)
 fi

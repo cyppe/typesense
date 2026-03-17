@@ -19,6 +19,12 @@ bazel_dep(name = "abseil-cpp", version = "20260107.1", repo_name = "com_google_a
 bazel_dep(name = "googletest", version = "1.17.0.bcr.2", repo_name = "com_google_googletest")
 bazel_dep(name = "zlib", version = "1.3.2", repo_name = "com_github_madler_zlib")
 
+single_version_override(
+    module_name = "protobuf",
+    patches = ["//bazel:protobuf_34_enum_traits_impl.patch"],
+    patch_strip = 1,
+)
+
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
 git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")

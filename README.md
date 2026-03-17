@@ -133,6 +133,8 @@ You'll also see a list of user logos on the [Typesense Cloud](https://cloud.type
 **Option 1:** You can download the [binary packages](https://typesense.org/downloads) that we publish for
 Linux (x86_64, arm64, and arm64 `lg-page16`) and macOS (x86_64 and arm64).
 
+On Linux, the published `typesense-server` artifacts are built with optional CUDA-aware ONNX Runtime support. To enable GPU-backed embeddings and personalization, install the matching `typesense-gpu-deps` artifact alongside the regular Linux server artifact and provide the required NVIDIA runtime libraries. The current repo-owned build path is tested against CUDA 12.8 / cuDNN 9, and the packaged GPU sidecars currently depend on `libcublas*.so.12`, `libcudart.so.12`, `libcufft.so.11`, `libcurand.so.10`, and `libcudnn.so.9`. For tarball installs, keep the extracted GPU dependency `.so` files alongside `typesense-server` or on `LD_LIBRARY_PATH`. Whisper / voice-query inference remains CPU-only on this branch.
+
 **Option 2:** You can also run Typesense from our [official Docker image](https://hub.docker.com/r/typesense/typesense).
 
 **Option 3:** Spin up a managed cluster with [Typesense Cloud](https://cloud.typesense.org):

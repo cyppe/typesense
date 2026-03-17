@@ -2,6 +2,6 @@ Package: typesense-gpu-deps
 Version: $VERSION
 Maintainer: Typesense Inc. <contact@typesense.org>
 Description: Typesense GPU Dependencies
+ GPU provider sidecars for ONNX Runtime embeddings and personalization.
 Homepage: https://typesense.org
 Architecture: $ARCH
-Depends: curl

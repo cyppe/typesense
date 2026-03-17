@@ -34,6 +34,7 @@ If your task changes modernization status, benchmark policy, or the canonical wo
 - Benchmark comparison: `scripts/benchmark_vs_upstream.sh`
 - API test runner: `scripts/run_api_tests.sh`
 - Linux release replay: `scripts/release_linux_artifacts.sh`
+- Linux GPU deps replay: `scripts/release_linux_gpu_deps.sh`
 - API runtime bundle prep: `api_tests/scripts/prepare_runtime_bundle.sh`
 - C++ suite replay: `test/scripts/replay_typesense_test.sh`
 - Model prewarm: `test/scripts/prewarm_e5_small_model.sh`

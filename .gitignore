@@ -18,6 +18,8 @@ typesense-data
 /onnxruntime-prefix
 .secrets
 /dist
+/artifacts/
+/release/
 /tmp
 *.tar.gz
 /hf_cache/

@@ -137,7 +137,8 @@ jobs:
       max-parallel: 2
       matrix: ${{ fromJSON(needs.select_targets.outputs.matrix) }}
     env:
-      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel-cuda:ci
+      TYPESENSE_BAZEL_DOCKERFILE: docker/ci-bazel-cuda.Dockerfile
       TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
       TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
     steps:
@@ -165,6 +166,7 @@ jobs:
             export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
           fi
           args=(build //:typesense-server)
+          args+=(--define=use_cuda=on)
           if [ "${{ matrix.enable_jemalloc_lg_page16 }}" = "true" ]; then
             args+=(--define=enable_jemalloc_lg_page16=1)
           fi
@@ -197,7 +199,7 @@ jobs:
       - name: Assemble Linux release artifacts
         if: matrix.target_os == 'linux'
         run: |
-          args=(--version-label "${{ inputs.version_label }}" --target-arch "${{ matrix.target_arch }}")
+          args=(--with-cuda --version-label "${{ inputs.version_label }}" --target-arch "${{ matrix.target_arch }}")
           if [ "${{ matrix.enable_jemalloc_lg_page16 }}" = "true" ]; then
             args+=(--jemalloc-lg-page16)
           fi
@@ -302,7 +304,7 @@ jobs:
 # Notes:
 # - This is the manual workflow for core binary artifacts only.
 # - It follows GitHub Actions best practices for native multi-platform builds: matrix fan-out, named artifacts, and separation of artifact build from any future publishing workflow.
-# - It now includes the upstream-style linux-arm64-lg-page16 server lane, but it does not yet automate GPU dependency artifacts, Docker image publishing, or Homebrew tap updates.
+# - Linux server lanes build the regular typesense-server artifact with CUDA-aware ONNX Runtime support; publish the optional provider sidecars separately via release-gpu-deps.yml.
 # - Linux release tarballs/packages now ship the stripped runtime binary plus a separate `.debug` tarball sidecar that keeps split debug info keyed by the same BuildID.
 # - Linux lanes now use `scripts/release_linux_artifacts.sh` so local replay and workflow assembly stay container-backed and share one canonical artifact path.
 # - Darwin lanes intentionally ship the current unstripped `typesense-server` tarball with embedded DWARF and no `.dSYM` sidecar; revisit only when there is a concrete size/symbolication need plus a macOS-native validation lane.

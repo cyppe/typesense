@@ -136,9 +136,11 @@ cp $$BUILD_TMPDIR/lib/libocos_operators.a $$INSTALLDIR/lib
 cp $$BUILD_TMPDIR/lib/libortcustomops.a $$INSTALLDIR/lib
 """
 
-
+load("@cuda_home_repo//:cuda_helpers.bzl", "maybe_with_cuda_architectures")
+load("@cuda_home_repo//:ort_build_jobs.bzl", "ORT_BUILD_JOBS")
 load("@cuda_home_repo//:cuda_home.bzl", "CUDA_HOME")
 load("@cuda_home_repo//:cudnn_home.bzl", "CUDNN_HOME")
+load("@cuda_home_repo//:cuda_architectures.bzl", "CUDA_ARCHITECTURES")
 
 __ONNXRUNTIME_WITHOUT_CUDA = {'onnxruntime_RUN_ONNX_TESTS':'OFF',
 'onnxruntime_BUILD_UNIT_TESTS':'OFF',
@@ -205,7 +207,7 @@ __ONNXRUNTIME_WITHOUT_CUDA = {'onnxruntime_RUN_ONNX_TESTS':'OFF',
 }
 
 
-__ONNXRUNTIME_WITH_CUDA = {'onnxruntime_RUN_ONNX_TESTS':'OFF',
+__ONNXRUNTIME_WITH_CUDA = maybe_with_cuda_architectures({'onnxruntime_RUN_ONNX_TESTS':'OFF',
 'onnxruntime_BUILD_UNIT_TESTS':'OFF',
 'onnxruntime_GENERATE_TEST_REPORTS':'ON',
 'onnxruntime_USE_MIMALLOC':'OFF',
@@ -269,7 +271,7 @@ __ONNXRUNTIME_WITH_CUDA = {'onnxruntime_RUN_ONNX_TESTS':'OFF',
 'OCOS_ENABLE_CV2': 'OFF',
 'OCOS_ENABLE_OPENCV_CODECS': 'OFF',
 'FETCHCONTENT_TRY_FIND_PACKAGE_MODE': 'NEVER',
-}
+}, CUDA_ARCHITECTURES)
 
 config_setting(
     name = "with_cuda",
@@ -289,7 +291,7 @@ cmake(
     generate_args = ["--compile-no-warning-as-error"],
     build_args= [
         "--config Release",
-        "-j3"
+        "-j{}".format(ORT_BUILD_JOBS),
     ],
     tags=["requires-network","no-sandbox"],
     features=["-default_compile_flags","-fno-canonical-system-headers", "-Wno-builtin-macro-redefined"],
@@ -320,7 +322,7 @@ cmake(
     generate_args = ["--compile-no-warning-as-error"],
     build_args = [
         "--config Release",
-        "-j3",
+        "-j{}".format(ORT_BUILD_JOBS),
     ],
     tags = ["requires-network", "no-sandbox"],
     features = ["-default_compile_flags", "-fno-canonical-system-headers", "-Wno-builtin-macro-redefined"],
@@ -407,7 +409,7 @@ cmake(
     generate_args = ["--compile-no-warning-as-error"],
     build_args = [
         "--config Release",
-        "-j3",
+        "-j{}".format(ORT_BUILD_JOBS),
     ],
     build_data = ["@com_google_protobuf//:protoc"],
     deps = [

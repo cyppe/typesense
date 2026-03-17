@@ -43,7 +43,7 @@ bazel test --cache_test_results=no --test_output=all //:typesense-test --test_ti
 ## 4) GitHub trigger policy
 
 - `tests.yml` is the only automatic CI gate. It runs on `push` and can also be started manually with `workflow_dispatch`.
-- `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, and `release-binaries.yml` are manual-only workflows.
+- `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, `release-binaries.yml`, and `release-gpu-deps.yml` are manual-only workflows.
 - Prefer replaying the matching local wrapper command before dispatching a heavy manual workflow. This repo's wrappers are the canonical local equivalents of the GitHub lanes.
 
 ## 5) Known gotcha: GCC 15 + rules_foreign_cc pkgconfig
@@ -86,14 +86,20 @@ TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --p
 # local benchmark repro against the same latest local binary
 TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick --scope core
 
-# release-binaries.yml (local Linux replay)
-scripts/release_linux_artifacts.sh --build --version-label 0.0.0-local
-scripts/release_linux_artifacts.sh --build --target-arch arm64 --jemalloc-lg-page16 --version-label 0.0.0-local
+# release-binaries.yml (local Linux replay; Linux server artifacts are built with CUDA-capable ORT)
+scripts/release_linux_artifacts.sh --build --with-cuda --version-label 0.0.0-local
+scripts/release_linux_artifacts.sh --build --with-cuda --target-arch arm64 --version-label 0.0.0-local
+scripts/release_linux_artifacts.sh --build --with-cuda --target-arch arm64 --jemalloc-lg-page16 --version-label 0.0.0-local
+
+# release-gpu-deps.yml (local Linux GPU deps replay; ONNX Runtime embeddings/personalization only)
+scripts/release_linux_gpu_deps.sh --build --version-label 0.0.0-local
+scripts/release_linux_gpu_deps.sh --build --target-arch arm64 --emit-lg-page16-alias --version-label 0.0.0-local
 ```
 
 The workflow YAML also layers GitHub-specific cache and artifact plumbing on top of these commands, but the wrappers above are the primary repro paths.
 The benchmark wrapper now builds and runs its Bun CLI in Docker by default, so the host does not need Bun installed unless you intentionally use `--host-bun`.
 The Linux release wrapper keeps packaging tools inside containers, so the host does not need `alien`, `rpm`, `dpkg-dev`, `objcopy`, or `strip` installed separately.
+Linux release binaries now use `--define=use_cuda=on` on Linux so the published `typesense-server` artifact can load optional GPU provider sidecars from `typesense-gpu-deps`. On this branch the GPU surface is limited to ONNX Runtime-backed embeddings/personalization; Whisper remains CPU-only.
 Cross-arch local replays of `linux-arm64` or `linux-arm64-lg-page16` from an x86_64 host require Docker arm64 emulation to be enabled.
 Darwin release lanes still require native macOS runners. Their current artifact contract is the unstripped `typesense-server` tarball with embedded DWARF plus `typesense-server.md5.txt`; the repo does not currently produce a `.dSYM` sidecar.
 
