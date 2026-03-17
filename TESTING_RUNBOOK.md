@@ -7,6 +7,13 @@ Docs ownership:
 - `benchmark/README.md` owns benchmark CLI usage.
 - `benchmark/BENCHMARK_RESULTS.md` owns benchmark decisions and tuning guidance.
 
+## Entrypoint layout
+
+- Start with the repo-level wrappers under `scripts/` for build, API, benchmark, and release tasks.
+- Use `test/scripts/replay_typesense_test.sh` for focused C++ test replay.
+- Treat `api_tests/scripts/prepare_runtime_bundle.sh`, `test/scripts/prewarm_e5_small_model.sh`, and `debian-pkg/*.sh` as support helpers behind those wrappers unless a workflow/debug note explicitly calls for them.
+- `scripts/publish_release.sh` is the publish helper for already-built release artifacts, not a build/replay wrapper.
+
 ## 1) Recommended default: Dockerized Bazel
 
 Build the CI toolchain image once, then run Bazel commands inside it.
@@ -100,6 +107,7 @@ The workflow YAML also layers GitHub-specific cache and artifact plumbing on top
 The benchmark wrapper now builds and runs its Bun CLI in Docker by default, so the host does not need Bun installed unless you intentionally use `--host-bun`.
 The Linux release wrapper keeps packaging tools inside containers, so the host does not need `alien`, `rpm`, `dpkg-dev`, `objcopy`, or `strip` installed separately.
 Linux release binaries now use `--define=use_cuda=on` on Linux so the published `typesense-server` artifact can load optional GPU provider sidecars from `typesense-gpu-deps`. On this branch the GPU surface is limited to ONNX Runtime-backed embeddings/personalization; Whisper remains CPU-only.
+Artifact publishing is a separate post-build step via `scripts/publish_release.sh` against the generated `artifacts/` tree, not part of the local replay wrappers above.
 Cross-arch local replays of `linux-arm64` or `linux-arm64-lg-page16` from an x86_64 host require Docker arm64 emulation to be enabled.
 Darwin release lanes still require native macOS runners. Their current artifact contract is the unstripped `typesense-server` tarball with embedded DWARF plus `typesense-server.md5.txt`; the repo does not currently produce a `.dSYM` sidecar.
 

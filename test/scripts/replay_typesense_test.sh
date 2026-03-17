@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODELS_DIR_HOST="${TYPESENSE_TEST_MODELS_DIR_HOST:-${ROOT_DIR}/tmp/replay-models}"
 MODELS_DIR_CONTAINER="${TYPESENSE_TEST_MODELS_DIR_CONTAINER:-/work/tmp/replay-models}"
+MODEL_CACHE_MARKER_RELATIVE_PATH="ts_e5-small/model.onnx"
 
 gtest_filter=""
 if [[ $# -gt 0 ]] && [[ "${1}" != --* ]]; then
@@ -13,7 +14,7 @@ if [[ $# -gt 0 ]] && [[ "${1}" != --* ]]; then
 fi
 
 mkdir -p "${MODELS_DIR_HOST}"
-if [[ ! -f "${MODELS_DIR_HOST}/ts/e5-small/model.onnx" ]]; then
+if [[ ! -f "${MODELS_DIR_HOST}/${MODEL_CACHE_MARKER_RELATIVE_PATH}" ]]; then
 	bash "${ROOT_DIR}/test/scripts/prewarm_e5_small_model.sh" "${MODELS_DIR_HOST}"
 fi
 

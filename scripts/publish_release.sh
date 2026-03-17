@@ -1,16 +1,39 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-if [ -z "${TYPESENSE_VERSION:-}" ]; then
-	echo "\$TYPESENSE_VERSION is not provided. Quitting."
-	exit 1
-fi
+set -euo pipefail
 
-set -ex
-CURR_DIR=$(dirname "$0" | while read -r a; do cd "$a" && pwd && break; done)
-RELEASE_ARTIFACT_DIR="${RELEASE_ARTIFACT_DIR:-${CURR_DIR}/artifacts}"
-RELEASE_PACKAGE_DIR="${RELEASE_PACKAGE_DIR:-${CURR_DIR}/artifacts/packages}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+RELEASE_ARTIFACT_DIR="${RELEASE_ARTIFACT_DIR:-${PROJECT_DIR}/artifacts}"
+RELEASE_PACKAGE_DIR="${RELEASE_PACKAGE_DIR:-${PROJECT_DIR}/artifacts/packages}"
 AWS_PROFILE_NAME="${AWS_PROFILE_NAME:-typesense}"
 S3_RELEASE_PREFIX="${S3_RELEASE_PREFIX:-s3://dl.typesense.org/releases}"
+
+usage() {
+	cat <<'EOF'
+Usage:
+  TYPESENSE_VERSION=<version> scripts/publish_release.sh
+
+Environment:
+  TYPESENSE_VERSION       Version label to publish (required)
+  RELEASE_ARTIFACT_DIR    Tarball/checksum directory (default: ./artifacts)
+  RELEASE_PACKAGE_DIR     Package directory (default: ./artifacts/packages)
+  AWS_PROFILE_NAME        AWS CLI profile (default: typesense)
+  S3_RELEASE_PREFIX       Destination prefix (default: s3://dl.typesense.org/releases)
+
+Notes:
+  - This helper only uploads already-built artifacts. It does not build release outputs.
+  - Prefer `release-binaries.yml` or the repo-owned local release wrappers to create artifacts first.
+  - Legacy `build-Linux` / `build-Darwin` tarball fallbacks remain until the older layout is fully retired.
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+	usage
+	exit 0
+fi
+
+: "${TYPESENSE_VERSION:?TYPESENSE_VERSION is required. Use --help for details.}"
 
 upload_if_present() {
 	local path="$1"
@@ -41,8 +64,8 @@ fi
 
 if [ "${found_tarballs}" = false ]; then
 	for legacy_tarball in \
-		"${CURR_DIR}/build-Linux/typesense-server-${TYPESENSE_VERSION}-linux-amd64.tar.gz" \
-		"${CURR_DIR}/build-Darwin/typesense-server-${TYPESENSE_VERSION}-darwin-amd64.tar.gz"; do
+		"${PROJECT_DIR}/build-Linux/typesense-server-${TYPESENSE_VERSION}-linux-amd64.tar.gz" \
+		"${PROJECT_DIR}/build-Darwin/typesense-server-${TYPESENSE_VERSION}-darwin-amd64.tar.gz"; do
 		upload_if_present "${legacy_tarball}"
 		upload_if_present "${legacy_tarball}.sha256.txt"
 	done

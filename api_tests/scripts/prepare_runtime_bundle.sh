@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# Internal helper for scripts/run_api_tests.sh and release staging.
+# Use scripts/run_api_tests.sh for normal API replay instead of calling this directly.
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${1:-${REPO_ROOT}/typesense-runtime-bundle}"

@@ -413,6 +413,7 @@ scripts/check_local_toolchain.sh
 Please refer to the [CI build steps](.github/workflows/tests.yml) for the latest set of dependencies.
 
 `TESTING_RUNBOOK.md` is the canonical owner for local build, test, replay, and API test commands. Use it instead of copying command variants into multiple docs.
+The supported repo-level task wrappers live under `scripts/`; helper scripts under `api_tests/scripts/` and `test/scripts/` are mostly internal support paths or focused test replays, not alternate build entrypoints.
 
 ---
 &copy; 2016-present Typesense Inc.

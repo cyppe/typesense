@@ -35,11 +35,15 @@ If your task changes modernization status, benchmark policy, or the canonical wo
 - API test runner: `scripts/run_api_tests.sh`
 - Linux release replay: `scripts/release_linux_artifacts.sh`
 - Linux GPU deps replay: `scripts/release_linux_gpu_deps.sh`
-- API runtime bundle prep: `api_tests/scripts/prepare_runtime_bundle.sh`
+- Release publish helper: `scripts/publish_release.sh`
 - C++ suite replay: `test/scripts/replay_typesense_test.sh`
-- Model prewarm: `test/scripts/prewarm_e5_small_model.sh`
 
-Before adding a new helper script, check whether one of these should become the single supported entrypoint instead.
+Internal support helpers, not first-choice task entrypoints:
+- `api_tests/scripts/prepare_runtime_bundle.sh`
+- `test/scripts/prewarm_e5_small_model.sh`
+- `debian-pkg/*.sh`
+
+Before adding a new helper script, first decide whether it belongs under `scripts/` as a public task entrypoint or next to a subsystem as an internal helper.
 
 ## Default Commands
 

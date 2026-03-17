@@ -40,6 +40,7 @@ scripts/run_api_tests.sh -- --no-secrets
 ```
 
 This wrapper prepares the runtime bundle automatically and runs Bun in Docker by default, so the host does not need Bun installed. Use `--host-bun` only as an escape hatch.
+`api_tests/scripts/prepare_runtime_bundle.sh` is the internal staging helper behind that wrapper and is meant for targeted debugging or release assembly, not as the default API test entrypoint.
 
 `TESTING_RUNBOOK.md` owns the broader build/test/replay command matrix; keep this README focused on API-suite-specific behavior.
 

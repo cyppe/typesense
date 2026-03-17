@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+# Internal helper for test/scripts/replay_typesense_test.sh and CI model staging.
+# The on-disk cache path uses the runtime's normalized model directory naming (`ts_e5-small`).
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUTPUT_DIR="${1:-${REPO_ROOT}/tmp/ci-models}"
