@@ -1222,18 +1222,18 @@ Completed Mar 18, 2026.
 - Backport 6 is now landed locally on `v31-fork`: upstream commit `c2272a95` (`Add test for preset with auth.`) plus its one-line `core_api.cpp` guard. `get_collections_for_auth(...)` now ignores nested multi-search `preset` values unless they are strings, and `AuthManagerTest.HandleAuthenticationWithNonStringNestedMultiSearchPreset` covers the auth path that previously could throw on malformed JSON types.
 - Backport 7 is now landed locally on `v31-fork`: upstream commit `5bef9362` (`Improve filtering logic, beef up tests and clean up code.`) plus the upstream stress coverage. `filter_result_iterator_t` now reuses the shared `apply_not_equals(...)` path consistently for numeric/list `NOT_EQUALS`, avoids leaking or overwriting prior result buffers during repeated `!=` evaluation, and carries the upstream regression tests covering lazy numeric `!=` chains plus explicit `!=` lists on int/float fields.
 - Backport 8 is now landed locally on `v31-fork`: upstream commit `ae64826a` (`delete-by-query: batch index removals and add lock-batching tests`). `stateful_remove_docs(...)` now batches seq-id removals through `Collection::remove_if_found_many(...)` with an internal cap of `1000` ids per call, while explicitly preserving per-doc semantics for referenced collections so cascade deletes remain safe. The upstream regression coverage for batched removal semantics, cascade references, and bounded internal batching is now carried locally in `CoreAPIUtilsTest`.
+- `975163ef` (`fix(reference faceting): stop recursive get_related_ids overload`) is already effectively present in this fork, so no backport is needed: current `Index::get_related_ids(const uint32_t& seq_id, ...)` already materializes `std::vector<uint32_t> seq_ids{seq_id};` before delegating to the vector overload, which is the exact stable-line fix.
 - The current official `upstream/v30` tail after the fork's local `v30` tip is now fully triaged for the post-`36ed4a87` range; the remaining item-40 work is the older pre-tail patch families listed below.
 - The wider post-fork stable-line audit also surfaced older `upstream/v30` fixes that were never intentionally closed out in the fork and still need triage against current code:
   - `1b4fa888` highlight race-condition fix
   - `5458d3f0` finer-grained search locking
   - `3ad9d3e0` avoid cloning posting lists for highlighting
-  - `975163ef` reference-faceting overload recursion fix
 
 **Story A - Investigation**
 
 - [ ] Classify every missing `upstream/v30` patch as `backport now`, `already superseded in the fork`, or `reject/blocked` with a concrete reason.
 - [x] Backport the smallest safe user-visible fixes first: zero-match phrase vector behavior. *(`#2793` diversity seq-id ordering, `#2772` `/health` meta-thread-pool routing, `#2809` model-download timeout bump, `9b0d729b` model-config fetch timeout bump, `#2817` zero-match phrase/vector fallback, `c2272a95` nested preset auth hardening, `5bef9362` filtering/not-equals cleanup, and `ae64826a` delete-by-query batching are now landed locally. The behavior fixes carry focused tests; the timeout-only backports are documented as non-trivial to exercise without an injected transport seam.)*
-- [ ] Re-evaluate the older concurrency/highlighting/delete-by-query fixes against current NuRaft-era code before touching them; do not assume they are safe just because they shipped on the classic release line.
+- [ ] Re-evaluate the remaining concurrency/highlighting cluster (`1b4fa888`, `5458d3f0`, `3ad9d3e0`) against current NuRaft-era code before touching it; do not assume it is safe just because it shipped on the classic release line.
 - [ ] Keep parity proof test-first where upstream already supplied coverage.
 
 **Exit criteria**
