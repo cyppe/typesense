@@ -11,6 +11,49 @@ Historical note: Runs 14-26 below are archival pre-cutover measurements from whe
 
 ---
 
+## Run 31: Item 38 Closeout Against Upstream 30.1 After Benchmark Harness Repair (2026-03-18)
+
+**Commit:** local `HEAD` `1c34ddf7` at run time
+**Command:** `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --profile standard --scope core --clean`
+**Scenario:** rerun the canonical upstream-comparable `standard/core` lane after repairing the Dockerized Influx bind-mount cleanup path, and decide whether item 38's committed indexing JSON ownership-handoff change can close on current branch head.
+
+### Findings
+
+- Run 30's benchmark-harness blocker was real and root-caused locally: `--clean` removed and recreated the bind-mounted `benchmark/influxdb-data` tree while `benchmark-influxdb-1` could stay alive, so Docker kept the deleted inode mounted and k6 later failed with `mkdir /var/lib/influxdb/data: no such file or directory`.
+- `scripts/benchmark_vs_upstream.sh` now stops the benchmark compose stack before cleaning bind-mounted state, recreates `benchmark/influxdb-data/{data,meta,wal}`, and verifies those paths inside the running Influx container before launching the benchmark CLI.
+- The repaired wrapper completed the full canonical upstream compare successfully. Archive snapshot: `~/.cache/typesense/benchmark/archives/20260318-161516-standard-core`.
+
+### Import Summary
+
+| Lane | Import duration | Docs imported | HTTP status | Response warnings |
+|---|---:|---:|---:|---:|
+| upstream `30.1` | `50270 ms` | `1000000/1000000` | `200` | `0` |
+| current fork `1c34ddf7` | `31790 ms` | `1000000/1000000` | `200` | `0` |
+
+Import delta: `-18480 ms` (`-36.76%`) in the fork's favor.
+
+### Search p95 Summary
+
+| Scenario | Upstream p95 (`50vu / 100vu`) | Fork p95 (`50vu / 100vu`) | Delta (`50vu / 100vu`) |
+|---|---:|---:|---:|
+| `just_q` | `5 / 5 ms` | `5 / 4 ms` | `+0.00% / -20.00%` |
+| `q_star` | `0 / 0 ms` | `0 / 0 ms` | `0.00% / 0.00%` |
+| `filter_simple` | `110 / 345 ms` | `16 / 17 ms` | `-85.45% / -95.07%` |
+| `filter_complex` | `27 / 72 ms` | `6 / 6 ms` | `-77.78% / -91.67%` |
+| `sort_simple` | `254 / 577 ms` | `161 / 157 ms` | `-36.61% / -72.79%` |
+| `sort_eval_condition` | `306 / 617 ms` | `166 / 161 ms` | `-45.75% / -73.91%` |
+| `sort_eval_score` | `312 / 672 ms` | `166 / 173 ms` | `-46.79% / -74.26%` |
+| `facet` | `461 / 947 ms` | `142 / 140 ms` | `-69.20% / -85.22%` |
+| `group` | `2547 / 6170 ms` | `420 / 440 ms` | `-83.51% / -92.87%` |
+
+### Decision
+
+- Close item 38.
+- Keep the committed move-handoff code from `7ab4cd8b` (`Reduce indexing JSON copies and prewarm test models`).
+- Keep the benchmark-harness cleanup fix in `scripts/benchmark_vs_upstream.sh`; it is now part of the supported Dockerized benchmark lane, not a one-off local workaround.
+
+---
+
 ## Run 30: Item 38 Cleaner Repeat Blocked By Dockerized Influx Mount Failure (2026-03-18)
 
 **Commit:** local `HEAD` `1da111f7` at run time

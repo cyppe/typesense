@@ -208,6 +208,7 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BENCHMARK_DIR="${REPO_DIR}/benchmark"
+INFLUXDB_DATA_DIR="${BENCHMARK_DIR}/influxdb-data"
 UPSTREAM_URL="https://dl.typesense.org/releases/${UPSTREAM_VERSION}/typesense-server-${UPSTREAM_VERSION}-linux-amd64.tar.gz"
 export COMPOSE_PROJECT_NAME="benchmark"
 export BENCHMARK_WORK_DIR="${WORK_DIR}"
@@ -216,6 +217,29 @@ HOST_UID="$(id -u)"
 HOST_GID="$(id -g)"
 DOCKER_GID="$(stat -c '%g' /var/run/docker.sock)"
 export HOST_UID HOST_GID DOCKER_GID
+
+benchmark_compose() {
+	(
+		cd "${BENCHMARK_DIR}"
+		docker compose "$@"
+	)
+}
+
+prepare_influxdb_data_dir() {
+	mkdir -p "${INFLUXDB_DATA_DIR}/data" "${INFLUXDB_DATA_DIR}/meta" "${INFLUXDB_DATA_DIR}/wal"
+}
+
+verify_influxdb_data_dir_mount() {
+	local influxdb_container
+	influxdb_container="$(benchmark_compose ps -q influxdb 2>/dev/null | head -1)"
+	if [[ -z "${influxdb_container}" ]]; then
+		return 1
+	fi
+
+	docker exec "${influxdb_container}" test -d /var/lib/influxdb/data \
+		-a -d /var/lib/influxdb/meta \
+		-a -d /var/lib/influxdb/wal
+}
 
 if [[ -n "${BASELINE_BINARY_OVERRIDE}" ]] && [[ ! -x "${BASELINE_BINARY_OVERRIDE}" ]]; then
 	echo "Error: baseline binary is not executable: ${BASELINE_BINARY_OVERRIDE}" >&2
@@ -241,12 +265,15 @@ if [[ -n "${FORK_BINARY_OVERRIDE}" ]] && [[ -z "${FORK_LABEL_OVERRIDE}" ]]; then
 fi
 
 if [[ "${CLEAN}" == "true" ]]; then
+	echo "Stopping benchmark infrastructure before cleaning bind-mounted state..."
+	benchmark_compose down --remove-orphans || true
 	echo "Cleaning work directory and InfluxDB data..."
 	rm -rf "${WORK_DIR}" 2>/dev/null || sudo rm -rf "${WORK_DIR}" 2>/dev/null || true
-	rm -rf "${BENCHMARK_DIR}/influxdb-data" 2>/dev/null || sudo rm -rf "${BENCHMARK_DIR}/influxdb-data" 2>/dev/null || true
+	rm -rf "${INFLUXDB_DATA_DIR}" 2>/dev/null || sudo rm -rf "${INFLUXDB_DATA_DIR}" 2>/dev/null || true
 fi
 
 mkdir -p "${WORK_DIR}" "${WORK_DIR}/benchmark-node_modules"
+prepare_influxdb_data_dir
 
 if [[ "${BUILD}" == "true" ]]; then
 	echo "=== Building fork binary ==="
@@ -378,8 +405,17 @@ verify_binary "${FORK_BINARY}"
 verify_binary "${BASELINE_BINARY}"
 
 echo "=== Starting benchmark infrastructure ==="
-cd "${BENCHMARK_DIR}"
-docker compose up -d influxdb grafana k6
+benchmark_compose up -d influxdb grafana k6
+if ! verify_influxdb_data_dir_mount; then
+	echo "InfluxDB bind mount is stale; recreating benchmark infrastructure..."
+	benchmark_compose down --remove-orphans || true
+	prepare_influxdb_data_dir
+	benchmark_compose up -d influxdb grafana k6
+fi
+if ! verify_influxdb_data_dir_mount; then
+	echo "Error: InfluxDB data directories are missing inside the benchmark container." >&2
+	exit 1
+fi
 echo "Waiting for InfluxDB to be healthy..."
 timeout 30 bash -c 'until curl -sf http://localhost:8086/ping; do sleep 1; done' || {
 	echo "Error: InfluxDB did not become healthy" >&2
