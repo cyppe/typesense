@@ -55,7 +55,6 @@ struct highlight_field_t {
 
 struct highlight_field_snapshot_t {
     tsl::htrie_map<char, highlight_query_token_t> qtoken_leaves;
-    std::vector<std::unique_ptr<posting_list_t>> posting_lists;
 };
 
 struct union_global_params_t {
@@ -524,38 +523,38 @@ private:
                                       const uint8_t* index_symbols, const match_index_t& match_index, const std::string& raw_query,
                                       const std::vector<std::vector<std::string>>& q_phrases = {});
 
-    static void highlight_result(const bool& enable_nested_fields, const std::vector<char>& symbols_to_index,const std::vector<char>& token_separators,
-                                 const std::string& raw_query, const field& search_field,
-                                 const size_t& search_field_index,
-                                 const highlight_field_snapshot_t& highlight_snapshot,
-                                 const KV* field_order_kv, const nlohmann::json& document,
-                                 nlohmann::json& highlight_doc,
-                                 StringUtils& string_utils,
-                                 const size_t& snippet_threshold,
-                                 const size_t& highlight_affix_num_tokens,
-                                 const bool& highlight_fully,
-                                 const bool& is_infix_search,
-                                 const std::string& highlight_start_tag,
-                                 const std::string& highlight_end_tag,
-                                 const uint8_t* index_symbols,
-                                 highlight_t& highlight,
-                                 bool& found_highlight,
-                                 bool& found_full_highlight,
-                                 const std::vector<std::vector<std::string>>& q_phrases = {});
+    void highlight_result(const bool& enable_nested_fields, const std::vector<char>& symbols_to_index,const std::vector<char>& token_separators,
+                          const std::string& raw_query, const field& search_field,
+                          const size_t& search_field_index,
+                          const highlight_field_snapshot_t& highlight_snapshot,
+                          const KV* field_order_kv, const nlohmann::json& document,
+                          nlohmann::json& highlight_doc,
+                          StringUtils& string_utils,
+                          const size_t& snippet_threshold,
+                          const size_t& highlight_affix_num_tokens,
+                          const bool& highlight_fully,
+                          const bool& is_infix_search,
+                          const std::string& highlight_start_tag,
+                          const std::string& highlight_end_tag,
+                          const uint8_t* index_symbols,
+                          highlight_t& highlight,
+                          bool& found_highlight,
+                          bool& found_full_highlight,
+                          const std::vector<std::vector<std::string>>& q_phrases = {}) const;
 
-    static void do_highlighting(const tsl::htrie_map<char, field>& search_schema, const bool& enable_nested_fields,
-                                const std::vector<char>& symbols_to_index, const std::vector<char>& token_separators,
-                                const std::string& query, const std::vector<std::string>& raw_search_fields,
-                                const std::string& raw_query, const bool& enable_highlight_v1, const size_t& snippet_threshold,
-                                const size_t& highlight_affix_num_tokens, const std::string& highlight_start_tag,
-                                const std::string& highlight_end_tag, const std::vector<std::string>& highlight_field_names,
-                                const std::vector<std::string>& highlight_full_field_names,
-                                const std::vector<highlight_field_t>& highlight_items,
-                                const std::vector<highlight_field_snapshot_t>& highlight_snapshots,
-                                const uint8_t* index_symbols,
-                                const KV* field_order_kv, const nlohmann::json& document, nlohmann::json& highlight_res,
-                                nlohmann::json& wrapper_doc,
-                                const std::vector<std::vector<std::string>>& q_phrases = {});
+    void do_highlighting(const tsl::htrie_map<char, field>& search_schema, const bool& enable_nested_fields,
+                         const std::vector<char>& symbols_to_index, const std::vector<char>& token_separators,
+                         const std::string& query, const std::vector<std::string>& raw_search_fields,
+                         const std::string& raw_query, const bool& enable_highlight_v1, const size_t& snippet_threshold,
+                         const size_t& highlight_affix_num_tokens, const std::string& highlight_start_tag,
+                         const std::string& highlight_end_tag, const std::vector<std::string>& highlight_field_names,
+                         const std::vector<std::string>& highlight_full_field_names,
+                         const std::vector<highlight_field_t>& highlight_items,
+                         const std::vector<highlight_field_snapshot_t>& highlight_snapshots,
+                         const uint8_t* index_symbols,
+                         const KV* field_order_kv, const nlohmann::json& document, nlohmann::json& highlight_res,
+                         nlohmann::json& wrapper_doc,
+                         const std::vector<std::vector<std::string>>& q_phrases = {}) const;
 
     void remove_document(nlohmann::json & document, const uint32_t seq_id, bool remove_from_store);
 
