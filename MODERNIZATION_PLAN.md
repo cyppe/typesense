@@ -465,7 +465,7 @@ Done. Dockerized Bazel wrapper (`scripts/bazel_in_docker.sh`), CI uses repo Dock
   - ~~`dawidd6/action-download-artifact` `@v2` → `@v6`~~ done (benchmark-testing.yml).
   - `oven-sh/setup-bun` `@v2` — already on latest major.
 - [x] Keep `flake-detection.yml` available as the dedicated manual stress workflow for source/build-system changes.
-- [x] Bazel disk cache persistence via `actions/cache@v4` across all CI workflows.
+- [x] Bazel disk cache persistence via `actions/cache` restore/save steps across all Bazel-bearing GitHub workflows, including `release-binaries.yml`.
   - Caches `${{ github.workspace }}/.cache/bazel-docker` (disk-cache + repository-cache + bazelisk).
   - Key: `bazel-{os}-{workflow}-{hashFiles('MODULE.bazel','BUILD','.bazelrc','bazel/**')}` with prefix restore-keys.
   - Sanitizer jobs use config-specific keys (`-asan-`, `-tsan-`) since different build configs produce incompatible artifacts.
@@ -558,7 +558,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 3 | ~~CI action version bumps~~ | P2.11 | **done** | `actions/checkout` v4→v6, `actions/upload-artifact` v4→v7 across all 5 workflows. |
 | 4 | ~~ICU version upgrade (71→78)~~ | P1.7 | **done** | Upgraded to ICU 78.2 (Unicode 14→17, CLDR 48). Patch regenerated. |
 | 5 | ~~Patch debt reduction (whisper)~~ | P1.7 | **done** | Reduced from 11 hunks to 8, then to 1 hunk via v1.8.3 upgrade. |
-| 6 | ~~CI hygiene backlog (remaining)~~ | P2.11 | **done** | Bazel disk cache via `actions/cache@v4` in all workflows. |
+| 6 | ~~CI hygiene backlog (remaining)~~ | P2.11 | **done** | Bazel disk cache via `actions/cache` restore/save steps in all Bazel-bearing workflows, including `release-binaries.yml`. |
 | 7 | ~~Benchmark infrastructure audit~~ | P2.13 | **done** | Stack audited, local execution documented, cross-fork comparison feasible. |
 | 8 | ~~Fix pre-existing test warnings~~ | Known Issues | **done** | Narrowing + trigraph warnings fixed. |
 | 9 | ~~Protobuf 34 upgrade~~ | P1.6b | **done** | Upgraded from 33.5 to 34.0.bcr.1. Updated MODULE.bazel and onnxruntime.BUILD version strings. Clean build, 120/120 API tests pass, all 4 NuRaft unit tests pass. No code changes required — protobuf is only an indirect dependency via OnnxRuntime and SentencePiece. |
@@ -589,6 +589,9 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 34 | ~~Replace patch-only forks with released upstream versions where possible~~ | P1.7 Patch Debt | **done** | Completed March 17, 2026. Removed the stale `typesense/hnswlib` fork by pinning the same upstream `nmslib/hnswlib` parent commit directly while the migration was still in progress, switched `clip_tokenizer_cpp` from the Typesense mirror to the identical upstream `ozanarmagan/clip_tokenizer_cpp` commit, and moved `kakasi` off the Typesense fork to upstream `loretoparisi/kakasi` with a small repo-owned patch plus the in-repo `japanese_data` payload. Item 36 later removed the supported `hnswlib` runtime path entirely, so no fork-backed Bazel deps remain. |
 | 35 | ~~Script / doc entrypoint architecture cleanup~~ | P2 DX | **done** | Completed March 17, 2026. The public wrapper boundary is now explicit: repo-level task entrypoints live under `scripts/`, the publish helper moved from repo root to `scripts/publish_release.sh`, subsystem helpers are documented as internal support paths, and the C++ replay helper now checks the real prewarmed model-cache path. |
 | 36 | ~~USearch vector backend prototype / refactor boundary~~ | P1 Vector Search | **done** | Completed March 17, 2026. The supported production vector path is now USearch `index_gt` only behind `vector_index_t`; the remaining in-tree `hnswlib` backend and Bazel dependency were removed, mixed update/search behavior is benchmarked, and the closeout kept `hnsw_params` only as API-compat config while adopting USearch's builtin normalized-IP metric. |
+| 37 | Release workflow promotion / draft-posture cleanup | P2 Release | **todo** | The current branch tip now has green `tests` and full `release-binaries` proof. Remaining work is posture/name/docs cleanup, not build break-fixing. |
+| 38 | Indexing hot-path string-copy audit | P2 Perf | **todo** | Promote the deferred `TODO.md` perf candidate into a measured benchmark task now that larger runtime/build bottlenecks are closed. |
+| 39 | Search work-budget configurability audit | P2 Search | **todo** | Evaluate whether the current minimum-results heuristic should become explicit configuration instead of an implicit `max_results` coupling. |
 
 ### 25) Release workflow promotion and repo-owned replay extraction
 
@@ -1109,17 +1112,84 @@ Completed March 17, 2026. The supported production path is now fully USearch-bas
 - [x] No unjustified hnsw-only compatibility baggage remains in the supported production path.
 - [x] Any deliberate divergence from the old hnsw behavior is benchmarked or quality-validated and documented as an intentional improvement, not an accidental drift.
 
+### 37) Release workflow promotion / draft-posture cleanup
+
+**Why this sprint exists now**
+
+- `tests` and the full manual `release-binaries` matrix are now green on the current branch tip, including the Linux GPU-deps sidecar jobs and the existing Darwin lanes.
+- Earlier release-lane work closed the technical blockers, but parts of the repo still describe the workflow as effectively "draft" or "promotion follow-up" work.
+- That mismatch is now a documentation / workflow-posture problem, not a build-system problem.
+
+**Sprint goal**
+
+- Decide whether `release-binaries.yml` should now be treated as the supported manual release workflow and remove stale draft/promotion wording if so. The goal is to make the repo's release story honest and unambiguous: one supported manual workflow, one matching local replay path, and no leftover "draft" framing once the technical proof is already green.
+
+**Story A - Investigation / cleanup**
+
+- [ ] Audit workflow names, comments, README/runbook wording, and helper-script help text for stale "draft", "proof-only", or pre-GPU artifact assumptions.
+- [ ] Verify whether any real blocker remains to calling `release-binaries.yml` the supported manual release lane on this branch.
+- [ ] If no blocker remains, update the workflow/docs/help text to match the supported release posture and replay the narrowest affected validation lane only if behavior changes.
+
+**Exit criteria**
+
+- [ ] The repo's workflow/docs posture matches the current supported manual release contract instead of the older draft framing.
+
+### 38) Indexing hot-path string-copy audit
+
+**Why this sprint exists now**
+
+- The larger runtime, dependency, and RocksDB tuning blockers are now mostly closed.
+- `TODO.md` still carries "Prevent string copy during indexing", and that is now one of the clearest remaining first-party performance candidates.
+- This should be handled as a measured perf task, not a broad speculative refactor.
+
+**Sprint goal**
+
+- Find and remove the most material avoidable string copies in the import/indexing hot path, with benchmark-driven proof and no product-behavior drift. The goal is not a speculative refactor of indexing internals; it is to turn one concrete old TODO into a measured throughput or CPU-efficiency win, or to document precisely why the currently suspected copy sites are not worth changing.
+
+**Story A - Investigation**
+
+- [ ] Profile the current import/indexing path on the benchmark corpus and identify the highest-signal avoidable string-copy sites.
+- [ ] Prototype the smallest ownership/ref/view changes that remove the top copy sites without broad API churn.
+- [ ] Re-validate import correctness and benchmark impact before keeping any change.
+
+**Exit criteria**
+
+- [ ] The plan records either a measured indexing/import win or a precise no-go conclusion for the current top copy sites.
+
+### 39) Search work-budget configurability audit
+
+**Why this sprint exists now**
+
+- `TODO.md` still carries "Minimum results should be a variable instead of blindly going with max_results".
+- That heuristic is user-visible search behavior, not just an internal micro-optimization, so it should not be changed blindly.
+- The right next step is to understand and bound the behavior before exposing or changing it.
+
+**Sprint goal**
+
+- Decide whether the current minimum-results heuristic should become explicit configuration, and if so, land the smallest safe surface with focused proof. The goal is to make this search-budget behavior intentional and explainable instead of leaving a user-visible relevance/latency tradeoff buried in implicit coupling to `max_results`.
+
+**Story A - Investigation**
+
+- [ ] Trace the current heuristic through the search/relevance/cutoff path and document which product behaviors it controls today.
+- [ ] Design the smallest explicit configuration surface that does not silently destabilize existing defaults.
+- [ ] Prove the effect with focused relevance/latency checks, or record a no-go if the heuristic is not worth exposing yet.
+
+**Exit criteria**
+
+- [ ] The plan records a concrete go/no-go decision for making the minimum-results heuristic configurable.
+
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now:** no P1 item is currently marked active. Item **34** is now fully closed, and no fork-backed Bazel dependencies remain on the supported Docker/Bazel path.
+- **Active now:** item **37** (`Release workflow promotion / draft-posture cleanup`) is the cleanest repo-level follow-up after the latest green `tests` and full `release-binaries` runs on branch tip. Items **38** and **39** are now promoted from deferred `TODO.md` notes into explicit measured backlog tasks.
+- **Recently finished:** NuRaft follower-read visibility hardening (Mar 2026) — a real multi-node restart regression showed that `committed_index` convergence was not enough for safe follower reads. `NuRaftHttpRuntimeService` now waits for NuRaft local state-machine apply before replaying into live readable state, `/status` reports the real readable applied index, and the API harness now gates on `read_caught_up` across nodes.
 - **Recently finished:** item **36** (`USearch vector backend prototype / refactor boundary`) — the supported production vector path is now fully USearch-based behind `vector_index_t`. Story C removed the remaining in-tree `hnswlib` backend/Bazel dependency from the supported path, benchmarked mixed update/search behavior on the real production backend, and chose USearch's builtin normalized-IP metric over the temporary scalar parity shim while rejecting raw builtin cosine as slower with no checksum/quality gain.
 - **Recently finished:** item **35** (`Script / doc entrypoint architecture cleanup`) — Story A found the public wrapper boundary was already mostly right, but the docs overstated narrow support helpers and one publish helper still lived at repo root. Story B moved the publish helper into `scripts/publish_release.sh`, documented `api_tests/scripts/prepare_runtime_bundle.sh` and `test/scripts/prewarm_e5_small_model.sh` as internal support helpers instead of first-choice task entrypoints, kept `debian-pkg/` as the internal packaging asset boundary, and fixed `test/scripts/replay_typesense_test.sh` to probe the real prewarmed `ts_e5-small` cache path.
 - **Recently finished:** item **34** (`Replace patch-only forks with released upstream versions where possible`) — the stale `typesense/hnswlib` fork is gone, `clip_tokenizer_cpp` now points at the identical upstream `ozanarmagan/clip_tokenizer_cpp` commit instead of a Typesense mirror, and `kakasi` now points at upstream `loretoparisi/kakasi` with a small repo-owned patch plus the in-repo `japanese_data` payload. Item **36** later removed the supported `hnswlib` runtime path entirely, so no fork-backed Bazel deps remain.
 - **Recently finished:** item **33** (`GPU deps artifact automation boundary`) — Story A first found the real blocker in the one-Protobuf CUDA server path, then unblocked it with a repo-owned protobuf compatibility patch under the new `docker/ci-bazel-cuda.Dockerfile` toolchain. Story B added the canonical `scripts/release_linux_gpu_deps.sh` producer, fixed `debian-pkg/gpu_generate_deb_rpm.sh`, folded the Linux-only GPU-deps job into `release-binaries.yml` so one manual workflow dispatch can build the full release set, updated Linux `release-binaries` to build the regular server artifact with `--define=use_cuda=on`, and kept docs honest that the GPU scope on this branch is ONNX Runtime embeddings/personalization only (`typesense-gpu-deps` contains `libonnxruntime_providers_shared.so` + `libonnxruntime_providers_cuda.so`; Whisper remains CPU-only). Item **32** (`Upstream arm64 lg-page16 release parity`) — Story A landed on go and kept the variant inside `release-binaries` instead of a sibling workflow. The canonical Linux release wrapper now has a `--jemalloc-lg-page16` lane, `scripts/bazel_in_docker.sh` can target the matching Docker platform for cross-arch local replay, `release-binaries.yml` now includes `linux-arm64-lg-page16`, and the local split proof covered both the build-side jemalloc `--with-lg-page=16` configuration and the expected `arm64-lg-page16` DEB/RPM naming. Item **31** (`Container-first tooling coverage audit`) — Story A ranked the remaining host-dependent flows and landed on go only for the benchmark lane. The benchmark wrapper now defaults to the repo's Dockerized CLI, `benchmark-testing.yml` no longer installs Bun on the runner, and the remaining host-only paths are now explicit as intentional escape hatches (`--host-bun`, `check_local_toolchain.sh`) or native constraints (Darwin release lanes). Item **30** (`NuRaft post-cutover benchmark baseline refresh`) — Story A landed on no-go for a fresh replay. Keep Run 27 plus the current `standard/core` policy as the canonical post-cutover baseline, and treat hosted `benchmark-testing` as a same-branch guardrail only. The latest hosted proof remains run `23085170081` on March 14, 2026 (`27bb2bff` vs `985acb45`), and the stale `//:nuraft-prototype-benchmark` guidance has been removed from the current docs. Item **29** (`Explicit compiler-config topology audit`) — Story A landed on no-go for a topology rewrite. Keep the wrapper-driven default GCC contract for now: the Docker image already makes GCC the routine compiler, `build:gcc` only scopes GCC-only suppressions, and the repo only has one explicit clang lane today (`check_clang_warning_guardrail.sh`). Rewriting the topology around explicit compiler entrypoints would mostly duplicate flags across workflows and wrappers without adding new verified coverage. Item **28** (`Cross-platform debug-symbol policy parity`) — Story A landed on no-go for Darwin `dSYM` sidecars. Keep Linux split debug info because it materially shrinks the shipped runtime artifact, but make Darwin explicit as the current unstripped tarball with embedded DWARF and no sidecar until there is a concrete size/symbolication need plus a macOS-native validation lane. Local `18adf2a0` proof measured `401M` unstripped vs `129M` stripped runtime + `292M` debug file (`44M` + `104M` tarballs), while a comparable single unstripped tarball from the same binary measured `145M`. Item **27** (`Env-dependent suite enablement and hosted-proof audit`) — the supported env-dependent matrix is now explicit, secret-gated API coverage stays all-or-nothing on the three existing repo secrets, TEI keeps its dedicated lane, and the stale migration-download story is retired as unsupported in the current Bun harness. Story B also closed the hidden NuRaft `post_multi_search` auth regression and the Dockerized Bun env-forwarding gap. Item **26** (`ORT external Abseil injection and upgrade unblock`) — Story A landed on go with a BUILD-level `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` override on ORT's one-protobuf static lane, `abseil-cpp` is now `20260107.1`, and the canonical build + API health replay + targeted ORT-backed C++ replay all passed without growing `bazel/onnxruntime.patch`. Item **24** (`Release artifact debug-info policy`) — Linux release artifacts now use split debug info: stripped runtime tarball/package path plus a separate `.debug.tar.gz` sidecar, implemented directly in `release-binaries.yml` and measured locally at `427M -> 151M + 297M`. Item **23** (`Compile warning audit / cleanup`) — normal, ASAN, and TSAN local warning audits are now clean apart from the known Bazel/OpenJDK banner after scoping sanitizer-only suppressions to GCC 14/libstdc++ regex false positives and TSAN Abseil `-Wtsan` noise. Item **22** (`Release workflow promotion / current-tip full-matrix replay`) — run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`; the matching publish dry-run on version label `0.0.0-a2832b63` logged all `12` expected uploads after the RPM-glob fix. Item **20** (`Sanitizer lane stabilization + ORT extensions boundary audit`) — default ASAN is green again after removing `new_delete_type_mismatch=0` from `.bazelrc`, and the remaining ORT issue was resolved by rewriting fetched `OrtOpLoader` statics to process lifetime inside `bazel/onnxruntime.patch`. Item **21** (`NuRaft import/runtime parity + benchmark refactor sprint`) — hosted `benchmark-testing` is green on `27bb2bff` after the final replay-model fix. Item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
 - **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule. NuRaft async/streaming parity verified against upstream (both synchronous, full match).
-- **Later:** re-audit `bazel/kakasi.patch` if upstream `kakasi` lands those fixes or publishes a new usable release/source, and monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep any suppression file-scoped and dependency-scoped rather than broad. Mine `TODO.md` only when an item clearly aligns with the modernization queue above.
+- **Later:** re-audit `bazel/kakasi.patch` if upstream `kakasi` lands those fixes or publishes a new usable release/source, and monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep any suppression file-scoped and dependency-scoped rather than broad. Re-mine `TODO.md` only after items **38** and **39** are either completed or explicitly no-goed.
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
   - `TODO.md` upstream product backlog (not the modernization source of truth; mine opportunistically only when an item aligns with current modernization goals).
@@ -1236,7 +1306,7 @@ From `TODO.md`, these are the highest-value items that still align with current 
 - ~~**Numeric safety hardening:**~~ done — `coerce_int32_t()` and `coerce_int64_t()` in `validator.cpp` now bounds-check float values before casting, preventing UB from out-of-range floats. Returns 400 or drops the field per dirty_values policy.
 - ~~**Reliability coverage:**~~ done — `nuraft_replication_edges.test.ts` adds 19 focused multi-node tests covering follower-originated metadata writes, cross-node visibility, restart persistence, and snapshot persistence. Fixed NOT_LEADER race in `append_via_raft()`. Total: 139 pass, 0 fail.
 
-These were intentionally deferred while item 13 was active and are now strong next candidates post-Phase-3.
+These were intentionally deferred while item 13 was active. The two remaining modernization-aligned candidates are now promoted into item **38** (`Indexing hot-path string-copy audit`) and item **39** (`Search work-budget configurability audit`); re-mine `TODO.md` only after those two have been resolved or explicitly rejected.
 
 ### 14) Benchmark observability: full metrics collection + Grafana dashboard improvements
 
@@ -1505,6 +1575,7 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 58. **For ORT Abseil version sync, prefer `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` over a custom imported-target patch.** ORT's upstream `cmake/external/abseil-cpp.cmake` already owns the right CMake target graph and patch flow. Pointing `onnxruntime_static_one_protobuf` at `$$EXT_BUILD_ROOT/external/abseil-cpp+` let ORT and `re2` rebuild against the repo's Abseil LTS without growing `bazel/onnxruntime.patch`; the canonical build, `health.test.ts`, and `CollectionVectorTest.TestUnloadingModelsOnCollectionDelete` all stayed green on `abseil-cpp 20260107.1`.
 58. **Artifact upload globs should be looser than publish-time discovery when third-party packagers normalize filenames.** `alien` can preserve or normalize version-label punctuation in RPM output depending on the label shape, so workflow artifact collection should match the package family broadly (`typesense-server-*.rpm`) while repo-owned publish logic keeps the stricter version-aware filtering.
 59. **If a tooling CLI already has a repo-owned compose/image path, keep the wrapper on that container and make the compose project name and host-path contract explicit.** The benchmark wrapper only became truly Docker-first once it reused `benchmark/docker-compose.yml`'s `cli` service, kept host Bun behind `--host-bun`, pinned `COMPOSE_PROJECT_NAME=benchmark` so the wrapper and the hardcoded `benchmark_k6` network contract did not drift, and mounted the benchmark directory at the same absolute host path inside the CLI container so nested `docker compose run` bind mounts still resolved against the real host checkout.
+60. **On NuRaft, committed log index is not the same as follower-readable state.** For post-restart or follower reads, `committed_index` convergence alone is insufficient; the runtime must wait for `raft_server::wait_for_state_machine_commit(...)`, track the local readable applied index separately, and treat `read_caught_up`/applied-index convergence as the real read-safety gate.
 32. **Timed snapshot policy is part of the recovery contract, not just a scheduler detail.** If snapshots are blocked on follower health, a lagging follower can be trapped behind a permanently stale recovery point. Keep a test lane that distinguishes "require healthy peers" from "leader-only snapshot" policy so this deadlock class stays visible.
 33. **Do not misuse the existing HTTP benchmark wrapper as NuRaft evidence.** `scripts/benchmark_vs_upstream.sh` measures full server binaries behind the normal API/runtime surface. Until NuRaft has either a thin HTTP-facing adapter or a dedicated prototype benchmark harness, Story E needs its own measurement lane.
 34. **Prototype benchmarking should stay explicitly separate from the normal HTTP benchmark wrapper until the runtime surfaces actually match.** A dedicated NuRaft microbenchmark target is useful for Story E, but it is still measuring isolated replication/storage paths, not a drop-in server replacement. Treat it as evidence for feasibility, not as a substitute for a later apples-to-apples runtime comparison.
