@@ -1215,10 +1215,10 @@ Completed Mar 18, 2026.
 
 - The shared merge-base between `origin/v30`, `origin/v32`, and `upstream/v30` is `04555fce`, not the local `v30` tip, so `v32` is not implicitly carrying the full current stable release branch.
 - Backport 1 is now landed locally on `v31-fork`: upstream PR `#2793` / commit `0c089e86` (`fix: ensure forward-only iterator reads lower seq_id first in diversity similarity`) plus the upstream regression coverage. Current `src/diversity.cpp` now reads the lower seq_id first for forward-only facet iterators, and `CollectionCurationTest.DiversityForwardOnlyIteratorBug` locks that behavior in.
+- Backport 2 is now landed locally on `v31-fork`: upstream PR `#2772` / commit `87642711` (`fix: route /health to meta_thread_pool for responsiveness during bulk inserts`). Upstream shipped this as a one-line behavior fix; this fork also adds direct unit coverage via `HttpServer::should_use_meta_thread_pool(...)` so the `/health` routing rule does not silently regress.
 - The current official `upstream/v30` tail after the fork's local `v30` tip is:
   - `5621dcd9` `increase timeout for downloading models (#2809)`
   - `759a584f` `fix: preserve vector search for zero-match phrase queries (#2817)`
-  - `87642711` `fix: route /health to meta_thread_pool for responsiveness during bulk inserts (#2772)`
   - `9b0d729b` `Increase timeout for embedding model config fetch.`
   - `c2272a95` `Add test for preset with auth.` *(test-only coverage, but useful when validating parity)*
 - The wider post-fork stable-line audit also surfaced older `upstream/v30` fixes that were never intentionally closed out in the fork and still need triage against current code:
@@ -1232,7 +1232,7 @@ Completed Mar 18, 2026.
 **Story A - Investigation**
 
 - [ ] Classify every missing `upstream/v30` patch as `backport now`, `already superseded in the fork`, or `reject/blocked` with a concrete reason.
-- [ ] Backport the smallest safe user-visible fixes first: model-download/config timeout increases, zero-match phrase vector behavior, and `/health` responsiveness under bulk inserts. *(`#2793` diversity seq-id ordering is done locally with test coverage.)*
+- [ ] Backport the smallest safe user-visible fixes first: model-download/config timeout increases and zero-match phrase vector behavior. *(`#2793` diversity seq-id ordering and `#2772` `/health` meta-thread-pool routing are done locally with test coverage.)*
 - [ ] Re-evaluate the older concurrency/highlighting/delete-by-query fixes against current NuRaft-era code before touching them; do not assume they are safe just because they shipped on the classic release line.
 - [ ] Keep parity proof test-first where upstream already supplied coverage.
 

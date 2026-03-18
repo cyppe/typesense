@@ -301,6 +301,8 @@ public:
 
     void decr_pending_writes();
 
+    static bool should_use_meta_thread_pool(std::string_view root_resource);
+
     static bool curl_only_http1(std::string_view ua);
 
     void set_shutdown_triggered();

@@ -3040,6 +3040,13 @@ TEST_F(CoreAPIUtilsTest, CurlVersionSupportsOnlyHTTP1) {
     ASSERT_FALSE(HttpServer::curl_only_http1(R"(curl/100.81.28 (x86_64-pc-linux-gnu)"));
 }
 
+TEST_F(CoreAPIUtilsTest, HealthUsesMetaThreadPool) {
+    ASSERT_TRUE(HttpServer::should_use_meta_thread_pool("status"));
+    ASSERT_TRUE(HttpServer::should_use_meta_thread_pool("health"));
+    ASSERT_FALSE(HttpServer::should_use_meta_thread_pool("collections"));
+    ASSERT_FALSE(HttpServer::should_use_meta_thread_pool("multi_search"));
+}
+
 TEST_F(CoreAPIUtilsTest, UnionRemoveDuplicates) {
     nlohmann::json schema = R"({
         "name": "coll1",
