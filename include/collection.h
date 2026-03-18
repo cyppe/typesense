@@ -1069,6 +1069,10 @@ public:
 
     Option<bool> remove_if_found(uint32_t seq_id, bool remove_from_store = true);
 
+    Option<size_t> remove_if_found_many(const std::vector<uint32_t>& seq_ids,
+                                        bool remove_from_store = true,
+                                        std::vector<nlohmann::json>* removed_docs = nullptr);
+
     size_t get_num_documents() const;
 
     DIRTY_VALUES parse_dirty_values_option(std::string& dirty_values) const;

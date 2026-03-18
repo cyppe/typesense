@@ -6091,6 +6091,99 @@ Option<bool> Collection::remove_if_found(uint32_t seq_id, const bool remove_from
     return Option<bool>(true);
 }
 
+Option<size_t> Collection::remove_if_found_many(const std::vector<uint32_t>& seq_ids,
+                                                const bool remove_from_store,
+                                                std::vector<nlohmann::json>* removed_docs) {
+    if(removed_docs != nullptr) {
+        removed_docs->clear();
+    }
+
+    if(seq_ids.empty()) {
+        return Option<size_t>(0);
+    }
+
+    bool has_referenced_in = false;
+    {
+        std::shared_lock lock(mutex);
+        has_referenced_in = !referenced_in.empty();
+    }
+
+    if(has_referenced_in) {
+        size_t removed_count = 0;
+
+        for(const auto seq_id: seq_ids) {
+            nlohmann::json document;
+            auto get_doc_op = get_document_from_store(get_seq_id_key(seq_id), document);
+            if(!get_doc_op.ok()) {
+                if(get_doc_op.code() == 404) {
+                    continue;
+                }
+                return Option<size_t>(500, "Error while fetching the document with seq id: " +
+                                           std::to_string(seq_id));
+            }
+
+            remove_document(document, seq_id, remove_from_store);
+            removed_count++;
+
+            if(removed_docs != nullptr) {
+                removed_docs->emplace_back(std::move(document));
+            }
+        }
+
+        return Option<size_t>(removed_count);
+    }
+
+    std::vector<uint32_t> found_seq_ids;
+    std::vector<nlohmann::json> found_documents;
+    found_seq_ids.reserve(seq_ids.size());
+    found_documents.reserve(seq_ids.size());
+
+    for(const auto seq_id: seq_ids) {
+        nlohmann::json document;
+        auto get_doc_op = get_document_from_store(get_seq_id_key(seq_id), document);
+        if(!get_doc_op.ok()) {
+            if(get_doc_op.code() == 404) {
+                continue;
+            }
+            return Option<size_t>(500, "Error while fetching the document with seq id: " +
+                                       std::to_string(seq_id));
+        }
+
+        found_seq_ids.emplace_back(seq_id);
+        found_documents.emplace_back(std::move(document));
+    }
+
+    if(found_seq_ids.empty()) {
+        return Option<size_t>(0);
+    }
+
+    {
+        std::unique_lock lock(mutex);
+        for(size_t i = 0; i < found_seq_ids.size(); i++) {
+            index->remove(found_seq_ids[i], found_documents[i], {}, false);
+            if(num_documents != 0) {
+                num_documents -= 1;
+            }
+        }
+    }
+
+    if(remove_from_store) {
+        for(size_t i = 0; i < found_seq_ids.size(); i++) {
+            const auto id = found_documents[i]["id"].get<std::string>();
+            store->remove(get_doc_id_key(id));
+            store->remove(get_seq_id_key(found_seq_ids[i]));
+        }
+    }
+
+    if(removed_docs != nullptr) {
+        for(auto& document: found_documents) {
+            removed_docs->emplace_back(std::move(document));
+        }
+    }
+
+    return Option<size_t>(found_seq_ids.size());
+}
+
 uint32_t Collection::get_seq_id_from_key(const std::string & key) {
     // last 4 bytes of the key would be the serialized version of the sequence id
     std::string serialized_seq_id = key.substr(key.length() - 4);
