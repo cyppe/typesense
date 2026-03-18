@@ -16,6 +16,7 @@ Completed and historical migration notes are tracked in git history and PRs.
 3. **Do not duplicate information** — if something is in `bazel/PATCH_DEBT.md`, reference it, don't copy it here.
 4. **Commit this file** as part of the same PR/commit series that completes the work. The document must never be out of sync with the code.
 5. **Automation default:** continue executing the next open task in the Priority Queue without waiting for a "continue" prompt; only stop when a true blocking dilemma requires user choice.
+6. **Upstream intake testing rule:** when backporting or adopting logic from upstream branches/PRs, do not stop at code parity. Always check whether the new behavior is testable in this fork, and if it is, add or extend tests here even when the upstream change did not ship with new coverage.
 
 ## Scope
 
@@ -592,6 +593,8 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 37 | Release workflow promotion / draft-posture cleanup | P2 Release | **done** | Completed Mar 18, 2026. Current pushed tip `7eb65c27` is hosted-green on the relevant release proof (`release-binaries` run `23242998148`, both Darwin lanes success) and matching gate (`tests` run `23242982005` success). Fresh source audit confirmed the supported-manual-release posture already lives in workflow/docs/scripts; only stale plan wording remained. |
 | 38 | ~~Indexing hot-path string-copy audit~~ | P2 Perf | **done** | Completed Mar 18, 2026. Commit `7ab4cd8b` removed the highest-signal import-path deep copy by moving parsed local JSON documents directly into `index_record`, and after repairing the Dockerized Influx bind-mount cleanup bug in `scripts/benchmark_vs_upstream.sh`, the canonical upstream `30.1` `standard/core` replay on `1c34ddf7` closed green with import `50.270s -> 31.790s` and all meaningful non-zero search scenarios faster than upstream. |
 | 39 | ~~Search work-budget configurability audit~~ | P2 Search | **done** | Completed Mar 18, 2026 as a no-go for new API surface. The 2017 TODO referred to the pre-Index refactor search path, but current search budget behavior is already explicitly controlled by `typo_tokens_threshold`, `drop_tokens_threshold`, `max_candidates`, and `search_cutoff_ms`; a focused `CollectionTest.TypoTokensThreshold` replay now also proves typo expansion is not implicitly tied to `per_page`. |
+| 40 | Upstream `v30` release-parity catch-up audit | P1 Parity | **active** | Audit and selectively backport official `upstream/v30` fixes that the fork missed before modernization work diverged further, so `v32` stays intentionally compatible with the current stable release line rather than only with the older fork point. |
+| 41 | Upstream `v31` selective intake audit | P2 Intake | **queued** | Track post-fork `upstream/v31` bug fixes/features as explicit intake candidates instead of silently drifting from the upcoming release branch. |
 
 ### 25) Release workflow promotion and repo-owned replay extraction
 
@@ -1196,11 +1199,86 @@ Completed Mar 18, 2026.
 
 - [x] The plan records a concrete go/no-go decision for making the minimum-results heuristic configurable.
 
+### 40) Upstream `v30` release-parity catch-up audit
+
+**Why this sprint exists now**
+
+- The official release branch matters more than opportunistic TODO mining: `upstream/v30` is still the current stable reference line for the pre-modernization product behavior this fork started from.
+- The fork's local `v30` branch stops at `36ed4a87`, while current `upstream/v30` is `9b0d729b`; those later stable-branch commits have never been intentionally triaged in the modernization plan.
+- `v32` forked before that `origin/v30` tip, so parity with the official release line cannot be assumed from branch naming alone.
+
+**Sprint goal**
+
+- Decide which missing official `upstream/v30` patches are still applicable to the NuRaft/modernized fork, then backport the small, safe ones and record explicit no-go reasons for the rest.
+
+**Status snapshot (Mar 2026)**
+
+- The shared merge-base between `origin/v30`, `origin/v32`, and `upstream/v30` is `04555fce`, not the local `v30` tip, so `v32` is not implicitly carrying the full current stable release branch.
+- The current official `upstream/v30` tail after the fork's local `v30` tip is:
+  - `0c089e86` `fix: ensure forward-only iterator reads lower seq_id first in diversity similarity (#2793)`
+  - `5621dcd9` `increase timeout for downloading models (#2809)`
+  - `759a584f` `fix: preserve vector search for zero-match phrase queries (#2817)`
+  - `87642711` `fix: route /health to meta_thread_pool for responsiveness during bulk inserts (#2772)`
+  - `9b0d729b` `Increase timeout for embedding model config fetch.`
+  - `c2272a95` `Add test for preset with auth.` *(test-only coverage, but useful when validating parity)*
+- The wider post-fork stable-line audit also surfaced older `upstream/v30` fixes that were never intentionally closed out in the fork and still need triage against current code:
+  - `5bef9362` filtering logic cleanup and extra tests
+  - `1b4fa888` highlight race-condition fix
+  - `5458d3f0` finer-grained search locking
+  - `ae64826a` batched delete-by-query removals and lock-batching coverage
+  - `3ad9d3e0` avoid cloning posting lists for highlighting
+  - `975163ef` reference-faceting overload recursion fix
+
+**Story A - Investigation**
+
+- [ ] Classify every missing `upstream/v30` patch as `backport now`, `already superseded in the fork`, or `reject/blocked` with a concrete reason.
+- [ ] Backport the smallest safe user-visible fixes first: diversity similarity seq-id ordering, model-download/config timeout increases, zero-match phrase vector behavior, and `/health` responsiveness under bulk inserts.
+- [ ] Re-evaluate the older concurrency/highlighting/delete-by-query fixes against current NuRaft-era code before touching them; do not assume they are safe just because they shipped on the classic release line.
+- [ ] Keep parity proof test-first where upstream already supplied coverage.
+
+**Exit criteria**
+
+- [ ] The plan records a concrete go/no-go decision for each missing `upstream/v30` patch family, and any accepted small backports land with matching tests.
+
+### 41) Upstream `v31` selective intake audit
+
+**Why this sprint exists now**
+
+- `upstream/v31` is the development branch for the next upstream release, and the fork diverged from it at `ddfa9970` (`feat: add support for SigLIP tokenizer and image processor (#2795)`).
+- Several post-fork `v31` commits are user-visible fixes or product-surface changes that should become explicit intake decisions instead of accidental drift.
+
+**Sprint goal**
+
+- Turn upstream `v31` delta into an explicit backport queue: pull in the high-value bug fixes that fit the fork, and record which larger product-surface changes are intentionally deferred.
+
+**Status snapshot (Mar 2026)**
+
+- The most relevant post-fork `upstream/v31` candidates identified in this audit are:
+  - `fb5bf14b` `feat: update support for patching keys (#2820)`
+  - `121a5161` `fix(curation): fix query for semantic vector search with embedding generation (#2604)`
+  - `3f2e15f7` `add exception for operation get endpoint route (#2792)`
+  - `92ab674a` `fix(join): map object array filters with joined references (#2830)`
+  - `eb81162a` `dynamic faceting based on occurrence ratio (#2822)`
+  - `9c9e3905` `fix: handle Gemini streamed responses across curl buffer boundaries (#2836)`
+  - `c1bd3c77` `fix: update logic for skipping embedding generation when it is provided (#2807)`
+- Lower-signal items from the same range such as compile-only fixups or test-only additions should follow the product bugfixes rather than lead this intake queue.
+
+**Story A - Investigation**
+
+- [ ] Audit each identified `upstream/v31` candidate for fork applicability, expected user impact, and conflict risk with the NuRaft/modernization changes already landed.
+- [ ] Separate low-risk bugfix backports from larger product-surface changes; do not merge new behavior into `v32` just because it exists on `v31`.
+- [ ] Promote any accepted `v31` backports into concrete implementation tasks with proof, and explicitly mark rejected ones as deferred/non-goals instead of leaving them implicit.
+
+**Exit criteria**
+
+- [ ] The plan carries an explicit accept/reject/defer decision for each tracked `upstream/v31` candidate, with the accepted subset scheduled as concrete follow-up work.
+
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now:** no TODO-derived modernization sprint is currently active. Items **38** and **39** are both closed, so the next candidate can now be re-mined from `TODO.md` or selected from newly surfaced branch/CI regressions instead of carrying this stale `max_results` question forward.
+- **Active now:** item **40** (`Upstream v30 release-parity catch-up audit`) is the next priority. The official stable branch is more important than new TODO mining, and this audit found real `upstream/v30` commits that never received an explicit fork-side parity decision.
+- **Queued behind it:** item **41** (`Upstream v31 selective intake audit`) turns the post-fork upstream development-branch delta into an explicit queue instead of accidental drift.
 - **Recently finished:** item **39** (`Search work-budget configurability audit`) — no-go for a new config surface. The old TODO was specific to the pre-Index 2017 search path; current HEAD already exposes the real search-budget controls via `typo_tokens_threshold`, `drop_tokens_threshold`, `max_candidates`, and `search_cutoff_ms`, and the targeted `CollectionTest.TypoTokensThreshold` replay now proves typo expansion depth is not coupled to `per_page`.
 - **Recently finished:** item **38** (`Indexing hot-path string-copy audit`) — commit `7ab4cd8b` landed the real hot-path fix by moving parsed local JSON documents directly into `index_record` in `Collection::add_many(...)`, collection load, and alter-data replay. After fixing the benchmark harness's stale Influx bind-mount cleanup bug, the canonical upstream-comparable `standard/core` replay on `1c34ddf7` vs upstream `30.1` closed green with import `50.270s -> 31.790s` and every meaningful non-zero search scenario faster than upstream, including `filter_simple`, `facet`, and `group`.
 - **Recently finished:** item **37** (`Release workflow promotion / draft-posture cleanup`) — current pushed tip `7eb65c27` is hosted-green on `release-binaries` run `23242998148` and matching `tests` run `23242982005`, and a fresh source audit confirmed the supported-manual-release posture already lived in the workflow/runbook/README/scripts. The only remaining work was removing stale plan-only draft/promotion wording.
@@ -1210,7 +1288,7 @@ Use this to decide what to pick next without scanning multiple files.
 - **Recently finished:** item **34** (`Replace patch-only forks with released upstream versions where possible`) — the stale `typesense/hnswlib` fork is gone, `clip_tokenizer_cpp` now points at the identical upstream `ozanarmagan/clip_tokenizer_cpp` commit instead of a Typesense mirror, and `kakasi` now points at upstream `loretoparisi/kakasi` with a small repo-owned patch plus the in-repo `japanese_data` payload. Item **36** later removed the supported `hnswlib` runtime path entirely, so no fork-backed Bazel deps remain.
 - **Recently finished:** item **33** (`GPU deps artifact automation boundary`) — Story A first found the real blocker in the one-Protobuf CUDA server path, then unblocked it with a repo-owned protobuf compatibility patch under the new `docker/ci-bazel-cuda.Dockerfile` toolchain. Story B added the canonical `scripts/release_linux_gpu_deps.sh` producer, fixed `debian-pkg/gpu_generate_deb_rpm.sh`, folded the Linux-only GPU-deps job into `release-binaries.yml` so one manual workflow dispatch can build the full release set, updated Linux `release-binaries` to build the regular server artifact with `--define=use_cuda=on`, and kept docs honest that the GPU scope on this branch is ONNX Runtime embeddings/personalization only (`typesense-gpu-deps` contains `libonnxruntime_providers_shared.so` + `libonnxruntime_providers_cuda.so`; Whisper remains CPU-only). Item **32** (`Upstream arm64 lg-page16 release parity`) — Story A landed on go and kept the variant inside `release-binaries` instead of a sibling workflow. The canonical Linux release wrapper now has a `--jemalloc-lg-page16` lane, `scripts/bazel_in_docker.sh` can target the matching Docker platform for cross-arch local replay, `release-binaries.yml` now includes `linux-arm64-lg-page16`, and the local split proof covered both the build-side jemalloc `--with-lg-page=16` configuration and the expected `arm64-lg-page16` DEB/RPM naming. Item **31** (`Container-first tooling coverage audit`) — Story A ranked the remaining host-dependent flows and landed on go only for the benchmark lane. The benchmark wrapper now defaults to the repo's Dockerized CLI, `benchmark-testing.yml` no longer installs Bun on the runner, and the remaining host-only paths are now explicit as intentional escape hatches (`--host-bun`, `check_local_toolchain.sh`) or native constraints (Darwin release lanes). Item **30** (`NuRaft post-cutover benchmark baseline refresh`) — Story A landed on no-go for a fresh replay. Keep Run 27 plus the current `standard/core` policy as the canonical post-cutover baseline, and treat hosted `benchmark-testing` as a same-branch guardrail only. The latest hosted proof remains run `23085170081` on March 14, 2026 (`27bb2bff` vs `985acb45`), and the stale `//:nuraft-prototype-benchmark` guidance has been removed from the current docs. Item **29** (`Explicit compiler-config topology audit`) — Story A landed on no-go for a topology rewrite. Keep the wrapper-driven default GCC contract for now: the Docker image already makes GCC the routine compiler, `build:gcc` only scopes GCC-only suppressions, and the repo only has one explicit clang lane today (`check_clang_warning_guardrail.sh`). Rewriting the topology around explicit compiler entrypoints would mostly duplicate flags across workflows and wrappers without adding new verified coverage. Item **28** (`Cross-platform debug-symbol policy parity`) — Story A landed on no-go for Darwin `dSYM` sidecars. Keep Linux split debug info because it materially shrinks the shipped runtime artifact, but make Darwin explicit as the current unstripped tarball with embedded DWARF and no sidecar until there is a concrete size/symbolication need plus a macOS-native validation lane. Local `18adf2a0` proof measured `401M` unstripped vs `129M` stripped runtime + `292M` debug file (`44M` + `104M` tarballs), while a comparable single unstripped tarball from the same binary measured `145M`. Item **27** (`Env-dependent suite enablement and hosted-proof audit`) — the supported env-dependent matrix is now explicit, secret-gated API coverage stays all-or-nothing on the three existing repo secrets, TEI keeps its dedicated lane, and the stale migration-download story is retired as unsupported in the current Bun harness. Story B also closed the hidden NuRaft `post_multi_search` auth regression and the Dockerized Bun env-forwarding gap. Item **26** (`ORT external Abseil injection and upgrade unblock`) — Story A landed on go with a BUILD-level `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` override on ORT's one-protobuf static lane, `abseil-cpp` is now `20260107.1`, and the canonical build + API health replay + targeted ORT-backed C++ replay all passed without growing `bazel/onnxruntime.patch`. Item **24** (`Release artifact debug-info policy`) — Linux release artifacts now use split debug info: stripped runtime tarball/package path plus a separate `.debug.tar.gz` sidecar, implemented directly in `release-binaries.yml` and measured locally at `427M -> 151M + 297M`. Item **23** (`Compile warning audit / cleanup`) — normal, ASAN, and TSAN local warning audits are now clean apart from the known Bazel/OpenJDK banner after scoping sanitizer-only suppressions to GCC 14/libstdc++ regex false positives and TSAN Abseil `-Wtsan` noise. Item **22** (`Release workflow promotion / current-tip full-matrix replay`) — run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`; the matching publish dry-run on version label `0.0.0-a2832b63` logged all `12` expected uploads after the RPM-glob fix. Item **20** (`Sanitizer lane stabilization + ORT extensions boundary audit`) — default ASAN is green again after removing `new_delete_type_mismatch=0` from `.bazelrc`, and the remaining ORT issue was resolved by rewriting fetched `OrtOpLoader` statics to process lifetime inside `bazel/onnxruntime.patch`. Item **21** (`NuRaft import/runtime parity + benchmark refactor sprint`) — hosted `benchmark-testing` is green on `27bb2bff` after the final replay-model fix. Item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
 - **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule. NuRaft async/streaming parity verified against upstream (both synchronous, full match).
-- **Later:** re-audit `bazel/kakasi.patch` if upstream `kakasi` lands those fixes or publishes a new usable release/source, and monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep any suppression file-scoped and dependency-scoped rather than broad. `TODO.md` can be re-mined again now that items **38** and **39** are both resolved.
+- **Later:** re-audit `bazel/kakasi.patch` if upstream `kakasi` lands those fixes or publishes a new usable release/source, and monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep any suppression file-scoped and dependency-scoped rather than broad. Re-mine `TODO.md` only after items **40** and **41** have been triaged, since upstream parity/intake is now the clearer near-term queue.
 - **Archival/reference (not immediate execution lanes):**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
   - `TODO.md` upstream product backlog (not the modernization source of truth; mine opportunistically only when an item aligns with current modernization goals).
