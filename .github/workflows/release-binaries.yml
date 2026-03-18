@@ -193,7 +193,6 @@ jobs:
       TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel-cuda:ci
       TYPESENSE_BAZEL_DOCKERFILE: docker/ci-bazel-cuda.Dockerfile
       TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
-      TYPESENSE_HOST_BAZEL_CACHE_DIR: ${{ runner.temp }}/typesense-bazel-host
       TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
     steps:
       - name: Checkout code
@@ -221,9 +220,9 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: |
-            ${{ env.TYPESENSE_HOST_BAZEL_CACHE_DIR }}/disk-cache
-            ${{ env.TYPESENSE_HOST_BAZEL_CACHE_DIR }}/repository-cache
-            ${{ env.TYPESENSE_HOST_BAZEL_CACHE_DIR }}/bazelisk
+            ${{ runner.temp }}/typesense-bazel-host/disk-cache
+            ${{ runner.temp }}/typesense-bazel-host/repository-cache
+            ${{ runner.temp }}/typesense-bazel-host/bazelisk
           key: bazel-${{ runner.os }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
           restore-keys: |
             bazel-${{ runner.os }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-
@@ -274,7 +273,7 @@ jobs:
           ICU_PREFIX="$(brew --prefix icu4c 2>/dev/null || brew --prefix icu4c@78)"
           ZLIB_PREFIX="$(brew --prefix zlib)"
           GNU_SED_PREFIX="$(brew --prefix gnu-sed)"
-          HOST_CACHE_DIR="${TYPESENSE_HOST_BAZEL_CACHE_DIR}"
+          HOST_CACHE_DIR="${RUNNER_TEMP}/typesense-bazel-host"
           DISK_CACHE="${HOST_CACHE_DIR}/disk-cache"
           REPOSITORY_CACHE="${HOST_CACHE_DIR}/repository-cache"
           mkdir -p "${DISK_CACHE}" "${REPOSITORY_CACHE}" "${HOST_CACHE_DIR}/bazelisk"
@@ -420,16 +419,16 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: |
-            ${{ env.TYPESENSE_HOST_BAZEL_CACHE_DIR }}/disk-cache
-            ${{ env.TYPESENSE_HOST_BAZEL_CACHE_DIR }}/repository-cache
-            ${{ env.TYPESENSE_HOST_BAZEL_CACHE_DIR }}/bazelisk
+            ${{ runner.temp }}/typesense-bazel-host/disk-cache
+            ${{ runner.temp }}/typesense-bazel-host/repository-cache
+            ${{ runner.temp }}/typesense-bazel-host/bazelisk
           key: bazel-${{ runner.os }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
 
       - name: Report Bazel cache size
         if: always()
         run: |
           du -sh ${{ github.workspace }}/.cache/bazel-docker/* 2>/dev/null || true
-          du -sh ${{ env.TYPESENSE_HOST_BAZEL_CACHE_DIR }}/* 2>/dev/null || true
+          du -sh "${RUNNER_TEMP}/typesense-bazel-host"/* 2>/dev/null || true
 
   gpu-deps:
     if: always() && needs.select_targets.outputs.gpu_enabled == 'true' && (needs.core-binaries.result == 'success' || needs.core-binaries.result == 'skipped')
