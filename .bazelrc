@@ -21,6 +21,7 @@ build:macos --host_per_file_copt=external/protobuf\+.*/map\.cc@-Wno-deprecated-t
 # Scope heavy third-party warning buckets to their dependency boundaries.
 build --per_file_copt=external/\+new_git_repository\+lrucache/.*@-Wno-deprecated-declarations
 build --per_file_copt=external/\+new_git_repository\+onnx_runtime_extensions/.*@-Wno-pessimizing-move
+build --per_file_copt=.*clip_tokenizer.*@-Wno-pessimizing-move
 build --per_file_copt=.*clip_tokenizer.*@-Wno-sign-compare
 build --per_file_copt=.*clip_tokenizer.*@-Wno-unused-variable
 build --per_file_copt=.*quicly.*@-Wno-unused-but-set-variable

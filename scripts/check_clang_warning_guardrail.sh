@@ -17,7 +17,6 @@ echo "Running clang warning guardrail build..."
 	--cxxopt=-Wno-unused-command-line-argument \
 	--linkopt=-Wno-unused-command-line-argument \
 	--per_file_copt=.*onnx_runtime_extensions.*@-Wno-pessimizing-move \
-	--per_file_copt=.*clip_tokenizer.*@-Wno-pessimizing-move \
 	--per_file_copt=.*clip_tokenizer.*@-Wno-unused-variable \
 	--per_file_copt=.*quicly.*@-Wno-unused-but-set-variable \
 	2>&1 | tee "${LOG_FILE}" | python3 -c 'import sys; ignore="OpenJDK 64-Bit Server VM warning: Options -Xverify:none and -noverify were deprecated in JDK 13 and will likely be removed in a future release."; [sys.stdout.write(line) for line in sys.stdin if line.rstrip("\n") != ignore]'
