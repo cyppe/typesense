@@ -3269,6 +3269,8 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
                                  highlight_field_names, highlight_full_field_names, infixes, q_tokens,
                                  search_params->qtoken_set, highlight_items);
     }
+    std::vector<highlight_field_snapshot_t> highlight_snapshots;
+    build_highlight_snapshots(highlight_items, highlight_snapshots);
 
     nlohmann::json result = nlohmann::json::object();
     result["found"] = total;
@@ -3326,7 +3328,7 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
             do_highlighting(search_schema, enable_nested_fields, symbols_to_index, token_separators, query,
                             raw_search_fields, raw_query, enable_highlight_v1, snippet_threshold,
                             highlight_affix_num_tokens, highlight_start_tag, highlight_end_tag, highlight_field_names,
-                            highlight_full_field_names, highlight_items, index_symbols, field_order_kv, document,
+                            highlight_full_field_names, highlight_items, highlight_snapshots, index_symbols, field_order_kv, document,
                             highlight_res, wrapper_doc, field_query_tokens[0].q_phrases);
 
             if(group_limit && group_key.empty()) {
@@ -3476,7 +3478,9 @@ void Collection::do_highlighting(const tsl::htrie_map<char, field>& search_schem
                                  const size_t& highlight_affix_num_tokens, const std::string& highlight_start_tag,
                                  const std::string& highlight_end_tag, const std::vector<std::string>& highlight_field_names,
                                  const std::vector<std::string>& highlight_full_field_names,
-                                 const std::vector<highlight_field_t>& highlight_items, const uint8_t* index_symbols,
+                                 const std::vector<highlight_field_t>& highlight_items,
+                                 const std::vector<highlight_field_snapshot_t>& highlight_snapshots,
+                                 const uint8_t* index_symbols,
                                  const KV* field_order_kv, const nlohmann::json& document, nlohmann::json& highlight_res,
                                  nlohmann::json& wrapper_doc,
                                  const std::vector<std::vector<std::string>>& q_phrases) {
@@ -3500,6 +3504,8 @@ void Collection::do_highlighting(const tsl::htrie_map<char, field>& search_schem
 
     for(size_t i = 0; i < highlight_items.size(); i++) {
         auto& highlight_item = highlight_items[i];
+        const highlight_field_snapshot_t empty_highlight_snapshot;
+        const auto& highlight_snapshot = i < highlight_snapshots.size() ? highlight_snapshots[i] : empty_highlight_snapshot;
         const std::string& field_name = highlight_item.name;
         if(search_schema.count(field_name) == 0) {
             continue;
@@ -3515,7 +3521,7 @@ void Collection::do_highlighting(const tsl::htrie_map<char, field>& search_schem
             bool found_full_highlight = false;
 
             highlight_result(enable_nested_fields, symbols_to_index, token_separators,
-                             raw_query, search_field, i, highlight_item.qtoken_leaves, field_order_kv,
+                             raw_query, search_field, i, highlight_snapshot, field_order_kv,
                              document, highlight_res,
                              string_utils, snippet_threshold,
                              highlight_affix_num_tokens, highlight_item.fully_highlighted, highlight_item.infix,
@@ -3629,6 +3635,7 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
     auto highlight_field_names_list = std::vector<std::vector<std::string>>(size);
     auto highlight_full_field_names_list = std::vector<std::vector<std::string>>(size);
     auto highlight_items_list = std::vector<std::vector<highlight_field_t>>(size);
+    auto highlight_snapshots_list = std::vector<std::vector<highlight_field_snapshot_t>>(size);
     size_t total = 0;
     size_t out_of = 0;
     auto request_json_list = std::vector<nlohmann::json>(size);
@@ -3713,6 +3720,8 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
             coll->process_highlight_fields_with_lock(weighted_search_fields, raw_search_fields, include_fields_full, exclude_fields_full,
                                      highlight_field_names, highlight_full_field_names, infixes, q_tokens,
                                      search_params->qtoken_set, highlight_items_list[search_index]);
+            coll->build_highlight_snapshots_with_lock(highlight_items_list[search_index],
+                                                      highlight_snapshots_list[search_index]);
         }
 
         nlohmann::json params;
@@ -3947,6 +3956,7 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
             const auto& highlight_field_names = highlight_field_names_list[search_index];
             const auto& highlight_full_field_names = highlight_full_field_names_list[search_index];
             const auto& highlight_items = highlight_items_list[search_index];
+            const auto& highlight_snapshots = highlight_snapshots_list[search_index];
             const auto& index_symbols = index_symbols_list[search_index].data();
 
             nlohmann::json highlight_res;
@@ -3954,7 +3964,7 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
             do_highlighting(search_schema, enable_nested_fields, symbols_to_index, token_separators, query,
                             raw_search_fields, raw_query, enable_highlight_v1, snippet_threshold,
                             highlight_affix_num_tokens, highlight_start_tag, highlight_end_tag, highlight_field_names,
-                            highlight_full_field_names, highlight_items, index_symbols, kv, document,
+                            highlight_full_field_names, highlight_items, highlight_snapshots, index_symbols, kv, document,
                             highlight_res, wrapper_doc, {});
 
             if(group_limit && group_key.empty()) {
@@ -4428,7 +4438,7 @@ void Collection::process_highlight_fields(const std::vector<search_field_t>& sea
             art_leaf* leaf = index->get_token_leaf(field_name, (const unsigned char*) qtoken.c_str(), qtoken.size()+1);
             if(leaf) {
                 highlight_item.qtoken_leaves.insert(qtoken,
-                    token_leaf(leaf, it.value().root_len, it.value().num_typos, it.value().is_prefix)
+                    highlight_query_token_t(it.value().root_len, it.value().num_typos, it.value().is_prefix)
                 );
             }
         }
@@ -4445,9 +4455,52 @@ void Collection::process_highlight_fields(const std::vector<search_field_t>& sea
                 const auto& field_name = highlight_item.name;
                 art_leaf* leaf = index->get_token_leaf(field_name, (const unsigned char*) q_token.c_str(), q_token.size()+1);
                 if(leaf) {
-                    highlight_item.qtoken_leaves.insert(q_token, token_leaf(leaf, q_token.size(), 0, false));
+                    highlight_item.qtoken_leaves.insert(q_token, highlight_query_token_t(q_token.size(), 0, false));
                 }
             }
+        }
+    }
+}
+
+void Collection::build_highlight_snapshots_with_lock(
+    const std::vector<highlight_field_t>& highlight_items,
+    std::vector<highlight_field_snapshot_t>& highlight_snapshots) const {
+    std::shared_lock lock(mutex);
+    return build_highlight_snapshots(highlight_items, highlight_snapshots);
+}
+
+void Collection::build_highlight_snapshots(
+    const std::vector<highlight_field_t>& highlight_items,
+    std::vector<highlight_field_snapshot_t>& highlight_snapshots) const {
+    highlight_snapshots.clear();
+    highlight_snapshots.resize(highlight_items.size());
+
+    std::string qtoken;
+    for(size_t i = 0; i < highlight_items.size(); i++) {
+        const auto& highlight_item = highlight_items[i];
+        auto& highlight_snapshot = highlight_snapshots[i];
+
+        if(!highlight_item.is_string || highlight_item.qtoken_leaves.empty()) {
+            continue;
+        }
+
+        for(auto it = highlight_item.qtoken_leaves.begin(); it != highlight_item.qtoken_leaves.end(); ++it) {
+            it.key(qtoken);
+
+            auto leaf = index->get_token_leaf(highlight_item.name,
+                                              (const unsigned char*) qtoken.c_str(),
+                                              qtoken.size() + 1);
+            if(leaf == nullptr) {
+                continue;
+            }
+
+            auto owned_posting_list = posting_t::to_owned_posting_list(leaf->values);
+            if(owned_posting_list == nullptr) {
+                continue;
+            }
+
+            highlight_snapshot.posting_lists.emplace_back(owned_posting_list);
+            highlight_snapshot.qtoken_leaves.insert(qtoken, it.value());
         }
     }
 }
@@ -4920,7 +4973,7 @@ bool Collection::is_nested_array(const nlohmann::json& obj, std::vector<std::str
 void Collection::highlight_result(const bool& enable_nested_fields, const std::vector<char>& symbols_to_index,const std::vector<char>& token_separators,
                                   const std::string& raw_query, const field& search_field,
                                   const size_t& search_field_index,
-                                  const tsl::htrie_map<char, token_leaf>& qtoken_leaves,
+                                  const highlight_field_snapshot_t& highlight_snapshot,
                                   const KV* field_order_kv, const nlohmann::json& document,
                                   nlohmann::json& highlight_doc,
                                   StringUtils& string_utils,
@@ -4935,6 +4988,7 @@ void Collection::highlight_result(const bool& enable_nested_fields, const std::v
                                   bool& found_highlight,
                                   bool& found_full_highlight,
                                   const std::vector<std::vector<std::string>>& q_phrases) {
+    const auto& qtoken_leaves = highlight_snapshot.qtoken_leaves;
 
     if(raw_query == "*") {
         return;
@@ -5000,8 +5054,9 @@ void Collection::highlight_result(const bool& enable_nested_fields, const std::v
 
         if(!qtoken_leaves.empty()) {
             std::vector<void*> posting_lists;
-            for(auto token_leaf: qtoken_leaves) {
-                posting_lists.push_back(token_leaf.leaf->values);
+            posting_lists.reserve(highlight_snapshot.posting_lists.size());
+            for(const auto& posting_list: highlight_snapshot.posting_lists) {
+                posting_lists.push_back(posting_list.get());
             }
 
             std::map<size_t, std::vector<token_positions_t>> array_token_positions;
@@ -5231,7 +5286,7 @@ bool Collection::handle_highlight_text(std::string& text, const bool& normalise,
                                        const std::vector<char>& symbols_to_index, const std::vector<char>& token_separators,
                                        highlight_t& highlight, StringUtils& string_utils, const bool& use_word_tokenizer,
                                        const size_t& highlight_affix_num_tokens,
-                                       const tsl::htrie_map<char, token_leaf>& qtoken_leaves, const int& last_valid_offset_index,
+                                       const tsl::htrie_map<char, highlight_query_token_t>& qtoken_leaves, const int& last_valid_offset_index,
                                        const size_t& prefix_token_num_chars, const bool& highlight_fully,
                                        const size_t& snippet_threshold, const bool& is_infix_search,
                                        const std::vector<std::string>& raw_query_tokens, const size_t& last_valid_offset,
@@ -9411,7 +9466,7 @@ Option<bool> Collection::populate_facets(std::vector<facet> facets, size_t max_f
                     std::vector<std::string>& ftokens = a_facet.is_intersected ? a_facet.fvalue_tokens[facet_count.fvalue] :
                                                    a_facet.hash_tokens[facet_count.fhash];
 
-                    tsl::htrie_map<char, token_leaf> qtoken_leaves;
+                    tsl::htrie_map<char, highlight_query_token_t> qtoken_leaves;
 
                     //TS_LOG(INFO) << "working on hash_tokens for hash " << kv.first << " with size " << ftokens.size();
                     for(size_t ti = 0; ti < ftokens.size(); ti++) {
@@ -9431,7 +9486,7 @@ Option<bool> Collection::populate_facets(std::vector<facet> facets, size_t max_f
                                           fquery_tokens[ti].size() :
                                           resolved_token.size();
 
-                        token_leaf leaf(nullptr, root_len, 0, (ti == ftokens.size()-1));
+                        highlight_query_token_t leaf(root_len, 0, (ti == ftokens.size()-1));
                         qtoken_leaves.emplace(resolved_token, leaf);
                     }
 

@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_map>
 #include <thread>
+#include <memory>
 #include <mutex>
 #include <condition_variable>
 #include <shared_mutex>
@@ -27,17 +28,34 @@ struct doc_seq_id_t {
     bool is_new;
 };
 
+struct highlight_query_token_t {
+    bool is_prefix = false;
+    uint32_t root_len = 0;
+    uint32_t num_typos = 0;
+
+    highlight_query_token_t() = default;
+
+    highlight_query_token_t(uint32_t root_len, uint32_t num_typos, bool is_prefix):
+            is_prefix(is_prefix), root_len(root_len), num_typos(num_typos) {
+    }
+};
+
 struct highlight_field_t {
     std::string name;
     bool fully_highlighted;
     bool infix;
     bool is_string;
-    tsl::htrie_map<char, token_leaf> qtoken_leaves;
+    tsl::htrie_map<char, highlight_query_token_t> qtoken_leaves;
 
     highlight_field_t(const std::string& name, bool fully_highlighted, bool infix, bool is_string):
             name(name), fully_highlighted(fully_highlighted), infix(infix), is_string(is_string) {
 
     }
+};
+
+struct highlight_field_snapshot_t {
+    tsl::htrie_map<char, highlight_query_token_t> qtoken_leaves;
+    std::vector<std::unique_ptr<posting_list_t>> posting_lists;
 };
 
 struct union_global_params_t {
@@ -498,7 +516,7 @@ private:
                                       const std::vector<char>& symbols_to_index, const std::vector<char>& token_separators,
                                       highlight_t& highlight, StringUtils& string_utils, const bool& use_word_tokenizer,
                                       const size_t& highlight_affix_num_tokens,
-                                      const tsl::htrie_map<char, token_leaf>& qtoken_leaves, const int& last_valid_offset_index,
+                                      const tsl::htrie_map<char, highlight_query_token_t>& qtoken_leaves, const int& last_valid_offset_index,
                                       const size_t& prefix_token_num_chars, const bool& highlight_fully,
                                       const size_t& snippet_threshold, const bool& is_infix_search,
                                       const std::vector<std::string>& raw_query_tokens, const size_t& last_valid_offset,
@@ -509,7 +527,7 @@ private:
     static void highlight_result(const bool& enable_nested_fields, const std::vector<char>& symbols_to_index,const std::vector<char>& token_separators,
                                  const std::string& raw_query, const field& search_field,
                                  const size_t& search_field_index,
-                                 const tsl::htrie_map<char, token_leaf>& qtoken_leaves,
+                                 const highlight_field_snapshot_t& highlight_snapshot,
                                  const KV* field_order_kv, const nlohmann::json& document,
                                  nlohmann::json& highlight_doc,
                                  StringUtils& string_utils,
@@ -532,7 +550,9 @@ private:
                                 const size_t& highlight_affix_num_tokens, const std::string& highlight_start_tag,
                                 const std::string& highlight_end_tag, const std::vector<std::string>& highlight_field_names,
                                 const std::vector<std::string>& highlight_full_field_names,
-                                const std::vector<highlight_field_t>& highlight_items, const uint8_t* index_symbols,
+                                const std::vector<highlight_field_t>& highlight_items,
+                                const std::vector<highlight_field_snapshot_t>& highlight_snapshots,
+                                const uint8_t* index_symbols,
                                 const KV* field_order_kv, const nlohmann::json& document, nlohmann::json& highlight_res,
                                 nlohmann::json& wrapper_doc,
                                 const std::vector<std::vector<std::string>>& q_phrases = {});
@@ -1161,6 +1181,12 @@ public:
                                   std::vector<std::string>& q_tokens,
                                   const tsl::htrie_map<char, token_leaf>& qtoken_set,
                                   std::vector<highlight_field_t>& highlight_items) const;
+
+    void build_highlight_snapshots_with_lock(const std::vector<highlight_field_t>& highlight_items,
+                                             std::vector<highlight_field_snapshot_t>& highlight_snapshots) const;
+
+    void build_highlight_snapshots(const std::vector<highlight_field_t>& highlight_items,
+                                   std::vector<highlight_field_snapshot_t>& highlight_snapshots) const;
 
     static void copy_highlight_doc(const std::vector<highlight_field_t>& hightlight_items,
                                    const bool nested_fields_enabled,
