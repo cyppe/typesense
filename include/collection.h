@@ -5,6 +5,7 @@
 #include <string>
 #include <unordered_map>
 #include <thread>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <condition_variable>
@@ -459,6 +460,17 @@ private:
     /// "field name" -> reference_info(referenced_collection_name, referenced_field_name, is_async)
     spp::sparse_hash_map<std::string, reference_info_t> reference_fields;
 
+    struct read_state_t {
+        tsl::htrie_map<char, field> search_schema;
+        std::vector<char> symbols_to_index;
+        std::vector<char> token_separators;
+        bool enable_nested_fields = false;
+        spp::sparse_hash_map<std::string, reference_info_t> reference_fields;
+        std::string collection_name;
+    };
+
+    std::atomic<std::shared_ptr<const read_state_t>> read_state_snapshot;
+
     /// Contains the info where the current collection is referenced.
     /// Useful to perform operations such as cascading delete.
     /// collection_name -> field_name
@@ -655,6 +667,10 @@ private:
                                                       const bool& is_reference_sort,
                                                       const bool& is_union_search,
                                                       const uint32_t& union_search_index) const;
+
+    std::shared_ptr<const read_state_t> get_read_state_snapshot() const;
+
+    void rebuild_read_state_snapshot_unlocked();
     
     Option<bool> persist_collection_meta();
 

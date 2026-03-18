@@ -104,6 +104,8 @@ Collection::Collection(const std::string& name, const uint32_t& collection_id, c
     for (auto& update_ref_info: update_ref_infos) {
         update_reference_field(update_ref_info.field, update_ref_info.referenced_field);
     }
+
+    rebuild_read_state_snapshot_unlocked();
 }
 
 Option<Collection*> Collection::new_collection(const std::string& name, const uint32_t& collection_id,
@@ -175,6 +177,23 @@ Collection::~Collection() {
             VQModelManager::get_instance().delete_model(vq_model->get_model_name());
         }
     }
+}
+
+std::shared_ptr<const Collection::read_state_t> Collection::get_read_state_snapshot() const {
+    return read_state_snapshot.load(std::memory_order_acquire);
+}
+
+void Collection::rebuild_read_state_snapshot_unlocked() {
+    auto snapshot = std::make_shared<read_state_t>();
+    snapshot->search_schema = search_schema;
+    snapshot->symbols_to_index = symbols_to_index;
+    snapshot->token_separators = token_separators;
+    snapshot->enable_nested_fields = enable_nested_fields;
+    snapshot->reference_fields = reference_fields;
+    snapshot->collection_name = name;
+
+    read_state_snapshot.store(std::shared_ptr<const read_state_t>(std::move(snapshot)),
+                              std::memory_order_release);
 }
 
 uint32_t Collection::get_next_seq_id() {
@@ -704,6 +723,7 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
 
             if(found_new_field) {
                 index->refresh_schemas(new_fields, {});
+                rebuild_read_state_snapshot_unlocked();
             }
         }
 
@@ -2974,8 +2994,6 @@ Option<nlohmann::json> Collection::search(std::string query, const std::vector<s
                                           float diversity_lamda,
                                           size_t group_max_candidates,
                                           size_t diversity_limit) {
-    std::shared_lock lock(mutex);
-
     auto args = collection_search_args_t(query, search_fields, filter_query,
                                          facet_fields, sort_fields,
                                          num_typos, per_page, page, token_order,
@@ -3010,8 +3028,6 @@ Option<nlohmann::json> Collection::search(std::string query, const std::vector<s
 }
 
 Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
-    std::shared_lock lock(mutex);
-
     std::unique_ptr<search_args> search_params_guard;
     std::string query;
     std::vector<std::pair<uint32_t, uint32_t>> included_ids; // ID -> position
@@ -3025,19 +3041,32 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
     std::string transcribed_query;
     nlohmann::json curation_metadata;
 
-    const auto init_index_search_args_op = init_index_search_args(coll_args, search_params_guard, query, included_ids,
-                                                                  include_fields_full, exclude_fields_full, q_tokens,
-                                                                  conversation_standalone_query, vector_query,
-                                                                  facets, per_page, transcribed_query, curation_metadata,
-                                                                  false, 0);
+    const auto init_index_search_args_op = init_index_search_args_with_lock(coll_args, search_params_guard, query,
+                                                                            included_ids, include_fields_full,
+                                                                            exclude_fields_full, q_tokens,
+                                                                            conversation_standalone_query,
+                                                                            vector_query, facets, per_page,
+                                                                            transcribed_query, curation_metadata,
+                                                                            false, 0);
     if (!init_index_search_args_op.ok()) {
         return Option<nlohmann::json>(init_index_search_args_op.code(), init_index_search_args_op.error());
     }
 
-    const auto search_op = index->run_search(search_params_guard.get());
+    const auto search_op = run_search_with_lock(search_params_guard.get());
     if (!search_op.ok()) {
         return Option<nlohmann::json>(search_op.code(), search_op.error());
     }
+
+    const auto read_state_snapshot = get_read_state_snapshot();
+    if(read_state_snapshot == nullptr) {
+        return Option<nlohmann::json>(500, "Collection read state unavailable.");
+    }
+    const auto& search_schema_snapshot = read_state_snapshot->search_schema;
+    const auto& symbols_to_index_snapshot = read_state_snapshot->symbols_to_index;
+    const auto& token_separators_snapshot = read_state_snapshot->token_separators;
+    const auto enable_nested_fields_snapshot = read_state_snapshot->enable_nested_fields;
+    const auto& reference_fields_snapshot = read_state_snapshot->reference_fields;
+    const auto& collection_name_snapshot = read_state_snapshot->collection_name;
 
     const auto& search_params = search_params_guard.get();
     const auto& group_limit = search_params->group_limit;
@@ -3236,13 +3265,13 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
     if(!facet_query.query.empty()) {
         // identify facet hash tokens
 
-        auto fq_field = search_schema.at(facet_query.field_name);
+        auto fq_field = search_schema_snapshot.at(facet_query.field_name);
         bool is_cyrillic = Tokenizer::is_cyrillic(fq_field.locale);
         bool normalise = is_cyrillic ? false : true;
 
         // Use field-level symbols/separators if available, otherwise fall back to collection-level
-        const auto& symbols = fq_field.symbols_to_index.empty() ? symbols_to_index : fq_field.symbols_to_index;
-        const auto& separators = fq_field.token_separators.empty() ? token_separators : fq_field.token_separators;
+        const auto& symbols = fq_field.symbols_to_index.empty() ? symbols_to_index_snapshot : fq_field.symbols_to_index;
+        const auto& separators = fq_field.token_separators.empty() ? token_separators_snapshot : fq_field.token_separators;
 
         std::vector<std::string> facet_query_tokens;
         Tokenizer(facet_query.query, normalise, !fq_field.is_string(), fq_field.locale,
@@ -3265,12 +3294,13 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
 
     std::vector<highlight_field_t> highlight_items;
     if(query != "*") {
-        process_highlight_fields(weighted_search_fields, raw_search_fields, include_fields_full, exclude_fields_full,
-                                 highlight_field_names, highlight_full_field_names, infixes, q_tokens,
-                                 search_params->qtoken_set, highlight_items);
+        process_highlight_fields_with_lock(weighted_search_fields, raw_search_fields, include_fields_full,
+                                           exclude_fields_full, highlight_field_names,
+                                           highlight_full_field_names, infixes, q_tokens,
+                                           search_params->qtoken_set, highlight_items);
     }
     std::vector<highlight_field_snapshot_t> highlight_snapshots;
-    build_highlight_snapshots(highlight_items, highlight_snapshots);
+    build_highlight_snapshots_with_lock(highlight_items, highlight_snapshots);
 
     nlohmann::json result = nlohmann::json::object();
     result["found"] = total;
@@ -3286,7 +3316,7 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
     result[hits_key] = nlohmann::json::array();
 
     uint8_t index_symbols[256] = {};
-    for(char c: symbols_to_index) {
+    for(char c: symbols_to_index_snapshot) {
         index_symbols[uint8_t(c)] = 1;
     }
 
@@ -3315,17 +3345,18 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
                 continue;
             }
             nlohmann::json broken_ref_doc{};
-            for (auto it = document.begin(); !reference_fields.empty() && it != document.end(); it++) {
+            for (auto it = document.begin(); !reference_fields_snapshot.empty() && it != document.end(); it++) {
                 const auto& key = it.key();
                 if (key == "id" || key == ".flat" || key == fields::reference_helper_fields ||
-                        reference_fields.count(key) != 0) {
+                        reference_fields_snapshot.count(key) != 0) {
                     broken_ref_doc[key] = it.value();
                 }
             }
 
             nlohmann::json highlight_res;
             nlohmann::json wrapper_doc;
-            do_highlighting(search_schema, enable_nested_fields, symbols_to_index, token_separators, query,
+            do_highlighting(search_schema_snapshot, enable_nested_fields_snapshot, symbols_to_index_snapshot,
+                            token_separators_snapshot, query,
                             raw_search_fields, raw_query, enable_highlight_v1, snippet_threshold,
                             highlight_affix_num_tokens, highlight_start_tag, highlight_end_tag, highlight_field_names,
                             highlight_full_field_names, highlight_items, highlight_snapshots, index_symbols, field_order_kv, document,
@@ -3349,14 +3380,13 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
                                       "",
                                       0,
                                       field_order_kv->reference_filter_results,
-                                      get_name(), seq_id,
+                                      collection_name_snapshot, seq_id,
                                       ref_include_exclude_fields_vec);
             if (!prune_op.ok()) {
                 // Error code 1 returned from `Join::include_references` means reference value is invalid.
                 if (prune_op.code() != 1) {
                     return Option<nlohmann::json>(prune_op.code(), prune_op.error());
                 }
-                lock.unlock();
                 document = broken_ref_doc;
                 auto fix_op = fix_broken_reference(seq_id_key, seq_id,
                                                    include_fields_full, exclude_fields_full,
@@ -3367,7 +3397,6 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
                     }
                     return Option<nlohmann::json>(fix_op.code(), fix_op.error());
                 }
-                lock.lock();
             }
 
             wrapper_doc["document"] = document;
@@ -3397,12 +3426,13 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
                     const bool is_asc = sort_field.order == sort_field_const::asc;
 
                     auto get_geo_distance_op = !sort_field.reference_collection_name.empty() ?
-                                                index->get_referenced_geo_distance(sort_field, is_asc, field_order_kv->key,
-                                                                                   field_order_kv->reference_filter_results,
-                                                                                   reference_lat_lng, true) :
-                                                   index->get_geo_distance_with_lock(sort_field.name, is_asc,
-                                                                                     {(uint32_t) field_order_kv->key},
-                                                                                     reference_lat_lng, true);
+                                                get_referenced_geo_distance_with_lock(sort_field, is_asc,
+                                                                                      field_order_kv->key,
+                                                                                      field_order_kv->reference_filter_results,
+                                                                                      reference_lat_lng, true) :
+                                                get_geo_distance_with_lock(sort_field.name, is_asc,
+                                                                           {(uint32_t) field_order_kv->key},
+                                                                           reference_lat_lng, true);
                     if (!get_geo_distance_op.ok()) {
                         return Option<nlohmann::json>(get_geo_distance_op.code(), get_geo_distance_op.error());
                     }
@@ -3447,13 +3477,13 @@ Option<nlohmann::json> Collection::search(collection_search_args_t& coll_args) {
     result["search_cutoff"] = search_cutoff;
 
     result["request_params"] = nlohmann::json::object();
-    result["request_params"]["collection_name"] = name;
+    result["request_params"]["collection_name"] = collection_name_snapshot;
     result["request_params"]["per_page"] = per_page;
     result["request_params"]["q"] = raw_query;
 
     // handle analytics query expansion
     std::string first_q = raw_query;
-    expand_search_query(search_schema, symbols_to_index, token_separators,
+    expand_search_query(search_schema_snapshot, symbols_to_index_snapshot, token_separators_snapshot,
                         raw_query, offset, total, search_params, result_group_kvs, raw_search_fields, first_q);
     result["request_params"]["first_q"] = first_q;
 
@@ -3921,6 +3951,10 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
             if (coll == nullptr) {
                 return Option<bool>(400, "Collection having `coll_id: " + std::to_string(coll_id) + "` not found.");
             }
+            const auto read_state_snapshot = coll->get_read_state_snapshot();
+            if(read_state_snapshot == nullptr) {
+                return Option<bool>(500, "Collection read state unavailable.");
+            }
             const std::string& seq_id_key = coll->get_seq_id_key((uint32_t) kv->key);
 
             nlohmann::json document;
@@ -3931,20 +3965,21 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
                 continue;
             }
             nlohmann::json broken_ref_doc{};
-            for (auto it = document.begin(); !coll->reference_fields.empty() && it != document.end(); it++) {
+            const auto& reference_fields = read_state_snapshot->reference_fields;
+            for (auto it = document.begin(); !reference_fields.empty() && it != document.end(); it++) {
                 const auto& key = it.key();
                 if (key == "id" || key == ".flat" || key == fields::reference_helper_fields ||
-                        coll->reference_fields.count(key) != 0) {
+                        reference_fields.count(key) != 0) {
                     broken_ref_doc[key] = it.value();
                 }
             }
 
             const auto& coll_args = searches[search_index];
             const auto& search_params = search_params_guards[search_index].get();
-            const auto& search_schema = coll->get_schema();
-            const auto& enable_nested_fields = coll->get_enable_nested_fields();
-            const auto& symbols_to_index = coll->get_symbols_to_index();
-            const auto& token_separators = coll->get_token_separators();
+            const auto& search_schema = read_state_snapshot->search_schema;
+            const auto enable_nested_fields = read_state_snapshot->enable_nested_fields;
+            const auto& symbols_to_index = read_state_snapshot->symbols_to_index;
+            const auto& token_separators = read_state_snapshot->token_separators;
             const auto& query = queries[search_index];
             const auto& raw_search_fields = coll_args.search_fields;
             const auto& raw_query = coll_args.raw_query;
@@ -6645,6 +6680,8 @@ Option<bool> Collection::batch_alter_data(const std::vector<field>& alter_fields
         fields.push_back(f);
     }
 
+    rebuild_read_state_snapshot_unlocked();
+
     ulock.unlock();
     std::shared_lock shlock(mutex);
 
@@ -6798,6 +6835,8 @@ Option<bool> Collection::batch_alter_data(const std::vector<field>& alter_fields
 
         process_remove_field_for_embedding_fields(del_field, garbage_embedding_fields_vec);
     }
+
+    rebuild_read_state_snapshot_unlocked();
 
     ulock.unlock();
     shlock.lock();
@@ -7137,6 +7176,7 @@ Option<bool> Collection::validate_alter_payload(nlohmann::json& schema_changes,
                     if (field_it->nested) {
                         object_reference_fields.erase(field_name);
                     }
+                    rebuild_read_state_snapshot_unlocked();
 
                     //validated before only, so directly add to fields to delete
                     const auto ref_helper_field_name = field_name + fields::REFERENCE_HELPER_FIELD_SUFFIX;
@@ -7222,6 +7262,7 @@ Option<bool> Collection::validate_alter_payload(nlohmann::json& schema_changes,
                     if (field.nested) {
                         object_reference_fields.insert(field.name);
                     }
+                    rebuild_read_state_snapshot_unlocked();
 
                     for (auto& update_ref_info: update_ref_infos) {
                         update_reference_field(update_ref_info.field, update_ref_info.referenced_field);
@@ -8433,6 +8474,7 @@ void Collection::update_reference_field(const std::string& field_name, const fie
     }
 
     it->second.referenced_field = ref_field;
+    rebuild_read_state_snapshot_unlocked();
 }
 
 Option<uint32_t> Collection::get_sort_index_value_with_lock(const std::string& field_name,
