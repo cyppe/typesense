@@ -5787,10 +5787,10 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     ASSERT_EQ(size_t{6}, res_obj["hits"].size());
     ASSERT_EQ("5", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ("4", res_obj["hits"][2]["document"]["id"]);
+    ASSERT_EQ("0", res_obj["hits"][2]["document"]["id"]);
     ASSERT_EQ("3", res_obj["hits"][3]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][4]["document"]["id"]);
-    ASSERT_EQ("0", res_obj["hits"][5]["document"]["id"]);
+    ASSERT_EQ("4", res_obj["hits"][5]["document"]["id"]);
 
     req_params = {
             {"collection", "tags"},
@@ -5834,7 +5834,7 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
     ASSERT_EQ(size_t{2}, res_obj["hits"].size());
-    ASSERT_EQ("4", res_obj["hits"][0]["document"]["id"]);
+    ASSERT_EQ("0", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("3", res_obj["hits"][1]["document"]["id"]);
 
     req_params = {
@@ -5850,7 +5850,7 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     ASSERT_EQ(size_t{6}, res_obj["found"].get<size_t>());
     ASSERT_EQ(size_t{2}, res_obj["hits"].size());
     ASSERT_EQ("1", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_EQ("0", res_obj["hits"][1]["document"]["id"]);
+    ASSERT_EQ("4", res_obj["hits"][1]["document"]["id"]);
 
     req_params = {
             {"collection", "tags"},
@@ -5891,8 +5891,8 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     res_obj = nlohmann::json::parse(json_res);
     ASSERT_EQ("5", res_obj["hits"][0]["document"]["id"]);
     ASSERT_EQ("2", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ("4", res_obj["hits"][2]["document"]["id"]);
-    ASSERT_EQ("3", res_obj["hits"][3]["document"]["id"]);
+    ASSERT_EQ("3", res_obj["hits"][2]["document"]["id"]);
+    ASSERT_EQ("4", res_obj["hits"][3]["document"]["id"]);
     ASSERT_EQ("1", res_obj["hits"][4]["document"]["id"]);
     ASSERT_EQ("0", res_obj["hits"][5]["document"]["id"]);
 
@@ -5953,6 +5953,103 @@ TEST_F(CollectionCurationTest, DiversityOverride) {
     ASSERT_EQ("5", res_obj["hits"][2]["document"]["id"]);
     ASSERT_EQ("0", res_obj["hits"][3]["document"]["id"]);
     ASSERT_EQ("3", res_obj["hits"][4]["document"]["id"]);
+}
+
+// Regression for upstream #2793: the facet posting list iterator is forward-only,
+// so diversity similarity must read the lower seq_id first or MMR reranking
+// silently treats some similar candidates as unrelated.
+TEST_F(CollectionCurationTest, DiversityForwardOnlyIteratorBug) {
+    Collection* coll = nullptr;
+    auto schema_json =
+            R"({
+                "name": "diversity_iter",
+                "fields": [
+                    {"name": "sort_order", "type": "int32", "sort": true},
+                    {"name": "tag_groups", "type": "string[]", "facet": true}
+                ]
+            })"_json;
+
+    std::vector<nlohmann::json> documents = {
+            R"({"sort_order": 1, "tag_groups": ["a", "b", "c"]})"_json,
+            R"({"sort_order": 2, "tag_groups": ["a", "b", "d"]})"_json,
+            R"({"sort_order": 3, "tag_groups": ["e", "f"]})"_json,
+            R"({"sort_order": 4, "tag_groups": ["g", "h"]})"_json,
+            R"({"sort_order": 5, "tag_groups": ["i", "j"]})"_json
+    };
+
+    auto collection_create_op = collectionManager.create_collection(schema_json);
+    ASSERT_TRUE(collection_create_op.ok());
+    auto& ov_manager = CurationIndexManager::get_instance();
+
+    coll = collection_create_op.get();
+    coll->set_curation_sets({"index"});
+    for (const auto& json: documents) {
+        auto add_op = coll->add(json.dump());
+        ASSERT_TRUE(add_op.ok());
+    }
+
+    auto curation_json =
+            R"({
+                "id": "diversity_iter_rule",
+                "rule": {
+                    "tags": ["diverse"]
+                },
+                "diversity": {
+                    "similarity_metric": [
+                        {
+                            "field": "tag_groups",
+                            "method": "jaccard"
+                        }
+                    ]
+                }
+            })"_json;
+    curation_t curation;
+    auto op = curation_t::parse(curation_json, "", curation, "", {}, {});
+    ASSERT_TRUE(op.ok());
+    ov_manager.upsert_curation_item("index", curation_json);
+
+    nlohmann::json embedded_params;
+    std::string json_res;
+    long now_ts = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+    std::map<std::string, std::string> req_params = {
+            {"collection", "diversity_iter"},
+            {"q", "*"},
+            {"query_by", "tag_groups"},
+            {"sort_by", "sort_order:asc"},
+            {"curation_tags", "diverse"},
+            {"diversity_lambda", "1"},
+            {"diversity_limit", "10"}
+    };
+    auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
+    ASSERT_TRUE(search_op.ok());
+
+    auto res_obj = nlohmann::json::parse(json_res);
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ("0", res_obj["hits"][0]["document"]["id"]);
+    ASSERT_EQ("1", res_obj["hits"][1]["document"]["id"]);
+
+    req_params = {
+            {"collection", "diversity_iter"},
+            {"q", "*"},
+            {"query_by", "tag_groups"},
+            {"sort_by", "sort_order:asc"},
+            {"curation_tags", "diverse"},
+            {"diversity_lambda", "0"},
+            {"diversity_limit", "10"}
+    };
+    search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
+    ASSERT_TRUE(search_op.ok());
+
+    res_obj = nlohmann::json::parse(json_res);
+    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
+    ASSERT_EQ("0", res_obj["hits"][0]["document"]["id"]);
+    ASSERT_NE("1", res_obj["hits"][1]["document"]["id"].get<std::string>());
+
+    collectionManager.drop_collection("diversity_iter");
 }
 
 TEST_F(CollectionCurationTest, TextSortBucketDiversification) {
