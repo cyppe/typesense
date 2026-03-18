@@ -443,7 +443,7 @@ CURL *HttpClient::init_curl_stream(const std::string& url, async_stream_response
 
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 4000);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 30000); // 30s
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, timeout_ms);
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_PRIOR_KNOWLEDGE);
 
@@ -635,4 +635,3 @@ long HttpClient::download_file(const std::string& url, const std::string& file_p
 
     return http_code;
 }
-
