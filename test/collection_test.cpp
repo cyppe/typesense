@@ -702,6 +702,13 @@ TEST_F(CollectionTest, TypoTokensThreshold) {
 
     ASSERT_EQ(size_t{2}, results["hits"].size());
     ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
+
+    results = collection->search("redundant", {"title"}, "", {}, sort_fields, {2}, 1, 1,
+                                token_ordering::FREQUENCY, {true}, 10, spp::sparse_hash_set<std::string>(),
+                                spp::sparse_hash_set<std::string>(), 10, "", 5, 5, "", 10).get();
+
+    ASSERT_EQ(size_t{1}, results["hits"].size());
+    ASSERT_EQ(size_t{2}, results["found"].get<size_t>());
 }
 
 TEST_F(CollectionTest, MultiOccurrenceString) {
