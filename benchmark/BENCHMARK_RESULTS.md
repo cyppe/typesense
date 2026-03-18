@@ -11,6 +11,44 @@ Historical note: Runs 14-26 below are archival pre-cutover measurements from whe
 
 ---
 
+## Run 29: Indexing JSON Ownership Handoff Audit, First Measured Pass (item 38, 2026-03-18)
+
+**Commit:** local working tree on top of `86587197` at run time
+**Command:** `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --baseline-binary /tmp/typesense-server-baseline-86587197 --baseline-label baseline-86587197 --fork-binary ./bazel-bin/typesense-server --fork-label candidate-move-index-record --profile quick --scope core --clean`
+**Scenario:** item 38's first measured candidate removes a full `nlohmann::json` deep copy per imported document by moving freshly parsed local documents directly into `index_record` instead of copying them first in `Collection::add_many(...)` and the matching load/alter replay loops.
+
+### Import Summary
+
+| Lane | Import duration | Docs imported | HTTP status | Response warnings | Archive |
+|---|---:|---:|---:|---:|---|
+| baseline `86587197` binary | `27716 ms` | `1000000/1000000` | `200` | `0` | `~/.cache/typesense/benchmark/archives/20260318-073343-quick-core` |
+| candidate move-handoff binary | `26392 ms` | `1000000/1000000` | `200` | `0` | same archive |
+
+Import delta: `-1324 ms` (`-4.78%`) in the candidate's favor.
+
+### Representative Search p95 Summary
+
+| Scenario | Baseline p95 (`50vu / 100vu`) | Candidate p95 (`50vu / 100vu`) |
+|---|---:|---:|
+| `group` | `409 / 398 ms` | `384 / 390 ms` |
+| `just_q` | `5 / 4 ms` | `4 / 4 ms` |
+| `facet` | `138 / 138 ms` | `138 / 155 ms` |
+| `sort_simple` | `67 / 61 ms` | `86 / 90 ms` |
+| `sort_eval_score` | `103 / 72 ms` | `124 / 119 ms` |
+
+### Interpretation
+
+- The targeted ownership change is large enough to matter on the real 1M-doc import path. One full `quick/core` replay cut import time by about `4.8%` without changing response shape or ingestion count.
+- The same successful replay did **not** yield a clean steady-state search story. Some scenarios improved (`group`, `just_q`), some were flat, and some sort-heavy rows regressed materially. Because the code change only touches import-time JSON ownership handoff and does not change steady-state search code paths, this mixed table is more likely a sign that `quick/core` needs another clean repeat before closeout than proof of a real search regression.
+- A follow-up rerun with `--work-dir /tmp/typesense-bench-move-r2` was invalid because k6 could not write Influx stats (`mkdir /var/lib/influxdb/data: no such file or directory`). Treat that as a benchmark-harness issue, not as Typesense signal.
+
+### Decision
+
+- Keep the move-handoff code change as the current best import-path candidate for item 38.
+- Do **not** close item 38 yet on this run alone. Re-run the comparison cleanly before treating the search deltas as either a blocker or a non-issue.
+
+---
+
 ## Run 28: USearch Vector Backend Closeout (repo-owned `vector_index_t`, 2026-03-17)
 
 **Commit:** local working tree on top of `c1a50e23` at run time

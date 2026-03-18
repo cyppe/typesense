@@ -11,7 +11,7 @@ Docs ownership:
 
 - Start with the repo-level wrappers under `scripts/` for build, API, benchmark, and release tasks.
 - Use `test/scripts/replay_typesense_test.sh` for focused C++ test replay.
-- Treat `api_tests/scripts/prepare_runtime_bundle.sh`, `test/scripts/prewarm_e5_small_model.sh`, and `debian-pkg/*.sh` as support helpers behind those wrappers unless a workflow/debug note explicitly calls for them.
+- Treat `api_tests/scripts/prepare_runtime_bundle.sh`, `test/scripts/prewarm_public_test_models.sh`, and `debian-pkg/*.sh` as support helpers behind those wrappers unless a workflow/debug note explicitly calls for them.
 - `scripts/publish_release.sh` is the publish helper for already-built release artifacts, not a build/replay wrapper.
 
 ## 1) Recommended default: Dockerized Bazel
@@ -70,6 +70,9 @@ scripts/bazel_in_docker.sh test --verbose_failures //:typesense-test
 Use these before pushing or before manually dispatching the heavier GitHub workflows:
 
 ```bash
+# Public embedding models used by //:typesense-test
+bash test/scripts/prewarm_public_test_models.sh "$PWD/tmp/ci-models"
+
 # tests.yml
 scripts/bazel_in_docker.sh build //:typesense-server
 scripts/bazel_in_docker.sh test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=1200 --flaky_test_attempts=2 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
@@ -212,7 +215,7 @@ scripts/run_api_tests.sh --host-bun -- --no-secrets tests/health.test.ts
 
 ## 10) C++ integration replay (one-command style)
 
-When `//:typesense-test` fails in CI, replay the same lane locally with one command. The helper will prewarm the `ts/e5-small` model cache if needed and run the Dockerized Bazel test command with CI-like flags.
+When `//:typesense-test` fails in CI, replay the same lane locally with one command. The helper will prewarm the public embedding test model cache and run the Dockerized Bazel test command with CI-like flags.
 
 ```bash
 # Replay one failing gtest case quickly

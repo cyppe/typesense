@@ -34,8 +34,8 @@ jobs:
       - name: Setup test model artifacts
         run: curl https://dl.typesense.org/ci/tyrec/tyrec-1-models.tar.gz > ./test/resources/models.tar.gz
 
-      - name: Prewarm e5-small model cache
-        run: bash test/scripts/prewarm_e5_small_model.sh "${{ github.workspace }}/tmp/ci-models"
+      - name: Prewarm public embedding test model cache
+        run: bash test/scripts/prewarm_public_test_models.sh "${{ github.workspace }}/tmp/ci-models"
 
       - name: Run ASAN+UBSAN test suite
         run: >
@@ -94,8 +94,8 @@ jobs:
       - name: Setup test model artifacts
         run: curl https://dl.typesense.org/ci/tyrec/tyrec-1-models.tar.gz > ./test/resources/models.tar.gz
 
-      - name: Prewarm e5-small model cache
-        run: bash test/scripts/prewarm_e5_small_model.sh "${{ github.workspace }}/tmp/ci-models"
+      - name: Prewarm public embedding test model cache
+        run: bash test/scripts/prewarm_public_test_models.sh "${{ github.workspace }}/tmp/ci-models"
 
       - name: Run TSAN test suite
         run: >

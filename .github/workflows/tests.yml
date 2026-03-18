@@ -71,8 +71,8 @@ jobs:
       - name: Setup artifacts for tests
         run: curl https://dl.typesense.org/ci/tyrec/tyrec-1-models.tar.gz > ./test/resources/models.tar.gz
 
-      - name: Prewarm e5-small model cache
-        run: bash test/scripts/prewarm_e5_small_model.sh "${{ github.workspace }}/tmp/ci-models"
+      - name: Prewarm public embedding test model cache
+        run: bash test/scripts/prewarm_public_test_models.sh "${{ github.workspace }}/tmp/ci-models"
 
       - name: Run tests
         run: scripts/bazel_in_docker.sh test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=1200 --flaky_test_attempts=2 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models

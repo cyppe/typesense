@@ -40,7 +40,7 @@ If your task changes modernization status, benchmark policy, or the canonical wo
 
 Internal support helpers, not first-choice task entrypoints:
 - `api_tests/scripts/prepare_runtime_bundle.sh`
-- `test/scripts/prewarm_e5_small_model.sh`
+- `test/scripts/prewarm_public_test_models.sh`
 - `debian-pkg/*.sh`
 
 Before adding a new helper script, first decide whether it belongs under `scripts/` as a public task entrypoint or next to a subsystem as an internal helper.

@@ -2134,7 +2134,7 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
 
         num_valid_docs++;
 
-        index_records.emplace_back(index_record(0, seq_id, document, CREATE, dirty_values));
+        index_records.emplace_back(0, seq_id, std::move(document), CREATE, dirty_values);
 
         // Peek and check for last record right here so that we handle batched indexing correctly
         // Without doing this, the "last batch" would have to be indexed outside the loop.

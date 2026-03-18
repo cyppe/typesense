@@ -618,10 +618,11 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
 
     for(size_t i=0; i < json_lines.size(); i++) {
         const std::string & json_line = json_lines[i];
-        Option<doc_seq_id_t> doc_seq_id_op = to_doc(json_line, document, operation, dirty_values, id);
+        nlohmann::json parsed_document;
+        Option<doc_seq_id_t> doc_seq_id_op = to_doc(json_line, parsed_document, operation, dirty_values, id);
 
         const uint32_t seq_id = doc_seq_id_op.ok() ? doc_seq_id_op.get().seq_id : 0;
-        index_record record(i, seq_id, document, operation, dirty_values);
+        index_record record(i, seq_id, std::move(parsed_document), operation, dirty_values);
 
         // NOTE: we overwrite the input json_lines with result to avoid memory pressure
 
@@ -6548,7 +6549,8 @@ Option<bool> Collection::batch_alter_data(const std::vector<field>& alter_fields
             return populate_reference_helper_fields_op;
         }
 
-        index_record record(altered_docs, seq_id, document, index_operation_t::CREATE, DIRTY_VALUES::COERCE_OR_DROP);
+        index_record record(altered_docs, seq_id, std::move(document), index_operation_t::CREATE,
+                            DIRTY_VALUES::COERCE_OR_DROP);
         iter_batch.emplace_back(std::move(record));
 
         // Peek and check for last record right here so that we handle batched indexing correctly
