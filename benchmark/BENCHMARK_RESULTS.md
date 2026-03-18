@@ -11,6 +11,26 @@ Historical note: Runs 14-26 below are archival pre-cutover measurements from whe
 
 ---
 
+## Run 30: Item 38 Cleaner Repeat Blocked By Dockerized Influx Mount Failure (2026-03-18)
+
+**Commit:** local `HEAD` `1da111f7` at run time
+**Command:** `TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --baseline-binary /tmp/typesense-server-baseline-86587197 --baseline-label baseline-86587197 --fork-label head-1da111f7 --profile quick --scope core --clean`
+**Scenario:** rerun item 38 on the default benchmark workdir to decide whether Run 29's mixed search p95 table was real signal or quick-profile noise.
+
+### Findings
+
+- The rerun still hit repeated `Couldn't write stats ... mkdir /var/lib/influxdb/data: no such file or directory` errors from k6's Influx output path.
+- This is no longer just an alternate-`--work-dir` problem. The same failure reproduced on the default `~/.cache/typesense/benchmark` workdir.
+- The break is inside the current Dockerized benchmark harness, not just a missing host directory. During the rerun the checkout contained `benchmark/influxdb-data/data`, but `docker exec benchmark-influxdb-1 ls /var/lib/influxdb/data` still reported that path missing inside the running container.
+- One attempt reached a baseline-only import summary (`29187 ms`, `1000000/1000000`, HTTP `200`, warnings `0`) before the search phase became untrustworthy, but the compare never produced a clean fork-vs-baseline result worth treating as product signal.
+
+### Decision
+
+- Keep item 38 active.
+- Fix or bypass the Dockerized Influx mount failure before rerunning the explicit-binary `quick/core` compare.
+
+---
+
 ## Run 29: Indexing JSON Ownership Handoff Audit, First Measured Pass (item 38, 2026-03-18)
 
 **Commit:** local working tree on top of `86587197` at run time
@@ -40,7 +60,7 @@ Import delta: `-1324 ms` (`-4.78%`) in the candidate's favor.
 
 - The targeted ownership change is large enough to matter on the real 1M-doc import path. One full `quick/core` replay cut import time by about `4.8%` without changing response shape or ingestion count.
 - The same successful replay did **not** yield a clean steady-state search story. Some scenarios improved (`group`, `just_q`), some were flat, and some sort-heavy rows regressed materially. Because the code change only touches import-time JSON ownership handoff and does not change steady-state search code paths, this mixed table is more likely a sign that `quick/core` needs another clean repeat before closeout than proof of a real search regression.
-- A follow-up rerun with `--work-dir /tmp/typesense-bench-move-r2` was invalid because k6 could not write Influx stats (`mkdir /var/lib/influxdb/data: no such file or directory`). Treat that as a benchmark-harness issue, not as Typesense signal.
+- A follow-up rerun with `--work-dir /tmp/typesense-bench-move-r2` was invalid because k6 could not write Influx stats (`mkdir /var/lib/influxdb/data: no such file or directory`). A later repeat on the default benchmark workdir reproduced the same Dockerized Influx failure; see Run 30. Treat this as a benchmark-harness issue, not as Typesense signal.
 
 ### Decision
 
