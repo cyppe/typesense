@@ -209,10 +209,9 @@ jobs:
             ${{ github.workspace }}/.cache/bazel-docker/disk-cache
             ${{ github.workspace }}/.cache/bazel-docker/repository-cache
             ${{ github.workspace }}/.cache/bazel-docker/bazelisk
-          key: bazel-${{ runner.os }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel-cuda.Dockerfile') }}
+          key: bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel-cuda.Dockerfile') }}
           restore-keys: |
-            bazel-${{ runner.os }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-
-            bazel-${{ runner.os }}-${{ github.workflow }}-docker-
+            bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-
 
       - name: Restore Bazel cache (Host)
         if: ${{ !matrix.uses_docker_bazel }}
@@ -223,10 +222,9 @@ jobs:
             ${{ runner.temp }}/typesense-bazel-host/disk-cache
             ${{ runner.temp }}/typesense-bazel-host/repository-cache
             ${{ runner.temp }}/typesense-bazel-host/bazelisk
-          key: bazel-${{ runner.os }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          key: bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
           restore-keys: |
-            bazel-${{ runner.os }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-
-            bazel-${{ runner.os }}-${{ github.workflow }}-host-
+            bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-
 
       - name: Build CI Bazel image
         if: matrix.uses_docker_bazel
@@ -412,7 +410,7 @@ jobs:
             ${{ github.workspace }}/.cache/bazel-docker/disk-cache
             ${{ github.workspace }}/.cache/bazel-docker/repository-cache
             ${{ github.workspace }}/.cache/bazel-docker/bazelisk
-          key: bazel-${{ runner.os }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel-cuda.Dockerfile') }}
+          key: bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel-cuda.Dockerfile') }}
 
       - name: Save Bazel cache (Host)
         if: always() && (!matrix.uses_docker_bazel) && steps.bazel-cache-host.outputs.cache-hit != 'true'
@@ -422,7 +420,7 @@ jobs:
             ${{ runner.temp }}/typesense-bazel-host/disk-cache
             ${{ runner.temp }}/typesense-bazel-host/repository-cache
             ${{ runner.temp }}/typesense-bazel-host/bazelisk
-          key: bazel-${{ runner.os }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          key: bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
 
       - name: Report Bazel cache size
         if: always()
@@ -461,10 +459,9 @@ jobs:
             ${{ github.workspace }}/.cache/bazel-docker/disk-cache
             ${{ github.workspace }}/.cache/bazel-docker/repository-cache
             ${{ github.workspace }}/.cache/bazel-docker/bazelisk
-          key: bazel-${{ runner.os }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel-cuda.Dockerfile') }}
+          key: bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel-cuda.Dockerfile') }}
           restore-keys: |
-            bazel-${{ runner.os }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-
-            bazel-${{ runner.os }}-${{ github.workflow }}-docker-
+            bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-
 
       - name: Build CI Bazel image
         run: |
@@ -542,7 +539,7 @@ jobs:
             ${{ github.workspace }}/.cache/bazel-docker/disk-cache
             ${{ github.workspace }}/.cache/bazel-docker/repository-cache
             ${{ github.workspace }}/.cache/bazel-docker/bazelisk
-          key: bazel-${{ runner.os }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel-cuda.Dockerfile') }}
+          key: bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel-cuda.Dockerfile') }}
 
       - name: Report Bazel cache size
         if: always() && needs.core-binaries.result == 'skipped'
