@@ -5,7 +5,6 @@
 #include <string>
 #include <unordered_map>
 #include <thread>
-#include <atomic>
 #include <memory>
 #include <mutex>
 #include <condition_variable>
@@ -469,7 +468,8 @@ private:
         std::string collection_name;
     };
 
-    std::atomic<std::shared_ptr<const read_state_t>> read_state_snapshot;
+    mutable std::mutex read_state_snapshot_mutex;
+    std::shared_ptr<const read_state_t> read_state_snapshot;
 
     /// Contains the info where the current collection is referenced.
     /// Useful to perform operations such as cascading delete.

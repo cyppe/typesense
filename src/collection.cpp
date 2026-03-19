@@ -180,7 +180,8 @@ Collection::~Collection() {
 }
 
 std::shared_ptr<const Collection::read_state_t> Collection::get_read_state_snapshot() const {
-    return read_state_snapshot.load(std::memory_order_acquire);
+    std::lock_guard<std::mutex> lock(read_state_snapshot_mutex);
+    return read_state_snapshot;
 }
 
 void Collection::rebuild_read_state_snapshot_unlocked() {
@@ -192,8 +193,8 @@ void Collection::rebuild_read_state_snapshot_unlocked() {
     snapshot->reference_fields = reference_fields;
     snapshot->collection_name = name;
 
-    read_state_snapshot.store(std::shared_ptr<const read_state_t>(std::move(snapshot)),
-                              std::memory_order_release);
+    std::lock_guard<std::mutex> lock(read_state_snapshot_mutex);
+    read_state_snapshot = std::shared_ptr<const read_state_t>(std::move(snapshot));
 }
 
 uint32_t Collection::get_next_seq_id() {
