@@ -192,11 +192,7 @@ if ((BUILD_LINUX_PACKAGES)); then
 	BUILD_PACKAGES_ENV=1
 fi
 
-docker_run_args=(
-	docker run
-	--rm
-	--user 0:0
-	--entrypoint /bin/bash
+docker_env_args=(
 	-e "VERSION_LABEL=${VERSION_LABEL}"
 	-e "TARGET_ARCH=${TARGET_ARCH}"
 	-e "BUILD_LINUX_PACKAGES=${BUILD_PACKAGES_ENV}"
@@ -204,6 +200,18 @@ docker_run_args=(
 	-e "TYPESENSE_BAZEL_CACHE_DIR=${CACHE_DIR}"
 	-e "HOST_UID=$(id -u)"
 	-e "HOST_GID=$(id -g)"
+)
+
+if [[ -n "${TYPESENSE_ORT_PREBUILT_BUNDLE_DIR:-}" ]]; then
+	docker_env_args+=(-e "TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=$(workspace_env_to_container_path TYPESENSE_ORT_PREBUILT_BUNDLE_DIR)")
+fi
+
+docker_run_args=(
+	docker run
+	--rm
+	--user 0:0
+	--entrypoint /bin/bash
+	"${docker_env_args[@]}"
 	-v "${PROJECT_DIR}:${WORKDIR}"
 	-v "${CACHE_DIR}:${CACHE_DIR}"
 	-w "${WORKDIR}"
@@ -297,9 +305,5 @@ if [[ "${BUILD_LINUX_PACKAGES}" == "1" ]]; then
 fi
 '
 )
-
-if [[ -n "${TYPESENSE_ORT_PREBUILT_BUNDLE_DIR:-}" ]]; then
-	docker_run_args+=(-e "TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=$(workspace_env_to_container_path TYPESENSE_ORT_PREBUILT_BUNDLE_DIR)")
-fi
 
 "${docker_run_args[@]}"

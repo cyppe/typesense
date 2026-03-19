@@ -16,6 +16,10 @@ build --host_per_file_copt=external/protobuf\+.*@-Wno-sign-compare
 # GCC-only protobuf false positives must not leak into clang guardrails.
 build:gcc --per_file_copt=external/protobuf\+.*@-Wno-maybe-uninitialized
 build:gcc --host_per_file_copt=external/protobuf\+.*@-Wno-maybe-uninitialized
+# GCC on aarch64 can emit non-actionable psABI notes from third-party headers
+# under modern C++ modes; keep them out of routine CI/release logs.
+build:gcc --cxxopt=-Wno-psabi
+build:gcc --host_cxxopt=-Wno-psabi
 build:macos --per_file_copt=external/protobuf\+.*/map\.cc@-Wno-deprecated-this-capture
 build:macos --host_per_file_copt=external/protobuf\+.*/map\.cc@-Wno-deprecated-this-capture
 # Scope heavy third-party warning buckets to their dependency boundaries.
