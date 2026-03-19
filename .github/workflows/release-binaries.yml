@@ -45,6 +45,10 @@ on:
           - darwin
           - darwin-amd64
           - darwin-arm64
+      ort_bundle_run_id:
+        description: Optional workflow run ID from ort-bundles.yml to reuse a prebuilt Linux CUDA ORT bundle
+        required: false
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -52,6 +56,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   select_targets:
@@ -226,6 +231,29 @@ jobs:
           restore-keys: |
             bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-
 
+      - name: Compute ORT bundle key
+        if: matrix.target_os == 'linux' && inputs.ort_bundle_run_id != ''
+        id: ort-bundle-key
+        run: echo "bundle_key=$(scripts/release_ort_bundle.sh --print-key --target-arch "${{ matrix.target_arch }}")" >>"${GITHUB_OUTPUT}"
+
+      - name: Download prebuilt ORT bundle
+        if: matrix.target_os == 'linux' && inputs.ort_bundle_run_id != ''
+        uses: actions/download-artifact@v5
+        with:
+          name: typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}
+          path: ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.ort_bundle_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Extract prebuilt ORT bundle
+        if: matrix.target_os == 'linux' && inputs.ort_bundle_run_id != ''
+        run: |
+          cd "${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}"
+          sha256sum -c "typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}.tar.gz.sha256.txt"
+          mkdir -p bundle
+          tar -xzf "typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}.tar.gz" -C bundle
+
       - name: Build CI Bazel image
         if: matrix.uses_docker_bazel
         run: |
@@ -250,6 +278,9 @@ jobs:
           if [ "${{ matrix.enable_jemalloc_lg_page16 }}" = "true" ]; then
             args+=(--define=enable_jemalloc_lg_page16=1)
           fi
+          if [ -d "${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}/bundle/lib" ]; then
+            args+=(--repo_env=TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=/work/ort-bundle/${{ matrix.target_arch }}/bundle)
+          fi
           scripts/bazel_in_docker.sh "${args[@]}"
 
       - name: Upload Linux GPU provider build inputs
@@ -258,6 +289,8 @@ jobs:
         with:
           name: gpu-provider-build-inputs-linux-${{ matrix.target_arch }}
           path: |
+            ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}/bundle/lib/libonnxruntime_providers_shared.so
+            ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}/bundle/lib/libonnxruntime_providers_cuda.so
             ${{ github.workspace }}/bazel-bin/external/+new_git_repository+onnx_runtime/onnxruntime_static_one_protobuf/lib/libonnxruntime_providers_shared.so
             ${{ github.workspace }}/bazel-bin/external/+new_git_repository+onnx_runtime/onnxruntime_static_one_protobuf/lib/libonnxruntime_providers_cuda.so
           if-no-files-found: error
@@ -306,6 +339,9 @@ jobs:
           fi
           if [ "${{ inputs.build_linux_packages }}" != "true" ]; then
             args+=(--skip-packages)
+          fi
+          if [ -d "${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}/bundle/lib" ]; then
+            export TYPESENSE_ORT_PREBUILT_BUNDLE_DIR="${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}/bundle"
           fi
           bash scripts/release_linux_artifacts.sh "${args[@]}"
 
@@ -463,6 +499,29 @@ jobs:
           restore-keys: |
             bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-
 
+      - name: Compute ORT bundle key
+        if: inputs.ort_bundle_run_id != ''
+        id: ort-bundle-key
+        run: echo "bundle_key=$(scripts/release_ort_bundle.sh --print-key --target-arch "${{ matrix.target_arch }}")" >>"${GITHUB_OUTPUT}"
+
+      - name: Download prebuilt ORT bundle
+        if: inputs.ort_bundle_run_id != ''
+        uses: actions/download-artifact@v5
+        with:
+          name: typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}
+          path: ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.ort_bundle_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Extract prebuilt ORT bundle
+        if: inputs.ort_bundle_run_id != ''
+        run: |
+          cd "${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}"
+          sha256sum -c "typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}.tar.gz.sha256.txt"
+          mkdir -p bundle
+          tar -xzf "typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}.tar.gz" -C bundle
+
       - name: Build CI Bazel image
         run: |
           export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
@@ -489,6 +548,9 @@ jobs:
             args+=(--skip-packages)
           fi
           export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
+          if [ -d "${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}/bundle/lib" ]; then
+            export TYPESENSE_ORT_PREBUILT_BUNDLE_DIR="${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}/bundle"
+          fi
           bash scripts/release_linux_gpu_deps.sh "${args[@]}"
 
       - name: Upload primary GPU deps artifact

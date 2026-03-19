@@ -595,6 +595,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 | 39 | ~~Search work-budget configurability audit~~ | P2 Search | **done** | Completed Mar 18, 2026 as a no-go for new API surface. The 2017 TODO referred to the pre-Index refactor search path, but current search budget behavior is already explicitly controlled by `typo_tokens_threshold`, `drop_tokens_threshold`, `max_candidates`, and `search_cutoff_ms`; a focused `CollectionTest.TypoTokensThreshold` replay now also proves typo expansion is not implicitly tied to `per_page`. |
 | 40 | ~~Upstream `v30` release-parity catch-up audit~~ | P1 Parity | **done** | Completed Mar 18, 2026. Every missing official `upstream/v30` patch family is now either landed locally on `v31-fork` or explicitly classified as already present, so stable-line parity is intentional instead of assumed from the old fork point. |
 | 41 | Upstream `v31` selective intake audit | P2 Intake | **active** | `v30` parity triage is complete; the next intake work is to decide which post-fork `upstream/v31` bug fixes/features should be adopted on `v31-fork`. |
+| 42 | ~~Repo-owned prebuilt CUDA ORT bundle intake~~ | P2 Release | **done** | Completed Mar 19, 2026. Linux release lanes can now reuse a repo-owned CUDA-enabled one-Protobuf ORT install-tree bundle instead of rebuilding ORT from source on every cold hosted run, while keeping the source-build path as the default fallback. |
 
 ### 25) Release workflow promotion and repo-owned replay extraction
 
@@ -1272,12 +1273,39 @@ Completed Mar 18, 2026.
 
 - [ ] The plan carries an explicit accept/reject/defer decision for each tracked `upstream/v31` candidate, with the accepted subset scheduled as concrete follow-up work.
 
+### 42) Repo-owned prebuilt CUDA ORT bundle intake
+
+**Why this sprint exists now**
+
+- Cold `linux-amd64` `release-binaries` runs can spend most of the hosted 6-hour job budget rebuilding CUDA-enabled ONNX Runtime from source, especially when the cache namespace changes or a lane starts cold.
+- `actions/cache` only restores at job start and saves at job end, so a timed-out hosted job does not preserve completed ORT build actions the way a true Bazel remote cache would.
+- The goal here was to avoid adding self-hosted runners or Bazel remote-cache infrastructure if a repo-owned prebuilt bundle could preserve exact compatibility with the current one-Protobuf CUDA path.
+
+**Sprint goal**
+
+- Package the exact CUDA-enabled one-Protobuf ORT install tree this repo already builds, then let Linux release workflows consume that bundle when available while keeping the existing source build as the safe fallback.
+
+**Status snapshot (Mar 19, 2026)**
+
+- `MODULE.bazel` now declares a repo-owned `@typesense_ort` repository via `bazel/typesense_ort_repo.bzl`. When `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR` is unset it aliases back to `@onnx_runtime`; when it is set it exposes the extracted bundle's static archives, headers, and provider sidecars directly to Bazel.
+- `BUILD` now depends on `@typesense_ort//:onnxruntime_static_one_protobuf_lib`, so the main server target can switch between source-built ORT and a prebuilt bundle without target-label churn.
+- `scripts/release_ort_bundle.sh` is the canonical public entrypoint for bundle packaging. It can print the deterministic bundle key, build `@onnx_runtime//:onnxruntime_static_one_protobuf --define=use_cuda=on`, and package the resulting install tree into `artifacts/typesense-ort-bundle-<label>-linux-<arch>.tar.gz` plus SHA256 and JSON manifest sidecars.
+- `.github/workflows/ort-bundles.yml` is the manual hosted producer for those artifacts on `linux-amd64` and `linux-arm64`.
+- `.github/workflows/release-binaries.yml` now accepts optional input `ort_bundle_run_id`; when provided on Linux lanes it computes the matching bundle key, downloads the ORT bundle artifact from the specified `ort-bundles.yml` run, extracts it inside the checkout, and points Bazel/release helpers at that extracted tree.
+- `scripts/release_linux_artifacts.sh` and `scripts/release_linux_gpu_deps.sh` now forward `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR` through both the Bazel build phase and the later Dockerized release-assembly phase so the downloaded bundle can drive both the main server artifact and the optional GPU-deps artifact.
+- Local proof is green:
+  - `scripts/bazel_in_docker.sh build //:typesense-server --define=use_cuda=on --repo_env=TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=/work/tmp/ort-bundle-test.vfdb2U` linked successfully against an extracted bundle in `4.819s` with only `3` Bazel actions.
+  - `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR="$PWD/tmp/ort-bundle-test.vfdb2U" scripts/release_linux_artifacts.sh --with-cuda --skip-packages --target-arch amd64 --version-label 0.0.0-prebuilt-test` passed and produced the expected Linux tarball plus `.debug` sidecar.
+  - `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR="$PWD/tmp/ort-bundle-test.vfdb2U" scripts/release_linux_gpu_deps.sh --skip-packages --target-arch amd64 --version-label 0.0.0-prebuilt-test` passed and produced the expected GPU-deps tarball.
+  - `scripts/release_ort_bundle.sh --version-label 0.0.0-prebuilt-test --target-arch amd64` successfully packaged the current ORT install tree into the new artifact shape.
+- Item 42 is complete: the repo now has a CI-parity, repo-owned prebuilt ORT bundle path that avoids cold hosted ORT rebuilds when operators intentionally dispatch `ort-bundles.yml` first, without weakening the default source-build path.
+
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Active now:** item **40** (`Upstream v30 release-parity catch-up audit`) is the next priority. The official stable branch is more important than new TODO mining, and this audit found real `upstream/v30` commits that never received an explicit fork-side parity decision.
-- **Queued behind it:** item **41** (`Upstream v31 selective intake audit`) turns the post-fork upstream development-branch delta into an explicit queue instead of accidental drift.
+- **Active now:** item **41** (`Upstream v31 selective intake audit`) is the next priority. `v30` parity is closed, so the remaining intake question is which post-fork upstream development-branch fixes/features belong on `v31-fork`.
+- **Recently finished:** item **42** (`Repo-owned prebuilt CUDA ORT bundle intake`) — `@typesense_ort` now lets Linux release lanes consume a repo-owned extracted ORT install-tree bundle when `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR` is set, `scripts/release_ort_bundle.sh` is the canonical packager, `ort-bundles.yml` is the hosted producer, and `release-binaries.yml` can reuse a specific bundle run via `ort_bundle_run_id`.
 - **Recently finished:** item **39** (`Search work-budget configurability audit`) — no-go for a new config surface. The old TODO was specific to the pre-Index 2017 search path; current HEAD already exposes the real search-budget controls via `typo_tokens_threshold`, `drop_tokens_threshold`, `max_candidates`, and `search_cutoff_ms`, and the targeted `CollectionTest.TypoTokensThreshold` replay now proves typo expansion depth is not coupled to `per_page`.
 - **Recently finished:** item **38** (`Indexing hot-path string-copy audit`) — commit `7ab4cd8b` landed the real hot-path fix by moving parsed local JSON documents directly into `index_record` in `Collection::add_many(...)`, collection load, and alter-data replay. After fixing the benchmark harness's stale Influx bind-mount cleanup bug, the canonical upstream-comparable `standard/core` replay on `1c34ddf7` vs upstream `30.1` closed green with import `50.270s -> 31.790s` and every meaningful non-zero search scenario faster than upstream, including `filter_simple`, `facet`, and `group`.
 - **Recently finished:** item **37** (`Release workflow promotion / draft-posture cleanup`) — current pushed tip `7eb65c27` is hosted-green on `release-binaries` run `23242998148` and matching `tests` run `23242982005`, and a fresh source audit confirmed the supported-manual-release posture already lived in the workflow/runbook/README/scripts. The only remaining work was removing stale plan-only draft/promotion wording.
@@ -1678,6 +1706,7 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 60. **On NuRaft, committed log index is not the same as follower-readable state.** For post-restart or follower reads, `committed_index` convergence alone is insufficient; the runtime must wait for `raft_server::wait_for_state_machine_commit(...)`, track the local readable applied index separately, and treat `read_caught_up`/applied-index convergence as the real read-safety gate.
 61. **Benchmark reruns can currently fail in the Dockerized k6/Influx setup even on the default workdir.** The March 18, 2026 item-38 reruns first failed under `/tmp/typesense-bench-move-r2`, then reproduced on the default `~/.cache/typesense/benchmark` path with repeated `Couldn't write stats ... mkdir /var/lib/influxdb/data: no such file or directory` errors. Even when the host checkout contains `benchmark/influxdb-data/data`, `docker exec benchmark-influxdb-1 ls /var/lib/influxdb/data` can still report that path missing inside the running container, so treat this as a harness bug and verify the Influx bind mount itself before trusting the benchmark lane again.
 62. **Public-model CI staging has to match the models the active C++ suite actually exercises.** The March 18, 2026 `tests` run `23233009256` failed in `CollectionVectorTest.TestMultilingualE5` because CI only prewarmed `ts/e5-small`; `ts/multilingual-e5-small` then fell back to live model-repo downloads and timed out on the vocab fetch. Keep `test/scripts/prewarm_public_test_models.sh`, the workflow prewarm steps, and `test/scripts/replay_typesense_test.sh` aligned with the real public-model set used by `//:typesense-test`.
+63. **If a hosted release lane can time out before `actions/cache` saves, move the dominant cold-build output into a repo-owned artifact keyed from the real toolchain inputs.** The March 19, 2026 ORT bundle work avoided GitHub's 6-hour cold CUDA rebuild cliff without introducing remote-cache infrastructure: package the exact `onnxruntime_static_one_protobuf` install tree, key it from the ORT patches/BUILD/dockerfile/arch inputs, and let the release workflow consume that artifact opportunistically while keeping the source build as the fallback.
 32. **Timed snapshot policy is part of the recovery contract, not just a scheduler detail.** If snapshots are blocked on follower health, a lagging follower can be trapped behind a permanently stale recovery point. Keep a test lane that distinguishes "require healthy peers" from "leader-only snapshot" policy so this deadlock class stays visible.
 33. **Do not misuse the existing HTTP benchmark wrapper as NuRaft evidence.** `scripts/benchmark_vs_upstream.sh` measures full server binaries behind the normal API/runtime surface. Until NuRaft has either a thin HTTP-facing adapter or a dedicated prototype benchmark harness, Story E needs its own measurement lane.
 34. **Prototype benchmarking should stay explicitly separate from the normal HTTP benchmark wrapper until the runtime surfaces actually match.** A dedicated NuRaft microbenchmark target is useful for Story E, but it is still measuring isolated replication/storage paths, not a drop-in server replacement. Treat it as evidence for feasibility, not as a substitute for a later apples-to-apples runtime comparison.

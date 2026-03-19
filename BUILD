@@ -48,7 +48,7 @@ cc_library(
     }),
     deps = [
         ":headers",
-        "@onnx_runtime//:onnxruntime_static_one_protobuf_lib",
+        "@typesense_ort//:onnxruntime_static_one_protobuf_lib",
         "@sentencepiece",
         "@sentencepiece//:sentencepiece_headers",
         "@com_google_absl//absl/log:absl_log",

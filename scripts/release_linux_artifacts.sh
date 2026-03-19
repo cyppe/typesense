@@ -69,6 +69,33 @@ append_optional_repo_env() {
 	fi
 }
 
+append_optional_workspace_repo_env() {
+	local -n out_ref=$1
+	local env_name="$2"
+	local env_value="${!env_name:-}"
+	if [[ -z "${env_value}" ]]; then
+		return
+	fi
+	if [[ "${env_value}" != "${PROJECT_DIR}"/* ]]; then
+		echo "${env_name} must point inside ${PROJECT_DIR} so Dockerized Bazel can see it." >&2
+		exit 1
+	fi
+	out_ref+=("--repo_env=${env_name}=${WORKDIR}${env_value#${PROJECT_DIR}}")
+}
+
+workspace_env_to_container_path() {
+	local env_name="$1"
+	local env_value="${!env_name:-}"
+	if [[ -z "${env_value}" ]]; then
+		return
+	fi
+	if [[ "${env_value}" != "${PROJECT_DIR}"/* ]]; then
+		echo "${env_name} must point inside ${PROJECT_DIR} so Dockerized release assembly can see it." >&2
+		exit 1
+	fi
+	printf '%s%s\n' "${WORKDIR}" "${env_value#${PROJECT_DIR}}"
+}
+
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--build)
@@ -157,6 +184,7 @@ if ((BUILD_BEFORE_ASSEMBLY)); then
 		build_args+=(--define=use_cuda=on)
 		append_optional_repo_env build_args "TYPESENSE_ORT_CUDA_ARCHITECTURES"
 		append_optional_repo_env build_args "TYPESENSE_ORT_BUILD_JOBS"
+		append_optional_workspace_repo_env build_args "TYPESENSE_ORT_PREBUILT_BUNDLE_DIR"
 	fi
 	if ((ENABLE_JEMALLOC_LG_PAGE16)); then
 		build_args+=(--define=enable_jemalloc_lg_page16=1)
@@ -345,5 +373,9 @@ if [[ "${BUILD_LINUX_PACKAGES}" == "1" ]]; then
 fi
 '
 )
+
+if [[ -n "${TYPESENSE_ORT_PREBUILT_BUNDLE_DIR:-}" ]]; then
+	docker_run_args+=(-e "TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=$(workspace_env_to_container_path TYPESENSE_ORT_PREBUILT_BUNDLE_DIR)")
+fi
 
 "${docker_run_args[@]}"

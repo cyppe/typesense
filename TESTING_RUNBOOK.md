@@ -50,7 +50,7 @@ bazel test --cache_test_results=no --test_output=all //:typesense-test --test_ti
 ## 4) GitHub trigger policy
 
 - `tests.yml` is the only automatic CI gate. It runs on `push` and can also be started manually with `workflow_dispatch`.
-- `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, and `release-binaries.yml` are manual-only workflows.
+- `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, `ort-bundles.yml`, and `release-binaries.yml` are manual-only workflows.
 - Prefer replaying the matching local wrapper command before dispatching a heavy manual workflow. This repo's wrappers are the canonical local equivalents of the GitHub lanes.
 
 ## 5) Known gotcha: GCC 15 + rules_foreign_cc pkgconfig
@@ -96,6 +96,10 @@ TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --p
 # local benchmark repro against the same latest local binary
 TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --self-compare --profile quick --scope core
 
+# ort-bundles.yml
+scripts/release_ort_bundle.sh --build --target-arch amd64
+scripts/release_ort_bundle.sh --build --target-arch arm64
+
 # focused USearch vector-backend replay: metric-kernel comparison + mixed update/search workload
 scripts/bazel_in_docker.sh run //:usearch-vector-backend-benchmark -- --docs 20000 --dims 384 --cycles 10 --updates-per-cycle 400 --replacements-per-cycle 100 --searches-per-cycle 200 --k 20 --ef 80 --kernel-samples 4096 --kernel-repeats 64 --seed 42
 
@@ -107,6 +111,12 @@ scripts/release_linux_artifacts.sh --build --with-cuda --target-arch arm64 --jem
 # optional Linux GPU deps replay used by release-binaries.yml's gpu-deps job
 scripts/release_linux_gpu_deps.sh --build --version-label 0.0.0-local
 scripts/release_linux_gpu_deps.sh --build --target-arch arm64 --emit-lg-page16-alias --version-label 0.0.0-local
+
+# release-binaries.yml with a prebuilt ORT bundle extracted inside the checkout
+TYPESENSE_ORT_PREBUILT_BUNDLE_DIR="$PWD/tmp/ort-bundle" \
+scripts/release_linux_artifacts.sh --with-cuda --version-label 0.0.0-local --target-arch amd64
+TYPESENSE_ORT_PREBUILT_BUNDLE_DIR="$PWD/tmp/ort-bundle" \
+scripts/release_linux_gpu_deps.sh --version-label 0.0.0-local --target-arch amd64
 ```
 
 The workflow YAML also layers GitHub-specific cache and artifact plumbing on top of these commands, but the wrappers above are the primary repro paths.
@@ -114,6 +124,7 @@ The benchmark wrapper now builds and runs its Bun CLI in Docker by default, so t
 The Linux release wrapper keeps packaging tools inside containers, so the host does not need `alien`, `rpm`, `dpkg-dev`, `objcopy`, or `strip` installed separately.
 Linux release binaries now use `--define=use_cuda=on` on Linux so the published `typesense-server` artifact can load optional GPU provider sidecars from `typesense-gpu-deps`. On this branch the GPU surface is limited to ONNX Runtime-backed embeddings/personalization; Whisper remains CPU-only.
 Hosted `release-binaries.yml` GPU-deps lanes reuse the matching Linux server build's prebuilt provider sidecars when server artifacts are enabled, and only fall back to a standalone CUDA rebuild when you explicitly dispatch GPU deps without the core server lane.
+`ort-bundles.yml` packages the exact CUDA-enabled one-Protobuf ORT install tree into a reusable artifact keyed from the pinned ORT/toolchain inputs, and `release-binaries.yml` can consume one of those bundle runs via the manual `ort_bundle_run_id` input. Local wrapper replays use the same extracted-tree contract through `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR`, which must point inside the checkout so the Dockerized Bazel/release containers can see it at `/work/...`.
 Artifact publishing is a separate post-build step via `scripts/publish_release.sh` against the generated `artifacts/` tree, not part of the local replay wrappers above.
 Cross-arch local replays of `linux-arm64` or `linux-arm64-lg-page16` from an x86_64 host require Docker arm64 emulation to be enabled.
 Darwin release lanes still require native macOS runners. Their current artifact contract is the unstripped `typesense-server` tarball with embedded DWARF plus `typesense-server.md5.txt`; the repo does not currently produce a `.dSYM` sidecar.

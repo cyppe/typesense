@@ -32,9 +32,11 @@ new_git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl"
 
 cuda_home_repository = use_repo_rule("//bazel:onnxruntime_cuda_defs.bzl", "cuda_home_repository")
 output_base_util_repository = use_repo_rule("//bazel:compdb_output_base_util.bzl", "output_base_util_repository")
+typesense_ort_repository = use_repo_rule("//bazel:typesense_ort_repo.bzl", "typesense_ort_repository")
 
 cuda_home_repository(name = "cuda_home_repo")
 output_base_util_repository(name = "com_grail_bazel_output_base_util")
+typesense_ort_repository(name = "typesense_ort")
 
 git_repository(
     name = "com_grail_bazel_compdb",
