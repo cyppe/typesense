@@ -68,6 +68,25 @@ public:
     }
 };
 
+std::string preview_request_body_for_log(const std::string& body, size_t max_chars = 256) {
+    if (body.empty()) {
+        return "<empty>";
+    }
+
+    std::string preview = body.substr(0, std::min(body.size(), max_chars));
+    for (char& ch : preview) {
+        if (ch == '\n' || ch == '\r' || ch == '\t') {
+            ch = ' ';
+        }
+    }
+
+    if (body.size() > max_chars) {
+        preview += "...";
+    }
+
+    return preview;
+}
+
 void init_api(uint32_t cache_num_entries) {
     std::unique_lock lock(mutex);
     res_cache.capacity(cache_num_entries);
@@ -191,7 +210,9 @@ void get_collections_for_auth(std::map<std::string, std::string>& req_params,
             nlohmann::json obj = nlohmann::json::parse(body, nullptr, false);
 
             if(obj.is_discarded()) {
-                TS_LOG(ERROR) << "Create collection request body is malformed.";
+                TS_LOG(WARNING) << "Create collection request body could not be parsed during auth preflight. "
+                                << "bytes=" << body.size()
+                                << ", preview=" << preview_request_body_for_log(body);
             }
 
             else if(obj.count("name") != 0 && obj["name"].is_string()) {

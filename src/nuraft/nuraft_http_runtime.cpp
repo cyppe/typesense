@@ -31,6 +31,11 @@ constexpr size_t kDocumentImportRaftChunkMaxBytes = 4 * 1024 * 1024;
 // replay follows the same handler cadence as the old async import path.
 constexpr size_t kDocumentImportHandlerReplayChunkBytes = 196605;
 
+bool is_expected_missing_collection_mirror_skip(NuRaftRouteKind route_kind, const std::string& error) {
+    return route_kind == NuRaftRouteKind::kCollectionDrop &&
+           error.find("No collection with name `") != std::string::npos;
+}
+
 nlohmann::json normalize_collection_field(const nlohmann::json& field) {
     nlohmann::json normalized = field;
     normalized["facet"] = normalized.value("facet", false);
@@ -824,7 +829,12 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     }
 
     if (!mirror_single_node_typesense_state(request, route_kind, error)) {
-        TS_LOG(WARNING) << "NuRaft runtime skipped live Typesense state mirror: " << error;
+        if (is_expected_missing_collection_mirror_skip(route_kind, error)) {
+            TS_LOG(INFO) << "NuRaft runtime skipped live Typesense state mirror for missing collection drop: "
+                         << error;
+        } else {
+            TS_LOG(WARNING) << "NuRaft runtime skipped live Typesense state mirror: " << error;
+        }
         error.clear();
     }
     if (committed_index > live_product_state_applied_index_) {
