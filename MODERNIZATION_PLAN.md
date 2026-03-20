@@ -1263,6 +1263,7 @@ Completed Mar 18, 2026.
   - `c1bd3c77` `fix: update logic for skipping embedding generation when it is provided (#2807)`
 - Lower-signal items from the same range such as compile-only fixups or test-only additions should follow the product bugfixes rather than lead this intake queue.
 - Backport 1 is now landed locally on `v31-fork`: upstream PR `#2792` / commit `3f2e15f7` (`add exception for operation get endpoint route`). `route_path::_get_action()` now treats `GET /operations/schema_changes` as `operations/schema_changes:get` instead of the generic `:list` mapping, and `AuthManagerTest` covers both the action-string generation and the auth-path distinction between `operations/schema_changes:list` and `operations/schema_changes:get`.
+- Backport 2 is now landed locally on `v31-fork`: upstream PR `#2807` / commit `c1bd3c77` (`fix: update logic for skipping embedding generation when it is provided`). `Index::batch_embed_fields(...)` now preserves a pre-computed embedding supplied on `UPDATE`, `UPSERT`, and `EMPLACE` requests instead of silently regenerating it from source fields, and `CollectionVectorTest.SkipEmbeddingOpWhenValueExistsOnUpsert` locks in that create/update/upsert/emplace behavior using the collection's actual embedding dimension.
 
 **Story A - Investigation**
 

@@ -8126,8 +8126,10 @@ void Index::batch_embed_fields(std::vector<index_record*>& records,
                 continue;
             }
 
-            if(document->contains(field.name) && !record->is_update) {
-                // embedding already exists (could be a restore from export)
+            if((document->contains(field.name) && !record->is_update) ||
+               (record->is_update && record->doc.contains(field.name))) {
+                // Skip embedding if the vector already exists on create/restore or
+                // if update/upsert/emplace provided a pre-computed vector explicitly.
                 continue;
             }
 

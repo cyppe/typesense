@@ -2140,6 +2140,75 @@ TEST_F(CollectionVectorTest, SkipEmbeddingOpWhenValueExists) {
     ASSERT_EQ("Field `embedding` contains invalid float values.", add_op.error());
 }
 
+TEST_F(CollectionVectorTest, SkipEmbeddingOpWhenValueExistsOnUpsert) {
+    nlohmann::json schema = R"({
+        "name": "objects",
+        "fields": [
+            {"name": "name", "type": "string"},
+            {"name": "embedding", "type":"float[]", "embed":{"from": ["name"], "model_config": {"model_name": "ts/e5-small"}}}
+        ]
+    })"_json;
+
+    EmbedderManager::set_model_dir(typesense_test::test_models_dir());
+
+    auto op = collectionManager.create_collection(schema);
+    ASSERT_TRUE(op.ok());
+    Collection* coll = op.get();
+
+    size_t num_dim = 0;
+    for(const auto& f : coll->get_fields()) {
+        if(f.name == "embedding") {
+            num_dim = f.num_dim;
+            break;
+        }
+    }
+    ASSERT_GT(num_dim, size_t{0});
+
+    nlohmann::json doc;
+    doc["id"] = "0";
+    doc["name"] = "butter";
+    doc["embedding"] = std::vector<float>(num_dim, 0.345f);
+
+    auto add_op = coll->add(doc.dump(), CREATE);
+    ASSERT_TRUE(add_op.ok());
+
+    auto res = coll->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
+    ASSERT_NEAR(0.345, res["hits"][0]["document"]["embedding"][0].get<float>(), 0.01);
+
+    nlohmann::json upsert_doc;
+    upsert_doc["id"] = "0";
+    upsert_doc["name"] = "ghee";
+    upsert_doc["embedding"] = std::vector<float>(num_dim, 0.500f);
+
+    auto upsert_op = coll->add(upsert_doc.dump(), UPSERT);
+    ASSERT_TRUE(upsert_op.ok());
+
+    res = coll->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
+    ASSERT_NEAR(0.500, res["hits"][0]["document"]["embedding"][0].get<float>(), 0.01);
+
+    nlohmann::json update_doc;
+    update_doc["id"] = "0";
+    update_doc["name"] = "milk";
+    update_doc["embedding"] = std::vector<float>(num_dim, 0.700f);
+
+    auto update_op = coll->add(update_doc.dump(), UPDATE);
+    ASSERT_TRUE(update_op.ok());
+
+    res = coll->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
+    ASSERT_NEAR(0.700, res["hits"][0]["document"]["embedding"][0].get<float>(), 0.01);
+
+    nlohmann::json emplace_doc;
+    emplace_doc["id"] = "0";
+    emplace_doc["name"] = "cheese";
+    emplace_doc["embedding"] = std::vector<float>(num_dim, 0.900f);
+
+    auto emplace_op = coll->add(emplace_doc.dump(), EMPLACE);
+    ASSERT_TRUE(emplace_op.ok());
+
+    res = coll->search("*", {}, "", {}, {}, {0}, 10, 1, FREQUENCY, {true}).get();
+    ASSERT_NEAR(0.900, res["hits"][0]["document"]["embedding"][0].get<float>(), 0.01);
+}
+
 TEST_F(CollectionVectorTest, SemanticSearchReturnOnlyVectorDistance) {
     auto schema_json =
         R"({
