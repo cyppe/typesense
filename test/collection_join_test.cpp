@@ -5720,6 +5720,131 @@ TEST_F(CollectionJoinTest, FilterByObjectReferenceField) {
     ASSERT_EQ(10 , res_obj["hits"][1]["document"]["portions"][0].at("count"));
 }
 
+TEST_F(CollectionJoinTest, FilterByObjectArrayJoinCorrelation) {
+    auto schema_json =
+            R"({
+                "name": "profiles",
+                "fields": [
+                    {"name": "name", "type": "string"},
+                    {"name": "tags", "type": "string[]"}
+                ]
+            })"_json;
+    auto collection_create_op = collectionManager.create_collection(schema_json);
+    ASSERT_TRUE(collection_create_op.ok());
+
+    std::vector<nlohmann::json> documents = {
+            R"({"id": "profile_active", "name": "Active", "tags": ["ACTIVE"]})"_json,
+            R"({"id": "profile_inactive", "name": "Inactive", "tags": ["INACTIVE"]})"_json,
+            R"({"id": "profile_mixed", "name": "Mixed", "tags": ["INACTIVE", "ACTIVE"]})"_json
+    };
+    for (const auto& json: documents) {
+        auto add_op = collection_create_op.get()->add(json.dump());
+        ASSERT_TRUE(add_op.ok());
+    }
+
+    schema_json =
+            R"({
+                "name": "people",
+                "fields": [
+                    {"name": "name", "type": "string"},
+                    {"name": "locations", "type": "object[]"},
+                    {"name": "locations.isPrimary", "type": "bool[]", "optional": true},
+                    {"name": "locations.profileId", "type": "string[]", "reference": "profiles.id", "optional": true}
+                ],
+                "enable_nested_fields": true
+            })"_json;
+    collection_create_op = collectionManager.create_collection(schema_json);
+    ASSERT_TRUE(collection_create_op.ok());
+
+    documents = {
+            R"({
+                "id": "1",
+                "name": "ActiveOnly",
+                "locations": [{"isPrimary": true, "profileId": "profile_active"}]
+            })"_json,
+            R"({
+                "id": "2",
+                "name": "InactiveOnly",
+                "locations": [{"isPrimary": true, "profileId": "profile_inactive"}]
+            })"_json,
+            R"({
+                "id": "3",
+                "name": "Both",
+                "locations": [
+                    {"isPrimary": true, "profileId": "profile_active"},
+                    {"isPrimary": true, "profileId": "profile_inactive"}
+                ]
+            })"_json,
+            R"({
+                "id": "4",
+                "name": "MixedOnly",
+                "locations": [{"isPrimary": true, "profileId": "profile_mixed"}]
+            })"_json,
+            R"({
+                "id": "5",
+                "name": "NonPrimaryActive",
+                "locations": [{"isPrimary": false, "profileId": "profile_active"}]
+            })"_json,
+            R"({
+                "id": "6",
+                "name": "PrimaryNoProfile",
+                "locations": [{"isPrimary": true}]
+            })"_json,
+            R"({
+                "id": "7",
+                "name": "PrimaryInactiveSecondaryActive",
+                "locations": [
+                    {"isPrimary": true, "profileId": "profile_inactive"},
+                    {"isPrimary": false, "profileId": "profile_active"}
+                ]
+            })"_json
+    };
+    for (const auto& json: documents) {
+        auto add_op = collection_create_op.get()->add(json.dump());
+        ASSERT_TRUE(add_op.ok());
+    }
+
+    std::map<std::string, std::string> req_params = {
+            {"collection", "people"},
+            {"q", "*"},
+            {"filter_by", "locations.{isPrimary:true && $profiles(tags:ACTIVE)}"}
+    };
+    nlohmann::json embedded_params;
+    std::string json_res;
+    uint64_t now_ts = 0;
+
+    auto search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
+    ASSERT_TRUE(search_op.ok());
+    auto res_obj = nlohmann::json::parse(json_res);
+
+    ASSERT_EQ(size_t{3}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{3}, res_obj["hits"].size());
+    std::vector<std::string> expected = {"4", "3", "1"};
+    for (size_t i = 0; i < expected.size(); i++) {
+        ASSERT_EQ(expected[i], res_obj["hits"][i]["document"]["id"].get<std::string>());
+    }
+    std::vector<std::string> expected_names = {"MixedOnly", "Both", "ActiveOnly"};
+    for (size_t i = 0; i < expected_names.size(); i++) {
+        ASSERT_EQ(expected_names[i], res_obj["hits"][i]["document"]["name"].get<std::string>());
+    }
+
+    req_params["filter_by"] = "locations.{isPrimary:true && $profiles(tags:INACTIVE)}";
+    search_op = collectionManager.do_search(req_params, embedded_params, json_res, now_ts);
+    ASSERT_TRUE(search_op.ok());
+    res_obj = nlohmann::json::parse(json_res);
+
+    ASSERT_EQ(size_t{4}, res_obj["found"].get<size_t>());
+    ASSERT_EQ(size_t{4}, res_obj["hits"].size());
+    expected = {"7", "4", "3", "2"};
+    for (size_t i = 0; i < expected.size(); i++) {
+        ASSERT_EQ(expected[i], res_obj["hits"][i]["document"]["id"].get<std::string>());
+    }
+    expected_names = {"PrimaryInactiveSecondaryActive", "MixedOnly", "Both", "InactiveOnly"};
+    for (size_t i = 0; i < expected_names.size(); i++) {
+        ASSERT_EQ(expected_names[i], res_obj["hits"][i]["document"]["name"].get<std::string>());
+    }
+}
+
 TEST_F(CollectionJoinTest, CascadeDeleteOption) {
     auto schema_json =
             R"({
