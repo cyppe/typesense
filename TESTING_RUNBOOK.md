@@ -29,6 +29,7 @@ Notes:
 - The image is defined in `docker/ci-bazel.Dockerfile`.
 - Bazel output/cache is persisted on host at `$HOME/.cache/typesense/bazel-docker` by default.
 - Bazel version is controlled by `.bazelversion` (via bazelisk inside the container).
+- In shared CI, prefer persisting Bazel `disk-cache`, `repository-cache`, and `bazelisk` only. Do not persist the full output tree when a dependency uses host-native CPU codegen, or hosted runners can reuse binaries that crash on different microarchitectures.
 
 ## 2) Optional local-host flow
 

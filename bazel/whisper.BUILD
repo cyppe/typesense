@@ -29,8 +29,9 @@ cmake(
         "WHISPER_FFMPEG": "OFF",
         # Typesense runs whisper single-threaded; skip OpenMP.
         "GGML_OPENMP": "OFF",
-        # Let the toolchain choose native optimizations.
-        "GGML_NATIVE": "ON",
+        # Shared CI caches and shipped binaries must stay portable across
+        # heterogeneous hosted runner CPUs.
+        "GGML_NATIVE": "OFF",
     },
     build_args = [
         "--", "-j8",

@@ -26,8 +26,11 @@ jobs:
         id: bazel-cache
         uses: actions/cache/restore@v5
         with:
-          path: ${{ github.workspace }}/.cache/bazel-docker
-          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          path: |
+            ${{ github.workspace }}/.cache/bazel-docker/disk-cache
+            ${{ github.workspace }}/.cache/bazel-docker/repository-cache
+            ${{ github.workspace }}/.cache/bazel-docker/bazelisk
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel.Dockerfile') }}
           restore-keys: |
             bazel-${{ runner.os }}-${{ github.workflow }}-
 
@@ -113,8 +116,11 @@ jobs:
         if: always() && steps.bazel-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: ${{ github.workspace }}/.cache/bazel-docker
-          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**') }}
+          path: |
+            ${{ github.workspace }}/.cache/bazel-docker/disk-cache
+            ${{ github.workspace }}/.cache/bazel-docker/repository-cache
+            ${{ github.workspace }}/.cache/bazel-docker/bazelisk
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel.Dockerfile') }}
 
       - name: Report Bazel cache size
         if: always()
