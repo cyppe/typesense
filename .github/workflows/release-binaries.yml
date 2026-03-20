@@ -31,6 +31,11 @@ on:
         required: false
         default: true
         type: boolean
+      push_docker_images:
+        description: Push Linux runtime Docker images to Docker Hub after successful Linux artifact builds
+        required: false
+        default: false
+        type: boolean
       target_scope:
         description: Limit the workflow to a platform group or single lane
         required: false
@@ -607,9 +612,128 @@ jobs:
         if: always() && needs.core-binaries.result == 'skipped'
         run: du -sh ${{ github.workspace }}/.cache/bazel-docker/* 2>/dev/null || true
 
+  docker-images:
+    if: >
+      always() &&
+      inputs.push_docker_images &&
+      inputs.upload_artifacts &&
+      needs.core-binaries.result == 'success' &&
+      (inputs.target_scope == 'all' || inputs.target_scope == 'linux')
+    needs:
+      - core-binaries
+    name: docker-images
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+
+      - name: Download linux-amd64 artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: typesense-server-${{ inputs.version_label }}-linux-amd64
+          path: ${{ github.workspace }}/docker-release/linux-amd64
+
+      - name: Download linux-arm64 artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: typesense-server-${{ inputs.version_label }}-linux-arm64
+          path: ${{ github.workspace }}/docker-release/linux-arm64
+
+      - name: Download linux-arm64-lg-page16 artifact
+        if: inputs.target_scope == 'all' || inputs.target_scope == 'linux'
+        uses: actions/download-artifact@v8
+        with:
+          name: typesense-server-${{ inputs.version_label }}-linux-arm64-lg-page16
+          path: ${{ github.workspace }}/docker-release/linux-arm64-lg-page16
+
+      - name: Prepare Docker image contexts
+        id: prep
+        env:
+          VERSION_LABEL: ${{ inputs.version_label }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::8}"
+          BRANCH_TAG="${GITHUB_REF_NAME//\//-}"
+          echo "SHORT_SHA=${SHORT_SHA}" >>"$GITHUB_ENV"
+          echo "BRANCH_TAG=${BRANCH_TAG}" >>"$GITHUB_ENV"
+
+          mkdir -p \
+            "${{ github.workspace }}/docker-context/linux-amd64" \
+            "${{ github.workspace }}/docker-context/linux-arm64" \
+            "${{ github.workspace }}/docker-context/linux-arm64-lg-page16"
+
+          tar -xzf "${{ github.workspace }}/docker-release/linux-amd64/typesense-server-${VERSION_LABEL}-linux-amd64.tar.gz" \
+            -C "${{ github.workspace }}/docker-context/linux-amd64"
+          tar -xzf "${{ github.workspace }}/docker-release/linux-arm64/typesense-server-${VERSION_LABEL}-linux-arm64.tar.gz" \
+            -C "${{ github.workspace }}/docker-context/linux-arm64"
+
+          if [ -f "${{ github.workspace }}/docker-release/linux-arm64-lg-page16/typesense-server-${VERSION_LABEL}-linux-arm64-lg-page16.tar.gz" ]; then
+            tar -xzf "${{ github.workspace }}/docker-release/linux-arm64-lg-page16/typesense-server-${VERSION_LABEL}-linux-arm64-lg-page16.tar.gz" \
+              -C "${{ github.workspace }}/docker-context/linux-arm64-lg-page16"
+            echo "has_lg_page16=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "has_lg_page16=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push linux-amd64 image
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ github.workspace }}/docker-context/linux-amd64
+          file: ${{ github.workspace }}/docker/deployment.Dockerfile
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-${{ env.SHORT_SHA }}-linux-amd64
+
+      - name: Build and push linux-arm64 image
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ github.workspace }}/docker-context/linux-arm64
+          file: ${{ github.workspace }}/docker/deployment.Dockerfile
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-${{ env.SHORT_SHA }}-linux-arm64
+
+      - name: Publish multi-arch runtime tags
+        run: |
+          docker buildx imagetools create \
+            -t "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}-${SHORT_SHA}" \
+            -t "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}" \
+            "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}-${SHORT_SHA}-linux-amd64" \
+            "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}-${SHORT_SHA}-linux-arm64"
+
+      - name: Build and push linux-arm64-lg-page16 image
+        if: steps.prep.outputs.has_lg_page16 == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ github.workspace }}/docker-context/linux-arm64-lg-page16
+          file: ${{ github.workspace }}/docker/deployment.Dockerfile
+          platforms: linux/arm64
+          push: true
+          provenance: false
+          tags: |
+            ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-${{ env.SHORT_SHA }}-arm64-lg-page16
+            ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-arm64-lg-page16
+
 # Notes:
 # - This is the single manual workflow entrypoint for release artifact builds.
 # - Core server artifacts and optional Linux GPU deps stay separate jobs and separate artifact classes, but one dispatch can build the full release set.
+# - When `push_docker_images=true` and Docker Hub credentials are configured, the workflow can also publish Linux runtime images from the already-built release artifacts without rebuilding Typesense.
 # - It follows GitHub Actions best practices for native multi-platform builds: matrix fan-out, named artifacts, and separation of artifact build from any future publishing workflow.
 # - Linux server lanes build the regular typesense-server artifact with CUDA-aware ONNX Runtime support, and the Linux-only gpu-deps job packages the optional ORT provider sidecars from the same repo-owned toolchain.
 # - Linux release tarballs/packages now ship the stripped runtime binary plus a separate `.debug` tarball sidecar that keeps split debug info keyed by the same BuildID.
