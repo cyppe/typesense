@@ -210,6 +210,8 @@ void get_collections_for_auth(std::map<std::string, std::string>& req_params, co
                               std::vector<collection_key_t>& collections,
                               std::vector<nlohmann::json>& embedded_params_vec);
 
+bool auth_needs_full_body(const route_path& rpath);
+
 bool is_doc_import_route(uint64_t route_hash);
 
 bool is_coll_create_route(uint64_t route_hash);

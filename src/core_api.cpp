@@ -87,6 +87,33 @@ std::string preview_request_body_for_log(const std::string& body, size_t max_cha
     return preview;
 }
 
+std::string preview_request_body_around_offset_for_log(const std::string& body, size_t byte_offset,
+                                                       size_t radius = 96) {
+    if (body.empty()) {
+        return "<empty>";
+    }
+
+    const size_t safe_offset = std::min(byte_offset, body.size());
+    const size_t begin = (safe_offset > radius) ? (safe_offset - radius) : 0;
+    const size_t end = std::min(body.size(), safe_offset + radius);
+
+    std::string preview = body.substr(begin, end - begin);
+    for (char& ch : preview) {
+        if (ch == '\n' || ch == '\r' || ch == '\t') {
+            ch = ' ';
+        }
+    }
+
+    if (begin != 0) {
+        preview = "..." + preview;
+    }
+    if (end != body.size()) {
+        preview += "...";
+    }
+
+    return preview;
+}
+
 void init_api(uint32_t cache_num_entries) {
     std::unique_lock lock(mutex);
     res_cache.capacity(cache_num_entries);
@@ -128,6 +155,10 @@ bool handle_authentication(std::map<std::string, std::string>& req_params,
     }
 
     return collectionManager.auth_key_matches(req_auth_key, rpath.action, collections, req_params, embedded_params_vec);
+}
+
+bool auth_needs_full_body(const route_path& rpath) {
+    return rpath.handler == post_multi_search || rpath.handler == post_create_collection;
 }
 
 void stream_response(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
@@ -210,8 +241,21 @@ void get_collections_for_auth(std::map<std::string, std::string>& req_params,
             nlohmann::json obj = nlohmann::json::parse(body, nullptr, false);
 
             if(obj.is_discarded()) {
+                std::string parse_error_message = "unknown parse failure";
+                size_t parse_error_byte = 0;
+                try {
+                    auto parsed_body = nlohmann::json::parse(body);
+                    (void) parsed_body;
+                } catch (const nlohmann::json::parse_error& e) {
+                    parse_error_message = e.what();
+                    parse_error_byte = e.byte;
+                }
+
                 TS_LOG(WARNING) << "Create collection request body could not be parsed during auth preflight. "
                                 << "bytes=" << body.size()
+                                << ", parse_error=" << parse_error_message
+                                << ", error_preview="
+                                << preview_request_body_around_offset_for_log(body, parse_error_byte)
                                 << ", preview=" << preview_request_body_for_log(body);
             }
 

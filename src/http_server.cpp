@@ -608,9 +608,9 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
         }
     }
 
-    if(!is_multi_search_query) {
-        // multi_search needs to be handled later because the API key could be part of request body and
-        // the whole request body might not be available right now.
+    if(!is_multi_search_query && (req->proceed_req == nullptr || !auth_needs_full_body(*rpath))) {
+        // Routes whose auth context depends on request body must be authenticated only
+        // after the full body has been aggregated.
         bool authenticated = h2o_handler->http_server->auth_handler(query_map, embedded_params_vec, body, *rpath,
                                                                     api_auth_key_sent);
         if(!authenticated) {
@@ -854,7 +854,7 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
     //TS_LOG(INFO) << "process_request called";
     const std::string& root_resource = (rpath->path_parts.empty()) ? "" : rpath->path_parts[0];
 
-    if(root_resource == "multi_search") {
+    if(auth_needs_full_body(*rpath)) {
         // We can authenticate only when the full request body is available
         bool authenticated = handler->http_server->auth_handler(request->params, request->embedded_params_vec,
                                                                 request->body, *rpath, request->api_auth_key);
