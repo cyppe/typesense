@@ -420,4 +420,67 @@ TEST_F(NuRaftHttpRuntimeTest, InstallsSnapshotIntoFreshHttpRuntimeNode) {
     EXPECT_EQ("http://127.0.0.1:" + std::to_string(api_port_2) + "/", status["leader_url"].get<std::string>());
 }
 
+TEST_F(NuRaftHttpRuntimeTest, ExposesImportDiagnosticsInMetricsJson) {
+    const uint32_t api_port = pick_free_port();
+    const uint32_t peer_port = pick_free_port();
+    const std::string data_dir = node_dir("metrics-node");
+
+    NuRaftHttpServerOptions options;
+    options.startup_options.data_dir = data_dir;
+    options.startup_options.local_host = "127.0.0.1";
+    options.startup_options.peer_port = peer_port;
+    options.startup_options.api_port = api_port;
+    options.listen_address = "127.0.0.1";
+    options.listen_port = api_port;
+    options.api_key = "xyz";
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options, error)) << error;
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(201,
+              HttpClient::post_response(node1_.base_url() + "/collections",
+                                        kBooksCollectionSchema,
+                                        response,
+                                        headers,
+                                        {},
+                                        2000,
+                                        true));
+
+    response.clear();
+    headers.clear();
+    const std::string import_body = R"({"id":"1","title":"Dune"}
+{"id":"2","title":"Hyperion"})";
+    ASSERT_EQ(200,
+              HttpClient::post_response(node1_.base_url() + "/collections/books/documents/import?action=upsert",
+                                        import_body,
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true));
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(200,
+              HttpClient::get_response(node1_.base_url() + "/metrics.json",
+                                       response,
+                                       headers,
+                                       {},
+                                       5000,
+                                       true));
+    const auto metrics = parse_json(response);
+    EXPECT_TRUE(metrics.contains("nuraft_last_import_request_bytes")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("nuraft_last_import_total_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("collection_import_last_batch_validate_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("collection_import_last_batch_memory_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("collection_import_last_batch_async_reference_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("collection_import_last_reference_helper_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("import_handler_last_add_many_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ(2, metrics["collection_import_last_docs"].get<int>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ(2, metrics["import_handler_last_docs"].get<int>()) << "runtime log: " << node1_.log_path();
+    EXPECT_GT(metrics["nuraft_last_import_request_bytes"].get<int64_t>(), 0) << "runtime log: " << node1_.log_path();
+}
+
 }  // namespace

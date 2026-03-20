@@ -41,6 +41,82 @@ const std::string curation_t::MATCH_CONTAINS = "contains";
 
 const int ALTER_STATUS_MSG_COUNT = 5; // we keep track of last 5 status of alter op
 
+namespace {
+
+struct collection_import_metrics_state_t {
+    std::atomic<uint64_t> active_add_many_calls{0};
+    std::atomic<uint64_t> cumulative_add_many_calls{0};
+    std::atomic<uint64_t> cumulative_docs_received{0};
+    std::atomic<uint64_t> cumulative_docs_indexed{0};
+    std::atomic<uint64_t> last_add_many_docs{0};
+    std::atomic<uint64_t> last_add_many_num_indexed{0};
+    std::atomic<uint64_t> last_add_many_doc_parse_ms{0};
+    std::atomic<uint64_t> last_add_many_schema_update_ms{0};
+    std::atomic<uint64_t> last_add_many_batch_index_ms{0};
+    std::atomic<uint64_t> last_add_many_total_ms{0};
+    std::atomic<uint64_t> last_reference_helper_ms{0};
+    std::atomic<uint64_t> cumulative_reference_helper_ms{0};
+    std::atomic<uint64_t> last_reference_fields_count{0};
+    std::atomic<uint64_t> last_batch_index_docs{0};
+    std::atomic<uint64_t> last_batch_index_num_indexed{0};
+    std::atomic<uint64_t> last_batch_index_found_fields{0};
+    std::atomic<uint64_t> last_batch_index_validate_ms{0};
+    std::atomic<uint64_t> last_batch_index_memory_ms{0};
+    std::atomic<uint64_t> last_batch_index_async_reference_ms{0};
+    std::atomic<uint64_t> last_batch_index_write_ms{0};
+    std::atomic<uint64_t> last_batch_index_total_ms{0};
+    std::atomic<uint64_t> last_batch_index_async_reference_updates{0};
+    std::mutex collection_name_mutex;
+    std::string last_collection_name;
+};
+
+collection_import_metrics_state_t g_collection_import_metrics;
+
+uint64_t elapsed_ms_since(const std::chrono::steady_clock::time_point& start_time) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start_time).count();
+}
+
+void record_collection_batch_index_metrics(const std::string& collection_name,
+                                           const CollectionBatchIndexMetrics& metrics) {
+    g_collection_import_metrics.last_batch_index_docs.store(metrics.docs, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_num_indexed.store(metrics.num_indexed, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_found_fields.store(metrics.found_fields, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_validate_ms.store(metrics.validate_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_memory_ms.store(metrics.memory_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_async_reference_ms.store(metrics.async_reference_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_write_ms.store(metrics.write_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_total_ms.store(metrics.total_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_async_reference_updates.store(metrics.async_reference_updates,
+                                                                               std::memory_order_relaxed);
+
+    std::lock_guard<std::mutex> lock(g_collection_import_metrics.collection_name_mutex);
+    g_collection_import_metrics.last_collection_name = collection_name;
+}
+
+void record_collection_add_many_metrics(const std::string& collection_name,
+                                        uint64_t docs,
+                                        uint64_t num_indexed,
+                                        uint64_t doc_parse_ms,
+                                        uint64_t schema_update_ms,
+                                        uint64_t batch_index_ms,
+                                        uint64_t total_ms) {
+    g_collection_import_metrics.cumulative_add_many_calls.fetch_add(1, std::memory_order_relaxed);
+    g_collection_import_metrics.cumulative_docs_received.fetch_add(docs, std::memory_order_relaxed);
+    g_collection_import_metrics.cumulative_docs_indexed.fetch_add(num_indexed, std::memory_order_relaxed);
+    g_collection_import_metrics.last_add_many_docs.store(docs, std::memory_order_relaxed);
+    g_collection_import_metrics.last_add_many_num_indexed.store(num_indexed, std::memory_order_relaxed);
+    g_collection_import_metrics.last_add_many_doc_parse_ms.store(doc_parse_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_add_many_schema_update_ms.store(schema_update_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_add_many_batch_index_ms.store(batch_index_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_add_many_total_ms.store(total_ms, std::memory_order_relaxed);
+
+    std::lock_guard<std::mutex> lock(g_collection_import_metrics.collection_name_mutex);
+    g_collection_import_metrics.last_collection_name = collection_name;
+}
+
+}  // namespace
+
 struct sort_fields_guard_t {
     std::vector<sort_by> sort_fields_std;
 
@@ -347,6 +423,39 @@ Option<bool> Collection::update_async_references_with_lock(const std::string& re
     return Option<bool>(true);
 }
 
+CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
+    CollectionImportMetricsSnapshot snapshot;
+    snapshot.active_add_many_calls = g_collection_import_metrics.active_add_many_calls.load(std::memory_order_relaxed);
+    snapshot.cumulative_add_many_calls = g_collection_import_metrics.cumulative_add_many_calls.load(std::memory_order_relaxed);
+    snapshot.cumulative_docs_received = g_collection_import_metrics.cumulative_docs_received.load(std::memory_order_relaxed);
+    snapshot.cumulative_docs_indexed = g_collection_import_metrics.cumulative_docs_indexed.load(std::memory_order_relaxed);
+    snapshot.last_add_many_docs = g_collection_import_metrics.last_add_many_docs.load(std::memory_order_relaxed);
+    snapshot.last_add_many_num_indexed = g_collection_import_metrics.last_add_many_num_indexed.load(std::memory_order_relaxed);
+    snapshot.last_add_many_doc_parse_ms = g_collection_import_metrics.last_add_many_doc_parse_ms.load(std::memory_order_relaxed);
+    snapshot.last_add_many_schema_update_ms = g_collection_import_metrics.last_add_many_schema_update_ms.load(std::memory_order_relaxed);
+    snapshot.last_add_many_batch_index_ms = g_collection_import_metrics.last_add_many_batch_index_ms.load(std::memory_order_relaxed);
+    snapshot.last_add_many_total_ms = g_collection_import_metrics.last_add_many_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_reference_helper_ms = g_collection_import_metrics.last_reference_helper_ms.load(std::memory_order_relaxed);
+    snapshot.cumulative_reference_helper_ms = g_collection_import_metrics.cumulative_reference_helper_ms.load(std::memory_order_relaxed);
+    snapshot.last_reference_fields_count = g_collection_import_metrics.last_reference_fields_count.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_docs = g_collection_import_metrics.last_batch_index_docs.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_num_indexed = g_collection_import_metrics.last_batch_index_num_indexed.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_found_fields = g_collection_import_metrics.last_batch_index_found_fields.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_validate_ms = g_collection_import_metrics.last_batch_index_validate_ms.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_memory_ms = g_collection_import_metrics.last_batch_index_memory_ms.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_async_reference_ms =
+        g_collection_import_metrics.last_batch_index_async_reference_ms.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_write_ms = g_collection_import_metrics.last_batch_index_write_ms.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_total_ms = g_collection_import_metrics.last_batch_index_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_async_reference_updates =
+        g_collection_import_metrics.last_batch_index_async_reference_updates.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_collection_import_metrics.collection_name_mutex);
+        snapshot.last_collection_name = g_collection_import_metrics.last_collection_name;
+    }
+    return snapshot;
+}
+
 Option<doc_seq_id_t> Collection::to_doc(const std::string & json_str, nlohmann::json& document,
                                         const index_operation_t& operation,
                                         const DIRTY_VALUES dirty_values,
@@ -626,10 +735,15 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
                                     const size_t remote_embedding_timeout_ms,
                                     const size_t remote_embedding_num_tries,
                                     const size_t index_batch_size) {
+    const auto add_many_start = std::chrono::steady_clock::now();
+    g_collection_import_metrics.active_add_many_calls.fetch_add(1, std::memory_order_relaxed);
     std::vector<index_record> index_records;
 
     const size_t effective_index_batch_size = std::max<size_t>(1, index_batch_size);
     size_t num_indexed = 0;
+    uint64_t doc_parse_ms = 0;
+    uint64_t schema_update_ms = 0;
+    uint64_t batch_index_ms = 0;
     //bool exceeds_memory_limit = false;
 
     // ensures that document IDs are not repeated within the same batch
@@ -639,7 +753,9 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
     for(size_t i=0; i < json_lines.size(); i++) {
         const std::string & json_line = json_lines[i];
         nlohmann::json parsed_document;
+        const auto doc_parse_start = std::chrono::steady_clock::now();
         Option<doc_seq_id_t> doc_seq_id_op = to_doc(json_line, parsed_document, operation, dirty_values, id);
+        doc_parse_ms += elapsed_ms_since(doc_parse_start);
 
         const uint32_t seq_id = doc_seq_id_op.ok() ? doc_seq_id_op.get().seq_id : 0;
         index_record record(i, seq_id, std::move(parsed_document), operation, dirty_values);
@@ -707,6 +823,7 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
         }
 
         if(!new_fields.empty()) {
+            const auto schema_update_start = std::chrono::steady_clock::now();
             std::unique_lock lock(mutex);
 
             bool found_new_field = false;
@@ -726,6 +843,7 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
                 index->refresh_schemas(new_fields, {});
                 rebuild_read_state_snapshot_unlocked();
             }
+            schema_update_ms += elapsed_ms_since(schema_update_start);
         }
 
         index_records.emplace_back(std::move(record));
@@ -733,7 +851,9 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
         do_batched_index:
 
         if((i+1) % effective_index_batch_size == 0 || i == json_lines.size()-1 || repeated_doc) {
+            const auto batch_index_start = std::chrono::steady_clock::now();
             batch_index(index_records, json_lines, num_indexed, return_doc, return_id, remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries);
+            batch_index_ms += elapsed_ms_since(batch_index_start);
 
             if(found_batch_new_field) {
                 persist_collection_meta();
@@ -755,6 +875,20 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
     nlohmann::json resp_summary;
     resp_summary["num_imported"] = num_indexed;
     resp_summary["success"] = (num_indexed == json_lines.size());
+
+    const uint64_t total_ms = elapsed_ms_since(add_many_start);
+    record_collection_add_many_metrics(name, json_lines.size(), num_indexed, doc_parse_ms, schema_update_ms, batch_index_ms, total_ms);
+    g_collection_import_metrics.active_add_many_calls.fetch_sub(1, std::memory_order_relaxed);
+
+    if (total_ms >= 2000) {
+        TS_LOG(WARNING) << "Collection add_many slow path: collection=" << name
+                        << " docs=" << json_lines.size()
+                        << " indexed=" << num_indexed
+                        << " parse_ms=" << doc_parse_ms
+                        << " schema_ms=" << schema_update_ms
+                        << " batch_index_ms=" << batch_index_ms
+                        << " total_ms=" << total_ms;
+    }
 
     return resp_summary;
 }
@@ -877,8 +1011,11 @@ Option<nlohmann::json> Collection::update_matching_filter(const std::string& fil
 void Collection::batch_index(std::vector<index_record>& index_records, std::vector<std::string>& json_out,
                              size_t &num_indexed, const bool& return_doc, const bool& return_id, const size_t remote_embedding_batch_size,
                              const size_t remote_embedding_timeout_ms, const size_t remote_embedding_num_tries) {
+    const auto batch_index_start = std::chrono::steady_clock::now();
+    CollectionBatchIndexMetrics metrics;
 
-    batch_index_in_memory(index_records, remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries, true);
+    batch_index_in_memory(index_records, remote_embedding_batch_size, remote_embedding_timeout_ms,
+                          remote_embedding_num_tries, true, &metrics);
 
     // Aggregate all successful document writes into a single WriteBatch for efficiency.
     // This reduces RocksDB memtable flushes from N to 1 per batch (typically 1000 docs).
@@ -916,7 +1053,9 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
 
     // Attempt single aggregated write (covers both inserts and updates)
     if(!batch_record_indices.empty()) {
+        const auto write_start = std::chrono::steady_clock::now();
         bool write_ok = store->batch_write(aggregated_batch);
+        metrics.write_ms += elapsed_ms_since(write_start);
 
         if(write_ok) {
             // All writes succeeded — mark all records as indexed
@@ -930,6 +1069,7 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
             for(size_t idx : batch_record_indices) {
                 auto& index_record = index_records[idx];
                 bool doc_write_ok = false;
+                const auto single_write_start = std::chrono::steady_clock::now();
 
                 if(index_record.is_update) {
                     const std::string& serialized_json = index_record.new_doc.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore);
@@ -950,6 +1090,7 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
                         remove_document(index_record.doc, index_record.seq_id, false);
                     }
                 }
+                metrics.write_ms += elapsed_ms_since(single_write_start);
 
                 if(doc_write_ok) {
                     num_indexed++;
@@ -959,6 +1100,22 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
                 }
             }
         }
+    }
+
+    metrics.total_ms = elapsed_ms_since(batch_index_start);
+    record_collection_batch_index_metrics(name, metrics);
+
+    if (metrics.total_ms >= 1000) {
+        TS_LOG(INFO) << "Collection batch_index timing: collection=" << name
+                     << " docs=" << metrics.docs
+                     << " indexed=" << metrics.num_indexed
+                     << " found_fields=" << metrics.found_fields
+                     << " validate_ms=" << metrics.validate_ms
+                     << " memory_ms=" << metrics.memory_ms
+                     << " async_reference_ms=" << metrics.async_reference_ms
+                     << " async_reference_updates=" << metrics.async_reference_updates
+                     << " write_ms=" << metrics.write_ms
+                     << " total_ms=" << metrics.total_ms;
     }
 
     // Build response JSON for all records
@@ -1045,20 +1202,26 @@ Option<uint32_t> Collection::index_in_memory(nlohmann::json &document, uint32_t 
 }
 
 size_t Collection::batch_index_in_memory(std::vector<index_record>& index_records, const size_t remote_embedding_batch_size,
-                                         const size_t remote_embedding_timeout_ms, const size_t remote_embedding_num_tries, const bool generate_embeddings) {
+                                         const size_t remote_embedding_timeout_ms, const size_t remote_embedding_num_tries,
+                                         const bool generate_embeddings, CollectionBatchIndexMetrics* metrics) {
+    const auto total_start = std::chrono::steady_clock::now();
     std::shared_lock alter_shlock(alter_mutex);
     std::shared_lock shlock(mutex);
+    const auto validate_start = std::chrono::steady_clock::now();
     Index::batch_validate_and_preprocess(index, index_records, default_sorting_field, search_schema, embedding_fields,
                     fallback_field_type, token_separators, symbols_to_index, true, remote_embedding_batch_size,
                     remote_embedding_timeout_ms, remote_embedding_num_tries, generate_embeddings);
+    const uint64_t validate_ms = elapsed_ms_since(validate_start);
     shlock.unlock();
     std::unique_lock lock(mutex);
     const auto collection_name = name;
     std::unordered_set<std::string> found_fields;
+    const auto memory_start = std::chrono::steady_clock::now();
     size_t num_indexed = Index::batch_memory_index(index, index_records, default_sorting_field,
                                                    search_schema, embedding_fields, fallback_field_type,
                                                    token_separators, symbols_to_index, found_fields,
                                                    false, tsl::htrie_map<char, field>(), collection_name);
+    const uint64_t memory_ms = elapsed_ms_since(memory_start);
     num_documents += num_indexed;
 
     spp::sparse_hash_map<std::string, std::set<reference_pair_t>> found_async_referenced_ins;
@@ -1072,7 +1235,21 @@ size_t Collection::batch_index_in_memory(std::vector<index_record>& index_record
 
     lock.unlock();
 
+    const auto async_reference_start = std::chrono::steady_clock::now();
     Index::update_async_references(collection_name, index_records, found_async_referenced_ins);
+    const uint64_t async_reference_ms = elapsed_ms_since(async_reference_start);
+
+    if (metrics != nullptr) {
+        metrics->docs = index_records.size();
+        metrics->num_indexed = num_indexed;
+        metrics->found_fields = found_fields.size();
+        metrics->validate_ms = validate_ms;
+        metrics->memory_ms = memory_ms;
+        metrics->async_reference_ms = async_reference_ms;
+        metrics->async_reference_updates = found_async_referenced_ins.size();
+        metrics->total_ms = elapsed_ms_since(total_start);
+    }
+
     return num_indexed;
 }
 
@@ -7679,9 +7856,14 @@ Option<bool> Collection::detect_new_fields(nlohmann::json& document,
         }
     }
 
+    const auto reference_helper_start = std::chrono::steady_clock::now();
     auto populate_reference_helper_fields_op = Join::populate_reference_helper_fields(document, schema, reference_fields,
-                                                                                 object_reference_fields,
-                                                                                 is_update);
+                                                                                      object_reference_fields,
+                                                                                      is_update);
+    const uint64_t reference_helper_ms = elapsed_ms_since(reference_helper_start);
+    g_collection_import_metrics.last_reference_helper_ms.store(reference_helper_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.cumulative_reference_helper_ms.fetch_add(reference_helper_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_reference_fields_count.store(reference_fields.size(), std::memory_order_relaxed);
     if (!populate_reference_helper_fields_op.ok()) {
         return populate_reference_helper_fields_op;
     }

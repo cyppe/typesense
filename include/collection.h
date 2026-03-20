@@ -9,6 +9,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <shared_mutex>
+#include <atomic>
 #include "art.h"
 #include "index.h"
 #include "number.h"
@@ -26,6 +27,44 @@
 struct doc_seq_id_t {
     uint32_t seq_id;
     bool is_new;
+};
+
+struct CollectionBatchIndexMetrics {
+    uint64_t docs = 0;
+    uint64_t num_indexed = 0;
+    uint64_t found_fields = 0;
+    uint64_t validate_ms = 0;
+    uint64_t memory_ms = 0;
+    uint64_t async_reference_ms = 0;
+    uint64_t write_ms = 0;
+    uint64_t total_ms = 0;
+    uint64_t async_reference_updates = 0;
+};
+
+struct CollectionImportMetricsSnapshot {
+    uint64_t active_add_many_calls = 0;
+    uint64_t cumulative_add_many_calls = 0;
+    uint64_t cumulative_docs_received = 0;
+    uint64_t cumulative_docs_indexed = 0;
+    uint64_t last_add_many_docs = 0;
+    uint64_t last_add_many_num_indexed = 0;
+    uint64_t last_add_many_doc_parse_ms = 0;
+    uint64_t last_add_many_schema_update_ms = 0;
+    uint64_t last_add_many_batch_index_ms = 0;
+    uint64_t last_add_many_total_ms = 0;
+    uint64_t last_reference_helper_ms = 0;
+    uint64_t cumulative_reference_helper_ms = 0;
+    uint64_t last_reference_fields_count = 0;
+    uint64_t last_batch_index_docs = 0;
+    uint64_t last_batch_index_num_indexed = 0;
+    uint64_t last_batch_index_found_fields = 0;
+    uint64_t last_batch_index_validate_ms = 0;
+    uint64_t last_batch_index_memory_ms = 0;
+    uint64_t last_batch_index_async_reference_ms = 0;
+    uint64_t last_batch_index_write_ms = 0;
+    uint64_t last_batch_index_total_ms = 0;
+    uint64_t last_batch_index_async_reference_updates = 0;
+    std::string last_collection_name;
 };
 
 struct highlight_query_token_t {
@@ -955,8 +994,11 @@ public:
 
     nlohmann::json get_summary_json() const;
 
+    static CollectionImportMetricsSnapshot get_import_metrics_snapshot();
+
     size_t batch_index_in_memory(std::vector<index_record>& index_records, const size_t remote_embedding_batch_size,
-                                 const size_t remote_embedding_timeout_ms, const size_t remote_embedding_num_tries, const bool generate_embeddings);
+                                 const size_t remote_embedding_timeout_ms, const size_t remote_embedding_num_tries,
+                                 const bool generate_embeddings, CollectionBatchIndexMetrics* metrics = nullptr);
 
     Option<nlohmann::json> add(const std::string & json_str,
                                const index_operation_t& operation=CREATE, const std::string& id="",

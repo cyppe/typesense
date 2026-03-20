@@ -39,6 +39,18 @@ LRU::Cache<uint64_t, cached_res_t> res_cache;
 std::shared_mutex alter_mutex;
 std::set<std::string> alters_in_progress;
 
+struct import_handler_metrics_state_t {
+    std::atomic<uint64_t> cumulative_calls{0};
+    std::atomic<uint64_t> cumulative_docs{0};
+    std::atomic<uint64_t> last_body_bytes{0};
+    std::atomic<uint64_t> last_docs{0};
+    std::atomic<uint64_t> last_split_ms{0};
+    std::atomic<uint64_t> last_add_many_ms{0};
+    std::atomic<uint64_t> last_total_ms{0};
+};
+
+import_handler_metrics_state_t g_import_handler_metrics;
+
 class alter_guard_t {
     std::string collection_name;
 public:
@@ -683,6 +695,39 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
             node_status["raft_leader_id"].is_number_integer()) {
             result["nuraft_leader_id"] = node_status["raft_leader_id"];
         }
+        if (node_status.contains("active_import_requests")) {
+            result["nuraft_active_import_requests"] = node_status["active_import_requests"];
+        }
+        if (node_status.contains("cumulative_import_requests")) {
+            result["nuraft_cumulative_import_requests"] = node_status["cumulative_import_requests"];
+        }
+        if (node_status.contains("cumulative_import_bytes")) {
+            result["nuraft_cumulative_import_bytes"] = node_status["cumulative_import_bytes"];
+        }
+        if (node_status.contains("last_import_request_bytes")) {
+            result["nuraft_last_import_request_bytes"] = node_status["last_import_request_bytes"];
+        }
+        if (node_status.contains("last_import_logical_chunks")) {
+            result["nuraft_last_import_logical_chunks"] = node_status["last_import_logical_chunks"];
+        }
+        if (node_status.contains("last_import_replay_chunks")) {
+            result["nuraft_last_import_replay_chunks"] = node_status["last_import_replay_chunks"];
+        }
+        if (node_status.contains("last_import_append_ms")) {
+            result["nuraft_last_import_append_ms"] = node_status["last_import_append_ms"];
+        }
+        if (node_status.contains("last_import_replay_ms")) {
+            result["nuraft_last_import_replay_ms"] = node_status["last_import_replay_ms"];
+        }
+        if (node_status.contains("last_import_total_ms")) {
+            result["nuraft_last_import_total_ms"] = node_status["last_import_total_ms"];
+        }
+        if (node_status.contains("last_import_response_bytes")) {
+            result["nuraft_last_import_response_bytes"] = node_status["last_import_response_bytes"];
+        }
+        if (node_status.contains("max_import_total_ms")) {
+            result["nuraft_max_import_total_ms"] = node_status["max_import_total_ms"];
+        }
 
         if (result.contains("nuraft_last_index") &&
             result.contains("nuraft_committed_index")) {
@@ -710,6 +755,43 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
                 (committed_index - state_machine_applied_index) : 0;
         }
     }
+
+    const auto collection_import_metrics = Collection::get_import_metrics_snapshot();
+    result["collection_import_active_add_many_calls"] = collection_import_metrics.active_add_many_calls;
+    result["collection_import_cumulative_add_many_calls"] = collection_import_metrics.cumulative_add_many_calls;
+    result["collection_import_cumulative_docs_received"] = collection_import_metrics.cumulative_docs_received;
+    result["collection_import_cumulative_docs_indexed"] = collection_import_metrics.cumulative_docs_indexed;
+    result["collection_import_last_collection_name"] = collection_import_metrics.last_collection_name;
+    result["collection_import_last_docs"] = collection_import_metrics.last_add_many_docs;
+    result["collection_import_last_num_indexed"] = collection_import_metrics.last_add_many_num_indexed;
+    result["collection_import_last_doc_parse_ms"] = collection_import_metrics.last_add_many_doc_parse_ms;
+    result["collection_import_last_schema_update_ms"] = collection_import_metrics.last_add_many_schema_update_ms;
+    result["collection_import_last_batch_index_ms"] = collection_import_metrics.last_add_many_batch_index_ms;
+    result["collection_import_last_total_ms"] = collection_import_metrics.last_add_many_total_ms;
+    result["collection_import_last_reference_helper_ms"] = collection_import_metrics.last_reference_helper_ms;
+    result["collection_import_cumulative_reference_helper_ms"] =
+        collection_import_metrics.cumulative_reference_helper_ms;
+    result["collection_import_last_reference_fields_count"] =
+        collection_import_metrics.last_reference_fields_count;
+    result["collection_import_last_batch_docs"] = collection_import_metrics.last_batch_index_docs;
+    result["collection_import_last_batch_num_indexed"] = collection_import_metrics.last_batch_index_num_indexed;
+    result["collection_import_last_batch_found_fields"] = collection_import_metrics.last_batch_index_found_fields;
+    result["collection_import_last_batch_validate_ms"] = collection_import_metrics.last_batch_index_validate_ms;
+    result["collection_import_last_batch_memory_ms"] = collection_import_metrics.last_batch_index_memory_ms;
+    result["collection_import_last_batch_async_reference_ms"] =
+        collection_import_metrics.last_batch_index_async_reference_ms;
+    result["collection_import_last_batch_async_reference_updates"] =
+        collection_import_metrics.last_batch_index_async_reference_updates;
+    result["collection_import_last_batch_write_ms"] = collection_import_metrics.last_batch_index_write_ms;
+    result["collection_import_last_batch_total_ms"] = collection_import_metrics.last_batch_index_total_ms;
+
+    result["import_handler_cumulative_calls"] = g_import_handler_metrics.cumulative_calls.load(std::memory_order_relaxed);
+    result["import_handler_cumulative_docs"] = g_import_handler_metrics.cumulative_docs.load(std::memory_order_relaxed);
+    result["import_handler_last_body_bytes"] = g_import_handler_metrics.last_body_bytes.load(std::memory_order_relaxed);
+    result["import_handler_last_docs"] = g_import_handler_metrics.last_docs.load(std::memory_order_relaxed);
+    result["import_handler_last_split_ms"] = g_import_handler_metrics.last_split_ms.load(std::memory_order_relaxed);
+    result["import_handler_last_add_many_ms"] = g_import_handler_metrics.last_add_many_ms.load(std::memory_order_relaxed);
+    result["import_handler_last_total_ms"] = g_import_handler_metrics.last_total_ms.load(std::memory_order_relaxed);
 
     res->set_body(200, result.dump(2));
     return true;
@@ -1700,6 +1782,7 @@ bool get_export_documents(const std::shared_ptr<http_req>& req, const std::share
 }
 
 bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
+    const auto import_handler_start = std::chrono::steady_clock::now();
     //TS_LOG(INFO) << "Import, req->body_index=" << req->body_index << ", body size: " << req->body.size();
     //TS_LOG(INFO) << "req->first_chunk=" << req->first_chunk_aggregate << ", last_chunk=" << req->last_chunk_aggregate;
 
@@ -1828,7 +1911,10 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
     //TS_LOG(INFO) << "req body %: " << (float(req->body_index)/req->body.size())*100;
 
     std::vector<std::string> json_lines;
+    const auto split_start = std::chrono::steady_clock::now();
     StringUtils::split(req->body, json_lines, "\n", false, false);
+    const uint64_t split_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - split_start).count();
 
     //TS_LOG(INFO) << "json_lines.size before: " << json_lines.size() << ", req->body_index: " << req->body_index;
 
@@ -1874,10 +1960,13 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
         const auto& dirty_values = collection->parse_dirty_values_option(req->params[DIRTY_VALUES]);
         const bool& return_doc = req->params[RETURN_DOC] == "true";
         const bool& return_id = req->params[RETURN_ID] == "true";
+        const auto add_many_start = std::chrono::steady_clock::now();
         nlohmann::json json_res = collection->add_many(json_lines, document, operation, "",
                                                        dirty_values, return_doc, return_id,
                                                        REMOTE_EMBEDDING_BATCH_SIZE_VAL, REMOTE_EMBEDDING_TIMEOUT_MS_VAL,
                                                        REMOTE_EMBEDDING_NUM_TRIES_VAL, IMPORT_BATCH_SIZE);
+        const uint64_t add_many_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - add_many_start).count();
         //const std::string& import_summary_json = json_res->dump();
         //response_stream << import_summary_json << "\n";
 
@@ -1896,6 +1985,25 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
         // when we have accumulated enough response data to stream.
         // Otherwise, we will send an empty line as first response.
         res->status_code = 200;
+
+        const uint64_t total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - import_handler_start).count();
+        g_import_handler_metrics.cumulative_calls.fetch_add(1, std::memory_order_relaxed);
+        g_import_handler_metrics.cumulative_docs.fetch_add(json_lines.size(), std::memory_order_relaxed);
+        g_import_handler_metrics.last_body_bytes.store(req->body.size(), std::memory_order_relaxed);
+        g_import_handler_metrics.last_docs.store(json_lines.size(), std::memory_order_relaxed);
+        g_import_handler_metrics.last_split_ms.store(split_ms, std::memory_order_relaxed);
+        g_import_handler_metrics.last_add_many_ms.store(add_many_ms, std::memory_order_relaxed);
+        g_import_handler_metrics.last_total_ms.store(total_ms, std::memory_order_relaxed);
+
+        if (total_ms >= 2000) {
+            TS_LOG(INFO) << "Import handler timing: collection=" << req->params["collection"]
+                         << " docs=" << json_lines.size()
+                         << " body_bytes=" << req->body.size()
+                         << " split_ms=" << split_ms
+                         << " add_many_ms=" << add_many_ms
+                         << " total_ms=" << total_ms;
+        }
     }
 
     res->content_type_header = "text/plain; charset=utf-8";
