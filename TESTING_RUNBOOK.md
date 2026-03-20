@@ -53,6 +53,7 @@ bazel test --cache_test_results=no --test_output=all //:typesense-test --test_ti
 - `tests.yml` is the only automatic CI gate. It runs on `push` and can also be started manually with `workflow_dispatch`.
 - `clang-warning-guard.yml`, `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, `ort-bundles.yml`, and `release-binaries.yml` are manual-only workflows.
 - Prefer replaying the matching local wrapper command before dispatching a heavy manual workflow. This repo's wrappers are the canonical local equivalents of the GitHub lanes.
+- For a short “what is this workflow for, and when should I run it?” reference, see [.github/WORKFLOWS.md](/home/cyppe/Projects/forks/typesense-fork/typesense/.github/WORKFLOWS.md).
 
 ## 5) Known gotcha: GCC 15 + rules_foreign_cc pkgconfig
 
