@@ -244,6 +244,7 @@ export class TypesenseProcessManager {
         "--listen-address=0.0.0.0",
         `--node-host=${this.ipAddress}`,
         `--peering-port=${resolvedPeeringPort}`,
+        ...TypesenseProcessManager.additionalConfigs,
       ]
       : [
         `--data-dir=${resolvedDataDir}`,
@@ -284,6 +285,7 @@ export class TypesenseProcessManager {
           "--listen-address=0.0.0.0",
           `--node-host=${this.ipAddress}`,
           `--peering-port=${node.peerPort}`,
+          ...TypesenseProcessManager.additionalConfigs,
         ];
         this.spawnServer(node.name, args, node.port);
       }
