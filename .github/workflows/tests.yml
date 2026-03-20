@@ -10,6 +10,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   test:
     runs-on: ubuntu-24.04
@@ -34,11 +38,73 @@ jobs:
           restore-keys: |
             bazel-${{ runner.os }}-${{ github.workflow }}-
 
+      - name: Compute ORT bundle key
+        id: ort-bundle-key
+        run: echo "bundle_key=$(scripts/release_ort_bundle.sh --print-key --target-arch amd64)" >>"${GITHUB_OUTPUT}"
+
+      - name: Find matching prebuilt ORT bundle
+        id: ort-bundle-run
+        run: |
+          set -euo pipefail
+
+          artifact_name="typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-amd64"
+          run_id=""
+
+          while IFS= read -r candidate_run_id; do
+            [ -n "${candidate_run_id}" ] || continue
+            found_name="$(gh api -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/runs/${candidate_run_id}/artifacts" \
+              -q '.artifacts[] | select(.name == "'"${artifact_name}"'") | .name' | head -n 1 || true)"
+            if [ "${found_name}" = "${artifact_name}" ]; then
+              run_id="${candidate_run_id}"
+              break
+            fi
+          done < <(
+            gh api -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/workflows/ort-bundles.yml/runs?branch=${{ github.ref_name }}&status=completed&per_page=20" \
+              -q '.workflow_runs[] | select(.conclusion == "success") | .id'
+          )
+
+          if [ -n "${run_id}" ]; then
+            echo "run_id=${run_id}" >>"$GITHUB_OUTPUT"
+            echo "artifact_name=${artifact_name}" >>"$GITHUB_OUTPUT"
+            echo "Found matching ORT bundle run ${run_id} for ${artifact_name}"
+          else
+            echo "run_id=" >>"$GITHUB_OUTPUT"
+            echo "artifact_name=${artifact_name}" >>"$GITHUB_OUTPUT"
+            echo "No matching ORT bundle found for ${artifact_name}; falling back to source build."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download prebuilt ORT bundle
+        if: steps.ort-bundle-run.outputs.run_id != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.ort-bundle-run.outputs.artifact_name }}
+          path: ${{ github.workspace }}/ort-bundle/amd64
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.ort-bundle-run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Extract prebuilt ORT bundle
+        if: steps.ort-bundle-run.outputs.run_id != ''
+        run: |
+          cd "${{ github.workspace }}/ort-bundle/amd64"
+          sha256sum -c "${{ steps.ort-bundle-run.outputs.artifact_name }}.tar.gz.sha256.txt"
+          mkdir -p bundle
+          tar -xzf "${{ steps.ort-bundle-run.outputs.artifact_name }}.tar.gz" -C bundle
+
       - name: Build CI Bazel image
         run: scripts/bazel_in_docker.sh --build-image-only
 
       - name: Build Typesense
-        run: scripts/bazel_in_docker.sh build //:typesense-server
+        run: |
+          args=(build //:typesense-server)
+          if [ -d "${{ github.workspace }}/ort-bundle/amd64/bundle/lib" ]; then
+            args+=(--repo_env=TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=/work/ort-bundle/amd64/bundle)
+          fi
+          scripts/bazel_in_docker.sh "${args[@]}"
 
       - name: Guard GCC warning budget
         run: |
@@ -78,7 +144,12 @@ jobs:
         run: bash test/scripts/prewarm_public_test_models.sh "${{ github.workspace }}/tmp/ci-models"
 
       - name: Run tests
-        run: scripts/bazel_in_docker.sh test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=1200 --flaky_test_attempts=2 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models
+        run: |
+          args=(test --cache_test_results=no --test_output=all //:typesense-test --test_timeout=1200 --flaky_test_attempts=2 --test_env=TYPESENSE_TEST_MODELS_DIR=/work/tmp/ci-models)
+          if [ -d "${{ github.workspace }}/ort-bundle/amd64/bundle/lib" ]; then
+            args+=(--repo_env=TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=/work/ort-bundle/amd64/bundle)
+          fi
+          scripts/bazel_in_docker.sh "${args[@]}"
 
       # Source: https://github.com/actions/upload-artifact/issues/92#issuecomment-1080347032
       - name: Set BAZEL_BIN_FULL_PATH
