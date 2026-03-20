@@ -79,7 +79,7 @@ jobs:
 
       # Download latest version binary
       - name: Download Latest Version Binary
-        uses: dawidd6/action-download-artifact@v17
+        uses: dawidd6/action-download-artifact@v19
         with:
           workflow: tests.yml
           name: typesense-server
@@ -89,7 +89,7 @@ jobs:
 
       # Download previous version binary
       - name: Download Previous Version Binary
-        uses: dawidd6/action-download-artifact@v17
+        uses: dawidd6/action-download-artifact@v19
         with:
           workflow: tests.yml
           name: typesense-server
@@ -105,7 +105,7 @@ jobs:
 
       # Download previous benchmark data
       - name: Download previous benchmark data
-        uses: dawidd6/action-download-artifact@v17
+        uses: dawidd6/action-download-artifact@v19
         with:
           name: benchmark-data
           workflow: benchmark-testing.yml
