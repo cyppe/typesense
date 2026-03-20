@@ -129,6 +129,7 @@ bool handle_authentication(std::map<std::string, std::string>& req_params,
                            const std::string& body,
                            const route_path& rpath,
                            const std::string& req_auth_key) {
+    embedded_params_vec.clear();
 
     if(rpath.handler == get_health) {
         // health endpoint requires no authentication
