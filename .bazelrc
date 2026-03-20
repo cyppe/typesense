@@ -29,6 +29,9 @@ build --per_file_copt=.*clip_tokenizer.*@-Wno-pessimizing-move
 build --per_file_copt=.*clip_tokenizer.*@-Wno-sign-compare
 build --per_file_copt=.*clip_tokenizer.*@-Wno-unused-variable
 build --per_file_copt=.*quicly.*@-Wno-unused-but-set-variable
+# USearch emits non-actionable half-precision #warnings from index_plugins.hpp
+# even though the fork's production vector path is float32-only.
+build --per_file_copt=(src/vector_index|src/main/usearch_vector_backend_benchmark|test/usearch_vector_backend_prototype_test)\.cpp@-Wno-cpp
 # GCC 15 defaults C to gnu23; pin C dialect until third-party C deps are C23-clean.
 build --conlyopt="-std=gnu17"
 build:linux --conlyopt="-D_GNU_SOURCE"
