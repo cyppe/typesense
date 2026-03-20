@@ -112,6 +112,8 @@ jobs:
           TYPESENSE_GCC_WARNING_MAX=0 \
           TYPESENSE_GCC_TRACKED_WARNING_MAX=0 \
           scripts/check_gcc_warning_guardrail.sh
+        env:
+          TYPESENSE_ORT_PREBUILT_BUNDLE_DIR: /work/ort-bundle/amd64/bundle
 
       - name: Save GCC warning log on failure
         uses: actions/upload-artifact@v7
@@ -128,6 +130,8 @@ jobs:
           TYPESENSE_CLANG_TRACKED_WARNING_MAX=0 \
           TYPESENSE_CLANG_SPARSEPP_WARNING_MAX=0 \
           scripts/check_clang_warning_guardrail.sh
+        env:
+          TYPESENSE_ORT_PREBUILT_BUNDLE_DIR: /work/ort-bundle/amd64/bundle
 
       - name: Save clang warning log on failure
         uses: actions/upload-artifact@v7

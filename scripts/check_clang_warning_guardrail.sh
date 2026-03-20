@@ -10,15 +10,23 @@ SPARSEPP_WARNING_MAX="${TYPESENSE_CLANG_SPARSEPP_WARNING_MAX:-0}"
 mkdir -p "$(dirname "${LOG_FILE}")"
 
 echo "Running clang warning guardrail build..."
-"${ROOT_DIR}/scripts/bazel_in_docker.sh" build //:typesense-server \
-	--repo_env=CC=clang \
-	--repo_env=CXX=clang++ \
-	--cxxopt=-Wno-enum-constexpr-conversion \
-	--cxxopt=-Wno-unused-command-line-argument \
-	--linkopt=-Wno-unused-command-line-argument \
-	--per_file_copt=.*onnx_runtime_extensions.*@-Wno-pessimizing-move \
-	--per_file_copt=.*clip_tokenizer.*@-Wno-unused-variable \
-	--per_file_copt=.*quicly.*@-Wno-unused-but-set-variable \
+bazel_args=(
+	build
+	//:typesense-server
+	--repo_env=CC=clang
+	--repo_env=CXX=clang++
+	--cxxopt=-Wno-enum-constexpr-conversion
+	--cxxopt=-Wno-unused-command-line-argument
+	--linkopt=-Wno-unused-command-line-argument
+	--per_file_copt=.*onnx_runtime_extensions.*@-Wno-pessimizing-move
+	--per_file_copt=.*clip_tokenizer.*@-Wno-unused-variable
+	--per_file_copt=.*quicly.*@-Wno-unused-but-set-variable
+)
+if [[ -n "${TYPESENSE_ORT_PREBUILT_BUNDLE_DIR:-}" ]]; then
+	bazel_args+=("--repo_env=TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=${TYPESENSE_ORT_PREBUILT_BUNDLE_DIR}")
+fi
+
+"${ROOT_DIR}/scripts/bazel_in_docker.sh" "${bazel_args[@]}" \
 	2>&1 | tee "${LOG_FILE}" | python3 -c 'import sys; ignore="OpenJDK 64-Bit Server VM warning: Options -Xverify:none and -noverify were deprecated in JDK 13 and will likely be removed in a future release."; [sys.stdout.write(line) for line in sys.stdin if line.rstrip("\n") != ignore]'
 
 read -r TOTAL_WARNINGS TRACKED_WARNINGS SPARSEPP_WARNINGS < <(

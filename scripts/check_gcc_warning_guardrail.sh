@@ -9,7 +9,12 @@ TRACKED_WARNING_MAX="${TYPESENSE_GCC_TRACKED_WARNING_MAX:-0}"
 mkdir -p "$(dirname "${LOG_FILE}")"
 
 echo "Running GCC warning guardrail build..."
-"${ROOT_DIR}/scripts/bazel_in_docker.sh" build //:typesense-server \
+bazel_args=(build //:typesense-server)
+if [[ -n "${TYPESENSE_ORT_PREBUILT_BUNDLE_DIR:-}" ]]; then
+	bazel_args+=("--repo_env=TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=${TYPESENSE_ORT_PREBUILT_BUNDLE_DIR}")
+fi
+
+"${ROOT_DIR}/scripts/bazel_in_docker.sh" "${bazel_args[@]}" \
 	2>&1 | tee "${LOG_FILE}" | python3 -c 'import sys; ignore="OpenJDK 64-Bit Server VM warning: Options -Xverify:none and -noverify were deprecated in JDK 13 and will likely be removed in a future release."; [sys.stdout.write(line) for line in sys.stdin if line.rstrip("\n") != ignore]'
 
 read -r TOTAL_WARNINGS TRACKED_WARNINGS < <(
