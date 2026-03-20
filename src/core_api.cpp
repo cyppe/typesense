@@ -641,6 +641,74 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     const std::string & data_dir_path = collectionManager.get_store()->get_state_dir_path();
 
     SystemMetrics::get_instance().get(data_dir_path, result);
+    result["pending_write_batches"] = server->get_num_queued_writes();
+
+    nlohmann::json node_status = server->node_status();
+    if (!node_status.empty()) {
+        if (node_status.contains("queued_writes")) {
+            result["queued_writes"] = node_status["queued_writes"];
+        }
+
+        if (node_status.contains("last_index") &&
+            node_status["last_index"].is_number_unsigned()) {
+            result["nuraft_last_index"] = node_status["last_index"];
+        }
+        if (node_status.contains("committed_index") &&
+            node_status["committed_index"].is_number_unsigned()) {
+            result["nuraft_committed_index"] = node_status["committed_index"];
+        }
+        if (node_status.contains("known_applied_index") &&
+            node_status["known_applied_index"].is_number_unsigned()) {
+            result["nuraft_known_applied_index"] = node_status["known_applied_index"];
+        }
+        if (node_status.contains("state_machine_applied_index") &&
+            node_status["state_machine_applied_index"].is_number_unsigned()) {
+            result["nuraft_state_machine_applied_index"] = node_status["state_machine_applied_index"];
+        }
+        if (node_status.contains("read_caught_up")) {
+            result["nuraft_read_caught_up"] = node_status["read_caught_up"];
+        }
+        if (node_status.contains("write_caught_up")) {
+            result["nuraft_write_caught_up"] = node_status["write_caught_up"];
+        }
+        if (node_status.contains("is_leader")) {
+            result["nuraft_is_leader"] = node_status["is_leader"];
+        }
+        if (node_status.contains("raft_term") &&
+            node_status["raft_term"].is_number_integer()) {
+            result["nuraft_term"] = node_status["raft_term"];
+        }
+        if (node_status.contains("raft_leader_id") &&
+            node_status["raft_leader_id"].is_number_integer()) {
+            result["nuraft_leader_id"] = node_status["raft_leader_id"];
+        }
+
+        if (result.contains("nuraft_last_index") &&
+            result.contains("nuraft_committed_index")) {
+            const auto last_index = result["nuraft_last_index"].get<uint64_t>();
+            const auto committed_index = result["nuraft_committed_index"].get<uint64_t>();
+            result["nuraft_commit_lag"] = last_index >= committed_index ?
+                                          (last_index - committed_index) : 0;
+        }
+
+        if (result.contains("nuraft_committed_index") &&
+            result.contains("nuraft_known_applied_index")) {
+            const auto committed_index = result["nuraft_committed_index"].get<uint64_t>();
+            const auto known_applied_index = result["nuraft_known_applied_index"].get<uint64_t>();
+            result["nuraft_live_apply_lag"] = committed_index >= known_applied_index ?
+                                              (committed_index - known_applied_index) : 0;
+        }
+
+        if (result.contains("nuraft_committed_index") &&
+            result.contains("nuraft_state_machine_applied_index")) {
+            const auto committed_index = result["nuraft_committed_index"].get<uint64_t>();
+            const auto state_machine_applied_index =
+                result["nuraft_state_machine_applied_index"].get<uint64_t>();
+            result["nuraft_state_machine_apply_lag"] =
+                committed_index >= state_machine_applied_index ?
+                (committed_index - state_machine_applied_index) : 0;
+        }
+    }
 
     res->set_body(200, result.dump(2));
     return true;

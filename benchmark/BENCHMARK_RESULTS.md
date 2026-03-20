@@ -11,6 +11,12 @@ Historical note: Runs 14-26 below are archival pre-cutover measurements from whe
 
 ---
 
+## Benchmark Scope Warning (2026-03-20)
+
+Current benchmark wins are real for the lanes they measure, but they do **not** yet prove that the server stays operationally responsive during sustained heavy imports. A real DDEV import against the fork on March 20, 2026 produced repeated slow requests on cheap endpoints like `/metrics.json`, `/health`, `/collections`, `/aliases`, and `/keys` in the `2.5-4.7s` range while the import was in progress, and related Laravel import jobs eventually timed out at `600s`. The canonical `quick/core` and `standard/core` lanes do not exercise that shape: they measure import completion and then post-import search, not "live reads while imports are saturating the node". Treat current benchmark results as incomplete for that question until the harness adds a concurrent import + live-read responsiveness lane.
+
+---
+
 ## Run 31: Item 38 Closeout Against Upstream 30.1 After Benchmark Harness Repair (2026-03-18)
 
 **Commit:** local `HEAD` `1c34ddf7` at run time

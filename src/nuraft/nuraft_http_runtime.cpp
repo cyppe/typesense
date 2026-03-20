@@ -551,10 +551,16 @@ bool mirror_single_node_typesense_state(const std::shared_ptr<http_req>& request
             return apply_typesense_write_handler(request, del_drop_collection, error);
         case NuRaftRouteKind::kDocumentWrite:
             if (request->http_method == "PATCH") {
+                if (request->params.count("id") == 0 || request->params.at("id").empty()) {
+                    return apply_typesense_write_handler(request, patch_update_documents, error);
+                }
                 return apply_typesense_write_handler(request, patch_update_document, error);
             }
             return apply_typesense_write_handler(request, post_add_document, error);
         case NuRaftRouteKind::kDocumentDelete:
+            if (request->params.count("id") == 0 || request->params.at("id").empty()) {
+                return apply_typesense_write_handler(request, del_remove_documents, error);
+            }
             return apply_typesense_write_handler(request, del_remove_document, error);
         case NuRaftRouteKind::kDocumentImport:
             return apply_typesense_write_handler(request, post_import_documents, error);
