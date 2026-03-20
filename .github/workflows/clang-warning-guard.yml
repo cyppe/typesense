@@ -1,0 +1,128 @@
+name: clang-warning-guard
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  clang-warning-guard:
+    runs-on: ubuntu-24.04
+    env:
+      TYPESENSE_BAZEL_IMAGE: typesense/ci-bazel:ci
+      TYPESENSE_BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel-docker
+      TYPESENSE_BAZEL_REPO_ENV_CONLYOPTS: -std=gnu17
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Restore Bazel cache
+        id: bazel-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            ${{ github.workspace }}/.cache/bazel-docker/disk-cache
+            ${{ github.workspace }}/.cache/bazel-docker/repository-cache
+            ${{ github.workspace }}/.cache/bazel-docker/bazelisk
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel.Dockerfile') }}
+          restore-keys: |
+            bazel-${{ runner.os }}-${{ github.workflow }}-
+
+      - name: Compute ORT bundle key
+        id: ort-bundle-key
+        run: echo "bundle_key=$(scripts/release_ort_bundle.sh --print-key --target-arch amd64)" >>"${GITHUB_OUTPUT}"
+
+      - name: Find matching prebuilt ORT bundle
+        id: ort-bundle-run
+        run: |
+          set -euo pipefail
+
+          artifact_name="typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-amd64"
+          run_id=""
+
+          while IFS= read -r candidate_run_id; do
+            [ -n "${candidate_run_id}" ] || continue
+            found_name="$(gh api -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/runs/${candidate_run_id}/artifacts" \
+              -q '.artifacts[] | select(.name == "'"${artifact_name}"'") | .name' | head -n 1 || true)"
+            if [ "${found_name}" = "${artifact_name}" ]; then
+              run_id="${candidate_run_id}"
+              break
+            fi
+          done < <(
+            gh api -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/workflows/ort-bundles.yml/runs?branch=${{ github.ref_name }}&status=completed&per_page=20" \
+              -q '.workflow_runs[] | select(.conclusion == "success") | .id'
+          )
+
+          if [ -n "${run_id}" ]; then
+            echo "run_id=${run_id}" >>"$GITHUB_OUTPUT"
+            echo "artifact_name=${artifact_name}" >>"$GITHUB_OUTPUT"
+            echo "Found matching ORT bundle run ${run_id} for ${artifact_name}"
+          else
+            echo "run_id=" >>"$GITHUB_OUTPUT"
+            echo "artifact_name=${artifact_name}" >>"$GITHUB_OUTPUT"
+            echo "No matching ORT bundle found for ${artifact_name}; falling back to source build."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download prebuilt ORT bundle
+        if: steps.ort-bundle-run.outputs.run_id != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.ort-bundle-run.outputs.artifact_name }}
+          path: ${{ github.workspace }}/ort-bundle/amd64
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.ort-bundle-run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Extract prebuilt ORT bundle
+        if: steps.ort-bundle-run.outputs.run_id != ''
+        run: |
+          cd "${{ github.workspace }}/ort-bundle/amd64"
+          sha256sum -c "${{ steps.ort-bundle-run.outputs.artifact_name }}.tar.gz.sha256.txt"
+          mkdir -p bundle
+          tar -xzf "${{ steps.ort-bundle-run.outputs.artifact_name }}.tar.gz" -C bundle
+
+      - name: Build CI Bazel image
+        run: scripts/bazel_in_docker.sh --build-image-only
+
+      - name: Guard clang warning budget
+        run: |
+          TYPESENSE_CLANG_WARNING_LOG=${{ github.workspace }}/tmp/clang-warning-guardrail.log \
+          TYPESENSE_CLANG_WARNING_MAX=0 \
+          TYPESENSE_CLANG_TRACKED_WARNING_MAX=0 \
+          TYPESENSE_CLANG_SPARSEPP_WARNING_MAX=0 \
+          scripts/check_clang_warning_guardrail.sh
+        env:
+          TYPESENSE_ORT_PREBUILT_BUNDLE_DIR: /work/ort-bundle/amd64/bundle
+
+      - name: Save clang warning log on failure
+        uses: actions/upload-artifact@v7
+        with:
+          name: clang-warning-guardrail-log
+          path: ${{ github.workspace }}/tmp/clang-warning-guardrail.log
+          if-no-files-found: warn
+        if: failure()
+
+      - name: Save Bazel cache
+        if: always() && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            ${{ github.workspace }}/.cache/bazel-docker/disk-cache
+            ${{ github.workspace }}/.cache/bazel-docker/repository-cache
+            ${{ github.workspace }}/.cache/bazel-docker/bazelisk
+          key: bazel-${{ runner.os }}-${{ github.workflow }}-${{ hashFiles('MODULE.bazel', 'BUILD', '.bazelrc', 'bazel/**', 'docker/ci-bazel.Dockerfile') }}
+
+      - name: Report Bazel cache size
+        if: always()
+        run: du -sh ${{ github.workspace }}/.cache/bazel-docker/*/ 2>/dev/null || true

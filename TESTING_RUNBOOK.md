@@ -51,7 +51,7 @@ bazel test --cache_test_results=no --test_output=all //:typesense-test --test_ti
 ## 4) GitHub trigger policy
 
 - `tests.yml` is the only automatic CI gate. It runs on `push` and can also be started manually with `workflow_dispatch`.
-- `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, `ort-bundles.yml`, and `release-binaries.yml` are manual-only workflows.
+- `clang-warning-guard.yml`, `flake-detection.yml`, `sanitizer-testing.yml`, `nightly-extended.yml`, `benchmark-testing.yml`, `ort-bundles.yml`, and `release-binaries.yml` are manual-only workflows.
 - Prefer replaying the matching local wrapper command before dispatching a heavy manual workflow. This repo's wrappers are the canonical local equivalents of the GitHub lanes.
 
 ## 5) Known gotcha: GCC 15 + rules_foreign_cc pkgconfig
@@ -126,6 +126,7 @@ The Linux release wrapper keeps packaging tools inside containers, so the host d
 Linux release binaries now use `--define=use_cuda=on` on Linux so the published `typesense-server` artifact can load optional GPU provider sidecars from `typesense-gpu-deps`. On this branch the GPU surface is limited to ONNX Runtime-backed embeddings/personalization; Whisper remains CPU-only.
 Hosted `release-binaries.yml` GPU-deps lanes reuse the matching Linux server build's prebuilt provider sidecars when server artifacts are enabled, and only fall back to a standalone CUDA rebuild when you explicitly dispatch GPU deps without the core server lane.
 `ort-bundles.yml` packages the exact CUDA-enabled one-Protobuf ORT install tree into a reusable artifact keyed from the pinned ORT/toolchain inputs. `release-binaries.yml` can consume one of those bundle runs via the manual `ort_bundle_run_id` input, and `tests.yml` now auto-discovers the latest matching successful `ort-bundles.yml` artifact on the same branch before falling back to a source ORT build. The GCC and Clang warning-guardrail builds reuse that same extracted ORT tree too, so the warning-budget checks do not re-enter the slow source ORT path. Local wrapper replays use the same extracted-tree contract through `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR`, which must point inside the checkout so the Dockerized Bazel/release containers can see it at `/work/...`.
+Run `clang-warning-guard.yml` manually when a change can plausibly affect clang-only warnings: compiler flags in `.bazelrc`, `scripts/bazel_in_docker.sh`, Bazel external patches/BUILD files, Docker toolchain image changes, or warning-prone first-party C++ touched near templates/macros that GCC and clang diagnose differently. It is no longer part of the automatic push gate.
 When `release-binaries.yml` is dispatched with `push_docker_images=true`, the workflow can also publish Linux runtime images to Docker Hub from the already-built Linux release artifacts. Configure `DOCKERHUB_USERNAME` as a GitHub Actions repository variable and `DOCKERHUB_TOKEN` as a repository secret before enabling that path.
 Artifact publishing is a separate post-build step via `scripts/publish_release.sh` against the generated `artifacts/` tree, not part of the local replay wrappers above.
 Cross-arch local replays of `linux-arm64` or `linux-arm64-lg-page16` from an x86_64 host require Docker arm64 emulation to be enabled.

@@ -123,24 +123,6 @@ jobs:
           if-no-files-found: warn
         if: failure()
 
-      - name: Guard clang warning budget
-        run: |
-          TYPESENSE_CLANG_WARNING_LOG=${{ github.workspace }}/tmp/clang-warning-guardrail.log \
-          TYPESENSE_CLANG_WARNING_MAX=0 \
-          TYPESENSE_CLANG_TRACKED_WARNING_MAX=0 \
-          TYPESENSE_CLANG_SPARSEPP_WARNING_MAX=0 \
-          scripts/check_clang_warning_guardrail.sh
-        env:
-          TYPESENSE_ORT_PREBUILT_BUNDLE_DIR: /work/ort-bundle/amd64/bundle
-
-      - name: Save clang warning log on failure
-        uses: actions/upload-artifact@v7
-        with:
-          name: clang-warning-guardrail-log
-          path: ${{ github.workspace }}/tmp/clang-warning-guardrail.log
-          if-no-files-found: warn
-        if: failure()
-
       - name: Setup artifacts for tests
         run: curl https://dl.typesense.org/ci/tyrec/tyrec-1-models.tar.gz > ./test/resources/models.tar.gz
 
