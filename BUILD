@@ -105,6 +105,7 @@ cc_binary(
     name = "typesense-server",
     srcs = [
         "src/main/typesense_nuraft_runtime.cpp",
+        "src/nuraft/nuraft_runtime_options.cpp",
         ":src_files",
     ],
     local_defines = [
@@ -205,6 +206,26 @@ cc_test(
     copts = COPTS + ["-O0", "-DTEST_BUILD"],
     deps = [
         ":headers",
+        ":nuraft_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
+    name = "nuraft-runtime-options-test",
+    srcs = [
+        "src/nuraft/nuraft_runtime_options.cpp",
+        "test/nuraft_runtime_options_test.cpp",
+        "test/runfiles_utils.h",
+        ":src_files",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    data = [
+        ":test_data_files",
+    ],
+    deps = [
+        ":headers",
+        ":common_deps",
         ":nuraft_lib",
         "@com_google_googletest//:gtest_main",
     ],
@@ -413,6 +434,7 @@ cc_test(
     name = "typesense-test",
     size = "large",
     srcs = [
+        "src/nuraft/nuraft_runtime_options.cpp",
         ":src_files",
         ":test_src_files",
     ],

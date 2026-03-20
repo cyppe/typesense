@@ -1,19 +1,20 @@
-#include <cstdint>
-#include <cstdlib>
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
-#include <limits>
-#include <set>
+#include <thread>
 #include <string>
 
+#include <cmdline.h>
 #include <curl/curl.h>
 
 #include "analytics_manager.h"
 #include "collection_manager.h"
 #include "conversation_model_manager.h"
+#include "core_api.h"
 #include "curation_index_manager.h"
 #include "http_client.h"
 #include "nuraft/nuraft_http_runtime.h"
+#include "nuraft/nuraft_runtime_options.h"
 #include "natural_language_search_model_manager.h"
 #include "personalization_model_manager.h"
 #include "ratelimit_manager.h"
@@ -30,283 +31,17 @@ namespace {
 #define TS_STRINGIFY_IMPL(x) #x
 #define TS_STRINGIFY(x) TS_STRINGIFY_IMPL(x)
 
-std::string runtime_usage(const char* program_name) {
-    const std::string binary_name = (program_name == nullptr || std::string(program_name).empty()) ?
-                                    "typesense-server" :
-                                    std::string(program_name);
-    return "usage: " + binary_name + " --data-dir <dir> [options]\n"
-           "options:\n"
-           "  --data-dir <dir>               NuRaft prototype state root\n"
-           "  --node-host <host>             Advertised host for this node (default: 127.0.0.1)\n"
-           "  --listen-address <host>        HTTP listen address (default: 127.0.0.1)\n"
-           "  --listen-port <port>           HTTP listen port (default: --api-port)\n"
-           "  --api-port <port>              API identity port / server_id (default: 8108)\n"
-           "  --request-timeout-ms <ms>      HTTP request/read timeout for bulk requests (default: 60000)\n"
-           "  --peering-port <port>          Peer identity port (default: 8107)\n"
-           "  --nodes <list>                 Comma-separated host:peer_port:api_port list\n"
-           "  --api-key <value>              API key for HTTP auth (default: xyz)\n"
-           "  --api-uses-ssl                 Use HTTPS when deriving leader URLs\n"
-           "\n"
-           "raft options (overridable via TYPESENSE_RAFT_* env vars):\n"
-           "  --raft-heart-beat-interval-ms <ms>           Heartbeat interval (default: 100)\n"
-           "  --raft-election-timeout-lower-ms <ms>        Election timeout lower bound (default: 200)\n"
-           "  --raft-election-timeout-upper-ms <ms>        Election timeout upper bound (default: 400)\n"
-           "  --raft-reserved-log-items <n>                Log entries kept after snapshot (default: 5000)\n"
-           "  --raft-client-req-timeout-ms <ms>            Client request timeout (default: 3000)\n"
-           "  --raft-auto-forwarding <bool>                Forward follower writes to leader (default: true)\n"
-           "  --raft-auto-forwarding-req-timeout-ms <ms>   Auto-forwarding timeout (default: 5000)\n"
-           "  --raft-snapshot-distance <n>                 Commits between snapshots (default: 10000)\n"
-           "  --raft-leadership-expiry-ms <ms>             Step down without quorum ack (default: 5000, 0=disabled)\n"
-           "  --raft-asio-thread-pool-size <n>             ASIO transport threads (default: 4)\n"
-           "\n"
-           "  --help                         Print this message\n";
-}
-
-bool parse_uint32(const std::string& value, uint32_t& parsed, std::string& error) {
-    try {
-        const unsigned long long numeric = std::stoull(value);
-        if (numeric > std::numeric_limits<uint32_t>::max()) {
-            error = "integer value is out of range";
-            return false;
-        }
-        parsed = static_cast<uint32_t>(numeric);
-        error.clear();
-        return true;
-    } catch (const std::exception&) {
-        error = "integer value is invalid";
-        return false;
-    }
-}
-
-std::string get_env(const std::string& name) {
-    const char* value = std::getenv(name.c_str());
-    return value ? std::string(value) : std::string();
-}
-
-bool parse_bool(const std::string& value, bool& parsed, std::string& error) {
-    if (value == "true" || value == "1" || value == "yes") {
-        parsed = true;
-        return true;
-    }
-    if (value == "false" || value == "0" || value == "no") {
-        parsed = false;
-        return true;
-    }
-    error = "expected true/false";
-    return false;
-}
-
-void apply_raft_env_overrides(NuRaftRaftParams& rp) {
-    std::string val;
-    val = get_env("TYPESENSE_RAFT_HEART_BEAT_INTERVAL_MS");
-    if (!val.empty()) rp.heart_beat_interval_ms = static_cast<uint32_t>(std::stoul(val));
-
-    val = get_env("TYPESENSE_RAFT_ELECTION_TIMEOUT_LOWER_MS");
-    if (!val.empty()) rp.election_timeout_lower_bound_ms = static_cast<uint32_t>(std::stoul(val));
-
-    val = get_env("TYPESENSE_RAFT_ELECTION_TIMEOUT_UPPER_MS");
-    if (!val.empty()) rp.election_timeout_upper_bound_ms = static_cast<uint32_t>(std::stoul(val));
-
-    val = get_env("TYPESENSE_RAFT_RESERVED_LOG_ITEMS");
-    if (!val.empty()) rp.reserved_log_items = static_cast<uint32_t>(std::stoul(val));
-
-    val = get_env("TYPESENSE_RAFT_CLIENT_REQ_TIMEOUT_MS");
-    if (!val.empty()) rp.client_req_timeout_ms = static_cast<uint32_t>(std::stoul(val));
-
-    val = get_env("TYPESENSE_RAFT_AUTO_FORWARDING");
-    if (!val.empty()) {
-        bool parsed = true;
-        std::string err;
-        if (parse_bool(val, parsed, err)) rp.auto_forwarding = parsed;
-    }
-
-    val = get_env("TYPESENSE_RAFT_AUTO_FORWARDING_REQ_TIMEOUT_MS");
-    if (!val.empty()) rp.auto_forwarding_req_timeout_ms = static_cast<uint32_t>(std::stoul(val));
-
-    val = get_env("TYPESENSE_RAFT_SNAPSHOT_DISTANCE");
-    if (!val.empty()) rp.snapshot_distance = static_cast<uint32_t>(std::stoul(val));
-
-    val = get_env("TYPESENSE_RAFT_LEADERSHIP_EXPIRY_MS");
-    if (!val.empty()) rp.leadership_expiry_ms = static_cast<uint32_t>(std::stoul(val));
-
-    val = get_env("TYPESENSE_RAFT_ASIO_THREAD_POOL_SIZE");
-    if (!val.empty()) rp.asio_thread_pool_size = static_cast<uint32_t>(std::stoul(val));
-}
-
-bool apply_server_env_overrides(NuRaftHttpServerOptions& options, std::string& error) {
-    std::string value = get_env("TYPESENSE_REQUEST_TIMEOUT_MS");
-    if (!value.empty() && !parse_uint32(value, options.request_timeout_ms, error)) {
-        error = "invalid value for TYPESENSE_REQUEST_TIMEOUT_MS: " + error;
-        return false;
-    }
-
-    error.clear();
-    return true;
-}
-
-bool parse_options(int argc,
-                   char** argv,
-                   NuRaftHttpServerOptions& options,
-                   bool& help_requested,
-                   std::string& error,
-                   std::string& usage) {
-    options = NuRaftHttpServerOptions();
-    options.startup_options.local_host = "127.0.0.1";
-    options.startup_options.peer_port = 8107;
-    options.startup_options.api_port = 8108;
-    options.listen_address = "127.0.0.1";
-    options.listen_port = 8108;
-    options.api_key = "xyz";
-    help_requested = false;
-    usage = runtime_usage(argc > 0 ? argv[0] : nullptr);
-
-    // Apply ENV overrides first (CLI args take priority over ENV).
-    apply_raft_env_overrides(options.raft_params);
-    if (!apply_server_env_overrides(options, error)) {
-        return false;
-    }
-
-    bool listen_port_explicit = false;
-    for (int i = 1; i < argc; ++i) {
-        const std::string argument = argv[i];
-        if (argument == "--help") {
-            help_requested = true;
-            continue;
-        }
-
-        if (argument == "--api-uses-ssl") {
-            options.startup_options.api_uses_ssl = true;
-            continue;
-        }
-
-        if (argument.rfind("--", 0) != 0) {
-            error = "unexpected positional argument: " + argument;
-            return false;
-        }
-
-        std::string option_name;
-        std::string option_value;
-        const size_t equals_pos = argument.find('=');
-        if (equals_pos != std::string::npos) {
-            option_name = argument.substr(2, equals_pos - 2);
-            option_value = argument.substr(equals_pos + 1);
-        } else {
-            option_name = argument.substr(2);
-            if (i + 1 >= argc) {
-                error = "option needs value: --" + option_name;
-                return false;
-            }
-            option_value = argv[++i];
-        }
-
-        if (option_name == "data-dir") {
-            options.startup_options.data_dir = option_value;
-        } else if (option_name == "node-host") {
-            options.startup_options.local_host = option_value;
-        } else if (option_name == "listen-address") {
-            options.listen_address = option_value;
-        } else if (option_name == "listen-port") {
-            if (!parse_uint32(option_value, options.listen_port, error)) {
-                error = "invalid value for --listen-port: " + error;
-                return false;
-            }
-            listen_port_explicit = true;
-        } else if (option_name == "api-port") {
-            if (!parse_uint32(option_value, options.startup_options.api_port, error)) {
-                error = "invalid value for --api-port: " + error;
-                return false;
-            }
-            if (!listen_port_explicit) {
-                options.listen_port = options.startup_options.api_port;
-            }
-        } else if (option_name == "request-timeout-ms") {
-            if (!parse_uint32(option_value, options.request_timeout_ms, error)) {
-                error = "invalid value for --request-timeout-ms: " + error;
-                return false;
-            }
-        } else if (option_name == "peering-port") {
-            if (!parse_uint32(option_value, options.startup_options.peer_port, error)) {
-                error = "invalid value for --peering-port: " + error;
-                return false;
-            }
-        } else if (option_name == "nodes") {
-            options.startup_options.nodes_config = option_value;
-        } else if (option_name == "api-key") {
-            options.api_key = option_value;
-        } else if (option_name == "raft-heart-beat-interval-ms") {
-            if (!parse_uint32(option_value, options.raft_params.heart_beat_interval_ms, error)) {
-                error = "invalid value for --raft-heart-beat-interval-ms: " + error;
-                return false;
-            }
-        } else if (option_name == "raft-election-timeout-lower-ms") {
-            if (!parse_uint32(option_value, options.raft_params.election_timeout_lower_bound_ms, error)) {
-                error = "invalid value for --raft-election-timeout-lower-ms: " + error;
-                return false;
-            }
-        } else if (option_name == "raft-election-timeout-upper-ms") {
-            if (!parse_uint32(option_value, options.raft_params.election_timeout_upper_bound_ms, error)) {
-                error = "invalid value for --raft-election-timeout-upper-ms: " + error;
-                return false;
-            }
-        } else if (option_name == "raft-reserved-log-items") {
-            if (!parse_uint32(option_value, options.raft_params.reserved_log_items, error)) {
-                error = "invalid value for --raft-reserved-log-items: " + error;
-                return false;
-            }
-        } else if (option_name == "raft-client-req-timeout-ms") {
-            if (!parse_uint32(option_value, options.raft_params.client_req_timeout_ms, error)) {
-                error = "invalid value for --raft-client-req-timeout-ms: " + error;
-                return false;
-            }
-        } else if (option_name == "raft-auto-forwarding") {
-            if (!parse_bool(option_value, options.raft_params.auto_forwarding, error)) {
-                error = "invalid value for --raft-auto-forwarding: " + error;
-                return false;
-            }
-        } else if (option_name == "raft-auto-forwarding-req-timeout-ms") {
-            if (!parse_uint32(option_value, options.raft_params.auto_forwarding_req_timeout_ms, error)) {
-                error = "invalid value for --raft-auto-forwarding-req-timeout-ms: " + error;
-                return false;
-            }
-        } else if (option_name == "raft-snapshot-distance") {
-            if (!parse_uint32(option_value, options.raft_params.snapshot_distance, error)) {
-                error = "invalid value for --raft-snapshot-distance: " + error;
-                return false;
-            }
-        } else if (option_name == "raft-leadership-expiry-ms") {
-            if (!parse_uint32(option_value, options.raft_params.leadership_expiry_ms, error)) {
-                error = "invalid value for --raft-leadership-expiry-ms: " + error;
-                return false;
-            }
-        } else if (option_name == "raft-asio-thread-pool-size") {
-            if (!parse_uint32(option_value, options.raft_params.asio_thread_pool_size, error)) {
-                error = "invalid value for --raft-asio-thread-pool-size: " + error;
-                return false;
-            }
-        } else {
-            error = "undefined option: --" + option_name;
-            return false;
-        }
-    }
-
-    if (!help_requested && options.startup_options.data_dir.empty()) {
-        error = "need option: --data-dir";
-        return false;
-    }
-
-    error.clear();
-    return true;
-}
-
 }  // namespace
 
 int main(int argc, char** argv) {
     NuRaftHttpServerOptions options;
+    cmdline::parser cmdline_options;
     bool help_requested = false;
     std::string error;
     std::string usage;
-    if (!parse_options(argc, argv, options, help_requested, error, usage)) {
-        std::cerr << error << "\n" << usage;
+    Config& config = Config::get_instance();
+    if (!load_nuraft_runtime_options(cmdline_options, argc, argv, config, options, help_requested, usage, error)) {
+        std::cerr << "Typesense " << TS_STRINGIFY(TYPESENSE_VERSION) << "\n" << error << "\n" << usage;
         return 1;
     }
 
@@ -315,15 +50,13 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    Config& config = Config::get_instance();
-    config.set_api_key(options.api_key);
-    config.set_data_dir(options.startup_options.data_dir);
-    config.set_listen_address(options.listen_address);
-    config.set_listen_port(static_cast<int>(options.listen_port));
-    config.set_request_timeout_ms(options.request_timeout_ms);
-    config.set_enable_search_analytics(true);
-    config.set_analytics_dir(options.startup_options.data_dir + "/analytics_db");
-    config.set_analytics_minute_rate_limit(1000);
+    if (config.get_analytics_dir().empty()) {
+        config.set_analytics_dir(options.startup_options.data_dir + "/analytics_db");
+    }
+
+    signal(SIGINT, catch_interrupt);
+    signal(SIGTERM, catch_interrupt);
+    signal(SIGHUP, catch_interrupt);
 
     const int logger_init = init_root_logger(config, TS_STRINGIFY(TYPESENSE_VERSION));
     if (logger_init != 0) {
@@ -332,15 +65,50 @@ int main(int argc, char** argv) {
 
     curl_global_init(CURL_GLOBAL_SSL);
     HttpClient::get_instance().init(options.api_key);
+    init_api(static_cast<uint32_t>(config.get_cache_num_entries()));
 
     std::atomic<bool> quit_product_state(false);
-    ThreadPool app_thread_pool(4);
-    ThreadPool server_thread_pool(4);
+    const size_t proc_count = std::max<size_t>(1, std::thread::hardware_concurrency());
+    const size_t configured_thread_pool_size = config.get_thread_pool_size();
+    const size_t num_threads = configured_thread_pool_size == 0 ? (proc_count * 8) : configured_thread_pool_size;
+    const size_t configured_parallel_collection_load = config.get_num_collections_parallel_load();
+    const size_t num_collections_parallel_load =
+        configured_parallel_collection_load == 0 ? (proc_count * 4) : configured_parallel_collection_load;
+
+    ThreadPool app_thread_pool(num_threads);
+    ThreadPool server_thread_pool(num_threads);
     std::filesystem::create_directories(options.startup_options.data_dir);
     std::filesystem::create_directories(options.startup_options.data_dir + "/db");
     std::filesystem::create_directories(config.get_analytics_dir());
     std::filesystem::create_directories(config.get_analytics_dir() + "/db");
-    Store store(options.startup_options.data_dir + "/db", 24 * 60 * 60, 1024, true, 0);
+    Store store(options.startup_options.data_dir + "/db",
+                24 * 60 * 60,
+                1024,
+                true,
+                0,
+                config.get_db_write_buffer_size(),
+                config.get_db_max_write_buffer_number(),
+                config.get_db_max_log_file_size(),
+                config.get_db_keep_log_file_num(),
+                config.get_db_block_cache_size(),
+                config.get_db_rate_limit_bytes_per_sec(),
+                config.get_db_level_compaction_dynamic_level_bytes(),
+                static_cast<uint32_t>(config.get_db_block_size()),
+                static_cast<uint32_t>(config.get_db_format_version()),
+                config.get_db_enable_statistics(),
+                static_cast<uint32_t>(config.get_db_compression_parallel_threads()),
+                static_cast<uint64_t>(config.get_db_bytes_per_sync()),
+                static_cast<uint64_t>(config.get_db_max_manifest_file_size()),
+                config.get_db_enable_async_io(),
+                config.get_db_offpeak_time_utc(),
+                config.get_db_unordered_write(),
+                static_cast<uint32_t>(config.get_db_max_subcompactions()),
+                static_cast<uint32_t>(config.get_db_max_background_jobs()),
+                config.get_db_use_direct_reads(),
+                config.get_db_use_direct_io_for_flush_and_compaction(),
+                static_cast<uint64_t>(config.get_db_compaction_readahead_size()),
+                config.get_db_optimize_filters_for_hits(),
+                config.get_db_paranoid_memory_checks());
     auto analytics_store = std::make_unique<Store>(config.get_analytics_dir() + "/db",
                                                    24 * 60 * 60,
                                                    1024,
@@ -348,14 +116,14 @@ int main(int argc, char** argv) {
                                                    config.get_analytics_db_ttl());
     HttpServer http_server(
         TS_STRINGIFY(TYPESENSE_VERSION),
-        options.listen_address,
-        options.listen_port,
-        "",
-        "",
-        8 * 60 * 60 * 1000,
-        options.request_timeout_ms,
-        true,
-        std::set<std::string>{},
+        config.get_api_address(),
+        static_cast<uint32_t>(config.get_api_port()),
+        config.get_ssl_cert(),
+        config.get_ssl_cert_key(),
+        config.get_ssl_refresh_interval_seconds() * 1000,
+        config.get_request_timeout_ms(),
+        config.get_enable_cors(),
+        config.get_cors_domains(),
         &server_thread_pool
     );
     server = &http_server;
@@ -388,7 +156,7 @@ int main(int argc, char** argv) {
     static_cast<void>(PersonalizationModelManager::init(&store));
     static_cast<void>(NaturalLanguageSearchModelManager::init(&store));
 
-    const auto load_op = collection_manager.load(config.get_num_collections_parallel_load(),
+    const auto load_op = collection_manager.load(num_collections_parallel_load,
                                                  config.get_num_documents_parallel_load());
     if (!load_op.ok()) {
         collection_manager.dispose();

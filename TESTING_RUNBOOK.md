@@ -102,6 +102,10 @@ TYPESENSE_REQUEST_TIMEOUT_MS=300000 scripts/benchmark_vs_upstream.sh --build --s
 scripts/release_ort_bundle.sh --build --target-arch amd64
 scripts/release_ort_bundle.sh --build --target-arch arm64
 
+# startup/help parity for the shipped NuRaft runtime
+scripts/bazel_in_docker.sh run //:typesense-server -- --help
+scripts/bazel_in_docker.sh test //:nuraft-runtime-options-test --test_output=errors
+
 # focused USearch vector-backend replay: metric-kernel comparison + mixed update/search workload
 scripts/bazel_in_docker.sh run //:usearch-vector-backend-benchmark -- --docs 20000 --dims 384 --cycles 10 --updates-per-cycle 400 --replacements-per-cycle 100 --searches-per-cycle 200 --k 20 --ef 80 --kernel-samples 4096 --kernel-repeats 64 --seed 42
 

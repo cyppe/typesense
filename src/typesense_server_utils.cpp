@@ -39,14 +39,14 @@ void init_cmdline_options(cmdline::parser& options, int argc, char** argv) {
 
     options.set_program_name("./typesense-server");
 
-    options.add<std::string>("data-dir", 'd', "Directory where data will be stored.", true);
-    options.add<std::string>("api-key", 'a', "API key that allows all operations.", true);
+    options.add<std::string>("data-dir", 'd', "Directory where data will be stored.", false);
+    options.add<std::string>("api-key", 'a', "API key that allows all operations.", false);
     options.add<std::string>("search-only-api-key", 's', "[DEPRECATED: use API key management end-point] API key that allows only searches.", false);
     options.add<std::string>("health-rusage-api-key", '\0', "API key that allows access to health end-point with resource usage.", false);
     options.add<std::string>("analytics-dir", '\0', "Directory where Analytics will be stored.", false);
-    options.add<uint32_t>("analytics-db-ttl", '\0', "TTL in seconds for events stored in analytics db", false);
-    options.add<uint32_t>("analytics-minute-rate-limit", '\0', "per minute rate limit for /events endpoint", false);
-    options.add<uint32_t>("shutdown-delay-seconds", '\0', "delay in seconds after which server will shutdown on receiving signal");
+    options.add<uint32_t>("analytics-db-ttl", '\0', "TTL in seconds for events stored in analytics db", false, 2419200);
+    options.add<uint32_t>("analytics-minute-rate-limit", '\0', "per minute rate limit for /events endpoint", false, 5);
+    options.add<uint32_t>("shutdown-delay-seconds", '\0', "delay in seconds after which server will shutdown on receiving signal", false, 0);
 
     options.add<std::string>("api-address", '\0', "Address to which Typesense API service binds.", false, "0.0.0.0");
     options.add<uint32_t>("api-port", '\0', "Port on which Typesense API service listens.", false, 8108);
@@ -73,10 +73,10 @@ void init_cmdline_options(cmdline::parser& options, int argc, char** argv) {
     options.add<size_t>("healthy-write-lag", '\0', "Writes are rejected if the updates lag behind this threshold.", false, 500);
     options.add<int>("log-slow-requests-time-ms", '\0', "When >= 0, requests that take longer than this duration are logged.", false, -1);
 
-    options.add<uint32_t>("num-collections-parallel-load", '\0', "Number of collections that are loaded in parallel during start up.", false, 4);
+    options.add<uint32_t>("num-collections-parallel-load", '\0', "Number of collections that are loaded in parallel during start up. Use 0 for dynamic sizing (NUM_CORES * 4).", false, 0);
     options.add<uint32_t>("num-documents-parallel-load", '\0', "Number of documents per collection that are indexed in parallel during start up.", false, 1000);
 
-    options.add<uint32_t>("thread-pool-size", '\0', "Number of threads used for handling concurrent requests.", false, 4);
+    options.add<uint32_t>("thread-pool-size", '\0', "Number of threads used for handling concurrent requests. Use 0 for dynamic sizing (NUM_CORES * 8).", false, 0);
 
     options.add<std::string>("log-dir", '\0', "Path to the log directory.", false, "");
     options.add<std::string>("config", '\0', "Path to the configuration file.", false, "");
@@ -95,23 +95,23 @@ void init_cmdline_options(cmdline::parser& options, int argc, char** argv) {
     options.add<uint32_t>("analytics-flush-interval", '\0', "Frequency of persisting analytics data to disk (in seconds).", false, 3600);
     options.add<uint32_t>("housekeeping-interval", '\0', "Frequency of housekeeping background job (in seconds).", false, 1800);
     options.add<bool>("enable-lazy-filter", '\0', "Filter clause will be evaluated lazily.", false, false);
-    options.add<uint32_t>("db-compaction-interval", '\0', "Frequency of RocksDB compaction (in seconds).", false, 604800);
+    options.add<uint32_t>("db-compaction-interval", '\0', "Frequency of RocksDB compaction (in seconds).", false, 0);
     options.add<uint16_t>("filter-by-max-ops", '\0', "Maximum number of operations permitted in filtery_by.", false, Config::FILTER_BY_DEFAULT_OPERATIONS);
 
     options.add<int>("max-per-page", '\0', "Max number of hits per page", false, 250);
     options.add<uint32_t>("max-group-limit", '\0', "Max number of results to be returned per group", false, 99);
-    options.add<uint32_t>("max-indexing-concurrency", '\0', "maximum concurrency for batch indexing docs.", false);
+    options.add<uint32_t>("max-indexing-concurrency", '\0', "maximum concurrency for batch indexing docs.", false, 4);
 
-    options.add<uint32_t>("proxy-rate-limit", '\0', "proxy rate limit.", false);
+    options.add<uint32_t>("proxy-rate-limit", '\0', "proxy rate limit.", false, 1000);
     options.add<std::string>("proxy-disallowed-dest-cidrs", '\0', "Disallowed dest CIDRs for proxy.", false, "");
     options.add<bool>("proxy-allow-only-peer-src-ips", '\0', "Allow only peers as src IPs for proxy.", false, false);
 
-    options.add<uint32_t>("db-write-buffer-size", '\0', "RocksDB write buffer size in bytes.", false);
-    options.add<uint32_t>("db-max-write-buffer-number", '\0', "RocksDB max number of write buffers.", false);
-    options.add<uint32_t>("db-max-log-file-size", '\0', "RocksDB max log file size in bytes.", false);
-    options.add<uint32_t>("db-keep-log-file-num", '\0', "RocksDB number of log files to keep.", false);
-    options.add<uint64_t>("db-block-cache-size", '\0', "RocksDB block cache size in bytes.", false);
-    options.add<int64_t>("db-rate-limit-bytes-per-sec", '\0', "RocksDB rate limiter bytes per second (0 to disable).", false);
+    options.add<uint32_t>("db-write-buffer-size", '\0', "RocksDB write buffer size in bytes.", false, 128 * 1048576);
+    options.add<uint32_t>("db-max-write-buffer-number", '\0', "RocksDB max number of write buffers.", false, 4);
+    options.add<uint32_t>("db-max-log-file-size", '\0', "RocksDB max log file size in bytes.", false, 4 * 1048576);
+    options.add<uint32_t>("db-keep-log-file-num", '\0', "RocksDB number of log files to keep.", false, 5);
+    options.add<uint64_t>("db-block-cache-size", '\0', "RocksDB block cache size in bytes.", false, 256ULL * 1048576ULL);
+    options.add<int64_t>("db-rate-limit-bytes-per-sec", '\0', "RocksDB rate limiter bytes per second (0 to disable).", false, 0);
     options.add<bool>("db-level-compaction-dynamic-level-bytes", '\0', "RocksDB dynamic level sizing for compaction.", false, true);
     options.add<uint32_t>("db-block-size", '\0', "RocksDB SST block size in bytes.", false, 16 * 1024);
     options.add<uint32_t>("db-format-version", '\0', "RocksDB SST format version (max 7).", false, 7);
