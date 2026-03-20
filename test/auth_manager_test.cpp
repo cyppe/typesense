@@ -267,6 +267,15 @@ TEST_F(AuthManagerTest, VerifyAuthentication) {
     ASSERT_FALSE(auth_manager.authenticate("documents:search",
                                            {collection_key_t("coll_c", coll_c_key.value),},
                                            sparams, embedded_params));
+
+    api_key_t operation_key("zxcvbnm", "operation get", {"operations/schema_changes:get"}, {"*"}, FUTURE_TS);
+    auth_manager.create_key(operation_key);
+    ASSERT_FALSE(auth_manager.authenticate("operations/schema_changes:list",
+                                           {collection_key_t("", operation_key.value)},
+                                           sparams, embedded_params));
+    ASSERT_TRUE(auth_manager.authenticate("operations/schema_changes:get",
+                                          {collection_key_t("", operation_key.value)},
+                                          sparams, embedded_params));
 }
 
 TEST_F(AuthManagerTest, GenerationOfAPIAction) {
@@ -285,6 +294,7 @@ TEST_F(AuthManagerTest, GenerationOfAPIAction) {
     route_path rpath_analytics_rules_get = route_path("GET", {"analytics", "rules", ":id"}, nullptr, false, false);
     route_path rpath_analytics_rules_put = route_path("PUT", {"analytics", "rules", ":id"}, nullptr, false, false);
     route_path rpath_ops_cache_clear_post = route_path("POST", {"operations", "cache", "clear"}, nullptr, false, false);
+    route_path rpath_ops_schema_changes_get = route_path("GET", {"operations", "schema_changes"}, nullptr, false, false);
     route_path rpath_conv_models_list = route_path("GET", {"conversations", "models"}, nullptr, false, false);
 
     ASSERT_STREQ("documents:search", rpath_search._get_action().c_str());
@@ -302,6 +312,7 @@ TEST_F(AuthManagerTest, GenerationOfAPIAction) {
     ASSERT_STREQ("analytics/rules:get", rpath_analytics_rules_get._get_action().c_str());
     ASSERT_STREQ("analytics/rules:upsert", rpath_analytics_rules_put._get_action().c_str());
     ASSERT_STREQ("operations/cache/clear:create", rpath_ops_cache_clear_post._get_action().c_str());
+    ASSERT_STREQ("operations/schema_changes:get", rpath_ops_schema_changes_get._get_action().c_str());
     ASSERT_STREQ("conversations/models:list", rpath_conv_models_list._get_action().c_str());
 }
 

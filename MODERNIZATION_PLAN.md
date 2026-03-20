@@ -1262,6 +1262,7 @@ Completed Mar 18, 2026.
   - `9c9e3905` `fix: handle Gemini streamed responses across curl buffer boundaries (#2836)`
   - `c1bd3c77` `fix: update logic for skipping embedding generation when it is provided (#2807)`
 - Lower-signal items from the same range such as compile-only fixups or test-only additions should follow the product bugfixes rather than lead this intake queue.
+- Backport 1 is now landed locally on `v31-fork`: upstream PR `#2792` / commit `3f2e15f7` (`add exception for operation get endpoint route`). `route_path::_get_action()` now treats `GET /operations/schema_changes` as `operations/schema_changes:get` instead of the generic `:list` mapping, and `AuthManagerTest` covers both the action-string generation and the auth-path distinction between `operations/schema_changes:list` and `operations/schema_changes:get`.
 
 **Story A - Investigation**
 
@@ -1298,6 +1299,12 @@ Completed Mar 18, 2026.
   - `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR="$PWD/tmp/ort-bundle-test.vfdb2U" scripts/release_linux_artifacts.sh --with-cuda --skip-packages --target-arch amd64 --version-label 0.0.0-prebuilt-test` passed and produced the expected Linux tarball plus `.debug` sidecar.
   - `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR="$PWD/tmp/ort-bundle-test.vfdb2U" scripts/release_linux_gpu_deps.sh --skip-packages --target-arch amd64 --version-label 0.0.0-prebuilt-test` passed and produced the expected GPU-deps tarball.
   - `scripts/release_ort_bundle.sh --version-label 0.0.0-prebuilt-test --target-arch amd64` successfully packaged the current ORT install tree into the new artifact shape.
+- Hosted proof is green too:
+  - `ort-bundles.yml` run `23297096113` succeeded on both `linux-amd64` and `linux-arm64`, publishing `typesense-ort-bundle-8bb83bc13b6e3962-linux-amd64` and `typesense-ort-bundle-e0316edc4a80a6ce-linux-arm64`.
+  - `release-binaries.yml` run `23302834117` proved the fixed arm64 bundle-backed release path end-to-end, including `gpu-linux-arm64`.
+  - `release-binaries.yml` run `23310421507` then proved the amd64 bundle-backed path end-to-end, including `gpu-linux-amd64`.
+  - Full-matrix `release-binaries.yml` run `23312338973` succeeded across `linux-amd64`, `linux-arm64`, `linux-arm64-lg-page16`, `darwin-amd64`, `darwin-arm64`, `gpu-linux-amd64`, and `gpu-linux-arm64`.
+  - The second-pass cache effect on already-proven Linux core lanes was material: `linux-amd64` `Build Typesense server in Docker` dropped from about `35m34s` in `23310421507` to about `22s` in `23312338973`, and `linux-arm64` dropped from about `23m53s` in `23302834117` to about `26s` in `23312338973`.
 - Item 42 is complete: the repo now has a CI-parity, repo-owned prebuilt ORT bundle path that avoids cold hosted ORT rebuilds when operators intentionally dispatch `ort-bundles.yml` first, without weakening the default source-build path.
 
 ### Backlog map (active / later / archival)
