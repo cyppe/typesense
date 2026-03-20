@@ -238,7 +238,7 @@ jobs:
 
       - name: Download prebuilt ORT bundle
         if: matrix.target_os == 'linux' && inputs.ort_bundle_run_id != ''
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}
           path: ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}
@@ -506,7 +506,7 @@ jobs:
 
       - name: Download prebuilt ORT bundle
         if: inputs.ort_bundle_run_id != ''
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}
           path: ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}
@@ -529,7 +529,7 @@ jobs:
 
       - name: Download prebuilt GPU provider inputs
         if: needs.core-binaries.result == 'success'
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: gpu-provider-build-inputs-linux-${{ matrix.target_arch }}
           path: ${{ github.workspace }}/bazel-bin/external/+new_git_repository+onnx_runtime/onnxruntime_static_one_protobuf/lib
