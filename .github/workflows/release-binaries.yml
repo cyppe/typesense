@@ -50,8 +50,13 @@ on:
           - darwin
           - darwin-amd64
           - darwin-arm64
+      use_prebuilt_ort_bundle:
+        description: Auto-discover and reuse the latest matching successful same-branch ORT bundle
+        required: false
+        default: true
+        type: boolean
       ort_bundle_run_id:
-        description: Optional workflow run ID from ort-bundles.yml to reuse a prebuilt Linux CUDA ORT bundle
+        description: Optional explicit ort-bundles.yml workflow run ID override (leave blank to auto-discover when enabled)
         required: false
         default: ""
 
@@ -237,27 +242,72 @@ jobs:
             bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-host-${{ matrix.artifact_name }}-
 
       - name: Compute ORT bundle key
-        if: matrix.target_os == 'linux' && inputs.ort_bundle_run_id != ''
+        if: matrix.target_os == 'linux' && inputs.use_prebuilt_ort_bundle
         id: ort-bundle-key
         run: echo "bundle_key=$(scripts/release_ort_bundle.sh --print-key --target-arch "${{ matrix.target_arch }}")" >>"${GITHUB_OUTPUT}"
 
+      - name: Resolve prebuilt ORT bundle run
+        if: matrix.target_os == 'linux' && inputs.use_prebuilt_ort_bundle
+        id: ort-bundle-run
+        run: |
+          set -euo pipefail
+
+          artifact_name="typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}"
+          run_id="${{ inputs.ort_bundle_run_id }}"
+
+          if [ -n "${run_id}" ]; then
+            found_name="$(gh api -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/runs/${run_id}/artifacts" \
+              -q '.artifacts[] | select(.name == "'"${artifact_name}"'") | .name' | head -n 1 || true)"
+            if [ "${found_name}" != "${artifact_name}" ]; then
+              echo "Requested ORT bundle run ${run_id} does not contain ${artifact_name}" >&2
+              exit 1
+            fi
+          else
+            while IFS= read -r candidate_run_id; do
+              [ -n "${candidate_run_id}" ] || continue
+              found_name="$(gh api -H "Accept: application/vnd.github+json" \
+                "/repos/${{ github.repository }}/actions/runs/${candidate_run_id}/artifacts" \
+                -q '.artifacts[] | select(.name == "'"${artifact_name}"'") | .name' | head -n 1 || true)"
+              if [ "${found_name}" = "${artifact_name}" ]; then
+                run_id="${candidate_run_id}"
+                break
+              fi
+            done < <(
+              gh api -H "Accept: application/vnd.github+json" \
+                "/repos/${{ github.repository }}/actions/workflows/ort-bundles.yml/runs?branch=${{ github.ref_name }}&status=completed&per_page=20" \
+                -q '.workflow_runs[] | select(.conclusion == "success") | .id'
+            )
+          fi
+
+          echo "artifact_name=${artifact_name}" >>"$GITHUB_OUTPUT"
+          echo "run_id=${run_id}" >>"$GITHUB_OUTPUT"
+
+          if [ -n "${run_id}" ]; then
+            echo "Using prebuilt ORT bundle run ${run_id} for ${artifact_name}"
+          else
+            echo "No matching ORT bundle found for ${artifact_name}; falling back to source build."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Download prebuilt ORT bundle
-        if: matrix.target_os == 'linux' && inputs.ort_bundle_run_id != ''
+        if: matrix.target_os == 'linux' && steps.ort-bundle-run.outputs.run_id != ''
         uses: actions/download-artifact@v8
         with:
-          name: typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}
+          name: ${{ steps.ort-bundle-run.outputs.artifact_name }}
           path: ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.ort_bundle_run_id }}
+          run-id: ${{ steps.ort-bundle-run.outputs.run_id }}
           github-token: ${{ github.token }}
 
       - name: Extract prebuilt ORT bundle
-        if: matrix.target_os == 'linux' && inputs.ort_bundle_run_id != ''
+        if: matrix.target_os == 'linux' && steps.ort-bundle-run.outputs.run_id != ''
         run: |
           cd "${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}"
-          sha256sum -c "typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}.tar.gz.sha256.txt"
+          sha256sum -c "${{ steps.ort-bundle-run.outputs.artifact_name }}.tar.gz.sha256.txt"
           mkdir -p bundle
-          tar -xzf "typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}.tar.gz" -C bundle
+          tar -xzf "${{ steps.ort-bundle-run.outputs.artifact_name }}.tar.gz" -C bundle
 
       - name: Build CI Bazel image
         if: matrix.uses_docker_bazel
@@ -505,27 +555,72 @@ jobs:
             bazel-${{ runner.os }}-${{ matrix.runner }}-${{ github.workflow }}-docker-${{ matrix.artifact_name }}-
 
       - name: Compute ORT bundle key
-        if: inputs.ort_bundle_run_id != ''
+        if: inputs.use_prebuilt_ort_bundle
         id: ort-bundle-key
         run: echo "bundle_key=$(scripts/release_ort_bundle.sh --print-key --target-arch "${{ matrix.target_arch }}")" >>"${GITHUB_OUTPUT}"
 
+      - name: Resolve prebuilt ORT bundle run
+        if: inputs.use_prebuilt_ort_bundle
+        id: ort-bundle-run
+        run: |
+          set -euo pipefail
+
+          artifact_name="typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}"
+          run_id="${{ inputs.ort_bundle_run_id }}"
+
+          if [ -n "${run_id}" ]; then
+            found_name="$(gh api -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/runs/${run_id}/artifacts" \
+              -q '.artifacts[] | select(.name == "'"${artifact_name}"'") | .name' | head -n 1 || true)"
+            if [ "${found_name}" != "${artifact_name}" ]; then
+              echo "Requested ORT bundle run ${run_id} does not contain ${artifact_name}" >&2
+              exit 1
+            fi
+          else
+            while IFS= read -r candidate_run_id; do
+              [ -n "${candidate_run_id}" ] || continue
+              found_name="$(gh api -H "Accept: application/vnd.github+json" \
+                "/repos/${{ github.repository }}/actions/runs/${candidate_run_id}/artifacts" \
+                -q '.artifacts[] | select(.name == "'"${artifact_name}"'") | .name' | head -n 1 || true)"
+              if [ "${found_name}" = "${artifact_name}" ]; then
+                run_id="${candidate_run_id}"
+                break
+              fi
+            done < <(
+              gh api -H "Accept: application/vnd.github+json" \
+                "/repos/${{ github.repository }}/actions/workflows/ort-bundles.yml/runs?branch=${{ github.ref_name }}&status=completed&per_page=20" \
+                -q '.workflow_runs[] | select(.conclusion == "success") | .id'
+            )
+          fi
+
+          echo "artifact_name=${artifact_name}" >>"$GITHUB_OUTPUT"
+          echo "run_id=${run_id}" >>"$GITHUB_OUTPUT"
+
+          if [ -n "${run_id}" ]; then
+            echo "Using prebuilt ORT bundle run ${run_id} for ${artifact_name}"
+          else
+            echo "No matching ORT bundle found for ${artifact_name}; falling back to source build."
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Download prebuilt ORT bundle
-        if: inputs.ort_bundle_run_id != ''
+        if: steps.ort-bundle-run.outputs.run_id != ''
         uses: actions/download-artifact@v8
         with:
-          name: typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}
+          name: ${{ steps.ort-bundle-run.outputs.artifact_name }}
           path: ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}
           repository: ${{ github.repository }}
-          run-id: ${{ inputs.ort_bundle_run_id }}
+          run-id: ${{ steps.ort-bundle-run.outputs.run_id }}
           github-token: ${{ github.token }}
 
       - name: Extract prebuilt ORT bundle
-        if: inputs.ort_bundle_run_id != ''
+        if: steps.ort-bundle-run.outputs.run_id != ''
         run: |
           cd "${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}"
-          sha256sum -c "typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}.tar.gz.sha256.txt"
+          sha256sum -c "${{ steps.ort-bundle-run.outputs.artifact_name }}.tar.gz.sha256.txt"
           mkdir -p bundle
-          tar -xzf "typesense-ort-bundle-${{ steps.ort-bundle-key.outputs.bundle_key }}-linux-${{ matrix.target_arch }}.tar.gz" -C bundle
+          tar -xzf "${{ steps.ort-bundle-run.outputs.artifact_name }}.tar.gz" -C bundle
 
       - name: Build CI Bazel image
         run: |
