@@ -51,6 +51,118 @@ struct import_handler_metrics_state_t {
 
 import_handler_metrics_state_t g_import_handler_metrics;
 
+struct collection_create_metrics_snapshot_t {
+    uint64_t cumulative_calls = 0;
+    uint64_t cumulative_failures = 0;
+    uint64_t last_parse_ms = 0;
+    uint64_t last_create_ms = 0;
+    uint64_t last_total_ms = 0;
+    int64_t last_status_code = 0;
+    std::string last_collection_name;
+};
+
+struct collection_drop_metrics_snapshot_t {
+    uint64_t cumulative_calls = 0;
+    uint64_t cumulative_failures = 0;
+    uint64_t last_drop_ms = 0;
+    uint64_t last_total_ms = 0;
+    int64_t last_status_code = 0;
+    std::string last_collection_name;
+};
+
+namespace {
+
+struct collection_create_metrics_state_t {
+    std::atomic<uint64_t> cumulative_calls{0};
+    std::atomic<uint64_t> cumulative_failures{0};
+    std::atomic<uint64_t> last_parse_ms{0};
+    std::atomic<uint64_t> last_create_ms{0};
+    std::atomic<uint64_t> last_total_ms{0};
+    std::atomic<int64_t> last_status_code{0};
+    std::mutex last_collection_mutex;
+    std::string last_collection_name;
+};
+
+struct collection_drop_metrics_state_t {
+    std::atomic<uint64_t> cumulative_calls{0};
+    std::atomic<uint64_t> cumulative_failures{0};
+    std::atomic<uint64_t> last_drop_ms{0};
+    std::atomic<uint64_t> last_total_ms{0};
+    std::atomic<int64_t> last_status_code{0};
+    std::mutex last_collection_mutex;
+    std::string last_collection_name;
+};
+
+collection_create_metrics_state_t g_collection_create_metrics;
+collection_drop_metrics_state_t g_collection_drop_metrics;
+
+collection_create_metrics_snapshot_t get_collection_create_metrics_snapshot() {
+    collection_create_metrics_snapshot_t snapshot;
+    snapshot.cumulative_calls = g_collection_create_metrics.cumulative_calls.load(std::memory_order_relaxed);
+    snapshot.cumulative_failures = g_collection_create_metrics.cumulative_failures.load(std::memory_order_relaxed);
+    snapshot.last_parse_ms = g_collection_create_metrics.last_parse_ms.load(std::memory_order_relaxed);
+    snapshot.last_create_ms = g_collection_create_metrics.last_create_ms.load(std::memory_order_relaxed);
+    snapshot.last_total_ms = g_collection_create_metrics.last_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_status_code = g_collection_create_metrics.last_status_code.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_collection_create_metrics.last_collection_mutex);
+        snapshot.last_collection_name = g_collection_create_metrics.last_collection_name;
+    }
+    return snapshot;
+}
+
+collection_drop_metrics_snapshot_t get_collection_drop_metrics_snapshot() {
+    collection_drop_metrics_snapshot_t snapshot;
+    snapshot.cumulative_calls = g_collection_drop_metrics.cumulative_calls.load(std::memory_order_relaxed);
+    snapshot.cumulative_failures = g_collection_drop_metrics.cumulative_failures.load(std::memory_order_relaxed);
+    snapshot.last_drop_ms = g_collection_drop_metrics.last_drop_ms.load(std::memory_order_relaxed);
+    snapshot.last_total_ms = g_collection_drop_metrics.last_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_status_code = g_collection_drop_metrics.last_status_code.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_collection_drop_metrics.last_collection_mutex);
+        snapshot.last_collection_name = g_collection_drop_metrics.last_collection_name;
+    }
+    return snapshot;
+}
+
+void update_collection_create_metrics(const std::string& collection_name,
+                                      uint64_t parse_ms,
+                                      uint64_t create_ms,
+                                      uint64_t total_ms,
+                                      int64_t status_code) {
+    g_collection_create_metrics.cumulative_calls.fetch_add(1, std::memory_order_relaxed);
+    if (status_code < 200 || status_code >= 300) {
+        g_collection_create_metrics.cumulative_failures.fetch_add(1, std::memory_order_relaxed);
+    }
+    g_collection_create_metrics.last_parse_ms.store(parse_ms, std::memory_order_relaxed);
+    g_collection_create_metrics.last_create_ms.store(create_ms, std::memory_order_relaxed);
+    g_collection_create_metrics.last_total_ms.store(total_ms, std::memory_order_relaxed);
+    g_collection_create_metrics.last_status_code.store(status_code, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_collection_create_metrics.last_collection_mutex);
+        g_collection_create_metrics.last_collection_name = collection_name;
+    }
+}
+
+void update_collection_drop_metrics(const std::string& collection_name,
+                                    uint64_t drop_ms,
+                                    uint64_t total_ms,
+                                    int64_t status_code) {
+    g_collection_drop_metrics.cumulative_calls.fetch_add(1, std::memory_order_relaxed);
+    if (status_code < 200 || status_code >= 300) {
+        g_collection_drop_metrics.cumulative_failures.fetch_add(1, std::memory_order_relaxed);
+    }
+    g_collection_drop_metrics.last_drop_ms.store(drop_ms, std::memory_order_relaxed);
+    g_collection_drop_metrics.last_total_ms.store(total_ms, std::memory_order_relaxed);
+    g_collection_drop_metrics.last_status_code.store(status_code, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_collection_drop_metrics.last_collection_mutex);
+        g_collection_drop_metrics.last_collection_name = collection_name;
+    }
+}
+
+}
+
 class alter_guard_t {
     std::string collection_name;
 public:
@@ -348,13 +460,25 @@ bool get_collections(const std::shared_ptr<http_req>& req, const std::shared_ptr
 }
 
 bool post_create_collection(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
+    req->mark_handler_start();
+    const auto total_start = std::chrono::steady_clock::now();
     nlohmann::json req_json;
+    std::string collection_name;
     try {
         req_json = nlohmann::json::parse(req->body);
     } catch(const std::exception& e) {
         //TS_LOG(ERROR) << "JSON error: " << e.what();
         res->set_400("Bad JSON.");
+        const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - total_start).count();
+        update_collection_create_metrics("", total_ms, 0, total_ms, res->status_code);
+        req->mark_handler_end();
         return false;
+    }
+    const auto parse_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - total_start).count();
+    if(req_json.count("name") != 0 && req_json["name"].is_string()) {
+        collection_name = req_json["name"].get<std::string>();
     }
 
     const std::string SRC_COLL_NAME = "src_name";
@@ -369,17 +493,32 @@ bool post_create_collection(const std::shared_ptr<http_req>& req, const std::sha
     }*/
 
     CollectionManager& collectionManager = CollectionManager::get_instance();
+    const auto create_start = std::chrono::steady_clock::now();
     const Option<Collection*> &collection_op = req->params.count(SRC_COLL_NAME) != 0 ?
                collectionManager.clone_collection(req->params[SRC_COLL_NAME], req_json, req->params.count(COPY_DOCUMENTS) != 0) :
                CollectionManager::create_collection(req_json);
+    const auto create_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - create_start).count();
+    const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - total_start).count();
 
     if(collection_op.ok()) {
         nlohmann::json json_response = collection_op.get()->get_summary_json();
         res->set_201(json_response.dump());
+        update_collection_create_metrics(collection_name, parse_ms, create_ms, total_ms, res->status_code);
+        if(total_ms >= 250) {
+            TS_LOG(INFO) << "Collection create timing: collection=" << collection_name
+                         << ", parse_ms=" << parse_ms
+                         << ", create_ms=" << create_ms
+                         << ", total_ms=" << total_ms;
+        }
+        req->mark_handler_end();
         return true;
     }
 
     res->set(collection_op.code(), collection_op.error());
+    update_collection_create_metrics(collection_name, parse_ms, create_ms, total_ms, res->status_code);
+    req->mark_handler_end();
     return false;
 }
 
@@ -480,6 +619,8 @@ bool patch_update_collection(const std::shared_ptr<http_req>& req, const std::sh
 }
 
 bool del_drop_collection(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
+    req->mark_handler_start();
+    const auto total_start = std::chrono::steady_clock::now();
     bool compact_store = false;
 
     if(req->params.count("compact_store") != 0) {
@@ -492,13 +633,24 @@ bool del_drop_collection(const std::shared_ptr<http_req>& req, const std::shared
 
     CollectionManager & collectionManager = CollectionManager::get_instance();
     Option<nlohmann::json> drop_op = collectionManager.drop_collection(req->params["collection"], true, compact_store);
+    const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - total_start).count();
 
     if(!drop_op.ok()) {
         res->set(drop_op.code(), drop_op.error());
+        update_collection_drop_metrics(req->params["collection"], total_ms, total_ms, res->status_code);
+        req->mark_handler_end();
         return false;
     }
 
     res->set_200(drop_op.get().dump());
+    update_collection_drop_metrics(req->params["collection"], total_ms, total_ms, res->status_code);
+    if(total_ms >= 250) {
+        TS_LOG(INFO) << "Collection drop timing: collection=" << req->params["collection"]
+                     << ", total_ms=" << total_ms
+                     << ", compact_store=" << compact_store;
+    }
+    req->mark_handler_end();
     return true;
 }
 
@@ -792,6 +944,35 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["import_handler_last_split_ms"] = g_import_handler_metrics.last_split_ms.load(std::memory_order_relaxed);
     result["import_handler_last_add_many_ms"] = g_import_handler_metrics.last_add_many_ms.load(std::memory_order_relaxed);
     result["import_handler_last_total_ms"] = g_import_handler_metrics.last_total_ms.load(std::memory_order_relaxed);
+
+    const auto collection_create_metrics = get_collection_create_metrics_snapshot();
+    result["collection_create_cumulative_calls"] = collection_create_metrics.cumulative_calls;
+    result["collection_create_cumulative_failures"] = collection_create_metrics.cumulative_failures;
+    result["collection_create_last_collection_name"] = collection_create_metrics.last_collection_name;
+    result["collection_create_last_parse_ms"] = collection_create_metrics.last_parse_ms;
+    result["collection_create_last_create_ms"] = collection_create_metrics.last_create_ms;
+    result["collection_create_last_total_ms"] = collection_create_metrics.last_total_ms;
+    result["collection_create_last_status_code"] = collection_create_metrics.last_status_code;
+
+    const auto collection_drop_metrics = get_collection_drop_metrics_snapshot();
+    result["collection_drop_cumulative_calls"] = collection_drop_metrics.cumulative_calls;
+    result["collection_drop_cumulative_failures"] = collection_drop_metrics.cumulative_failures;
+    result["collection_drop_last_collection_name"] = collection_drop_metrics.last_collection_name;
+    result["collection_drop_last_drop_ms"] = collection_drop_metrics.last_drop_ms;
+    result["collection_drop_last_total_ms"] = collection_drop_metrics.last_total_ms;
+    result["collection_drop_last_status_code"] = collection_drop_metrics.last_status_code;
+
+    const auto http_request_metrics = http_req::get_metrics_snapshot();
+    result["http_request_cumulative_requests"] = http_request_metrics.cumulative_requests;
+    result["http_request_cumulative_slow_requests"] = http_request_metrics.cumulative_slow_requests;
+    result["http_request_last_route"] = http_request_metrics.last_route;
+    result["http_request_last_is_write"] = http_request_metrics.last_is_write;
+    result["http_request_last_total_ms"] = http_request_metrics.last_total_ms;
+    result["http_request_last_auth_ms"] = http_request_metrics.last_auth_ms;
+    result["http_request_last_handler_wait_ms"] = http_request_metrics.last_handler_wait_ms;
+    result["http_request_last_handler_ms"] = http_request_metrics.last_handler_ms;
+    result["http_request_last_unattributed_ms"] = http_request_metrics.last_unattributed_ms;
+    result["http_request_last_conn_to_start_ms"] = http_request_metrics.last_conn_to_start_ms;
 
     res->set_body(200, result.dump(2));
     return true;

@@ -608,11 +608,14 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
         }
     }
 
+    uint64_t immediate_auth_duration_us = 0;
     if(!is_multi_search_query && (req->proceed_req == nullptr || !auth_needs_full_body(*rpath))) {
         // Routes whose auth context depends on request body must be authenticated only
         // after the full body has been aggregated.
+        const auto auth_start_us = http_req::now_ts_us();
         bool authenticated = h2o_handler->http_server->auth_handler(query_map, embedded_params_vec, body, *rpath,
                                                                     api_auth_key_sent);
+        immediate_auth_duration_us = http_req::now_ts_us() - auth_start_us;
         if(!authenticated) {
             std::string message = std::string("{\"message\": \"Forbidden - a valid `") + http_req::AUTH_HEADER +
                                   "` header must be sent.\"}";
@@ -631,6 +634,9 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
     std::shared_ptr<http_req> request = std::make_shared<http_req>(req, rpath->http_method, path_without_query,
                                                                    route_hash, query_map, embedded_params_vec,
                                                                    api_auth_key_sent, body, client_ip, is_binary_body);
+    if(immediate_auth_duration_us != 0) {
+        request->add_auth_duration_us(immediate_auth_duration_us);
+    }
 
     // add custom generator with a dispose function for cleaning up resources
     h2o_custom_generator_t* custom_gen = new h2o_custom_generator_t;
@@ -856,8 +862,10 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
 
     if(auth_needs_full_body(*rpath)) {
         // We can authenticate only when the full request body is available
+        const auto auth_start_us = http_req::now_ts_us();
         bool authenticated = handler->http_server->auth_handler(request->params, request->embedded_params_vec,
                                                                 request->body, *rpath, request->api_auth_key);
+        request->add_auth_duration_us(http_req::now_ts_us() - auth_start_us);
         if(!authenticated) {
             std::string message = std::string("{\"message\": \"Forbidden - a valid `") + http_req::AUTH_HEADER +
                                   "` header must be sent.\"}";
@@ -870,6 +878,7 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
     request->is_write = is_write;
 
     if(is_write) {
+        request->mark_handler_dispatch();
         handler->http_server->get_replication_state()->write(request, response);
         return 0;
     }
@@ -881,10 +890,13 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
 
     // TS_LOG(INFO) << "Before enqueue res: " << response
     thread_pool->log_exhaustion();
+    request->mark_handler_dispatch();
     thread_pool->enqueue([rpath, message_dispatcher, request, response]() {
         // call the API handler
         //TS_LOG(INFO) << "Wait for response " << response.get() << ", action: " << rpath->_get_action();
+        request->mark_handler_start();
         (rpath->handler)(request, response);
+        request->mark_handler_end();
 
         if(!rpath->async_res) {
             // lifecycle of non async res will be owned by stream responder

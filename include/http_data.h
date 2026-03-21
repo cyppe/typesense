@@ -256,6 +256,19 @@ public:
     }
 };
 
+struct http_request_metrics_snapshot_t {
+    uint64_t cumulative_requests = 0;
+    uint64_t cumulative_slow_requests = 0;
+    uint64_t last_total_ms = 0;
+    uint64_t last_auth_ms = 0;
+    uint64_t last_handler_wait_ms = 0;
+    uint64_t last_handler_ms = 0;
+    uint64_t last_unattributed_ms = 0;
+    uint64_t last_conn_to_start_ms = 0;
+    bool last_is_write = false;
+    std::string last_route;
+};
+
 struct http_req {
     static constexpr const char* AUTH_HEADER = "x-typesense-api-key";
     static constexpr const char* USER_HEADER = "x-typesense-user-id";
@@ -311,6 +324,11 @@ struct http_req {
 
     std::atomic<bool> is_write = false;
 
+    std::atomic<uint64_t> auth_duration_us{0};
+    std::atomic<uint64_t> handler_dispatch_ts_us{0};
+    std::atomic<uint64_t> handler_start_ts_us{0};
+    std::atomic<uint64_t> handler_end_ts_us{0};
+
     bool (*async_res_set_headers_callback)(const std::string&, const std::shared_ptr<http_req>, long, std::string&) = nullptr;
     void (*async_res_write_callback)(std::string&, const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&) = nullptr;
     bool (*async_res_done_callback)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&) = nullptr;
@@ -361,6 +379,7 @@ struct http_req {
             const std::string metric_identifier = http_method + " " + path_without_query;
             AppMetrics::get_instance().increment_duration(metric_identifier, ms_since_start);
             AppMetrics::get_instance().increment_write_metrics(route_hash, ms_since_start);
+            record_lifecycle_metrics(*this, metric_identifier, ms_since_start);
 
             bool log_slow_searches = config.get_log_slow_searches_time_ms() >= 0 &&
                                      int(ms_since_start) >= config.get_log_slow_searches_time_ms() &&
@@ -484,6 +503,26 @@ struct http_req {
     }
 
     bool do_resource_check();
+
+    void add_auth_duration_us(uint64_t duration_us) {
+        auth_duration_us.fetch_add(duration_us, std::memory_order_relaxed);
+    }
+
+    void mark_handler_dispatch() {
+        handler_dispatch_ts_us.store(now_ts_us(), std::memory_order_relaxed);
+    }
+
+    void mark_handler_start() {
+        handler_start_ts_us.store(now_ts_us(), std::memory_order_relaxed);
+    }
+
+    void mark_handler_end() {
+        handler_end_ts_us.store(now_ts_us(), std::memory_order_relaxed);
+    }
+
+    static uint64_t now_ts_us();
+    static http_request_metrics_snapshot_t get_metrics_snapshot();
+    static void record_lifecycle_metrics(const http_req& req, const std::string& route, uint64_t total_ms);
 };
 
 struct route_path {
@@ -581,4 +620,3 @@ struct async_stream_response_t {
     std::condition_variable cv;
     bool ready = false;
 };
-

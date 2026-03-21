@@ -478,9 +478,16 @@ TEST_F(NuRaftHttpRuntimeTest, ExposesImportDiagnosticsInMetricsJson) {
     EXPECT_TRUE(metrics.contains("collection_import_last_batch_async_reference_ms")) << "runtime log: " << node1_.log_path();
     EXPECT_TRUE(metrics.contains("collection_import_last_reference_helper_ms")) << "runtime log: " << node1_.log_path();
     EXPECT_TRUE(metrics.contains("import_handler_last_add_many_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("collection_create_last_total_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("collection_drop_last_total_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("http_request_last_total_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("http_request_last_auth_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("http_request_last_handler_wait_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("http_request_last_handler_ms")) << "runtime log: " << node1_.log_path();
     EXPECT_EQ(2, metrics["collection_import_last_docs"].get<int>()) << "runtime log: " << node1_.log_path();
     EXPECT_EQ(2, metrics["import_handler_last_docs"].get<int>()) << "runtime log: " << node1_.log_path();
     EXPECT_GT(metrics["nuraft_last_import_request_bytes"].get<int64_t>(), 0) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ("books", metrics["collection_create_last_collection_name"].get<std::string>()) << "runtime log: " << node1_.log_path();
 }
 
 }  // namespace
