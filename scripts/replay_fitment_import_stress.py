@@ -359,6 +359,13 @@ class ScenarioResult:
 
 
 @dataclass
+class DelayedCapture:
+    thread: threading.Thread
+    cancel_event: threading.Event
+    result: dict[str, Any]
+
+
+@dataclass
 class ProbeSample:
     route: str
     phase: str
@@ -1118,6 +1125,26 @@ def start_profile_command(
     return proc, stdout_log, stderr_log
 
 
+def start_delayed_capture(delay_seconds: float, launch: Any) -> DelayedCapture:
+    cancel_event = threading.Event()
+    result: dict[str, Any] = {"started": False, "completed": False, "value": None}
+
+    def worker() -> None:
+        if delay_seconds > 0 and cancel_event.wait(delay_seconds):
+            result["completed"] = True
+            return
+        if cancel_event.is_set():
+            result["completed"] = True
+            return
+        result["value"] = launch()
+        result["started"] = True
+        result["completed"] = True
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    return DelayedCapture(thread=thread, cancel_event=cancel_event, result=result)
+
+
 def start_perf_record(
     process: TypesenseProcess,
     label: str,
@@ -1252,7 +1279,12 @@ def maybe_chown_to_current_user(path: Path | None) -> None:
     )
 
 
-def generate_perf_artifacts(data_path: Path, prefix: str, temp_dir: Path) -> dict[str, Any]:
+def generate_perf_artifacts(
+    data_path: Path,
+    prefix: str,
+    temp_dir: Path,
+    flamegraph_max_bytes: int,
+) -> dict[str, Any]:
     outputs: dict[str, Any] = {}
     if not data_path.exists():
         outputs[f"{prefix}_artifact_error"] = f"missing data file: {data_path}"
@@ -1293,6 +1325,12 @@ def generate_perf_artifacts(data_path: Path, prefix: str, temp_dir: Path) -> dic
     if not (shutil.which("inferno-collapse-perf") and shutil.which("inferno-flamegraph")):
         outputs[f"{prefix}_flamegraph_skipped"] = "inferno tools not installed"
         return outputs
+    if flamegraph_max_bytes >= 0 and data_path.stat().st_size > flamegraph_max_bytes:
+        outputs[f"{prefix}_flamegraph_skipped"] = (
+            f"capture too large for automatic flamegraph ({data_path.stat().st_size} bytes > {flamegraph_max_bytes})"
+        )
+        return outputs
+
     folded_path = temp_dir / f"{data_path.stem}.folded"
     flamegraph_path = temp_dir / f"{data_path.stem}.svg"
     flamegraph_stderr_log = temp_dir / f"{data_path.stem}.flamegraph.stderr.log"
@@ -1366,6 +1404,7 @@ def run_scenario(
     runqlat_output_path: Path | None = None
     runqlat_stderr_log: Path | None = None
     runqlat_exit_code: int | None = None
+    delayed_captures: dict[str, DelayedCapture] = {}
     try:
         process.start()
         create_timings: dict[str, float] = {}
@@ -1479,41 +1518,56 @@ def run_scenario(
         metrics_thread.start()
 
         if args.profile_cmd:
-            profile_proc, profile_stdout_log, profile_stderr_log = start_profile_command(
-                args.profile_cmd,
-                process,
-                args.api_key,
-                label,
+            delayed_captures["profile_cmd"] = start_delayed_capture(
+                    args.profile_start_delay_seconds,
+                    lambda: start_profile_command(
+                        args.profile_cmd,
+                        process,
+                        args.api_key,
+                        label,
+                    ),
             )
         if args.perf_seconds > 0:
-            perf_proc, perf_data_path, perf_stdout_log, perf_stderr_log = start_perf_record(
-                process,
-                label,
-                args.perf_seconds,
-                args.perf_frequency,
-                args.perf_call_graph,
+            delayed_captures["perf_oncpu"] = start_delayed_capture(
+                    args.profile_start_delay_seconds,
+                    lambda: start_perf_record(
+                        process,
+                        label,
+                        args.perf_seconds,
+                        args.perf_frequency,
+                        args.perf_call_graph,
+                    ),
             )
         if args.perf_offcpu_seconds > 0:
-            perf_offcpu_proc, perf_offcpu_data_path, perf_offcpu_stdout_log, perf_offcpu_stderr_log = start_perf_record(
-                process,
-                label,
-                args.perf_offcpu_seconds,
-                args.perf_frequency,
-                args.perf_call_graph,
-                offcpu=True,
+            delayed_captures["perf_offcpu"] = start_delayed_capture(
+                    args.profile_start_delay_seconds,
+                    lambda: start_perf_record(
+                        process,
+                        label,
+                        args.perf_offcpu_seconds,
+                        args.perf_frequency,
+                        args.perf_call_graph,
+                        offcpu=True,
+                    ),
             )
         if args.perf_stat_seconds > 0:
-            perf_stat_proc, perf_stat_output_path = start_perf_stat(
-                process,
-                label,
-                args.perf_stat_seconds,
-                args.perf_stat_events,
+            delayed_captures["perf_stat"] = start_delayed_capture(
+                    args.profile_start_delay_seconds,
+                    lambda: start_perf_stat(
+                        process,
+                        label,
+                        args.perf_stat_seconds,
+                        args.perf_stat_events,
+                    ),
             )
         if args.runqlat_seconds > 0:
-            runqlat_proc, runqlat_output_path, runqlat_stderr_log = start_runqlat(
-                process,
-                label,
-                args.runqlat_seconds,
+            delayed_captures["runqlat"] = start_delayed_capture(
+                    args.profile_start_delay_seconds,
+                    lambda: start_runqlat(
+                        process,
+                        label,
+                        args.runqlat_seconds,
+                    ),
             )
 
         started = now_ms()
@@ -1570,13 +1624,43 @@ def run_scenario(
             thread.join(timeout=2.0)
         metrics_thread.join(timeout=2.0)
 
+        for delayed_capture in delayed_captures.values():
+            delayed_capture.thread.join(timeout=max(1.0, args.profile_start_delay_seconds + 1.0))
+
+        for capture_name, delayed_capture in delayed_captures.items():
+            value = delayed_capture.result.get("value")
+            if not delayed_capture.result.get("started") or value is None:
+                continue
+            if capture_name == "profile_cmd":
+                profile_proc, profile_stdout_log, profile_stderr_log = value
+                continue
+            if capture_name == "perf_oncpu":
+                perf_proc, perf_data_path, perf_stdout_log, perf_stderr_log = value
+                continue
+            if capture_name == "perf_offcpu":
+                perf_offcpu_proc, perf_offcpu_data_path, perf_offcpu_stdout_log, perf_offcpu_stderr_log = value
+                continue
+            if capture_name == "perf_stat":
+                perf_stat_proc, perf_stat_output_path = value
+                continue
+            if capture_name == "runqlat":
+                runqlat_proc, runqlat_output_path, runqlat_stderr_log = value
+                continue
+
         if profile_proc is not None:
             profile_exit_code = wait_for_capture_process(profile_proc, args.profile_wait_timeout)
 
         if perf_proc is not None:
             perf_exit_code = wait_for_capture_process(perf_proc, args.profile_wait_timeout)
             if perf_data_path is not None:
-                profiling_outputs.update(generate_perf_artifacts(perf_data_path, "perf_oncpu", process.temp_dir))
+                profiling_outputs.update(
+                    generate_perf_artifacts(
+                        perf_data_path,
+                        "perf_oncpu",
+                        process.temp_dir,
+                        args.perf_flamegraph_max_bytes,
+                    )
+                )
             if perf_stdout_log is not None:
                 profiling_outputs["perf_oncpu_stdout_log"] = str(perf_stdout_log)
             if perf_stderr_log is not None:
@@ -1586,7 +1670,14 @@ def run_scenario(
         if perf_offcpu_proc is not None:
             perf_offcpu_exit_code = wait_for_capture_process(perf_offcpu_proc, args.profile_wait_timeout)
             if perf_offcpu_data_path is not None:
-                profiling_outputs.update(generate_perf_artifacts(perf_offcpu_data_path, "perf_offcpu", process.temp_dir))
+                profiling_outputs.update(
+                    generate_perf_artifacts(
+                        perf_offcpu_data_path,
+                        "perf_offcpu",
+                        process.temp_dir,
+                        args.perf_flamegraph_max_bytes,
+                    )
+                )
             if perf_offcpu_stdout_log is not None:
                 profiling_outputs["perf_offcpu_stdout_log"] = str(perf_offcpu_stdout_log)
             if perf_offcpu_stderr_log is not None:
@@ -1657,6 +1748,10 @@ def run_scenario(
             stderr_log=str(process.stderr_log),
         )
     finally:
+        for delayed_capture in delayed_captures.values():
+            delayed_capture.cancel_event.set()
+            if delayed_capture.thread.is_alive():
+                delayed_capture.thread.join(timeout=0.2)
         if profile_proc is not None and profile_proc.poll() is None:
             wait_for_capture_process(profile_proc, 0.1)
         if perf_proc is not None and perf_proc.poll() is None:
@@ -1849,6 +1944,15 @@ def parse_args() -> argparse.Namespace:
         help="How long to wait for --profile-cmd to exit after the workload finishes before terminating it.",
     )
     parser.add_argument(
+        "--profile-start-delay-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "Delay profiler launch into the workload so captures focus on steady-state import pressure instead "
+            "of server startup or early ramp-up."
+        ),
+    )
+    parser.add_argument(
         "--perf-seconds",
         type=float,
         default=0.0,
@@ -1870,6 +1974,15 @@ def parse_args() -> argparse.Namespace:
         "--perf-call-graph",
         default="dwarf,16384",
         help="Call graph mode passed to perf record when --perf-seconds/--perf-offcpu-seconds are enabled.",
+    )
+    parser.add_argument(
+        "--perf-flamegraph-max-bytes",
+        type=int,
+        default=16 * 1024 * 1024,
+        help=(
+            "Skip automatic folded/SVG flamegraph generation when a perf capture exceeds this size. "
+            "Set to -1 to always attempt flamegraph generation."
+        ),
     )
     parser.add_argument(
         "--perf-stat-seconds",

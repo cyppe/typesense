@@ -304,6 +304,7 @@ Profiling defaults baked into the harness:
 - on-CPU `perf record` uses `--call-graph dwarf,16384` so optimized C++ builds still produce useful user-space callchains
 - on-CPU and off-CPU `perf record` use `-B -N` (`--no-buildid --no-buildid-cache`) to avoid the expensive final build-id post-processing step that can otherwise stall or corrupt short heavy-load captures
 - `runqlat` is PID-scoped and millisecond-bucketed so scheduler delay is easy to compare between runs
+- automatic SVG generation is intentionally capped by `--perf-flamegraph-max-bytes` (default `16MiB`) so large steady-state captures do not spend minutes in `perf script` / `addr2line`; use text artifacts by default for large runs, or set `--perf-flamegraph-max-bytes -1` when you explicitly want the SVG anyway
 
 Replay against live DDEV schema definitions:
 
