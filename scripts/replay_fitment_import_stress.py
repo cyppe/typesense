@@ -5,6 +5,7 @@ import http.client
 import json
 import os
 import shutil
+import signal
 import socket
 import statistics
 import subprocess
@@ -346,6 +347,10 @@ class ScenarioResult:
     profile_exit_code: int | None
     profile_stdout_log: str | None
     profile_stderr_log: str | None
+    perf_data_path: str | None
+    perf_exit_code: int | None
+    perf_stdout_log: str | None
+    perf_stderr_log: str | None
     stdout_log: str
     stderr_log: str
 
@@ -1109,6 +1114,50 @@ def start_profile_command(
     return proc, stdout_log, stderr_log
 
 
+def start_perf_record(
+    process: TypesenseProcess,
+    label: str,
+    seconds: float,
+    frequency: int,
+    call_graph: str,
+) -> tuple[subprocess.Popen[str], Path, Path, Path]:
+    data_path = process.temp_dir / f"{label}.perf"
+    stdout_log = process.temp_dir / f"perf-{label}-stdout.log"
+    stderr_log = process.temp_dir / f"perf-{label}-stderr.log"
+    stdout_file = stdout_log.open("w", encoding="utf-8")
+    stderr_file = stderr_log.open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [
+            "sudo",
+            "perf",
+            "record",
+            "-F",
+            str(frequency),
+            "--call-graph",
+            call_graph,
+            "-o",
+            str(data_path),
+            "-p",
+            str(process.pid),
+        ],
+        stdout=stdout_file,
+        stderr=stderr_file,
+        text=True,
+        preexec_fn=os.setsid,
+    )
+
+    def stop_later() -> None:
+        time.sleep(seconds)
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
+
+    threading.Thread(target=stop_later, daemon=True).start()
+    return proc, data_path, stdout_log, stderr_log
+
+
 def run_scenario(
     label: str,
     binary: Path,
@@ -1120,6 +1169,11 @@ def run_scenario(
     profile_stdout_log: Path | None = None
     profile_stderr_log: Path | None = None
     profile_exit_code: int | None = None
+    perf_proc: subprocess.Popen[str] | None = None
+    perf_data_path: Path | None = None
+    perf_stdout_log: Path | None = None
+    perf_stderr_log: Path | None = None
+    perf_exit_code: int | None = None
     try:
         process.start()
         create_timings: dict[str, float] = {}
@@ -1239,6 +1293,14 @@ def run_scenario(
                 args.api_key,
                 label,
             )
+        if args.perf_seconds > 0:
+            perf_proc, perf_data_path, perf_stdout_log, perf_stderr_log = start_perf_record(
+                process,
+                label,
+                args.perf_seconds,
+                args.perf_frequency,
+                args.perf_call_graph,
+            )
 
         started = now_ms()
         import_stats = run_imports(
@@ -1305,6 +1367,30 @@ def run_scenario(
                     profile_proc.kill()
                     profile_exit_code = profile_proc.wait(timeout=5.0)
 
+        if perf_proc is not None:
+            try:
+                perf_exit_code = perf_proc.wait(timeout=args.profile_wait_timeout)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(perf_proc.pid, signal.SIGINT)
+                except ProcessLookupError:
+                    pass
+                try:
+                    perf_exit_code = perf_proc.wait(timeout=10.0)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(perf_proc.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        perf_exit_code = perf_proc.wait(timeout=5.0)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            os.killpg(perf_proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        perf_exit_code = perf_proc.wait(timeout=5.0)
+
         final_metrics = collect_final_metrics(process.base_url, args.api_key, args.timeout)
         import_summary = summarize_latencies(import_stats.batch_latencies_ms)
         import_summary.update(
@@ -1346,6 +1432,10 @@ def run_scenario(
             profile_exit_code=profile_exit_code,
             profile_stdout_log=str(profile_stdout_log) if profile_stdout_log is not None else None,
             profile_stderr_log=str(profile_stderr_log) if profile_stderr_log is not None else None,
+            perf_data_path=str(perf_data_path) if perf_data_path is not None else None,
+            perf_exit_code=perf_exit_code,
+            perf_stdout_log=str(perf_stdout_log) if perf_stdout_log is not None else None,
+            perf_stderr_log=str(perf_stderr_log) if perf_stderr_log is not None else None,
             stdout_log=str(process.stdout_log),
             stderr_log=str(process.stderr_log),
         )
@@ -1357,6 +1447,19 @@ def run_scenario(
             except subprocess.TimeoutExpired:
                 profile_proc.kill()
                 profile_proc.wait(timeout=5.0)
+        if perf_proc is not None and perf_proc.poll() is None:
+            try:
+                os.killpg(perf_proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                perf_proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(perf_proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                perf_proc.wait(timeout=5.0)
         process.stop()
         process.cleanup(args.keep_temp)
 
@@ -1443,6 +1546,14 @@ def print_result(result: ScenarioResult) -> None:
             f"  stdout={result.profile_stdout_log}\n"
             f"  stderr={result.profile_stderr_log}"
         )
+    if result.perf_data_path:
+        print(
+            "Perf capture:\n"
+            f"  data={result.perf_data_path}\n"
+            f"  exit_code={result.perf_exit_code}\n"
+            f"  stdout={result.perf_stdout_log}\n"
+            f"  stderr={result.perf_stderr_log}"
+        )
     print(f"Logs: stdout={result.stdout_log} stderr={result.stderr_log}")
 
 
@@ -1526,6 +1637,23 @@ def parse_args() -> argparse.Namespace:
         default=30.0,
         help="How long to wait for --profile-cmd to exit after the workload finishes before terminating it.",
     )
+    parser.add_argument(
+        "--perf-seconds",
+        type=float,
+        default=0.0,
+        help="Optionally capture a host-side perf record attached to the server PID for this many seconds.",
+    )
+    parser.add_argument(
+        "--perf-frequency",
+        type=int,
+        default=199,
+        help="Sampling frequency used when --perf-seconds is enabled.",
+    )
+    parser.add_argument(
+        "--perf-call-graph",
+        default="dwarf,16384",
+        help="Call graph mode passed to perf record when --perf-seconds is enabled.",
+    )
     parser.add_argument("--keep-temp", action="store_true", help="Keep temporary data/log directories for inspection.")
     parser.add_argument("--server-arg", action="append", default=[], help="Extra arg passed through to typesense-server.")
     parser.add_argument("--json-output", type=Path, help="Optional path to write the final summary JSON.")
@@ -1584,6 +1712,10 @@ def main() -> int:
                 "profile_exit_code": result.profile_exit_code,
                 "profile_stdout_log": result.profile_stdout_log,
                 "profile_stderr_log": result.profile_stderr_log,
+                "perf_data_path": result.perf_data_path,
+                "perf_exit_code": result.perf_exit_code,
+                "perf_stdout_log": result.perf_stdout_log,
+                "perf_stderr_log": result.perf_stderr_log,
                 "stdout_log": result.stdout_log,
                 "stderr_log": result.stderr_log,
             }
