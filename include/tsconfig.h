@@ -122,6 +122,7 @@ private:
     bool db_paranoid_memory_checks;
 
     uint32_t max_indexing_concurrency;
+    uint32_t import_batch_size;
 
     uint32_t proxy_rate_limit;
 
@@ -207,6 +208,7 @@ protected:
         this->db_paranoid_memory_checks = true;
 
         this->max_indexing_concurrency = 4;
+        this->import_batch_size = 40;
 
         this->proxy_rate_limit = 1000;
 
@@ -352,6 +354,10 @@ public:
 
     void set_max_indexing_concurrency(uint32_t val) {
         this->max_indexing_concurrency = val;
+    }
+
+    void set_import_batch_size(uint32_t val) {
+        this->import_batch_size = val;
     }
 
     void set_shutdown_delay_seconds(uint32_t val) {
@@ -745,6 +751,10 @@ public:
 
     uint32_t get_max_indexing_concurrency() const {
         return this->max_indexing_concurrency;
+    }
+
+    uint32_t get_import_batch_size() const {
+        return this->import_batch_size;
     }
 
     uint32_t get_proxy_rate_limit() const {

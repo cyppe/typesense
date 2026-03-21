@@ -207,6 +207,10 @@ void Config::load_config_env() {
         this->log_slow_searches_time_ms = std::stoi(get_env("TYPESENSE_LOG_SLOW_SEARCHES_TIME_MS"));
     }
 
+    if(!get_env("TYPESENSE_IMPORT_BATCH_SIZE").empty()) {
+        this->import_batch_size = std::stoi(get_env("TYPESENSE_IMPORT_BATCH_SIZE"));
+    }
+
     if(!get_env("TYPESENSE_NUM_COLLECTIONS_PARALLEL_LOAD").empty()) {
         this->num_collections_parallel_load = std::stoi(get_env("TYPESENSE_NUM_COLLECTIONS_PARALLEL_LOAD"));
     }
@@ -541,6 +545,10 @@ void Config::load_config_file(cmdline::parser& options) {
         this->log_slow_searches_time_ms = (int) reader.GetInteger("server", "log-slow-searches-time-ms", 30*1000);
     }
 
+    if(reader.Exists("server", "import-batch-size")) {
+        this->import_batch_size = (uint32_t) reader.GetInteger("server", "import-batch-size", 40);
+    }
+
     if(reader.Exists("server", "num-collections-parallel-load")) {
         this->num_collections_parallel_load = (int) reader.GetInteger("server", "num-collections-parallel-load", 0);
     }
@@ -867,6 +875,10 @@ void Config::load_config_cmd_args(cmdline::parser& options)  {
 
     if(options.exist("log-slow-searches-time-ms")) {
         this->log_slow_searches_time_ms = options.get<int>("log-slow-searches-time-ms");
+    }
+
+    if(options.exist("import-batch-size")) {
+        this->import_batch_size = options.get<uint32_t>("import-batch-size");
     }
 
     if(options.exist("num-collections-parallel-load")) {

@@ -26,6 +26,22 @@ struct http_request_metrics_state_t {
     std::atomic<bool> last_is_write{false};
     std::mutex last_route_mutex;
     std::string last_route;
+
+    std::atomic<uint64_t> import_last_total_ms{0};
+    std::atomic<uint64_t> import_last_auth_ms{0};
+    std::atomic<uint64_t> import_last_handler_wait_ms{0};
+    std::atomic<uint64_t> import_last_handler_ms{0};
+    std::atomic<uint64_t> import_last_unattributed_ms{0};
+    std::atomic<uint64_t> import_last_conn_to_start_ms{0};
+    std::atomic<uint64_t> import_last_response_dispatch_ms{0};
+    std::atomic<uint64_t> import_last_response_queue_ms{0};
+    std::atomic<uint64_t> import_last_response_progress_ms{0};
+    std::atomic<uint64_t> import_last_response_send_calls{0};
+    std::atomic<uint64_t> import_last_response_proceed_count{0};
+    std::atomic<uint64_t> import_last_response_defer_count{0};
+    std::atomic<uint64_t> import_last_response_first_send_delay_ms{0};
+    std::atomic<uint64_t> import_last_response_send_window_ms{0};
+    std::atomic<bool> import_last_response_final_sent{false};
 };
 
 http_request_metrics_state_t g_http_request_metrics;
@@ -205,6 +221,24 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
         std::lock_guard<std::mutex> lock(g_http_request_metrics.last_route_mutex);
         snapshot.last_route = g_http_request_metrics.last_route;
     }
+    snapshot.import_last_total_ms = g_http_request_metrics.import_last_total_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_auth_ms = g_http_request_metrics.import_last_auth_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_handler_wait_ms = g_http_request_metrics.import_last_handler_wait_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_handler_ms = g_http_request_metrics.import_last_handler_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_unattributed_ms = g_http_request_metrics.import_last_unattributed_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_conn_to_start_ms = g_http_request_metrics.import_last_conn_to_start_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_response_dispatch_ms = g_http_request_metrics.import_last_response_dispatch_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_response_queue_ms = g_http_request_metrics.import_last_response_queue_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_response_progress_ms = g_http_request_metrics.import_last_response_progress_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_response_send_calls = g_http_request_metrics.import_last_response_send_calls.load(std::memory_order_relaxed);
+    snapshot.import_last_response_proceed_count = g_http_request_metrics.import_last_response_proceed_count.load(std::memory_order_relaxed);
+    snapshot.import_last_response_defer_count = g_http_request_metrics.import_last_response_defer_count.load(std::memory_order_relaxed);
+    snapshot.import_last_response_first_send_delay_ms =
+        g_http_request_metrics.import_last_response_first_send_delay_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_response_send_window_ms =
+        g_http_request_metrics.import_last_response_send_window_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_response_final_sent =
+        g_http_request_metrics.import_last_response_final_sent.load(std::memory_order_relaxed);
     return snapshot;
 }
 
@@ -357,5 +391,25 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     {
         std::lock_guard<std::mutex> lock(g_http_request_metrics.last_route_mutex);
         g_http_request_metrics.last_route = route;
+    }
+
+    if (route.find("POST /collections/") == 0 && route.find("/documents/import") != std::string::npos) {
+        g_http_request_metrics.import_last_total_ms.store(total_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_auth_ms.store(auth_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_handler_wait_ms.store(handler_wait_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_handler_ms.store(handler_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_unattributed_ms.store(unattributed_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_conn_to_start_ms.store(conn_to_start_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_dispatch_ms.store(response_dispatch_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_queue_ms.store(response_queue_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_progress_ms.store(response_progress_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_send_calls.store(response_send_calls, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_proceed_count.store(response_proceed_count, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_defer_count.store(response_defer_count, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_first_send_delay_ms.store(response_first_send_delay_ms,
+                                                                              std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_send_window_ms.store(response_send_window_ms,
+                                                                         std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_final_sent.store(response_final_sent, std::memory_order_relaxed);
     }
 }

@@ -52,6 +52,8 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> last_add_many_num_indexed{0};
     std::atomic<uint64_t> last_add_many_doc_parse_ms{0};
     std::atomic<uint64_t> last_add_many_schema_update_ms{0};
+    std::atomic<uint64_t> last_add_many_batch_calls{0};
+    std::atomic<uint64_t> last_add_many_effective_index_batch_size{0};
     std::atomic<uint64_t> last_add_many_batch_index_ms{0};
     std::atomic<uint64_t> last_add_many_total_ms{0};
     std::atomic<uint64_t> last_reference_helper_ms{0};
@@ -103,6 +105,8 @@ void record_collection_add_many_metrics(const std::string& collection_name,
                                         uint64_t num_indexed,
                                         uint64_t doc_parse_ms,
                                         uint64_t schema_update_ms,
+                                        uint64_t batch_calls,
+                                        uint64_t effective_index_batch_size,
                                         uint64_t batch_index_ms,
                                         uint64_t total_ms) {
     g_collection_import_metrics.cumulative_add_many_calls.fetch_add(1, std::memory_order_relaxed);
@@ -112,6 +116,8 @@ void record_collection_add_many_metrics(const std::string& collection_name,
     g_collection_import_metrics.last_add_many_num_indexed.store(num_indexed, std::memory_order_relaxed);
     g_collection_import_metrics.last_add_many_doc_parse_ms.store(doc_parse_ms, std::memory_order_relaxed);
     g_collection_import_metrics.last_add_many_schema_update_ms.store(schema_update_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_add_many_batch_calls.store(batch_calls, std::memory_order_relaxed);
+    g_collection_import_metrics.last_add_many_effective_index_batch_size.store(effective_index_batch_size, std::memory_order_relaxed);
     g_collection_import_metrics.last_add_many_batch_index_ms.store(batch_index_ms, std::memory_order_relaxed);
     g_collection_import_metrics.last_add_many_total_ms.store(total_ms, std::memory_order_relaxed);
 
@@ -437,6 +443,9 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
     snapshot.last_add_many_num_indexed = g_collection_import_metrics.last_add_many_num_indexed.load(std::memory_order_relaxed);
     snapshot.last_add_many_doc_parse_ms = g_collection_import_metrics.last_add_many_doc_parse_ms.load(std::memory_order_relaxed);
     snapshot.last_add_many_schema_update_ms = g_collection_import_metrics.last_add_many_schema_update_ms.load(std::memory_order_relaxed);
+    snapshot.last_add_many_batch_calls = g_collection_import_metrics.last_add_many_batch_calls.load(std::memory_order_relaxed);
+    snapshot.last_add_many_effective_index_batch_size =
+        g_collection_import_metrics.last_add_many_effective_index_batch_size.load(std::memory_order_relaxed);
     snapshot.last_add_many_batch_index_ms = g_collection_import_metrics.last_add_many_batch_index_ms.load(std::memory_order_relaxed);
     snapshot.last_add_many_total_ms = g_collection_import_metrics.last_add_many_total_ms.load(std::memory_order_relaxed);
     snapshot.last_reference_helper_ms = g_collection_import_metrics.last_reference_helper_ms.load(std::memory_order_relaxed);
@@ -751,6 +760,7 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
     size_t num_indexed = 0;
     uint64_t doc_parse_ms = 0;
     uint64_t schema_update_ms = 0;
+    uint64_t batch_calls = 0;
     uint64_t batch_index_ms = 0;
     //bool exceeds_memory_limit = false;
 
@@ -861,6 +871,7 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
         if((i+1) % effective_index_batch_size == 0 || i == json_lines.size()-1 || repeated_doc) {
             const auto batch_index_start = std::chrono::steady_clock::now();
             batch_index(index_records, json_lines, num_indexed, return_doc, return_id, remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries);
+            batch_calls++;
             batch_index_ms += elapsed_ms_since(batch_index_start);
 
             if(found_batch_new_field) {
@@ -885,7 +896,8 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
     resp_summary["success"] = (num_indexed == json_lines.size());
 
     const uint64_t total_ms = elapsed_ms_since(add_many_start);
-    record_collection_add_many_metrics(name, json_lines.size(), num_indexed, doc_parse_ms, schema_update_ms, batch_index_ms, total_ms);
+    record_collection_add_many_metrics(name, json_lines.size(), num_indexed, doc_parse_ms, schema_update_ms,
+                                       batch_calls, effective_index_batch_size, batch_index_ms, total_ms);
     g_collection_import_metrics.active_add_many_calls.fetch_sub(1, std::memory_order_relaxed);
 
     if (total_ms >= 2000) {
@@ -894,6 +906,8 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
                         << " indexed=" << num_indexed
                         << " parse_ms=" << doc_parse_ms
                         << " schema_ms=" << schema_update_ms
+                        << " batch_calls=" << batch_calls
+                        << " index_batch_size=" << effective_index_batch_size
                         << " batch_index_ms=" << batch_index_ms
                         << " total_ms=" << total_ms;
     }

@@ -277,6 +277,22 @@ struct http_request_metrics_snapshot_t {
     bool last_response_final_sent = false;
     bool last_is_write = false;
     std::string last_route;
+
+    uint64_t import_last_total_ms = 0;
+    uint64_t import_last_auth_ms = 0;
+    uint64_t import_last_handler_wait_ms = 0;
+    uint64_t import_last_handler_ms = 0;
+    uint64_t import_last_unattributed_ms = 0;
+    uint64_t import_last_conn_to_start_ms = 0;
+    uint64_t import_last_response_dispatch_ms = 0;
+    uint64_t import_last_response_queue_ms = 0;
+    uint64_t import_last_response_progress_ms = 0;
+    uint64_t import_last_response_send_calls = 0;
+    uint64_t import_last_response_proceed_count = 0;
+    uint64_t import_last_response_defer_count = 0;
+    uint64_t import_last_response_first_send_delay_ms = 0;
+    uint64_t import_last_response_send_window_ms = 0;
+    bool import_last_response_final_sent = false;
 };
 
 struct message_dispatch_type_metrics_snapshot_t {

@@ -52,6 +52,8 @@ struct CollectionImportMetricsSnapshot {
     uint64_t last_add_many_num_indexed = 0;
     uint64_t last_add_many_doc_parse_ms = 0;
     uint64_t last_add_many_schema_update_ms = 0;
+    uint64_t last_add_many_batch_calls = 0;
+    uint64_t last_add_many_effective_index_batch_size = 0;
     uint64_t last_add_many_batch_index_ms = 0;
     uint64_t last_add_many_total_ms = 0;
     uint64_t last_reference_helper_ms = 0;

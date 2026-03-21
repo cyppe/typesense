@@ -928,6 +928,9 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["collection_import_last_num_indexed"] = collection_import_metrics.last_add_many_num_indexed;
     result["collection_import_last_doc_parse_ms"] = collection_import_metrics.last_add_many_doc_parse_ms;
     result["collection_import_last_schema_update_ms"] = collection_import_metrics.last_add_many_schema_update_ms;
+    result["collection_import_last_batch_calls"] = collection_import_metrics.last_add_many_batch_calls;
+    result["collection_import_last_effective_index_batch_size"] =
+        collection_import_metrics.last_add_many_effective_index_batch_size;
     result["collection_import_last_batch_index_ms"] = collection_import_metrics.last_add_many_batch_index_ms;
     result["collection_import_last_total_ms"] = collection_import_metrics.last_add_many_total_ms;
     result["collection_import_last_reference_helper_ms"] = collection_import_metrics.last_reference_helper_ms;
@@ -958,6 +961,7 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["import_handler_last_split_ms"] = g_import_handler_metrics.last_split_ms.load(std::memory_order_relaxed);
     result["import_handler_last_add_many_ms"] = g_import_handler_metrics.last_add_many_ms.load(std::memory_order_relaxed);
     result["import_handler_last_total_ms"] = g_import_handler_metrics.last_total_ms.load(std::memory_order_relaxed);
+    result["config_import_batch_size"] = Config::get_instance().get_import_batch_size();
 
     const auto collection_create_metrics = get_collection_create_metrics_snapshot();
     result["collection_create_cumulative_calls"] = collection_create_metrics.cumulative_calls;
@@ -996,6 +1000,23 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_request_last_response_first_send_delay_ms"] = http_request_metrics.last_response_first_send_delay_ms;
     result["http_request_last_response_send_window_ms"] = http_request_metrics.last_response_send_window_ms;
     result["http_request_last_response_final_sent"] = http_request_metrics.last_response_final_sent;
+    result["http_import_last_total_ms"] = http_request_metrics.import_last_total_ms;
+    result["http_import_last_auth_ms"] = http_request_metrics.import_last_auth_ms;
+    result["http_import_last_handler_wait_ms"] = http_request_metrics.import_last_handler_wait_ms;
+    result["http_import_last_handler_ms"] = http_request_metrics.import_last_handler_ms;
+    result["http_import_last_unattributed_ms"] = http_request_metrics.import_last_unattributed_ms;
+    result["http_import_last_conn_to_start_ms"] = http_request_metrics.import_last_conn_to_start_ms;
+    result["http_import_last_response_dispatch_ms"] = http_request_metrics.import_last_response_dispatch_ms;
+    result["http_import_last_response_queue_ms"] = http_request_metrics.import_last_response_queue_ms;
+    result["http_import_last_response_progress_ms"] = http_request_metrics.import_last_response_progress_ms;
+    result["http_import_last_response_send_calls"] = http_request_metrics.import_last_response_send_calls;
+    result["http_import_last_response_proceed_count"] = http_request_metrics.import_last_response_proceed_count;
+    result["http_import_last_response_defer_count"] = http_request_metrics.import_last_response_defer_count;
+    result["http_import_last_response_first_send_delay_ms"] =
+        http_request_metrics.import_last_response_first_send_delay_ms;
+    result["http_import_last_response_send_window_ms"] =
+        http_request_metrics.import_last_response_send_window_ms;
+    result["http_import_last_response_final_sent"] = http_request_metrics.import_last_response_final_sent;
 
     const auto message_dispatch_metrics = get_message_dispatch_metrics_snapshot();
     result["message_dispatch_stream_response_queued"] = message_dispatch_metrics.stream_response.queued;
@@ -2065,9 +2086,10 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
     const char *REMOTE_EMBEDDING_BATCH_SIZE = "remote_embedding_batch_size";
     const char *REMOTE_EMBEDDING_TIMEOUT_MS = "remote_embedding_timeout_ms";
     const char *REMOTE_EMBEDDING_NUM_TRIES = "remote_embedding_num_tries";
+    const auto default_import_batch_size = Config::get_instance().get_import_batch_size();
 
     if(req->params.count(BATCH_SIZE) == 0) {
-        req->params[BATCH_SIZE] = "40";
+        req->params[BATCH_SIZE] = std::to_string(default_import_batch_size);
     }
 
     if(req->params.count(REMOTE_EMBEDDING_BATCH_SIZE) == 0) {
@@ -3442,9 +3464,10 @@ Option<std::pair<std::string,std::string>> get_api_key_and_ip(const std::string&
 bool post_import_stemming_dictionary(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
     const char *BATCH_SIZE = "batch_size";
     const char *ID = "id";
+    const auto default_import_batch_size = Config::get_instance().get_import_batch_size();
 
     if(req->params.count(BATCH_SIZE) == 0) {
-        req->params[BATCH_SIZE] = "40";
+        req->params[BATCH_SIZE] = std::to_string(default_import_batch_size);
     }
 
     if(req->params.count(ID) == 0) {
