@@ -198,6 +198,21 @@ std::shared_ptr<http_req> build_import_chunk_request(const http_req& source,
     return request;
 }
 
+NuRaftAppliedRequest build_applied_request(const http_req& request) {
+    NuRaftAppliedRequest applied_request;
+    applied_request.route_hash = request.route_hash;
+    applied_request.route_kind = NuRaftRouteClassifier::classify(request.route_hash);
+    applied_request.params = request.params;
+    applied_request.metadata = request.metadata;
+    applied_request.body = request.body;
+    applied_request.first_chunk_aggregate = request.first_chunk_aggregate;
+    applied_request.last_chunk_aggregate = request.last_chunk_aggregate.load();
+    applied_request.start_ts = request.start_ts;
+    applied_request.log_index = request.log_index;
+    applied_request.is_binary_body = request.is_binary_body;
+    return applied_request;
+}
+
 template <typename ConsumeChunk>
 bool for_each_import_body_chunk(const std::string& body,
                                 ConsumeChunk&& consume_chunk,
@@ -821,8 +836,13 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         return;
     }
 
-    const std::string request_json = request->to_json();
-    if (!append_via_raft(request_json, *request, committed_index, forwarded_to_leader, error)) {
+    const std::string request_payload = build_applied_request(*request).encode_binary();
+    if (!append_via_raft(request_payload,
+                         NuRaftRequestEnvelope::kAppliedRequestBinaryEncoding,
+                         *request,
+                         committed_index,
+                         forwarded_to_leader,
+                         error)) {
         response->set_500(error);
         send_response(request, response);
         return;
@@ -988,11 +1008,12 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
                                    bool last_chunk,
                                    std::string& chunk_error) -> bool {
         auto chunk_request = build_import_chunk_request(*request, std::move(chunk_body), first_chunk, last_chunk);
-        const std::string request_json = chunk_request->to_json();
+        const std::string request_payload = build_applied_request(*chunk_request).encode_binary();
 
         uint64_t chunk_committed_index = 0;
         bool chunk_forwarded_to_leader = false;
-        if (!append_via_raft(request_json,
+        if (!append_via_raft(request_payload,
+                             NuRaftRequestEnvelope::kAppliedRequestBinaryEncoding,
                              *chunk_request,
                              chunk_committed_index,
                              chunk_forwarded_to_leader,
@@ -1827,9 +1848,9 @@ bool NuRaftHttpRuntimeService::initialize_raft_server(std::string& error) {
     raft_state_machine_ = nuraft::cs_new<TypesenseStateMachine>(
         layout_,
         materialized_state_sink_.get(),
-        [](uint64_t log_idx, const std::string& request_json) {
+        [](uint64_t log_idx, const NuRaftAppliedRequest& request) {
             (void)log_idx;
-            (void)request_json;
+            (void)request;
         });
 
     // Create state manager.
@@ -1889,7 +1910,8 @@ bool NuRaftHttpRuntimeService::initialize_raft_server(std::string& error) {
 }
 
 bool NuRaftHttpRuntimeService::append_via_raft(
-    const std::string& request_json,
+    const std::string& request_payload,
+    uint16_t payload_encoding,
     const http_req& request,
     uint64_t& committed_index,
     bool& forwarded_to_leader,
@@ -1903,7 +1925,7 @@ bool NuRaftHttpRuntimeService::append_via_raft(
     }
 
     // Serialize the request into a NuRaft buffer.
-    NuRaftRequestEnvelope envelope(request_json);
+    NuRaftRequestEnvelope envelope(request_payload, payload_encoding);
     std::string serialized = envelope.serialize();
 
     // Append to Raft — this blocks until committed by majority (blocking mode).

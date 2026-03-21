@@ -32,10 +32,10 @@ bool read_le(std::string_view bytes, size_t offset, T& value) {
 
 }  // namespace
 
-NuRaftRequestEnvelope::NuRaftRequestEnvelope(std::string request_json,
+NuRaftRequestEnvelope::NuRaftRequestEnvelope(std::string payload,
                                              uint16_t payload_encoding,
                                              uint16_t flags)
-    : payload_encoding_(payload_encoding), flags_(flags), request_json_(std::move(request_json)) {}
+    : payload_encoding_(payload_encoding), flags_(flags), payload_(std::move(payload)) {}
 
 uint16_t NuRaftRequestEnvelope::version() const {
     return version_;
@@ -49,20 +49,24 @@ uint16_t NuRaftRequestEnvelope::flags() const {
     return flags_;
 }
 
+const std::string& NuRaftRequestEnvelope::payload() const {
+    return payload_;
+}
+
 const std::string& NuRaftRequestEnvelope::request_json() const {
-    return request_json_;
+    return payload_;
 }
 
 std::string NuRaftRequestEnvelope::serialize() const {
     std::string out;
-    out.reserve(kHeaderSize + request_json_.size());
+    out.reserve(kHeaderSize + payload_.size());
 
     append_le<uint32_t>(out, kMagic);
     append_le<uint16_t>(out, version_);
     append_le<uint16_t>(out, payload_encoding_);
     append_le<uint16_t>(out, flags_);
-    append_le<uint64_t>(out, request_json_.size());
-    out.append(request_json_);
+    append_le<uint64_t>(out, payload_.size());
+    out.append(payload_);
 
     return out;
 }
@@ -108,7 +112,7 @@ bool NuRaftRequestEnvelope::deserialize(std::string_view bytes,
     envelope.version_ = version;
     envelope.payload_encoding_ = payload_encoding;
     envelope.flags_ = flags;
-    envelope.request_json_ = std::string(bytes.substr(kHeaderSize));
+    envelope.payload_ = std::string(bytes.substr(kHeaderSize));
     error.clear();
     return true;
 }

@@ -103,7 +103,8 @@ private:
                                        uint64_t& committed_index,
                                        bool& forwarded_to_leader,
                                        std::string& error);
-    bool append_via_raft(const std::string& request_json,
+    bool append_via_raft(const std::string& request_payload,
+                         uint16_t payload_encoding,
                          const http_req& request,
                          uint64_t& committed_index,
                          bool& forwarded_to_leader,

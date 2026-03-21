@@ -11,13 +11,14 @@
 #include <libnuraft/nuraft.hxx>
 
 #include "nuraft_snapshot_coordinator.h"
+#include "nuraft_applied_request_store.h"
 #include "nuraft_state_layout.h"
 #include "nuraft_state_machine_sink.h"
 
 // Callback invoked after each committed log entry is applied to the state machine.
-// Parameters: log_index, request_json (the NuRaftRequestEnvelope payload).
+// Parameters: log_index, decoded request.
 using TypesenseCommitCallback = std::function<void(uint64_t log_index,
-                                                   const std::string& request_json)>;
+                                                   const NuRaftAppliedRequest& request)>;
 
 // NuRaft state machine for Typesense.
 //

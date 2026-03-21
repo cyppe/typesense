@@ -952,6 +952,11 @@ public:
                                 const DIRTY_VALUES dirty_values,
                                 const std::string& id="");
 
+    Option<doc_seq_id_t> prepare_document_for_indexing(nlohmann::json& document,
+                                                       const index_operation_t& operation,
+                                                       const DIRTY_VALUES dirty_values,
+                                                       const std::string& id="");
+
 
     static uint32_t get_seq_id_from_key(const std::string & key);
 

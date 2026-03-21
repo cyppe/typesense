@@ -20,6 +20,69 @@ nlohmann::json encode_request(const NuRaftAppliedRequest& request);
 bool decode_request(const nlohmann::json& encoded,
                     NuRaftAppliedRequest& request,
                     std::string& error);
+std::string encode_binary_request(const NuRaftAppliedRequest& request);
+bool decode_binary_request(std::string_view encoded,
+                           NuRaftAppliedRequest& request,
+                           std::string& error);
+
+constexpr uint32_t kBinaryAppliedRequestMagic = 0x54534152;  // TSAR
+constexpr uint16_t kBinaryAppliedRequestVersion = 1;
+
+template <typename T>
+void append_le(std::string& out, T value) {
+    using UnsignedT = typename std::make_unsigned<T>::type;
+    const UnsignedT converted = static_cast<UnsignedT>(value);
+    for (size_t i = 0; i < sizeof(T); ++i) {
+        out.push_back(static_cast<char>((converted >> (i * 8)) & 0xff));
+    }
+}
+
+template <typename T>
+bool read_le(std::string_view bytes, size_t& offset, T& value) {
+    if (offset + sizeof(T) > bytes.size()) {
+        return false;
+    }
+
+    using UnsignedT = typename std::make_unsigned<T>::type;
+    UnsignedT converted = 0;
+    for (size_t i = 0; i < sizeof(T); ++i) {
+        converted |= static_cast<UnsignedT>(static_cast<unsigned char>(bytes[offset + i])) << (i * 8);
+    }
+
+    value = static_cast<T>(converted);
+    offset += sizeof(T);
+    return true;
+}
+
+void append_string(std::string& out, std::string_view value) {
+    append_le<uint64_t>(out, value.size());
+    out.append(value.data(), value.size());
+}
+
+bool read_string(std::string_view bytes, size_t& offset, std::string& value) {
+    uint64_t size = 0;
+    if (!read_le<uint64_t>(bytes, offset, size) || offset + size > bytes.size()) {
+        return false;
+    }
+
+    value.assign(bytes.data() + offset, size);
+    offset += size;
+    return true;
+}
+
+void append_bool(std::string& out, bool value) {
+    out.push_back(value ? '\1' : '\0');
+}
+
+bool read_bool(std::string_view bytes, size_t& offset, bool& value) {
+    if (offset >= bytes.size()) {
+        return false;
+    }
+
+    value = bytes[offset] != '\0';
+    ++offset;
+    return true;
+}
 
 }  // namespace
 
@@ -41,9 +104,23 @@ std::string NuRaftAppliedRequest::encode() const {
     return encode_request(*this).dump();
 }
 
+std::string NuRaftAppliedRequest::encode_binary() const {
+    return encode_binary_request(*this);
+}
+
 bool NuRaftAppliedRequest::from_log_entry(const NuRaftLogEntry& entry,
                                           NuRaftAppliedRequest& applied_request,
                                           std::string& error) {
+    if (entry.envelope.payload_encoding() == NuRaftRequestEnvelope::kAppliedRequestBinaryEncoding) {
+        if (!decode_binary_request(entry.envelope.payload(), applied_request, error)) {
+            return false;
+        }
+        applied_request.index = entry.index;
+        applied_request.route_kind = NuRaftRouteClassifier::classify(applied_request.route_hash);
+        error.clear();
+        return true;
+    }
+
     try {
         const nlohmann::json request = nlohmann::json::parse(entry.envelope.request_json());
         if (!request.contains("route_hash") || !request["route_hash"].is_number_unsigned() ||
@@ -78,6 +155,10 @@ bool NuRaftAppliedRequest::from_log_entry(const NuRaftLogEntry& entry,
 bool NuRaftAppliedRequest::decode(const std::string& encoded,
                                   NuRaftAppliedRequest& applied_request,
                                   std::string& error) {
+    if (decode_binary(encoded, applied_request, error)) {
+        return true;
+    }
+
     nlohmann::json parsed;
     try {
         parsed = nlohmann::json::parse(encoded);
@@ -87,6 +168,12 @@ bool NuRaftAppliedRequest::decode(const std::string& encoded,
     }
 
     return decode_request(parsed, applied_request, error);
+}
+
+bool NuRaftAppliedRequest::decode_binary(std::string_view encoded,
+                                         NuRaftAppliedRequest& applied_request,
+                                         std::string& error) {
+    return decode_binary_request(encoded, applied_request, error);
 }
 
 namespace {
@@ -105,6 +192,92 @@ nlohmann::json encode_request(const NuRaftAppliedRequest& request) {
         {"log_index", request.log_index},
         {"is_binary_body", request.is_binary_body},
     };
+}
+
+std::string encode_binary_request(const NuRaftAppliedRequest& request) {
+    std::string encoded;
+    encoded.reserve(sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint64_t) * 5 + sizeof(int64_t) +
+                    request.metadata.size() + request.body.size() + request.params.size() * 24);
+
+    append_le<uint32_t>(encoded, kBinaryAppliedRequestMagic);
+    append_le<uint16_t>(encoded, kBinaryAppliedRequestVersion);
+    append_le<uint64_t>(encoded, request.index);
+    append_le<uint64_t>(encoded, request.route_hash);
+    append_le<uint32_t>(encoded, request.params.size());
+    for (const auto& [key, value] : request.params) {
+        append_string(encoded, key);
+        append_string(encoded, value);
+    }
+    append_string(encoded, request.metadata);
+    append_string(encoded, request.body);
+    append_bool(encoded, request.first_chunk_aggregate);
+    append_bool(encoded, request.last_chunk_aggregate);
+    append_le<uint64_t>(encoded, request.start_ts);
+    append_le<int64_t>(encoded, request.log_index);
+    append_bool(encoded, request.is_binary_body);
+    return encoded;
+}
+
+bool decode_binary_request(std::string_view encoded,
+                           NuRaftAppliedRequest& request,
+                           std::string& error) {
+    size_t offset = 0;
+    uint32_t magic = 0;
+    uint16_t version = 0;
+    if (!read_le<uint32_t>(encoded, offset, magic) ||
+        !read_le<uint16_t>(encoded, offset, version)) {
+        error = "NuRaft applied request binary payload is truncated.";
+        return false;
+    }
+
+    if (magic != kBinaryAppliedRequestMagic) {
+        error = "NuRaft applied request binary payload has an invalid magic.";
+        return false;
+    }
+
+    if (version != kBinaryAppliedRequestVersion) {
+        error = "NuRaft applied request binary payload version is unsupported.";
+        return false;
+    }
+
+    request = {};
+    uint32_t params_count = 0;
+    if (!read_le<uint64_t>(encoded, offset, request.index) ||
+        !read_le<uint64_t>(encoded, offset, request.route_hash) ||
+        !read_le<uint32_t>(encoded, offset, params_count)) {
+        error = "NuRaft applied request binary payload is missing fixed fields.";
+        return false;
+    }
+
+    for (uint32_t i = 0; i < params_count; ++i) {
+        std::string key;
+        std::string value;
+        if (!read_string(encoded, offset, key) || !read_string(encoded, offset, value)) {
+            error = "NuRaft applied request binary payload has a truncated params section.";
+            return false;
+        }
+        request.params.emplace(std::move(key), std::move(value));
+    }
+
+    if (!read_string(encoded, offset, request.metadata) ||
+        !read_string(encoded, offset, request.body) ||
+        !read_bool(encoded, offset, request.first_chunk_aggregate) ||
+        !read_bool(encoded, offset, request.last_chunk_aggregate) ||
+        !read_le<uint64_t>(encoded, offset, request.start_ts) ||
+        !read_le<int64_t>(encoded, offset, request.log_index) ||
+        !read_bool(encoded, offset, request.is_binary_body)) {
+        error = "NuRaft applied request binary payload is truncated in the tail section.";
+        return false;
+    }
+
+    if (offset != encoded.size()) {
+        error = "NuRaft applied request binary payload has unexpected trailing bytes.";
+        return false;
+    }
+
+    request.route_kind = NuRaftRouteClassifier::classify(request.route_hash);
+    error.clear();
+    return true;
 }
 
 bool decode_request(const nlohmann::json& encoded,

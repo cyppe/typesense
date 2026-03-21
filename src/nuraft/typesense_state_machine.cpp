@@ -97,7 +97,7 @@ nuraft::ptr<nuraft::buffer> TypesenseStateMachine::commit(
 
     // Notify the runtime so it can mirror to CollectionManager.
     if (commit_callback_) {
-        commit_callback_(log_idx, envelope.request_json());
+        commit_callback_(log_idx, applied);
     }
 
     return nullptr;

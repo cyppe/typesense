@@ -544,21 +544,23 @@ nlohmann::json NaturalLanguageSearchModelManager::build_generated_params(const s
     return generated_params;
 }
 
-void NaturalLanguageSearchModelManager::add_nl_query_data_to_results(nlohmann::json& results_json, const std::map<std::string, std::string>* req_params, uint64_t nl_processing_time_ms, bool error) {
-
+bool NaturalLanguageSearchModelManager::has_nl_query_data(const std::map<std::string, std::string>* req_params) {
     if (req_params == nullptr) {
-        return;
+        return false;
     }
 
-    const bool has_nl_data =
+    return
         req_params->count("processed_by_nl_model") > 0 ||
         req_params->count("_llm_response") > 0      ||
         req_params->count("llm_response_str") > 0   ||
         req_params->count("_original_nl_query") > 0 ||
         req_params->count("_fallback_q_used") > 0 ||
         req_params->count("_nl_processing_failed") > 0;
+}
 
-    if (!has_nl_data) {
+void NaturalLanguageSearchModelManager::add_nl_query_data_to_results(nlohmann::json& results_json, const std::map<std::string, std::string>* req_params, uint64_t nl_processing_time_ms, bool error) {
+
+    if (!has_nl_query_data(req_params)) {
         return;
     }
 

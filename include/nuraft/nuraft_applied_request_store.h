@@ -31,6 +31,7 @@ struct NuRaftAppliedRequest {
 
     bool operator==(const NuRaftAppliedRequest& other) const;
     std::string encode() const;
+    std::string encode_binary() const;
 
     static bool from_log_entry(const NuRaftLogEntry& entry,
                                NuRaftAppliedRequest& applied_request,
@@ -38,6 +39,9 @@ struct NuRaftAppliedRequest {
     static bool decode(const std::string& encoded,
                        NuRaftAppliedRequest& applied_request,
                        std::string& error);
+    static bool decode_binary(std::string_view encoded,
+                              NuRaftAppliedRequest& applied_request,
+                              std::string& error);
 };
 
 class NuRaftAppliedRequestStore {

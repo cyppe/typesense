@@ -768,6 +768,24 @@ bool HttpServer::should_handle_inline_route(std::string_view root_resource, cons
         return false;
     }
 
+    const auto& parts = rpath.path_parts;
+    const bool is_runtime_collections_route =
+        rpath.http_method == "GET" &&
+        parts.size() == 1 &&
+        parts[0] == "collections";
+    const bool is_runtime_search_route =
+        rpath.http_method == "GET" &&
+        parts.size() == 4 &&
+        parts[0] == "collections" &&
+        !parts[1].empty() &&
+        parts[1][0] == ':' &&
+        parts[2] == "documents" &&
+        parts[3] == "search";
+
+    if(is_runtime_collections_route || is_runtime_search_route) {
+        return true;
+    }
+
     if(rpath.http_method == "GET" &&
        (rpath.handler == get_collections ||
         rpath.handler == get_aliases ||

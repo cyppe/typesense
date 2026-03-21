@@ -23,6 +23,12 @@ struct http_request_metrics_state_t {
     std::atomic<uint64_t> last_response_defer_count{0};
     std::atomic<uint64_t> last_response_first_send_delay_ms{0};
     std::atomic<uint64_t> last_response_send_window_ms{0};
+    std::atomic<uint64_t> last_h2o_header_ms{0};
+    std::atomic<uint64_t> last_h2o_body_ms{0};
+    std::atomic<uint64_t> last_h2o_request_total_ms{0};
+    std::atomic<uint64_t> last_h2o_process_ms{0};
+    std::atomic<uint64_t> last_h2o_response_ms{0};
+    std::atomic<uint64_t> last_h2o_total_ms{0};
     std::atomic<bool> last_response_final_sent{false};
     std::atomic<bool> last_is_write{false};
     std::mutex last_route_mutex;
@@ -43,6 +49,12 @@ struct http_request_metrics_state_t {
     std::atomic<uint64_t> import_last_response_defer_count{0};
     std::atomic<uint64_t> import_last_response_first_send_delay_ms{0};
     std::atomic<uint64_t> import_last_response_send_window_ms{0};
+    std::atomic<uint64_t> import_last_h2o_header_ms{0};
+    std::atomic<uint64_t> import_last_h2o_body_ms{0};
+    std::atomic<uint64_t> import_last_h2o_request_total_ms{0};
+    std::atomic<uint64_t> import_last_h2o_process_ms{0};
+    std::atomic<uint64_t> import_last_h2o_response_ms{0};
+    std::atomic<uint64_t> import_last_h2o_total_ms{0};
     std::atomic<bool> import_last_response_final_sent{false};
     std::atomic<uint64_t> import_cumulative_requests{0};
     std::atomic<uint64_t> import_cumulative_total_ms{0};
@@ -52,6 +64,10 @@ struct http_request_metrics_state_t {
     std::atomic<uint64_t> import_cumulative_unattributed_ms{0};
     std::atomic<uint64_t> import_cumulative_response_pre_dispatch_wait_ms{0};
     std::atomic<uint64_t> import_cumulative_response_queue_ms{0};
+    std::atomic<uint64_t> import_cumulative_h2o_request_total_ms{0};
+    std::atomic<uint64_t> import_cumulative_h2o_process_ms{0};
+    std::atomic<uint64_t> import_cumulative_h2o_response_ms{0};
+    std::atomic<uint64_t> import_cumulative_h2o_total_ms{0};
     std::atomic<uint64_t> import_max_total_ms{0};
 };
 
@@ -69,6 +85,8 @@ struct http_route_lifecycle_metrics_state_t {
     std::atomic<uint64_t> last_response_pre_dispatch_wait_ms{0};
     std::atomic<uint64_t> last_response_queue_ms{0};
     std::atomic<uint64_t> last_response_progress_ms{0};
+    std::atomic<uint64_t> last_h2o_request_total_ms{0};
+    std::atomic<uint64_t> last_h2o_total_ms{0};
     std::atomic<uint64_t> cumulative_total_ms{0};
     std::atomic<uint64_t> cumulative_auth_ms{0};
     std::atomic<uint64_t> cumulative_handler_wait_ms{0};
@@ -77,6 +95,8 @@ struct http_route_lifecycle_metrics_state_t {
     std::atomic<uint64_t> cumulative_conn_to_start_ms{0};
     std::atomic<uint64_t> cumulative_response_queue_ms{0};
     std::atomic<uint64_t> cumulative_response_pre_dispatch_wait_ms{0};
+    std::atomic<uint64_t> cumulative_h2o_request_total_ms{0};
+    std::atomic<uint64_t> cumulative_h2o_total_ms{0};
     std::atomic<uint64_t> max_total_ms{0};
 };
 
@@ -130,6 +150,24 @@ uint64_t average_or_zero(uint64_t total, uint64_t count) {
     return count == 0 ? 0 : (total / count);
 }
 
+bool timeval_is_nonzero(const timeval& value) {
+    return value.tv_sec != 0 || value.tv_usec != 0;
+}
+
+uint64_t timeval_to_us(const timeval& value) {
+    return (static_cast<uint64_t>(value.tv_sec) * 1000 * 1000) + static_cast<uint64_t>(value.tv_usec);
+}
+
+uint64_t duration_ms_between(const timeval& from, const timeval& until) {
+    if(!timeval_is_nonzero(from) || !timeval_is_nonzero(until)) {
+        return 0;
+    }
+
+    const uint64_t from_us = timeval_to_us(from);
+    const uint64_t until_us = timeval_to_us(until);
+    return until_us >= from_us ? (until_us - from_us) / 1000 : 0;
+}
+
 http_route_lifecycle_metrics_snapshot_t snapshot_hot_http_route_metrics(
     const http_route_lifecycle_metrics_state_t& state) {
     http_route_lifecycle_metrics_snapshot_t snapshot;
@@ -145,6 +183,8 @@ http_route_lifecycle_metrics_snapshot_t snapshot_hot_http_route_metrics(
         state.last_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed);
     snapshot.last_response_queue_ms = state.last_response_queue_ms.load(std::memory_order_relaxed);
     snapshot.last_response_progress_ms = state.last_response_progress_ms.load(std::memory_order_relaxed);
+    snapshot.last_h2o_request_total_ms = state.last_h2o_request_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_h2o_total_ms = state.last_h2o_total_ms.load(std::memory_order_relaxed);
     snapshot.max_total_ms = state.max_total_ms.load(std::memory_order_relaxed);
     snapshot.avg_total_ms = average_or_zero(
         state.cumulative_total_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
@@ -163,6 +203,10 @@ http_route_lifecycle_metrics_snapshot_t snapshot_hot_http_route_metrics(
     snapshot.avg_response_pre_dispatch_wait_ms = average_or_zero(
         state.cumulative_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed),
         snapshot.cumulative_requests);
+    snapshot.avg_h2o_request_total_ms = average_or_zero(
+        state.cumulative_h2o_request_total_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
+    snapshot.avg_h2o_total_ms = average_or_zero(
+        state.cumulative_h2o_total_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
     return snapshot;
 }
 
@@ -197,7 +241,8 @@ void record_hot_http_route_metrics(http_route_lifecycle_metrics_state_t& state, 
                                    uint64_t handler_wait_ms, uint64_t handler_ms, uint64_t unattributed_ms,
                                    uint64_t conn_to_start_ms, uint64_t response_dispatch_ms,
                                    uint64_t response_pre_dispatch_wait_ms, uint64_t response_queue_ms,
-                                   uint64_t response_progress_ms) {
+                                   uint64_t response_progress_ms, uint64_t h2o_request_total_ms,
+                                   uint64_t h2o_total_ms) {
     state.cumulative_requests.fetch_add(1, std::memory_order_relaxed);
     state.last_total_ms.store(total_ms, std::memory_order_relaxed);
     state.last_auth_ms.store(auth_ms, std::memory_order_relaxed);
@@ -209,6 +254,8 @@ void record_hot_http_route_metrics(http_route_lifecycle_metrics_state_t& state, 
     state.last_response_pre_dispatch_wait_ms.store(response_pre_dispatch_wait_ms, std::memory_order_relaxed);
     state.last_response_queue_ms.store(response_queue_ms, std::memory_order_relaxed);
     state.last_response_progress_ms.store(response_progress_ms, std::memory_order_relaxed);
+    state.last_h2o_request_total_ms.store(h2o_request_total_ms, std::memory_order_relaxed);
+    state.last_h2o_total_ms.store(h2o_total_ms, std::memory_order_relaxed);
     state.cumulative_total_ms.fetch_add(total_ms, std::memory_order_relaxed);
     state.cumulative_auth_ms.fetch_add(auth_ms, std::memory_order_relaxed);
     state.cumulative_handler_wait_ms.fetch_add(handler_wait_ms, std::memory_order_relaxed);
@@ -217,6 +264,8 @@ void record_hot_http_route_metrics(http_route_lifecycle_metrics_state_t& state, 
     state.cumulative_conn_to_start_ms.fetch_add(conn_to_start_ms, std::memory_order_relaxed);
     state.cumulative_response_queue_ms.fetch_add(response_queue_ms, std::memory_order_relaxed);
     state.cumulative_response_pre_dispatch_wait_ms.fetch_add(response_pre_dispatch_wait_ms, std::memory_order_relaxed);
+    state.cumulative_h2o_request_total_ms.fetch_add(h2o_request_total_ms, std::memory_order_relaxed);
+    state.cumulative_h2o_total_ms.fetch_add(h2o_total_ms, std::memory_order_relaxed);
 
     auto prev_max = state.max_total_ms.load(std::memory_order_relaxed);
     while(total_ms > prev_max &&
@@ -369,6 +418,12 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
     snapshot.last_response_defer_count = g_http_request_metrics.last_response_defer_count.load(std::memory_order_relaxed);
     snapshot.last_response_first_send_delay_ms = g_http_request_metrics.last_response_first_send_delay_ms.load(std::memory_order_relaxed);
     snapshot.last_response_send_window_ms = g_http_request_metrics.last_response_send_window_ms.load(std::memory_order_relaxed);
+    snapshot.last_h2o_header_ms = g_http_request_metrics.last_h2o_header_ms.load(std::memory_order_relaxed);
+    snapshot.last_h2o_body_ms = g_http_request_metrics.last_h2o_body_ms.load(std::memory_order_relaxed);
+    snapshot.last_h2o_request_total_ms = g_http_request_metrics.last_h2o_request_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_h2o_process_ms = g_http_request_metrics.last_h2o_process_ms.load(std::memory_order_relaxed);
+    snapshot.last_h2o_response_ms = g_http_request_metrics.last_h2o_response_ms.load(std::memory_order_relaxed);
+    snapshot.last_h2o_total_ms = g_http_request_metrics.last_h2o_total_ms.load(std::memory_order_relaxed);
     snapshot.last_response_final_sent = g_http_request_metrics.last_response_final_sent.load(std::memory_order_relaxed);
     snapshot.last_is_write = g_http_request_metrics.last_is_write.load(std::memory_order_relaxed);
     {
@@ -393,6 +448,14 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
         g_http_request_metrics.import_last_response_first_send_delay_ms.load(std::memory_order_relaxed);
     snapshot.import_last_response_send_window_ms =
         g_http_request_metrics.import_last_response_send_window_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_h2o_header_ms = g_http_request_metrics.import_last_h2o_header_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_h2o_body_ms = g_http_request_metrics.import_last_h2o_body_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_h2o_request_total_ms =
+        g_http_request_metrics.import_last_h2o_request_total_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_h2o_process_ms = g_http_request_metrics.import_last_h2o_process_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_h2o_response_ms =
+        g_http_request_metrics.import_last_h2o_response_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_h2o_total_ms = g_http_request_metrics.import_last_h2o_total_ms.load(std::memory_order_relaxed);
     snapshot.import_last_response_final_sent =
         g_http_request_metrics.import_last_response_final_sent.load(std::memory_order_relaxed);
     snapshot.import_cumulative_requests =
@@ -418,6 +481,18 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
         import_cumulative_requests);
     snapshot.import_avg_response_pre_dispatch_wait_ms = average_or_zero(
         g_http_request_metrics.import_cumulative_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
+    snapshot.import_avg_h2o_request_total_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_h2o_request_total_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
+    snapshot.import_avg_h2o_process_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_h2o_process_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
+    snapshot.import_avg_h2o_response_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_h2o_response_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
+    snapshot.import_avg_h2o_total_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_h2o_total_ms.load(std::memory_order_relaxed),
         import_cumulative_requests);
     snapshot.import_max_total_ms = g_http_request_metrics.import_max_total_ms.load(std::memory_order_relaxed);
     return snapshot;
@@ -547,6 +622,28 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
         response_send_window_ms = (response_last_send_ts - response_first_send_ts) / 1000;
     }
 
+    uint64_t h2o_header_ms = 0;
+    uint64_t h2o_body_ms = 0;
+    uint64_t h2o_request_total_ms = 0;
+    uint64_t h2o_process_ms = 0;
+    uint64_t h2o_response_ms = 0;
+    uint64_t h2o_total_ms = 0;
+    if(req._req != nullptr) {
+        const auto& request_begin_at = req._req->timestamps.request_begin_at;
+        const auto& request_body_begin_at = req._req->timestamps.request_body_begin_at;
+        const auto& processed_at = req._req->processed_at.at;
+        const auto& response_start_at = req._req->timestamps.response_start_at;
+        const auto& response_end_at = req._req->timestamps.response_end_at;
+        const timeval header_until = timeval_is_nonzero(request_body_begin_at) ? request_body_begin_at : processed_at;
+        const timeval body_from = timeval_is_nonzero(request_body_begin_at) ? request_body_begin_at : processed_at;
+        h2o_header_ms = duration_ms_between(request_begin_at, header_until);
+        h2o_body_ms = duration_ms_between(body_from, processed_at);
+        h2o_request_total_ms = duration_ms_between(request_begin_at, processed_at);
+        h2o_process_ms = duration_ms_between(processed_at, response_start_at);
+        h2o_response_ms = duration_ms_between(response_start_at, response_end_at);
+        h2o_total_ms = duration_ms_between(request_begin_at, response_end_at);
+    }
+
     uint64_t attributed_ms = auth_ms + handler_wait_ms + handler_ms;
     uint64_t unattributed_ms = total_ms >= attributed_ms ? (total_ms - attributed_ms) : 0;
 
@@ -570,6 +667,12 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     g_http_request_metrics.last_response_defer_count.store(response_defer_count, std::memory_order_relaxed);
     g_http_request_metrics.last_response_first_send_delay_ms.store(response_first_send_delay_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_response_send_window_ms.store(response_send_window_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_header_ms.store(h2o_header_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_body_ms.store(h2o_body_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_request_total_ms.store(h2o_request_total_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_process_ms.store(h2o_process_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_response_ms.store(h2o_response_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_total_ms.store(h2o_total_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_response_final_sent.store(response_final_sent, std::memory_order_relaxed);
     g_http_request_metrics.last_is_write.store(req.is_write.load(std::memory_order_relaxed), std::memory_order_relaxed);
     {
@@ -596,6 +699,12 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
                                                                               std::memory_order_relaxed);
         g_http_request_metrics.import_last_response_send_window_ms.store(response_send_window_ms,
                                                                          std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_header_ms.store(h2o_header_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_body_ms.store(h2o_body_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_request_total_ms.store(h2o_request_total_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_process_ms.store(h2o_process_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_response_ms.store(h2o_response_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_total_ms.store(h2o_total_ms, std::memory_order_relaxed);
         g_http_request_metrics.import_last_response_final_sent.store(response_final_sent, std::memory_order_relaxed);
         g_http_request_metrics.import_cumulative_requests.fetch_add(1, std::memory_order_relaxed);
         g_http_request_metrics.import_cumulative_total_ms.fetch_add(total_ms, std::memory_order_relaxed);
@@ -606,6 +715,14 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
         g_http_request_metrics.import_cumulative_response_pre_dispatch_wait_ms.fetch_add(response_pre_dispatch_wait_ms,
                                                                                          std::memory_order_relaxed);
         g_http_request_metrics.import_cumulative_response_queue_ms.fetch_add(response_queue_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_h2o_request_total_ms.fetch_add(h2o_request_total_ms,
+                                                                                std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_h2o_process_ms.fetch_add(h2o_process_ms,
+                                                                          std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_h2o_response_ms.fetch_add(h2o_response_ms,
+                                                                           std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_h2o_total_ms.fetch_add(h2o_total_ms,
+                                                                        std::memory_order_relaxed);
         const uint64_t prev_max = g_http_request_metrics.import_max_total_ms.load(std::memory_order_relaxed);
         if (total_ms > prev_max) {
             g_http_request_metrics.import_max_total_ms.store(total_ms, std::memory_order_relaxed);
@@ -616,6 +733,7 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     if(hot_route_metrics != nullptr) {
         record_hot_http_route_metrics(*hot_route_metrics, total_ms, auth_ms, handler_wait_ms, handler_ms,
                                       unattributed_ms, conn_to_start_ms, response_dispatch_ms,
-                                      response_pre_dispatch_wait_ms, response_queue_ms, response_progress_ms);
+                                      response_pre_dispatch_wait_ms, response_queue_ms, response_progress_ms,
+                                      h2o_request_total_ms, h2o_total_ms);
     }
 }

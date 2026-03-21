@@ -606,7 +606,7 @@ bool NuRaftKvStateMachineSink::apply_all(const std::vector<NuRaftAppliedRequest>
     rocksdb::WriteBatch batch;
     std::map<std::string, ImportReplaySession> import_sessions;
     for (const auto& request : requests) {
-        batch.Put(applied_key(request.index), request.encode());
+        batch.Put(applied_key(request.index), request.encode_binary());
         if (!apply_materialized_mutation(db_.get(), batch, request, import_sessions, error)) {
             return false;
         }

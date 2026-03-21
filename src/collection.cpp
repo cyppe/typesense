@@ -35,6 +35,7 @@
 #include "sole.hpp"
 #include "synonym_index_manager.h"
 #include "curation_index_manager.h"
+#include <yyjson.h>
 
 const std::string curation_t::MATCH_EXACT = "exact";
 const std::string curation_t::MATCH_CONTAINS = "contains";
@@ -42,6 +43,69 @@ const std::string curation_t::MATCH_CONTAINS = "contains";
 const int ALTER_STATUS_MSG_COUNT = 5; // we keep track of last 5 status of alter op
 
 namespace {
+
+bool yyjson_to_nlohmann(yyjson_val* value, nlohmann::json& out) {
+    if(value == nullptr || yyjson_is_null(value)) {
+        out = nullptr;
+        return true;
+    }
+
+    if(yyjson_is_bool(value)) {
+        out = yyjson_get_bool(value);
+        return true;
+    }
+
+    if(yyjson_is_uint(value)) {
+        out = yyjson_get_uint(value);
+        return true;
+    }
+
+    if(yyjson_is_sint(value)) {
+        out = yyjson_get_sint(value);
+        return true;
+    }
+
+    if(yyjson_is_real(value)) {
+        out = yyjson_get_real(value);
+        return true;
+    }
+
+    if(yyjson_is_str(value)) {
+        out = std::string(yyjson_get_str(value), yyjson_get_len(value));
+        return true;
+    }
+
+    if(yyjson_is_arr(value)) {
+        out = nlohmann::json::array();
+        size_t idx, max;
+        yyjson_val* entry;
+        yyjson_arr_foreach(value, idx, max, entry) {
+            nlohmann::json child;
+            if(!yyjson_to_nlohmann(entry, child)) {
+                return false;
+            }
+            out.push_back(std::move(child));
+        }
+        return true;
+    }
+
+    if(yyjson_is_obj(value)) {
+        out = nlohmann::json::object();
+        size_t idx, max;
+        yyjson_val* key;
+        yyjson_val* entry;
+        yyjson_obj_foreach(value, idx, max, key, entry) {
+            nlohmann::json child;
+            if(!yyjson_to_nlohmann(entry, child)) {
+                return false;
+            }
+            out[std::string(yyjson_get_str(key), yyjson_get_len(key))] = std::move(child);
+        }
+        return true;
+    }
+
+    return false;
+}
 
 struct collection_import_metrics_state_t {
     std::atomic<uint64_t> active_add_many_calls{0};
@@ -570,12 +634,35 @@ Option<doc_seq_id_t> Collection::to_doc(std::string_view json_str, nlohmann::jso
                                         const index_operation_t& operation,
                                         const DIRTY_VALUES dirty_values,
                                         const std::string& id) {
+    yyjson_doc* yy_doc = yyjson_read_opts(const_cast<char*>(json_str.data()), json_str.size(), 0, nullptr, nullptr);
+    if(yy_doc != nullptr) {
+        yyjson_val* root = yyjson_doc_get_root(yy_doc);
+        const bool converted = yyjson_to_nlohmann(root, document);
+        yyjson_doc_free(yy_doc);
+
+        if(converted) {
+            return prepare_document_for_indexing(document, operation, dirty_values, id);
+        }
+
+        TS_LOG(ERROR) << "yyjson conversion error for import payload.";
+        return Option<doc_seq_id_t>(400, "Bad JSON: unsupported value encountered while converting parsed document.");
+    }
+
     try {
         document = nlohmann::json::parse(json_str.begin(), json_str.end());
     } catch(const std::exception& e) {
         TS_LOG(ERROR) << "JSON error: " << e.what();
         return Option<doc_seq_id_t>(400, std::string("Bad JSON: ") + e.what());
     }
+
+    return prepare_document_for_indexing(document, operation, dirty_values, id);
+}
+
+Option<doc_seq_id_t> Collection::prepare_document_for_indexing(nlohmann::json& document,
+                                                               const index_operation_t& operation,
+                                                               const DIRTY_VALUES dirty_values,
+                                                               const std::string& id) {
+    (void) dirty_values;
 
     if(!document.is_object()) {
         return Option<doc_seq_id_t>(400, "Bad JSON: not a properly formed document.");

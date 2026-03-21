@@ -1158,6 +1158,12 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_request_last_response_defer_count"] = http_request_metrics.last_response_defer_count;
     result["http_request_last_response_first_send_delay_ms"] = http_request_metrics.last_response_first_send_delay_ms;
     result["http_request_last_response_send_window_ms"] = http_request_metrics.last_response_send_window_ms;
+    result["http_request_last_h2o_header_ms"] = http_request_metrics.last_h2o_header_ms;
+    result["http_request_last_h2o_body_ms"] = http_request_metrics.last_h2o_body_ms;
+    result["http_request_last_h2o_request_total_ms"] = http_request_metrics.last_h2o_request_total_ms;
+    result["http_request_last_h2o_process_ms"] = http_request_metrics.last_h2o_process_ms;
+    result["http_request_last_h2o_response_ms"] = http_request_metrics.last_h2o_response_ms;
+    result["http_request_last_h2o_total_ms"] = http_request_metrics.last_h2o_total_ms;
     result["http_request_last_response_final_sent"] = http_request_metrics.last_response_final_sent;
     result["http_import_last_total_ms"] = http_request_metrics.import_last_total_ms;
     result["http_import_last_auth_ms"] = http_request_metrics.import_last_auth_ms;
@@ -1177,6 +1183,12 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         http_request_metrics.import_last_response_first_send_delay_ms;
     result["http_import_last_response_send_window_ms"] =
         http_request_metrics.import_last_response_send_window_ms;
+    result["http_import_last_h2o_header_ms"] = http_request_metrics.import_last_h2o_header_ms;
+    result["http_import_last_h2o_body_ms"] = http_request_metrics.import_last_h2o_body_ms;
+    result["http_import_last_h2o_request_total_ms"] = http_request_metrics.import_last_h2o_request_total_ms;
+    result["http_import_last_h2o_process_ms"] = http_request_metrics.import_last_h2o_process_ms;
+    result["http_import_last_h2o_response_ms"] = http_request_metrics.import_last_h2o_response_ms;
+    result["http_import_last_h2o_total_ms"] = http_request_metrics.import_last_h2o_total_ms;
     result["http_import_last_response_final_sent"] = http_request_metrics.import_last_response_final_sent;
     result["http_import_cumulative_requests"] = http_request_metrics.import_cumulative_requests;
     result["http_import_avg_total_ms"] = http_request_metrics.import_avg_total_ms;
@@ -1187,6 +1199,10 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_import_avg_response_pre_dispatch_wait_ms"] =
         http_request_metrics.import_avg_response_pre_dispatch_wait_ms;
     result["http_import_avg_response_queue_ms"] = http_request_metrics.import_avg_response_queue_ms;
+    result["http_import_avg_h2o_request_total_ms"] = http_request_metrics.import_avg_h2o_request_total_ms;
+    result["http_import_avg_h2o_process_ms"] = http_request_metrics.import_avg_h2o_process_ms;
+    result["http_import_avg_h2o_response_ms"] = http_request_metrics.import_avg_h2o_response_ms;
+    result["http_import_avg_h2o_total_ms"] = http_request_metrics.import_avg_h2o_total_ms;
     result["http_import_max_total_ms"] = http_request_metrics.import_max_total_ms;
 
     const auto hot_http_route_metrics = get_hot_http_route_metrics_snapshot();
@@ -1203,6 +1219,8 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         result[prefix + "_last_response_pre_dispatch_wait_ms"] = metrics.last_response_pre_dispatch_wait_ms;
         result[prefix + "_last_response_queue_ms"] = metrics.last_response_queue_ms;
         result[prefix + "_last_response_progress_ms"] = metrics.last_response_progress_ms;
+        result[prefix + "_last_h2o_request_total_ms"] = metrics.last_h2o_request_total_ms;
+        result[prefix + "_last_h2o_total_ms"] = metrics.last_h2o_total_ms;
         result[prefix + "_max_total_ms"] = metrics.max_total_ms;
         result[prefix + "_avg_total_ms"] = metrics.avg_total_ms;
         result[prefix + "_avg_auth_ms"] = metrics.avg_auth_ms;
@@ -1212,6 +1230,8 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         result[prefix + "_avg_conn_to_start_ms"] = metrics.avg_conn_to_start_ms;
         result[prefix + "_avg_response_queue_ms"] = metrics.avg_response_queue_ms;
         result[prefix + "_avg_response_pre_dispatch_wait_ms"] = metrics.avg_response_pre_dispatch_wait_ms;
+        result[prefix + "_avg_h2o_request_total_ms"] = metrics.avg_h2o_request_total_ms;
+        result[prefix + "_avg_h2o_total_ms"] = metrics.avg_h2o_total_ms;
     };
     add_hot_http_route_metrics("http_route_health", hot_http_route_metrics.health);
     add_hot_http_route_metrics("http_route_collections", hot_http_route_metrics.collections);
@@ -1465,9 +1485,12 @@ bool get_search(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
                                                           results_json_str, req->conn_ts);
     const auto do_search_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - do_search_start).count();
+    const bool has_nl_query_data = NaturalLanguageSearchModelManager::has_nl_query_data(&(req->params));
     if(!search_op.ok()) {
         nlohmann::json error_json;
-        NaturalLanguageSearchModelManager::add_nl_query_data_to_results(error_json, &(req->params), nl_search_time_ms, true);
+        if(has_nl_query_data) {
+            NaturalLanguageSearchModelManager::add_nl_query_data_to_results(error_json, &(req->params), nl_search_time_ms, true);
+        }
         error_json["message"] = search_op.error();
         res->set_body(search_op.code(), error_json.dump());
         if(search_op.code() == 408) {
@@ -1599,15 +1622,17 @@ bool get_search(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
 
     }
 
-    const auto final_parse_start = std::chrono::steady_clock::now();
-    nlohmann::json results_json = nlohmann::json::parse(results_json_str);
-    results_parse_ms += std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - final_parse_start).count();
-    NaturalLanguageSearchModelManager::add_nl_query_data_to_results(results_json, &(req->params), nl_search_time_ms);
-    const auto final_dump_start = std::chrono::steady_clock::now();
-    results_json_str = results_json.dump();
-    results_dump_ms += std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - final_dump_start).count();
+    if(has_nl_query_data) {
+        const auto final_parse_start = std::chrono::steady_clock::now();
+        nlohmann::json results_json = nlohmann::json::parse(results_json_str);
+        results_parse_ms += std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - final_parse_start).count();
+        NaturalLanguageSearchModelManager::add_nl_query_data_to_results(results_json, &(req->params), nl_search_time_ms);
+        const auto final_dump_start = std::chrono::steady_clock::now();
+        results_json_str = results_json.dump();
+        results_dump_ms += std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - final_dump_start).count();
+    }
 
     // if the response is an event stream, we need to add the data: prefix
     if(conversation_stream) {
