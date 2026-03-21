@@ -1072,6 +1072,30 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         if (node_status.contains("max_import_total_ms")) {
             result["nuraft_max_import_total_ms"] = node_status["max_import_total_ms"];
         }
+        if (node_status.contains("sync_cumulative_calls")) {
+            result["nuraft_sync_cumulative_calls"] = node_status["sync_cumulative_calls"];
+        }
+        if (node_status.contains("sync_cumulative_fast_path_hits")) {
+            result["nuraft_sync_cumulative_fast_path_hits"] = node_status["sync_cumulative_fast_path_hits"];
+        }
+        if (node_status.contains("sync_cumulative_replay_calls")) {
+            result["nuraft_sync_cumulative_replay_calls"] = node_status["sync_cumulative_replay_calls"];
+        }
+        if (node_status.contains("sync_last_total_ms")) {
+            result["nuraft_sync_last_total_ms"] = node_status["sync_last_total_ms"];
+        }
+        if (node_status.contains("sync_last_replay_ms")) {
+            result["nuraft_sync_last_replay_ms"] = node_status["sync_last_replay_ms"];
+        }
+        if (node_status.contains("sync_avg_total_ms")) {
+            result["nuraft_sync_avg_total_ms"] = node_status["sync_avg_total_ms"];
+        }
+        if (node_status.contains("sync_avg_replay_ms")) {
+            result["nuraft_sync_avg_replay_ms"] = node_status["sync_avg_replay_ms"];
+        }
+        if (node_status.contains("sync_max_total_ms")) {
+            result["nuraft_sync_max_total_ms"] = node_status["sync_max_total_ms"];
+        }
 
         if (result.contains("nuraft_last_index") &&
             result.contains("nuraft_committed_index")) {

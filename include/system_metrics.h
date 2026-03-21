@@ -4,7 +4,7 @@
 #include <atomic>
 #include <fstream>
 #include <sstream>
-#include <thread>
+#include <vector>
 #include <sys/stat.h>
 #include "json.hpp"
 
@@ -45,8 +45,13 @@ class SystemMetrics {
 private:
 
     const uint64_t MALLCTL_STATS_UPDATE_INTERVAL_SECONDS = 5;
+    const uint64_t CPU_STATS_UPDATE_INTERVAL_MILLISECONDS = 100;
     std::atomic<uint64_t> mallctl_stats_last_access = 0;
+    std::atomic<uint64_t> cpu_stats_last_refresh_ms = 0;
     mallctl_stats_t mallctl_stats;
+    std::vector<cpu_data_t> cached_cpu_data;
+    std::vector<cpu_stat_t> cached_cpu_stats;
+    bool cpu_stats_initialized = false;
 
     mutable std::shared_mutex mutex;
 
@@ -147,7 +152,11 @@ private:
 
     mallctl_stats_t get_cached_mallctl_stats();
 
-    SystemMetrics() {}
+    uint64_t get_now_ms() const;
+
+    std::vector<cpu_stat_t> make_zero_cpu_stats(const std::vector<cpu_data_t>& cpu_data) const;
+
+    SystemMetrics();
 
     ~SystemMetrics() {}
 
@@ -168,21 +177,7 @@ public:
 
     void get(const std::string & data_dir_path, nlohmann::json& result);
 
-    std::vector<cpu_stat_t> get_cpu_stats() {
-        // snapshot 1
-        std::vector<cpu_data_t> cpu_data_prev;
-        read_cpu_data(cpu_data_prev);
-
-        // 100ms pause
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-        // snapshot 2
-        std::vector<cpu_data_t> cpu_data_now;
-        read_cpu_data(cpu_data_now);
-
-        // compute
-        return compute_cpu_stats(cpu_data_prev, cpu_data_now);
-    }
+    std::vector<cpu_stat_t> get_cpu_stats();
 
     void get_proc_meminfo(uint64_t& memory_total_bytes, uint64_t& memory_available_bytes,
                           uint64_t& swap_total_bytes, uint64_t& swap_free_bytes);

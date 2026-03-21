@@ -19,11 +19,77 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 36: Cached CPU Sampling Removes The Last `metrics.json` Handler Stall (2026-03-21)
+
+**Commit:** local working tree on top of `HEAD` at run time
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --total-fitment-docs 200000 --batch-docs 5000 --import-workers 3 --product-docs 50000 --vehicle-docs 50000 --seed-target-order never --server-batch-size 1000 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.1 --json-output /tmp/fork-current-post-cpucache-200k.json`
+- `python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --total-fitment-docs 200000 --batch-docs 5000 --import-workers 3 --product-docs 50000 --vehicle-docs 50000 --seed-target-order never --server-batch-size 1000 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.1 --json-output /tmp/upstream-vs-fork-post-cpucache-200k.json`
+**Scenario:** eliminate the last route-local stall that still made `/metrics.json` materially slower than upstream even after the NuRaft sync/auth and event-loop fixes. The root cause turned out to be `SystemMetrics::get_cpu_stats()` sleeping for `100ms` inside every request so it could take a second `/proc/stat` snapshot. The route now uses cached delta-based CPU sampling instead of blocking the handler.
+
+### Findings
+
+- The remaining `/metrics.json` cost was real and almost entirely self-inflicted. On the corrected heavy-import lane before this fix, the fork still showed `/metrics.json 152.0ms` vs upstream `106.4ms`, and the route-level handler metrics showed about `102ms` of handler time even when the rest of the node was healthy.
+- Removing the per-request `100ms` CPU sampling pause collapsed the route’s own cost. On the fork-only `200k` replay, `/metrics.json` fell from `122.2ms` avg with about `113.5ms` Server-Timing `process` time to `26.7ms` avg with only `3.8ms` `process` time, and the internal route metrics dropped to roughly `1-2ms` total handler/H2O time.
+- The canonical upstream compare improved with it. On the corrected `200k` dashboard lane, the fork now runs at `120467.4 docs/s` vs upstream `72258.9 docs/s`, while `/metrics.json` is down to `29.0ms` avg instead of the earlier `152.0ms`.
+- Search and control-plane reads remain slower than upstream in some lanes, but the remaining gaps are now small-route admission/connection effects rather than an obviously expensive handler on the server side. The hot-route process time for `/collections`, `/stats.json`, and `/metrics.json` is now effectively negligible compared with the old DDEV-era failure mode.
+
+### Summary Table
+
+| Lane | Import avg | Docs/sec | `/health` avg | `/metrics.json` avg | `/stats.json` avg | `/collections` avg | Search avg |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| upstream `30.1`, `200k`, `batch_size=1000` | `189.5 ms` | `72258.9` | `1.6 ms` | `107.2 ms` | `0.2 ms` | `1.6 ms` | `7.4 ms` |
+| fork current, same `200k` lane | `105.3 ms` | `120467.4` | `14.7 ms` | `29.0 ms` | `2.1 ms` | `17.5 ms` | `21.9 ms` |
+
+### Decision
+
+- Keep CPU sampling out of request handlers. Any future system-metrics refresh should remain cached or background-updated; do not reintroduce a timed sampling pause in `/metrics.json` or health-adjacent routes.
+- Treat the corrected `200k` dashboard replay as green for release-quality heavy-import responsiveness on the local canonical lane. The fork now materially beats upstream on import throughput while keeping the dashboard-critical metrics route fast instead of self-blocking.
+- The remaining difference to upstream is no longer a root-cause investigation item. Search and some control-plane routes are still slower than upstream during import, but they are now in the “worth further polish if it is cheap” category, not “server becomes impossible to use” territory.
+
+---
+
+## Run 35: Corrected Upstream-Comparable Fitment Replay Turns Green After Sync/Auth And Event-Loop Fixes (2026-03-21)
+
+**Commit:** local working tree on top of `HEAD` at run time
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --total-fitment-docs 100000 --batch-docs 5000 --import-workers 3 --product-docs 30000 --vehicle-docs 30000 --seed-target-order never --server-batch-size 1000 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --json-output /tmp/upstream-vs-fork-batch1000-inlinecut-100k.json`
+- `python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --total-fitment-docs 200000 --batch-docs 5000 --import-workers 3 --product-docs 50000 --vehicle-docs 50000 --seed-target-order never --server-batch-size 1000 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.1 --json-output /tmp/upstream-vs-fork-batch1000-inlinecut-200k.json`
+**Scenario:** first correct the benchmark semantics, then rerun after the remaining NuRaft read/auth and HTTP-path fixes. The semantic correction is important: upstream `v30.1` still defaults the request parameter `batch_size` to `40`, but its internal `Collection::add_many(...)` path continues to batch at `1000`. The fork intentionally wires request/config `batch_size` end-to-end, so upstream-comparable replay must pass `--server-batch-size 1000`.
+
+### Findings
+
+- The earlier `batch_size=40` replay overstated the fork-vs-upstream gap because it was not apples-to-apples. Upstream was effectively still importing at `1000` internally while the fork really honored `40` end-to-end.
+- The `sync_live_product_state()` read-path cleanup was a real win, but not the decisive one. The bigger follow-up was narrowing the HTTP inline fast path back down to only truly trivial routes (`health` / `status` / `debug` class). Keeping `/metrics.json`, `/stats.json`, runtime search, and collection/control-plane GETs inline on the H2O event loop was creating request-admission pressure during import.
+- After those fixes, import response queueing essentially collapsed on the corrected lane: on the fork `200k` run, `http_import_avg_response_queue_ms=1` and `message_dispatch_stream_response_max_queue_ms=57`, versus the earlier `43ms` average queue cost and materially worse admission behavior.
+- On the corrected `100k` compare, the fork now beat upstream strongly on import throughput (`109922.5 docs/s` vs `74892.6 docs/s`) while keeping `/health` and `/metrics.json` effectively at upstream parity (`0.8ms` vs `0.8ms`, `104.9ms` vs `104.4ms`). Search and some control-plane GETs are still slower than upstream, but they are now measured in tens of milliseconds rather than the old operationally-bad multi-hundred-millisecond or multi-second regime.
+- The steadier `200k` replay kept the same story: upstream stayed at `73030.5 docs/s`, while the fork held `106273.4 docs/s`. Search remained usable during import (`37.7ms` avg, `59.2ms` p95), and the heavier GET routes stayed in the `17-52ms` range instead of the older “dashboard feels dead” shape.
+
+### Summary Table
+
+| Lane | Import avg | Docs/sec | `/health` avg | `/metrics.json` avg | `/stats.json` avg | `/collections` avg | Search avg |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| upstream `30.1`, `100k`, `batch_size=1000` | `176.8 ms` | `74892.6` | `0.8 ms` | `104.4 ms` | `0.3 ms` | `0.2 ms` | `5.9 ms` |
+| fork current, same `100k` lane | `112.5 ms` | `109922.5` | `0.8 ms` | `104.9 ms` | `14.1 ms` | `33.0 ms` | `15.2 ms` |
+| upstream `30.1`, `200k`, `batch_size=1000` | `188.0 ms` | `73030.5` | `0.4 ms` | `106.4 ms` | `0.2 ms` | `2.0 ms` | `6.5 ms` |
+| fork current, same `200k` lane | `121.8 ms` | `106273.4` | `21.7 ms` | `152.0 ms` | `42.4 ms` | `52.7 ms` | `37.7 ms` |
+
+### Decision
+
+- Treat the corrected `batch_size=1000` fitment replay as the canonical upstream-comparable heavy-import lane.
+- Keep the fork’s product behavior explicit: request/config `batch_size` must continue to flow end-to-end. Do **not** add a hidden internal hardcoded `1000` just because upstream still has one.
+- Keep the inline fast path restricted to truly trivial routes. Running heavier read/control-plane handlers inline on the H2O event loop was the wrong tradeoff for import-era responsiveness.
+- The remaining gap is now optimization, not root-cause uncertainty. The node stays operational during heavy import and the fork is ahead of upstream on corrected import throughput, but `/metrics.json` and some control-plane GETs are still slower than upstream and remain worth tuning.
+
+---
+
 ## Run 34: Dashboard-Style `batch_size=40` Replay Reopens The Remaining DDEV-Parity Gap (2026-03-21)
 
 **Commit:** local working tree on top of `HEAD` at run time
 **Command:** `python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --total-fitment-docs 50000 --batch-docs 5000 --import-workers 3 --product-docs 15000 --vehicle-docs 15000 --seed-target-order after --server-batch-size 40 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --json-output /tmp/upstream-vs-fork-dashboard-50k-b40-r2.json`
 **Scenario:** upgrade the local fitment replay to look more like the real DDEV control plane by probing the same dashboard GET routes during import and by explicitly forcing the historical low server-side import batching posture (`batch_size=40`).
+
+This run is still useful as a fork-only low-batch stress lane, but it is **not** an apples-to-apples upstream comparison after the later source audit in Run 35. Upstream `v30.1` keeps an internal `Collection::add_many(...)` batch size of `1000`, so this `--server-batch-size 40` replay is measuring a materially different product configuration on the fork than it is on upstream.
 
 ### Findings
 

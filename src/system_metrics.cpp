@@ -1,5 +1,6 @@
 #include "system_metrics.h"
 
+#include <chrono>
 #include <sys/resource.h>
 #include <sys/statvfs.h>
 #if __linux__
@@ -24,6 +25,63 @@
 #define impl_mallctl mallctl
 #endif
 #endif
+
+SystemMetrics::SystemMetrics() {
+    read_cpu_data(cached_cpu_data);
+    cached_cpu_stats = make_zero_cpu_stats(cached_cpu_data);
+    cpu_stats_initialized = !cached_cpu_data.empty();
+    cpu_stats_last_refresh_ms.store(get_now_ms(), std::memory_order_relaxed);
+}
+
+uint64_t SystemMetrics::get_now_ms() const {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+std::vector<cpu_stat_t> SystemMetrics::make_zero_cpu_stats(const std::vector<cpu_data_t>& cpu_data) const {
+    std::vector<cpu_stat_t> stats;
+    stats.reserve(cpu_data.size());
+    for(size_t i = 0; i < cpu_data.size(); ++i) {
+        stats.push_back(cpu_stat_t{"0.00", "100.00"});
+    }
+    return stats;
+}
+
+std::vector<cpu_stat_t> SystemMetrics::get_cpu_stats() {
+    const uint64_t now_ms = get_now_ms();
+    {
+        std::shared_lock lock(mutex);
+        if(cpu_stats_initialized &&
+           (now_ms - cpu_stats_last_refresh_ms.load(std::memory_order_relaxed)) <
+               CPU_STATS_UPDATE_INTERVAL_MILLISECONDS) {
+            return cached_cpu_stats;
+        }
+    }
+
+    std::vector<cpu_data_t> cpu_data_now;
+    read_cpu_data(cpu_data_now);
+
+    std::unique_lock lock(mutex);
+    const uint64_t refreshed_now_ms = get_now_ms();
+    if(cpu_stats_initialized &&
+       (refreshed_now_ms - cpu_stats_last_refresh_ms.load(std::memory_order_relaxed)) <
+           CPU_STATS_UPDATE_INTERVAL_MILLISECONDS) {
+        return cached_cpu_stats;
+    }
+
+    if(!cpu_stats_initialized || cached_cpu_data.size() != cpu_data_now.size()) {
+        cached_cpu_data = std::move(cpu_data_now);
+        cached_cpu_stats = make_zero_cpu_stats(cached_cpu_data);
+        cpu_stats_initialized = !cached_cpu_data.empty();
+        cpu_stats_last_refresh_ms.store(refreshed_now_ms, std::memory_order_relaxed);
+        return cached_cpu_stats;
+    }
+
+    cached_cpu_stats = compute_cpu_stats(cached_cpu_data, cpu_data_now);
+    cached_cpu_data = std::move(cpu_data_now);
+    cpu_stats_last_refresh_ms.store(refreshed_now_ms, std::memory_order_relaxed);
+    return cached_cpu_stats;
+}
 
 void SystemMetrics::get(const std::string &data_dir_path, nlohmann::json &result) {
     // DISK METRICS

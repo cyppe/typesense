@@ -939,15 +939,28 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
                                     const size_t remote_embedding_timeout_ms,
                                     const size_t remote_embedding_num_tries,
                                     const size_t index_batch_size) {
+    static constexpr std::string_view kImportSuccessResponseLine = R"({"success":true})";
+
     std::vector<std::string_view> json_line_views;
     json_line_views.reserve(json_lines.size());
     for(const auto& json_line : json_lines) {
         json_line_views.emplace_back(json_line);
     }
 
-    return add_many(json_line_views, json_lines, document, operation, id, dirty_values, return_doc, return_id,
-                    remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries,
-                    index_batch_size);
+    std::vector<std::string> json_out(json_lines.size());
+    auto response = add_many(json_line_views, json_out, document, operation, id, dirty_values, return_doc, return_id,
+                             remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries,
+                             index_batch_size);
+
+    for(size_t i = 0; i < json_out.size(); ++i) {
+        if(json_out[i].empty()) {
+            json_lines[i].assign(kImportSuccessResponseLine);
+        } else {
+            json_lines[i] = std::move(json_out[i]);
+        }
+    }
+
+    return response;
 }
 
 nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, std::vector<std::string>& json_out,
@@ -985,14 +998,17 @@ nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, s
     };
 
     detect_new_fields_snapshot_t detect_new_fields_snapshot;
-    auto refresh_detect_new_fields_snapshot = [&]() {
-        std::shared_lock lock(mutex);
+    auto refresh_detect_new_fields_snapshot_unlocked = [&]() {
         detect_new_fields_snapshot.fallback_field_type = fallback_field_type;
         detect_new_fields_snapshot.dynamic_fields = dynamic_fields;
         detect_new_fields_snapshot.nested_fields = nested_fields;
         detect_new_fields_snapshot.reference_fields = reference_fields;
         detect_new_fields_snapshot.search_schema = search_schema;
         detect_new_fields_snapshot.has_async_referenced_ins = !async_referenced_ins.empty();
+    };
+    auto refresh_detect_new_fields_snapshot = [&]() {
+        std::shared_lock lock(mutex);
+        refresh_detect_new_fields_snapshot_unlocked();
     };
     refresh_detect_new_fields_snapshot();
 
@@ -1080,7 +1096,7 @@ nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, s
                 rebuild_read_state_snapshot_unlocked();
             }
             schema_update_ms += elapsed_ms_since(schema_update_start);
-            refresh_detect_new_fields_snapshot();
+            refresh_detect_new_fields_snapshot_unlocked();
         }
 
         index_records.emplace_back(std::move(record));

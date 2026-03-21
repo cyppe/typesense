@@ -245,7 +245,7 @@ python3 scripts/replay_fitment_import_stress.py \
   --import-workers 3
 ```
 
-DDEV-like control-plane pressure replay:
+Upstream-comparable control-plane pressure replay:
 
 ```bash
 python3 scripts/replay_fitment_import_stress.py \
@@ -259,7 +259,7 @@ python3 scripts/replay_fitment_import_stress.py \
   --product-docs 15000 \
   --vehicle-docs 15000 \
   --seed-target-order after \
-  --server-batch-size 40 \
+  --server-batch-size 1000 \
   --probe-profile dashboard \
   --probe-workers 4 \
   --search-workers 2 \
@@ -267,9 +267,11 @@ python3 scripts/replay_fitment_import_stress.py \
 ```
 
 Notes:
+- Use `--server-batch-size 1000` for apples-to-apples upstream comparison on this lane. Upstream `v30.1` still defaults the request parameter to `40`, but its internal `Collection::add_many(...)` path continues to batch at `1000`; the fork intentionally wires the request/config batch size end-to-end instead of hiding a second hardcoded value.
+- If you explicitly want the lower-batch fork-only stress posture, pass `--server-batch-size 40`, but treat that as a separate configuration experiment rather than an upstream-comparable replay.
 - Use `--probe-profile dashboard` to exercise the same low-cost GET routes the Typesense dashboard hammers during import (`/collections`, `/aliases`, `/keys`, `/presets`, `/stemming/dictionaries`, `/stopwords`, `/debug`, plus `/health`, `/metrics.json`, `/stats.json`).
 - Use `--client-chunk-bytes` and `--client-chunk-delay-ms` if you want to simulate slower client-side upload pacing from a busy app container instead of sending each import body in one shot.
-- The lighter smoke lane is still useful for quick throughput checks, but the dashboard lane is the one that currently best mirrors the remaining DDEV heavy-import symptom.
+- The lighter smoke lane is still useful for quick throughput checks, but the dashboard lane is the one to use for live control-plane/search responsiveness claims during import.
 - For profiling, use host tools against the local replay PID rather than trying to hide `perf`/eBPF inside a container. The build/test flow remains Docker-first; the profiling flow is host-side because `perf`, `runqlat`, and related tools need direct kernel and PID-namespace visibility.
 
 Host-side profiling bundle against the replay lane:

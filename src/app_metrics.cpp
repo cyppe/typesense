@@ -165,11 +165,15 @@ void AppMetrics::increment_write_metrics(uint64_t route_hash, uint64_t duration)
 }
 
 void AppMetrics::get(const std::string& rps_key, const std::string& latency_key, nlohmann::json& result) const {
-    std::string serialized;
+    spp::sparse_hash_map<std::string, uint64_t> counts_snapshot;
+    spp::sparse_hash_map<std::string, TDigest> durations_snapshot;
     {
         std::shared_lock lock(mutex);
-        serialized = serialized_window_snapshot;
+        counts_snapshot = *counts;
+        durations_snapshot = *durations;
     }
+    const std::string serialized = serialize_metrics_window(counts_snapshot, durations_snapshot,
+                                                            rps_key, latency_key);
     result = nlohmann::json::parse(serialized.empty() ? "{}" : serialized);
 }
 

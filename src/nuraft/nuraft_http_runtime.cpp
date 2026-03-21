@@ -626,52 +626,84 @@ bool replay_live_product_state(HttpServer* server,
 }
 
 bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
+    const auto sync_start = std::chrono::steady_clock::now();
+    cumulative_sync_calls_.fetch_add(1, std::memory_order_relaxed);
+    last_sync_replay_ms_.store(0, std::memory_order_relaxed);
+
+    auto finish_sync_metrics = [&](uint64_t replay_ms) {
+        const uint64_t total_ms = elapsed_ms_since(sync_start);
+        cumulative_sync_total_ms_.fetch_add(total_ms, std::memory_order_relaxed);
+        last_sync_total_ms_.store(total_ms, std::memory_order_relaxed);
+        max_sync_total_ms_.store(std::max(max_sync_total_ms_.load(std::memory_order_relaxed), total_ms),
+                                 std::memory_order_relaxed);
+        last_sync_replay_ms_.store(replay_ms, std::memory_order_relaxed);
+        if (replay_ms != 0) {
+            cumulative_sync_replay_ms_.fetch_add(replay_ms, std::memory_order_relaxed);
+        }
+    };
+
+    auto state_is_caught_up = [&](uint64_t local_applied_index) {
+        return live_product_state_applied_index_.load(std::memory_order_relaxed) >= local_applied_index;
+    };
+
+    uint64_t local_applied_index = 0;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        if (!initialized_.load()) {
+            error.clear();
+            cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
+            finish_sync_metrics(0);
+            return true;
+        }
+
+        if (raft_state_machine_ != nullptr && materialized_state_sink_ != nullptr) {
+            local_applied_index = raft_state_machine_->get_last_commit_index();
+            if (state_is_caught_up(local_applied_index)) {
+                error.clear();
+                cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
+                finish_sync_metrics(0);
+                return true;
+            }
+        }
+    }
+
     std::unique_lock<std::shared_mutex> lock(mutex_);
     if (!initialized_.load()) {
         error.clear();
+        cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
+        finish_sync_metrics(0);
         return true;
     }
 
     if (raft_state_machine_ != nullptr && materialized_state_sink_ != nullptr) {
-        const uint64_t committed_index = raft_state_machine_->get_last_commit_index();
-        uint64_t last_applied_index = 0;
-        if (!read_last_local_applied_index(last_applied_index, error)) {
-            return false;
-        }
-
-        if (last_applied_index < committed_index) {
-            const size_t timeout_ms = std::max<size_t>(options_.request_timeout_ms, 1000);
-            lock.unlock();
-            const bool wait_ok = wait_for_local_state_machine_commit(committed_index, timeout_ms, error);
-            lock.lock();
-            if (!wait_ok) {
-                return false;
-            }
-            if (!read_last_local_applied_index(last_applied_index, error)) {
-                return false;
-            }
-            if (last_applied_index < committed_index) {
-                error = "NuRaft state machine commit watcher completed before local applied index caught up to " +
-                        std::to_string(committed_index) + ".";
-                return false;
-            }
+        local_applied_index = raft_state_machine_->get_last_commit_index();
+        if (state_is_caught_up(local_applied_index)) {
+            error.clear();
+            cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
+            finish_sync_metrics(0);
+            return true;
         }
     }
 
     if (materialized_state_sink_ != nullptr) {
         uint64_t replayed_through_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+        const auto replay_start = std::chrono::steady_clock::now();
         const bool ok = replay_live_product_state(server_,
                                                   *materialized_state_sink_,
                                                   replayed_through_index,
                                                   error);
+        const uint64_t replay_ms = elapsed_ms_since(replay_start);
         if (ok) {
             live_product_state_applied_index_.store(replayed_through_index, std::memory_order_relaxed);
+            cumulative_sync_replay_calls_.fetch_add(1, std::memory_order_relaxed);
         }
+        finish_sync_metrics(replay_ms);
         return ok;
     }
 
     NuRaftKvStateMachineSink sink(layout_);
     uint64_t replayed_through_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+    const auto replay_start = std::chrono::steady_clock::now();
     if (!replay_live_product_state(server_, sink,
                                    replayed_through_index,
                                    error)) {
@@ -679,7 +711,9 @@ bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
         error.clear();
     } else {
         live_product_state_applied_index_.store(replayed_through_index, std::memory_order_relaxed);
+        cumulative_sync_replay_calls_.fetch_add(1, std::memory_order_relaxed);
     }
+    finish_sync_metrics(elapsed_ms_since(replay_start));
     return true;
 }
 
@@ -1129,11 +1163,10 @@ uint64_t NuRaftHttpRuntimeService::node_state() const {
 
 nlohmann::json NuRaftHttpRuntimeService::get_status() {
     std::shared_lock<std::shared_mutex> lock(mutex_);
-    uint64_t state_machine_applied_index = 0;
-    std::string applied_index_error;
-    const bool has_state_machine_applied_index =
-        materialized_state_sink_ != nullptr &&
-        read_last_local_applied_index(state_machine_applied_index, applied_index_error);
+    const uint64_t state_machine_applied_index = raft_state_machine_ != nullptr ?
+        raft_state_machine_->get_last_commit_index() : 0;
+    const uint64_t sync_calls = cumulative_sync_calls_.load(std::memory_order_relaxed);
+    const uint64_t sync_replay_calls = cumulative_sync_replay_calls_.load(std::memory_order_relaxed);
     nlohmann::json status = {
         {"state", initialized_.load() ? "running" : "initializing"},
         {"server_id", identity_.server_id},
@@ -1157,6 +1190,16 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         {"last_import_docs_per_sec", last_import_docs_per_sec_.load(std::memory_order_relaxed)},
         {"last_import_bytes_per_sec", last_import_bytes_per_sec_.load(std::memory_order_relaxed)},
         {"max_import_total_ms", max_import_total_ms_.load(std::memory_order_relaxed)},
+        {"sync_cumulative_calls", sync_calls},
+        {"sync_cumulative_fast_path_hits", cumulative_sync_fast_path_hits_.load(std::memory_order_relaxed)},
+        {"sync_cumulative_replay_calls", sync_replay_calls},
+        {"sync_last_total_ms", last_sync_total_ms_.load(std::memory_order_relaxed)},
+        {"sync_last_replay_ms", last_sync_replay_ms_.load(std::memory_order_relaxed)},
+        {"sync_avg_total_ms", sync_calls == 0 ? 0 :
+                              cumulative_sync_total_ms_.load(std::memory_order_relaxed) / sync_calls},
+        {"sync_avg_replay_ms", sync_replay_calls == 0 ? 0 :
+                               cumulative_sync_replay_ms_.load(std::memory_order_relaxed) / sync_replay_calls},
+        {"sync_max_total_ms", max_sync_total_ms_.load(std::memory_order_relaxed)},
     };
 
     if (raft_server_) {
@@ -1171,13 +1214,7 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         status["applying_index"] = 0;
         status["raft_leader_id"] = raft_server_->get_leader();
         status["raft_term"] = raft_server_->get_term();
-        if (has_state_machine_applied_index) {
-            status["state_machine_applied_index"] = state_machine_applied_index;
-        }
-    }
-
-    if (!has_state_machine_applied_index && !applied_index_error.empty()) {
-        status["state_machine_applied_index_error"] = applied_index_error;
+        status["state_machine_applied_index"] = state_machine_applied_index;
     }
 
     return status;
@@ -1259,74 +1296,6 @@ std::string NuRaftHttpRuntimeService::get_leader_url() const {
 }
 
 void NuRaftHttpRuntimeService::decr_pending_writes() {}
-
-bool NuRaftHttpRuntimeService::read_last_local_applied_index(uint64_t& last_applied_index,
-                                                             std::string& error) const {
-    last_applied_index = 0;
-    if (materialized_state_sink_ == nullptr) {
-        error = "NuRaft runtime materialized state sink is not initialized.";
-        return false;
-    }
-
-    return materialized_state_sink_->read_last_applied_index(last_applied_index, error);
-}
-
-bool NuRaftHttpRuntimeService::wait_for_local_state_machine_commit(uint64_t target_index,
-                                                                   size_t timeout_ms,
-                                                                   std::string& error) const {
-    error.clear();
-    if (target_index == 0 || raft_server_ == nullptr) {
-        return true;
-    }
-
-    auto wait_result = raft_server_->wait_for_state_machine_commit(target_index);
-    if (wait_result == nullptr) {
-        error = "NuRaft did not return a state machine commit watcher.";
-        return false;
-    }
-
-    struct wait_state_t {
-        std::mutex mutex;
-        std::condition_variable cv;
-        bool ready = false;
-        bool committed = false;
-        std::string error;
-    };
-    auto wait_state = std::make_shared<wait_state_t>();
-
-    wait_result->when_ready([wait_state](nuraft::cmd_result<bool>& result, nuraft::ptr<std::exception>& err) {
-        {
-            std::lock_guard<std::mutex> guard(wait_state->mutex);
-            wait_state->ready = true;
-            wait_state->committed = result.get_result_code() == nuraft::cmd_result_code::OK && result.get();
-            if (err != nullptr) {
-                wait_state->error = err->what();
-            } else if (!wait_state->committed) {
-                wait_state->error = result.get_result_str();
-            }
-        }
-        wait_state->cv.notify_all();
-    });
-
-    std::unique_lock<std::mutex> wait_lock(wait_state->mutex);
-    const bool finished = wait_state->cv.wait_for(wait_lock, std::chrono::milliseconds(timeout_ms), [&] {
-        return wait_state->ready;
-    });
-    if (!finished) {
-        error = "Timed out waiting for NuRaft state machine commit at index " + std::to_string(target_index) + ".";
-        return false;
-    }
-
-    if (!wait_state->committed) {
-        error = wait_state->error.empty()
-            ? "NuRaft state machine commit watcher failed for index " + std::to_string(target_index) + "."
-            : wait_state->error;
-        return false;
-    }
-
-    error.clear();
-    return true;
-}
 
 bool NuRaftHttpRuntimeService::read_materialized_value(const std::string& key,
                                                        std::string& value,

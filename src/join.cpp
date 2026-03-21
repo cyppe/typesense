@@ -430,6 +430,10 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
         }
     }
 
+    if (helper_fields != nullptr && helper_fields->empty()) {
+        document.erase(fields::reference_helper_fields);
+    }
+
     return Option<bool>(true);
 }
 
