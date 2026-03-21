@@ -267,6 +267,7 @@ struct http_request_metrics_snapshot_t {
     uint64_t last_unattributed_ms = 0;
     uint64_t last_conn_to_start_ms = 0;
     uint64_t last_response_dispatch_ms = 0;
+    uint64_t last_response_pre_dispatch_wait_ms = 0;
     uint64_t last_response_queue_ms = 0;
     uint64_t last_response_progress_ms = 0;
     uint64_t last_response_send_calls = 0;
@@ -285,6 +286,7 @@ struct http_request_metrics_snapshot_t {
     uint64_t import_last_unattributed_ms = 0;
     uint64_t import_last_conn_to_start_ms = 0;
     uint64_t import_last_response_dispatch_ms = 0;
+    uint64_t import_last_response_pre_dispatch_wait_ms = 0;
     uint64_t import_last_response_queue_ms = 0;
     uint64_t import_last_response_progress_ms = 0;
     uint64_t import_last_response_send_calls = 0;
@@ -300,6 +302,7 @@ struct http_request_metrics_snapshot_t {
     uint64_t import_avg_handler_ms = 0;
     uint64_t import_avg_unattributed_ms = 0;
     uint64_t import_avg_response_queue_ms = 0;
+    uint64_t import_avg_response_pre_dispatch_wait_ms = 0;
     uint64_t import_max_total_ms = 0;
 };
 
@@ -405,6 +408,7 @@ struct http_req {
     std::atomic<uint64_t> handler_start_ts_us{0};
     std::atomic<uint64_t> handler_end_ts_us{0};
     std::atomic<uint64_t> response_dispatch_ts_us{0};
+    std::atomic<uint64_t> response_pre_dispatch_wait_us{0};
     std::atomic<uint64_t> response_start_ts_us{0};
     std::atomic<uint64_t> response_progress_ts_us{0};
     std::atomic<uint64_t> response_first_send_ts_us{0};
@@ -607,6 +611,10 @@ struct http_req {
 
     void mark_response_dispatch() {
         response_dispatch_ts_us.store(now_ts_us(), std::memory_order_relaxed);
+    }
+
+    void add_response_pre_dispatch_wait_us(uint64_t duration_us) {
+        response_pre_dispatch_wait_us.fetch_add(duration_us, std::memory_order_relaxed);
     }
 
     void mark_response_start() {

@@ -880,8 +880,12 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
     request->is_write = is_write;
 
     if(is_write) {
+        auto thread_pool = handler->http_server->get_thread_pool();
+        thread_pool->log_exhaustion();
         request->mark_handler_dispatch();
-        handler->http_server->get_replication_state()->write(request, response);
+        thread_pool->enqueue([request, response, server = handler->http_server]() {
+            server->get_replication_state()->write(request, response);
+        });
         return 0;
     }
 

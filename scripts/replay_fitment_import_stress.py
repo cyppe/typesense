@@ -647,6 +647,7 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
     interesting = [
         "http_request_last_route",
         "http_request_last_total_ms",
+        "http_request_last_response_pre_dispatch_wait_ms",
         "http_request_last_response_queue_ms",
         "http_request_last_response_send_window_ms",
         "http_request_last_response_defer_count",
@@ -676,6 +677,7 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_import_avg_handler_wait_ms",
         "http_import_avg_handler_ms",
         "http_import_avg_unattributed_ms",
+        "http_import_avg_response_pre_dispatch_wait_ms",
         "http_import_avg_response_queue_ms",
         "http_import_max_total_ms",
         "collection_import_last_total_ms",

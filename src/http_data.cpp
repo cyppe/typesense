@@ -15,6 +15,7 @@ struct http_request_metrics_state_t {
     std::atomic<uint64_t> last_unattributed_ms{0};
     std::atomic<uint64_t> last_conn_to_start_ms{0};
     std::atomic<uint64_t> last_response_dispatch_ms{0};
+    std::atomic<uint64_t> last_response_pre_dispatch_wait_ms{0};
     std::atomic<uint64_t> last_response_queue_ms{0};
     std::atomic<uint64_t> last_response_progress_ms{0};
     std::atomic<uint64_t> last_response_send_calls{0};
@@ -34,6 +35,7 @@ struct http_request_metrics_state_t {
     std::atomic<uint64_t> import_last_unattributed_ms{0};
     std::atomic<uint64_t> import_last_conn_to_start_ms{0};
     std::atomic<uint64_t> import_last_response_dispatch_ms{0};
+    std::atomic<uint64_t> import_last_response_pre_dispatch_wait_ms{0};
     std::atomic<uint64_t> import_last_response_queue_ms{0};
     std::atomic<uint64_t> import_last_response_progress_ms{0};
     std::atomic<uint64_t> import_last_response_send_calls{0};
@@ -48,6 +50,7 @@ struct http_request_metrics_state_t {
     std::atomic<uint64_t> import_cumulative_handler_wait_ms{0};
     std::atomic<uint64_t> import_cumulative_handler_ms{0};
     std::atomic<uint64_t> import_cumulative_unattributed_ms{0};
+    std::atomic<uint64_t> import_cumulative_response_pre_dispatch_wait_ms{0};
     std::atomic<uint64_t> import_cumulative_response_queue_ms{0};
     std::atomic<uint64_t> import_max_total_ms{0};
 };
@@ -216,6 +219,8 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
     snapshot.last_unattributed_ms = g_http_request_metrics.last_unattributed_ms.load(std::memory_order_relaxed);
     snapshot.last_conn_to_start_ms = g_http_request_metrics.last_conn_to_start_ms.load(std::memory_order_relaxed);
     snapshot.last_response_dispatch_ms = g_http_request_metrics.last_response_dispatch_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_pre_dispatch_wait_ms =
+        g_http_request_metrics.last_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed);
     snapshot.last_response_queue_ms = g_http_request_metrics.last_response_queue_ms.load(std::memory_order_relaxed);
     snapshot.last_response_progress_ms = g_http_request_metrics.last_response_progress_ms.load(std::memory_order_relaxed);
     snapshot.last_response_send_calls = g_http_request_metrics.last_response_send_calls.load(std::memory_order_relaxed);
@@ -236,6 +241,8 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
     snapshot.import_last_unattributed_ms = g_http_request_metrics.import_last_unattributed_ms.load(std::memory_order_relaxed);
     snapshot.import_last_conn_to_start_ms = g_http_request_metrics.import_last_conn_to_start_ms.load(std::memory_order_relaxed);
     snapshot.import_last_response_dispatch_ms = g_http_request_metrics.import_last_response_dispatch_ms.load(std::memory_order_relaxed);
+    snapshot.import_last_response_pre_dispatch_wait_ms =
+        g_http_request_metrics.import_last_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed);
     snapshot.import_last_response_queue_ms = g_http_request_metrics.import_last_response_queue_ms.load(std::memory_order_relaxed);
     snapshot.import_last_response_progress_ms = g_http_request_metrics.import_last_response_progress_ms.load(std::memory_order_relaxed);
     snapshot.import_last_response_send_calls = g_http_request_metrics.import_last_response_send_calls.load(std::memory_order_relaxed);
@@ -265,6 +272,8 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
         g_http_request_metrics.import_cumulative_unattributed_ms.load(std::memory_order_relaxed));
     snapshot.import_avg_response_queue_ms = average_or_zero(
         g_http_request_metrics.import_cumulative_response_queue_ms.load(std::memory_order_relaxed));
+    snapshot.import_avg_response_pre_dispatch_wait_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed));
     snapshot.import_max_total_ms = g_http_request_metrics.import_max_total_ms.load(std::memory_order_relaxed);
     return snapshot;
 }
@@ -342,6 +351,7 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     const auto handler_start_ts = req.handler_start_ts_us.load(std::memory_order_relaxed);
     const auto handler_end_ts = req.handler_end_ts_us.load(std::memory_order_relaxed);
     const auto response_dispatch_ts = req.response_dispatch_ts_us.load(std::memory_order_relaxed);
+    const auto response_pre_dispatch_wait_us = req.response_pre_dispatch_wait_us.load(std::memory_order_relaxed);
     const auto response_start_ts = req.response_start_ts_us.load(std::memory_order_relaxed);
     const auto response_progress_ts = req.response_progress_ts_us.load(std::memory_order_relaxed);
     const auto response_first_send_ts = req.response_first_send_ts_us.load(std::memory_order_relaxed);
@@ -370,6 +380,7 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     if (handler_end_ts != 0 && response_dispatch_ts >= handler_end_ts) {
         response_dispatch_ms = (response_dispatch_ts - handler_end_ts) / 1000;
     }
+    const uint64_t response_pre_dispatch_wait_ms = response_pre_dispatch_wait_us / 1000;
 
     uint64_t response_queue_ms = 0;
     if (response_dispatch_ts != 0 && response_start_ts >= response_dispatch_ts) {
@@ -406,6 +417,7 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     g_http_request_metrics.last_unattributed_ms.store(unattributed_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_conn_to_start_ms.store(conn_to_start_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_response_dispatch_ms.store(response_dispatch_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_pre_dispatch_wait_ms.store(response_pre_dispatch_wait_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_response_queue_ms.store(response_queue_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_response_progress_ms.store(response_progress_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_response_send_calls.store(response_send_calls, std::memory_order_relaxed);
@@ -428,6 +440,8 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
         g_http_request_metrics.import_last_unattributed_ms.store(unattributed_ms, std::memory_order_relaxed);
         g_http_request_metrics.import_last_conn_to_start_ms.store(conn_to_start_ms, std::memory_order_relaxed);
         g_http_request_metrics.import_last_response_dispatch_ms.store(response_dispatch_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_pre_dispatch_wait_ms.store(response_pre_dispatch_wait_ms,
+                                                                               std::memory_order_relaxed);
         g_http_request_metrics.import_last_response_queue_ms.store(response_queue_ms, std::memory_order_relaxed);
         g_http_request_metrics.import_last_response_progress_ms.store(response_progress_ms, std::memory_order_relaxed);
         g_http_request_metrics.import_last_response_send_calls.store(response_send_calls, std::memory_order_relaxed);
@@ -444,6 +458,8 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
         g_http_request_metrics.import_cumulative_handler_wait_ms.fetch_add(handler_wait_ms, std::memory_order_relaxed);
         g_http_request_metrics.import_cumulative_handler_ms.fetch_add(handler_ms, std::memory_order_relaxed);
         g_http_request_metrics.import_cumulative_unattributed_ms.fetch_add(unattributed_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_response_pre_dispatch_wait_ms.fetch_add(response_pre_dispatch_wait_ms,
+                                                                                         std::memory_order_relaxed);
         g_http_request_metrics.import_cumulative_response_queue_ms.fetch_add(response_queue_ms, std::memory_order_relaxed);
         const uint64_t prev_max = g_http_request_metrics.import_max_total_ms.load(std::memory_order_relaxed);
         if (total_ms > prev_max) {

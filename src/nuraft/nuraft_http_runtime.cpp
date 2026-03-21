@@ -727,7 +727,11 @@ void NuRaftHttpRuntimeService::send_response(const std::shared_ptr<http_req>& re
         return;
     }
 
+    const auto wait_start = std::chrono::steady_clock::now();
     response->wait();
+    request->add_response_pre_dispatch_wait_us(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - wait_start).count());
     auto* req_res = new async_req_res_t(request, response, true);
     request->mark_response_dispatch();
     server_->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);

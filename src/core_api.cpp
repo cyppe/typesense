@@ -996,6 +996,7 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_request_last_unattributed_ms"] = http_request_metrics.last_unattributed_ms;
     result["http_request_last_conn_to_start_ms"] = http_request_metrics.last_conn_to_start_ms;
     result["http_request_last_response_dispatch_ms"] = http_request_metrics.last_response_dispatch_ms;
+    result["http_request_last_response_pre_dispatch_wait_ms"] = http_request_metrics.last_response_pre_dispatch_wait_ms;
     result["http_request_last_response_queue_ms"] = http_request_metrics.last_response_queue_ms;
     result["http_request_last_response_progress_ms"] = http_request_metrics.last_response_progress_ms;
     result["http_request_last_response_send_calls"] = http_request_metrics.last_response_send_calls;
@@ -1011,6 +1012,8 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_import_last_unattributed_ms"] = http_request_metrics.import_last_unattributed_ms;
     result["http_import_last_conn_to_start_ms"] = http_request_metrics.import_last_conn_to_start_ms;
     result["http_import_last_response_dispatch_ms"] = http_request_metrics.import_last_response_dispatch_ms;
+    result["http_import_last_response_pre_dispatch_wait_ms"] =
+        http_request_metrics.import_last_response_pre_dispatch_wait_ms;
     result["http_import_last_response_queue_ms"] = http_request_metrics.import_last_response_queue_ms;
     result["http_import_last_response_progress_ms"] = http_request_metrics.import_last_response_progress_ms;
     result["http_import_last_response_send_calls"] = http_request_metrics.import_last_response_send_calls;
@@ -1027,6 +1030,8 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_import_avg_handler_wait_ms"] = http_request_metrics.import_avg_handler_wait_ms;
     result["http_import_avg_handler_ms"] = http_request_metrics.import_avg_handler_ms;
     result["http_import_avg_unattributed_ms"] = http_request_metrics.import_avg_unattributed_ms;
+    result["http_import_avg_response_pre_dispatch_wait_ms"] =
+        http_request_metrics.import_avg_response_pre_dispatch_wait_ms;
     result["http_import_avg_response_queue_ms"] = http_request_metrics.import_avg_response_queue_ms;
     result["http_import_max_total_ms"] = http_request_metrics.import_max_total_ms;
 
