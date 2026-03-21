@@ -123,6 +123,15 @@ Done. Audit complete — stabilized grouping, curation ordering, embedding polli
 - [x] Publish failing seed and command details in CI artifacts for reproducibility.
 - [x] Dedicated flake-detection workflow remains available for manual pre-merge stress validation and artifact capture.
 
+## Priority Queue
+
+1. [ ] Finish the heavy-import responsiveness investigation on the local `product_vehicle_fitments_se` replay lane.
+   Current state: the repo-owned replay harness now reproduces the fork's remaining upstream gap without DDEV. On March 21, 2026 the isolated fitment lane (`--seed-target-order never`, `50000` fitments, `5000` docs/request, `3` workers) still measured `210.5ms` avg import / `61756.8 docs/s` on the fork vs `165.5ms` / `74980.7 docs/s` upstream, while fork read/search probes stayed much worse (`/metrics.json 263.9ms`, `/stats.json 112.3ms`, search `134.5ms` avg). Keep iterating on this local lane before trusting DDEV-only conclusions.
+2. [ ] Narrow the remaining unattributed import-request time in the NuRaft HTTP runtime.
+   Current state: request-lifecycle instrumentation now reports fork-side averages around `http_import_avg_total_ms=149`, `http_import_avg_handler_ms=71`, `http_import_avg_response_queue_ms=15`, `http_import_avg_unattributed_ms=72` on the same lane. The old exclusive `NuRaftHttpRuntimeService::write()` mutex is fixed (shared read-side lock + atomic applied index), but that only gave a small improvement, so the main issue still sits elsewhere in the request shell / lock contention path.
+3. [ ] Re-measure mixed fitment import plus late reference seeding after the next runtime optimization.
+   Current state: batched async-reference reconciliation is implemented and no longer does one update pass per referenced value, but the March 21 replay showed only a small win on the mixed lane. Keep it, but focus next on the larger fitment-only gap and live-read/search starvation signal.
+
 ## Priority 1 - Build And Dependency Modernization
 
 ### 6) Migrate from Bazel 8.6.0 to Bazel 9
@@ -1683,6 +1692,12 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 22. **Release tarballs need checksum metadata inside and outside the archive.** `debian-pkg/generate_deb_rpm.sh` expects `typesense-server.md5.txt` inside the extracted tarball, and release automation benefits from a tarball-level SHA256 sidecar. Keep both when changing artifact assembly.
 
 23. **The clean GPU unblock was protobuf-side, and this branch's GPU artifact is ORT-provider-only.** If the one-Protobuf CUDA path regresses again, check the Protobuf `message_lite.h` / `EnumTraitsImpl` compatibility first before touching release automation. On this branch `typesense-gpu-deps` is only `libonnxruntime_providers_shared.so` plus `libonnxruntime_providers_cuda.so`, the regular Linux `typesense-server` artifact must be built with `--define=use_cuda=on`, and Whisper / voice-query remains CPU-only.
+
+24. **Use the repo-owned fitment replay before trusting DDEV-only heavy-import conclusions.** The March 21, 2026 `product_vehicle_fitments_se` harness reproduced the fork's slower imports and degraded live reads/searches locally, which made it possible to separate fitment-upsert cost from later async-reference backfill and avoid repeated rebuild-test loops through DDEV.
+
+25. **Upstream `/documents/import` still falls back to server-side `batch_size=40`; larger internal indexing batches are a distinct lower-layer default.** When comparing this fork against upstream, do not confuse the HTTP import route's `40`-doc server batching fallback with the deeper `Collection::add_many(... index_batch_size=1000)` default argument. The route-level fallback is what controls live import interleaving unless the request explicitly overrides it.
+
+26. **The top-level NuRaft write mutex was real but not the main heavy-import regression.** Removing exclusive request-wide locking from `NuRaftHttpRuntimeService::write()` was still correct, but March 21 local replays showed only a small throughput gain, so future agents should keep the fix and continue investigating request-shell / collection-lock contention instead of assuming that lock solved the import/search responsiveness gap.
 
 23. **Downstream packaging helpers should resolve both draft and legacy artifact locations.** During workflow migration, scripts like `debian-pkg/generate_deb_rpm.sh` and `scripts/publish_release.sh` should prefer the new `artifacts/` layout but keep a legacy fallback until the older release path is fully retired.
 

@@ -17,6 +17,35 @@ Current benchmark wins are real for the lanes they measure, but they do **not** 
 
 ---
 
+## Run 32: Local Fitment Replay Isolates The Remaining NuRaft Import/Search Responsiveness Gap (2026-03-21)
+
+**Commit:** local working tree on top of `HEAD` at run time
+**Command:** `TYPESENSE_IMPORT_BATCH_SIZE=1000 python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --total-fitment-docs 50000 --batch-docs 5000 --import-workers 3 --product-docs 15000 --vehicle-docs 15000 --probe-interval 0.2 --seed-target-order never --json-output /tmp/upstream-vs-fork-fitment-50k-never-b1000-current.json`
+**Scenario:** use the repo-owned `product_vehicle_fitments_se` replay harness to compare upstream vs the fork under concurrent import plus live read/search probes, while isolating the fitment-upsert phase (`--seed-target-order never`) from later async-reference backfill.
+
+### Findings
+
+- The local replay now reproduces the same class of user-visible regression without DDEV: the fork stays materially slower than upstream during the heavy fitment import lane and cheap reads/searches still degrade while writes are active.
+- The fork now supports a repo-owned server-side import batching knob (`TYPESENSE_IMPORT_BATCH_SIZE` / `--import-batch-size`), and on this lane `1000` is measurably better than the historical default `40` for throughput. Keep it as an override, not as a new product default.
+- The remaining gap is **not** explained by the old replay chunking, the extra handler-side slicing, or the initial async-reference backfill theory alone. On the isolated fitment lane, collection import work was only about `60-65ms` per sampled request while the fork still averaged `210.5ms` client-side and kept search around `134.5ms`.
+- Additional request-lifecycle instrumentation now shows the fork's average import request shell at roughly `149ms` (`auth ~5ms`, handler `~71ms`, response queue `~15ms`, unattributed remainder `~72ms`). That still leaves a sizable unattributed interval during import, and read/search responsiveness remains much worse than upstream.
+- A process-wide exclusive mutex in `NuRaftHttpRuntimeService::write()` was real and got removed from the hot path (shared read-side lock plus atomic applied-index tracking), but it only produced a small improvement. Keep the fix, but do not treat it as the main root cause.
+
+### Summary Table
+
+| Lane | Import avg | Docs/sec | `/health` avg | `/metrics.json` avg | `/stats.json` avg | Search avg |
+|---|---:|---:|---:|---:|---:|---:|
+| upstream `30.1` | `165.5 ms` | `74980.7` | `14.8 ms` | `106.8 ms` | `0.6 ms` | `4.4 ms` |
+| fork current | `210.5 ms` | `61756.8` | `27.5 ms` | `263.9 ms` | `112.3 ms` | `134.5 ms` |
+
+### Decision
+
+- Keep the local `replay_fitment_import_stress.py` lane as the canonical reproduction path for this regression; it now catches both import throughput loss and live read/search degradation under write saturation.
+- Keep server-side import batching configurable, but do **not** change the accepted product default from `40` based on this run alone.
+- Treat lock contention / request-lifecycle attribution during concurrent import as the next investigation area. The fork's live-read/search degradation is still far larger than the raw collection import work would suggest.
+
+---
+
 ## Run 31: Item 38 Closeout Against Upstream 30.1 After Benchmark Harness Repair (2026-03-18)
 
 **Commit:** local `HEAD` `1c34ddf7` at run time
