@@ -144,13 +144,17 @@ private:
     std::atomic<uint64_t> active_import_requests_{0};
     std::atomic<uint64_t> cumulative_import_requests_{0};
     std::atomic<uint64_t> cumulative_import_bytes_{0};
+    std::atomic<uint64_t> cumulative_import_docs_estimate_{0};
     std::atomic<uint64_t> last_import_request_bytes_{0};
+    std::atomic<uint64_t> last_import_docs_estimate_{0};
     std::atomic<uint64_t> last_import_logical_chunks_{0};
     std::atomic<uint64_t> last_import_replay_chunks_{0};
     std::atomic<uint64_t> last_import_append_ms_{0};
     std::atomic<uint64_t> last_import_replay_ms_{0};
     std::atomic<uint64_t> last_import_total_ms_{0};
     std::atomic<uint64_t> last_import_response_bytes_{0};
+    std::atomic<uint64_t> last_import_docs_per_sec_{0};
+    std::atomic<uint64_t> last_import_bytes_per_sec_{0};
     std::atomic<uint64_t> max_import_total_ms_{0};
     mutable std::mutex mutex_;
 

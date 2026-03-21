@@ -860,6 +860,9 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         if (node_status.contains("last_import_request_bytes")) {
             result["nuraft_last_import_request_bytes"] = node_status["last_import_request_bytes"];
         }
+        if (node_status.contains("last_import_docs_estimate")) {
+            result["nuraft_last_import_docs_estimate"] = node_status["last_import_docs_estimate"];
+        }
         if (node_status.contains("last_import_logical_chunks")) {
             result["nuraft_last_import_logical_chunks"] = node_status["last_import_logical_chunks"];
         }
@@ -877,6 +880,12 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         }
         if (node_status.contains("last_import_response_bytes")) {
             result["nuraft_last_import_response_bytes"] = node_status["last_import_response_bytes"];
+        }
+        if (node_status.contains("last_import_docs_per_sec")) {
+            result["nuraft_last_import_docs_per_sec"] = node_status["last_import_docs_per_sec"];
+        }
+        if (node_status.contains("last_import_bytes_per_sec")) {
+            result["nuraft_last_import_bytes_per_sec"] = node_status["last_import_bytes_per_sec"];
         }
         if (node_status.contains("max_import_total_ms")) {
             result["nuraft_max_import_total_ms"] = node_status["max_import_total_ms"];
@@ -977,6 +986,12 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_request_last_response_dispatch_ms"] = http_request_metrics.last_response_dispatch_ms;
     result["http_request_last_response_queue_ms"] = http_request_metrics.last_response_queue_ms;
     result["http_request_last_response_progress_ms"] = http_request_metrics.last_response_progress_ms;
+    result["http_request_last_response_send_calls"] = http_request_metrics.last_response_send_calls;
+    result["http_request_last_response_proceed_count"] = http_request_metrics.last_response_proceed_count;
+    result["http_request_last_response_defer_count"] = http_request_metrics.last_response_defer_count;
+    result["http_request_last_response_first_send_delay_ms"] = http_request_metrics.last_response_first_send_delay_ms;
+    result["http_request_last_response_send_window_ms"] = http_request_metrics.last_response_send_window_ms;
+    result["http_request_last_response_final_sent"] = http_request_metrics.last_response_final_sent;
 
     const auto message_dispatch_metrics = get_message_dispatch_metrics_snapshot();
     result["message_dispatch_stream_response_queued"] = message_dispatch_metrics.stream_response.queued;
@@ -1007,6 +1022,23 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         message_dispatch_metrics.other.last_queue_ms;
     result["message_dispatch_other_max_queue_ms"] =
         message_dispatch_metrics.other.max_queue_ms;
+
+    const auto response_flow_metrics = get_response_flow_metrics_snapshot();
+    result["response_flow_active_deferred_requests"] = response_flow_metrics.active_deferred_requests;
+    result["response_flow_cumulative_defer_schedules"] = response_flow_metrics.cumulative_defer_schedules;
+    result["response_flow_cumulative_defer_callbacks"] = response_flow_metrics.cumulative_defer_callbacks;
+    result["response_flow_cumulative_response_proceeds"] = response_flow_metrics.cumulative_response_proceeds;
+    result["response_flow_cumulative_response_send_calls"] = response_flow_metrics.cumulative_response_send_calls;
+    result["response_flow_cumulative_response_final_sends"] = response_flow_metrics.cumulative_response_final_sends;
+    result["response_flow_last_defer_timeout_ms"] = response_flow_metrics.last_defer_timeout_ms;
+    result["response_flow_last_defer_actual_ms"] = response_flow_metrics.last_defer_actual_ms;
+    result["response_flow_max_defer_actual_ms"] = response_flow_metrics.max_defer_actual_ms;
+    result["response_flow_last_send_calls_per_request"] = response_flow_metrics.last_send_calls_per_request;
+    result["response_flow_last_proceed_count_per_request"] = response_flow_metrics.last_proceed_count_per_request;
+    result["response_flow_last_defer_count_per_request"] = response_flow_metrics.last_defer_count_per_request;
+    result["response_flow_last_first_send_delay_ms"] = response_flow_metrics.last_first_send_delay_ms;
+    result["response_flow_last_send_window_ms"] = response_flow_metrics.last_send_window_ms;
+    result["response_flow_last_final_sent"] = response_flow_metrics.last_final_sent;
 
     const auto app_thread_pool_metrics = server->get_thread_pool()->get_metrics_snapshot();
     result["thread_pool_queued_tasks"] = app_thread_pool_metrics.queued_tasks;

@@ -922,6 +922,12 @@ void HttpServer::on_deferred_process_request(h2o_timer_t *entry) {
     const std::shared_ptr<http_res> response = deferred_req_res->res;
     HttpServer* server = deferred_req_res->server;
 
+    const uint64_t now_us = http_req::now_ts_us();
+    const uint64_t actual_delay_ms = now_us >= deferred_req_res->scheduled_ts_us
+        ? (now_us - deferred_req_res->scheduled_ts_us) / 1000
+        : 0;
+    record_response_defer_callback(actual_delay_ms, request->response_defer_count.load(std::memory_order_relaxed));
+
     // done with timer, so we can clear timer and data
     h2o_timer_unlink(&deferred_req_res->req->defer_timer.timer);
     delete deferred_req_res;
@@ -944,7 +950,7 @@ void HttpServer::defer_processing(const std::shared_ptr<http_req>& req, const st
     
     if(req->defer_timer.data == nullptr) {
         //TS_LOG(INFO) << "req->defer_timer.data is null";
-        auto deferred_req_res = new deferred_req_res_t(req, res, this, false);
+        auto deferred_req_res = new deferred_req_res_t(req, res, this, false, http_req::now_ts_us(), timeout_ms);
         //TS_LOG(INFO) << "req use count " << req.use_count();
         req->defer_timer.data = deferred_req_res;
         h2o_timer_init(&req->defer_timer.timer, on_deferred_process_request);
@@ -955,6 +961,8 @@ void HttpServer::defer_processing(const std::shared_ptr<http_req>& req, const st
     }
 
     h2o_timer_link(ctx.loop, timeout_ms, &req->defer_timer.timer);
+    req->mark_response_defer();
+    record_response_defer_schedule(timeout_ms);
 
     if(exit_loop) {
         // otherwise, replication thread could be stuck waiting on a future
@@ -993,6 +1001,8 @@ void HttpServer::response_proceed(h2o_generator_t *generator, h2o_req_t *req) {
     //TS_LOG(INFO) << "response_proceed called";
     h2o_custom_generator_t* custom_generator = reinterpret_cast<h2o_custom_generator_t*>(generator);
     custom_generator->req()->mark_response_progress();
+    custom_generator->req()->mark_response_proceed();
+    record_response_proceed();
 
     //TS_LOG(INFO) << "proxied_stream: " << custom_generator->response->proxied_stream;
     //TS_LOG(INFO) << "response.final: " <<  custom_generator->response->final;
@@ -1023,6 +1033,27 @@ void HttpServer::stream_response(stream_response_state_t& state) {
     // Check `async_req_res_t` constructor for overlapping writes.
 
     h2o_req_t* req = state.get_req();
+    auto* custom_generator = reinterpret_cast<h2o_custom_generator_t*>(state.generator);
+    if(custom_generator != nullptr) {
+        auto& hreq = custom_generator->req();
+        const bool final_send = (state.send_state == H2O_SEND_STATE_FINAL);
+        hreq->mark_response_send(final_send);
+        const auto response_start_ts = hreq->response_start_ts_us.load(std::memory_order_relaxed);
+        const auto first_send_ts = hreq->response_first_send_ts_us.load(std::memory_order_relaxed);
+        const auto last_send_ts = hreq->response_last_send_ts_us.load(std::memory_order_relaxed);
+        const uint64_t first_send_delay_ms = (response_start_ts != 0 && first_send_ts >= response_start_ts)
+            ? (first_send_ts - response_start_ts) / 1000
+            : 0;
+        const uint64_t send_window_ms = (first_send_ts != 0 && last_send_ts >= first_send_ts)
+            ? (last_send_ts - first_send_ts) / 1000
+            : 0;
+        record_response_send(final_send,
+                             hreq->response_send_count.load(std::memory_order_relaxed),
+                             hreq->response_proceed_count.load(std::memory_order_relaxed),
+                             hreq->response_defer_count.load(std::memory_order_relaxed),
+                             first_send_delay_ms,
+                             send_window_ms);
+    }
     
     bool start_of_res = (req->res.status == 0);
 

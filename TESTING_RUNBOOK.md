@@ -220,6 +220,61 @@ scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --singl
 scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --single-node-only --no-secrets tests/analytics.test.ts
 ```
 
+## 8) Reference-heavy import replay
+
+Use this when reproducing slow imports and read-latency regressions around `product_vehicle_fitments_se` without DDEV.
+The harness starts a local `typesense-server`, creates `products_se`, `vehicles_se`, and `product_vehicle_fitments_se`,
+then runs large bulk imports alongside `/health`, `/metrics.json`, and `/stats.json` probes.
+By default it mirrors the DDEV import ordering: fitments are bulk-imported first and the referenced
+`products_se` / `vehicles_se` documents are seeded afterwards so `async_reference` is exercised.
+The canonical offline lane uses the repo-owned schema fixtures in
+`benchmark/data/fitment_replay_schemas/`; live schema fetch is optional and meant for debugging drift, not for benchmark stability.
+
+It can either:
+- use the repo-owned fixture schemas that preserve the async-reference relationships, or
+- fetch the live fitment schema plus referenced field types from a running Typesense instance so the replay stays aligned with DDEV.
+
+Typical single-binary smoke run:
+
+```bash
+scripts/bazel_in_docker.sh build //:typesense-server
+python3 scripts/replay_fitment_import_stress.py \
+  --binary ./bazel-bin/typesense-server \
+  --total-fitment-docs 20000 \
+  --batch-docs 2000 \
+  --import-workers 3
+```
+
+Replay against live DDEV schema definitions:
+
+```bash
+python3 scripts/replay_fitment_import_stress.py \
+  --binary ./bazel-bin/typesense-server \
+  --source-url http://localhost:8108 \
+  --source-api-key motoaction-typesense-dev-key \
+  --schema-output-dir /tmp/fitment-schemas
+```
+
+Compare baseline vs candidate binaries on the same synthetic workload:
+
+```bash
+python3 scripts/replay_fitment_import_stress.py \
+  --baseline-binary /path/to/upstream/typesense-server \
+  --baseline-label upstream \
+  --candidate-binary ./bazel-bin/typesense-server \
+  --candidate-label fork \
+  --source-url http://localhost:8108 \
+  --source-api-key motoaction-typesense-dev-key
+```
+
+To keep references unresolved for the whole run:
+
+```bash
+python3 scripts/replay_fitment_import_stress.py \
+  --binary ./bazel-bin/typesense-server \
+  --seed-target-order never
+```
+
 If you intentionally want to reuse only the single-node phases of a file, the API runner now supports:
 
 ```bash

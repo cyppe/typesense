@@ -269,6 +269,12 @@ struct http_request_metrics_snapshot_t {
     uint64_t last_response_dispatch_ms = 0;
     uint64_t last_response_queue_ms = 0;
     uint64_t last_response_progress_ms = 0;
+    uint64_t last_response_send_calls = 0;
+    uint64_t last_response_proceed_count = 0;
+    uint64_t last_response_defer_count = 0;
+    uint64_t last_response_first_send_delay_ms = 0;
+    uint64_t last_response_send_window_ms = 0;
+    bool last_response_final_sent = false;
     bool last_is_write = false;
     std::string last_route;
 };
@@ -287,9 +293,33 @@ struct message_dispatch_metrics_snapshot_t {
     message_dispatch_type_metrics_snapshot_t other;
 };
 
+struct response_flow_metrics_snapshot_t {
+    uint64_t active_deferred_requests = 0;
+    uint64_t cumulative_defer_schedules = 0;
+    uint64_t cumulative_defer_callbacks = 0;
+    uint64_t cumulative_response_proceeds = 0;
+    uint64_t cumulative_response_send_calls = 0;
+    uint64_t cumulative_response_final_sends = 0;
+    uint64_t last_defer_timeout_ms = 0;
+    uint64_t last_defer_actual_ms = 0;
+    uint64_t max_defer_actual_ms = 0;
+    uint64_t last_send_calls_per_request = 0;
+    uint64_t last_proceed_count_per_request = 0;
+    uint64_t last_defer_count_per_request = 0;
+    uint64_t last_first_send_delay_ms = 0;
+    uint64_t last_send_window_ms = 0;
+    bool last_final_sent = false;
+};
+
 message_dispatch_metrics_snapshot_t get_message_dispatch_metrics_snapshot();
 void record_message_dispatch_enqueue(std::string_view type);
 void record_message_dispatch_dequeue(std::string_view type, uint64_t wait_ms);
+response_flow_metrics_snapshot_t get_response_flow_metrics_snapshot();
+void record_response_defer_schedule(uint64_t timeout_ms);
+void record_response_defer_callback(uint64_t actual_delay_ms, uint64_t defer_count_for_request);
+void record_response_proceed();
+void record_response_send(bool final_send, uint64_t send_calls_for_request, uint64_t proceed_count_for_request,
+                          uint64_t defer_count_for_request, uint64_t first_send_delay_ms, uint64_t send_window_ms);
 
 struct http_req {
     static constexpr const char* AUTH_HEADER = "x-typesense-api-key";
@@ -353,6 +383,12 @@ struct http_req {
     std::atomic<uint64_t> response_dispatch_ts_us{0};
     std::atomic<uint64_t> response_start_ts_us{0};
     std::atomic<uint64_t> response_progress_ts_us{0};
+    std::atomic<uint64_t> response_first_send_ts_us{0};
+    std::atomic<uint64_t> response_last_send_ts_us{0};
+    std::atomic<uint64_t> response_send_count{0};
+    std::atomic<uint64_t> response_proceed_count{0};
+    std::atomic<uint64_t> response_defer_count{0};
+    std::atomic<bool> response_final_sent{false};
 
     bool (*async_res_set_headers_callback)(const std::string&, const std::shared_ptr<http_req>, long, std::string&) = nullptr;
     void (*async_res_write_callback)(std::string&, const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&) = nullptr;
@@ -555,6 +591,25 @@ struct http_req {
 
     void mark_response_progress() {
         response_progress_ts_us.store(now_ts_us(), std::memory_order_relaxed);
+    }
+
+    void mark_response_send(bool final_send) {
+        const auto ts_us = now_ts_us();
+        uint64_t expected = 0;
+        response_first_send_ts_us.compare_exchange_strong(expected, ts_us, std::memory_order_relaxed);
+        response_last_send_ts_us.store(ts_us, std::memory_order_relaxed);
+        response_send_count.fetch_add(1, std::memory_order_relaxed);
+        if(final_send) {
+            response_final_sent.store(true, std::memory_order_relaxed);
+        }
+    }
+
+    void mark_response_proceed() {
+        response_proceed_count.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void mark_response_defer() {
+        response_defer_count.fetch_add(1, std::memory_order_relaxed);
     }
 
     static uint64_t now_ts_us();

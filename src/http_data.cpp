@@ -17,6 +17,12 @@ struct http_request_metrics_state_t {
     std::atomic<uint64_t> last_response_dispatch_ms{0};
     std::atomic<uint64_t> last_response_queue_ms{0};
     std::atomic<uint64_t> last_response_progress_ms{0};
+    std::atomic<uint64_t> last_response_send_calls{0};
+    std::atomic<uint64_t> last_response_proceed_count{0};
+    std::atomic<uint64_t> last_response_defer_count{0};
+    std::atomic<uint64_t> last_response_first_send_delay_ms{0};
+    std::atomic<uint64_t> last_response_send_window_ms{0};
+    std::atomic<bool> last_response_final_sent{false};
     std::atomic<bool> last_is_write{false};
     std::mutex last_route_mutex;
     std::string last_route;
@@ -39,6 +45,26 @@ struct message_dispatch_metrics_state_t {
 };
 
 message_dispatch_metrics_state_t g_message_dispatch_metrics;
+
+struct response_flow_metrics_state_t {
+    std::atomic<uint64_t> active_deferred_requests{0};
+    std::atomic<uint64_t> cumulative_defer_schedules{0};
+    std::atomic<uint64_t> cumulative_defer_callbacks{0};
+    std::atomic<uint64_t> cumulative_response_proceeds{0};
+    std::atomic<uint64_t> cumulative_response_send_calls{0};
+    std::atomic<uint64_t> cumulative_response_final_sends{0};
+    std::atomic<uint64_t> last_defer_timeout_ms{0};
+    std::atomic<uint64_t> last_defer_actual_ms{0};
+    std::atomic<uint64_t> max_defer_actual_ms{0};
+    std::atomic<uint64_t> last_send_calls_per_request{0};
+    std::atomic<uint64_t> last_proceed_count_per_request{0};
+    std::atomic<uint64_t> last_defer_count_per_request{0};
+    std::atomic<uint64_t> last_first_send_delay_ms{0};
+    std::atomic<uint64_t> last_send_window_ms{0};
+    std::atomic<bool> last_final_sent{false};
+};
+
+response_flow_metrics_state_t g_response_flow_metrics;
 
 message_dispatch_type_metrics_state_t& get_message_dispatch_metrics_state(std::string_view type) {
     if (type == "STREAM_RESPONSE") {
@@ -63,6 +89,26 @@ message_dispatch_type_metrics_snapshot_t snapshot_message_dispatch_type(
     snapshot.cumulative_messages = state.cumulative_messages.load(std::memory_order_relaxed);
     snapshot.last_queue_ms = state.last_queue_ms.load(std::memory_order_relaxed);
     snapshot.max_queue_ms = state.max_queue_ms.load(std::memory_order_relaxed);
+    return snapshot;
+}
+
+response_flow_metrics_snapshot_t snapshot_response_flow_metrics() {
+    response_flow_metrics_snapshot_t snapshot;
+    snapshot.active_deferred_requests = g_response_flow_metrics.active_deferred_requests.load(std::memory_order_relaxed);
+    snapshot.cumulative_defer_schedules = g_response_flow_metrics.cumulative_defer_schedules.load(std::memory_order_relaxed);
+    snapshot.cumulative_defer_callbacks = g_response_flow_metrics.cumulative_defer_callbacks.load(std::memory_order_relaxed);
+    snapshot.cumulative_response_proceeds = g_response_flow_metrics.cumulative_response_proceeds.load(std::memory_order_relaxed);
+    snapshot.cumulative_response_send_calls = g_response_flow_metrics.cumulative_response_send_calls.load(std::memory_order_relaxed);
+    snapshot.cumulative_response_final_sends = g_response_flow_metrics.cumulative_response_final_sends.load(std::memory_order_relaxed);
+    snapshot.last_defer_timeout_ms = g_response_flow_metrics.last_defer_timeout_ms.load(std::memory_order_relaxed);
+    snapshot.last_defer_actual_ms = g_response_flow_metrics.last_defer_actual_ms.load(std::memory_order_relaxed);
+    snapshot.max_defer_actual_ms = g_response_flow_metrics.max_defer_actual_ms.load(std::memory_order_relaxed);
+    snapshot.last_send_calls_per_request = g_response_flow_metrics.last_send_calls_per_request.load(std::memory_order_relaxed);
+    snapshot.last_proceed_count_per_request = g_response_flow_metrics.last_proceed_count_per_request.load(std::memory_order_relaxed);
+    snapshot.last_defer_count_per_request = g_response_flow_metrics.last_defer_count_per_request.load(std::memory_order_relaxed);
+    snapshot.last_first_send_delay_ms = g_response_flow_metrics.last_first_send_delay_ms.load(std::memory_order_relaxed);
+    snapshot.last_send_window_ms = g_response_flow_metrics.last_send_window_ms.load(std::memory_order_relaxed);
+    snapshot.last_final_sent = g_response_flow_metrics.last_final_sent.load(std::memory_order_relaxed);
     return snapshot;
 }
 
@@ -148,6 +194,12 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
     snapshot.last_response_dispatch_ms = g_http_request_metrics.last_response_dispatch_ms.load(std::memory_order_relaxed);
     snapshot.last_response_queue_ms = g_http_request_metrics.last_response_queue_ms.load(std::memory_order_relaxed);
     snapshot.last_response_progress_ms = g_http_request_metrics.last_response_progress_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_send_calls = g_http_request_metrics.last_response_send_calls.load(std::memory_order_relaxed);
+    snapshot.last_response_proceed_count = g_http_request_metrics.last_response_proceed_count.load(std::memory_order_relaxed);
+    snapshot.last_response_defer_count = g_http_request_metrics.last_response_defer_count.load(std::memory_order_relaxed);
+    snapshot.last_response_first_send_delay_ms = g_http_request_metrics.last_response_first_send_delay_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_send_window_ms = g_http_request_metrics.last_response_send_window_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_final_sent = g_http_request_metrics.last_response_final_sent.load(std::memory_order_relaxed);
     snapshot.last_is_write = g_http_request_metrics.last_is_write.load(std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(g_http_request_metrics.last_route_mutex);
@@ -182,6 +234,47 @@ void record_message_dispatch_dequeue(std::string_view type, uint64_t wait_ms) {
     }
 }
 
+response_flow_metrics_snapshot_t get_response_flow_metrics_snapshot() {
+    return snapshot_response_flow_metrics();
+}
+
+void record_response_defer_schedule(uint64_t timeout_ms) {
+    g_response_flow_metrics.active_deferred_requests.fetch_add(1, std::memory_order_relaxed);
+    g_response_flow_metrics.cumulative_defer_schedules.fetch_add(1, std::memory_order_relaxed);
+    g_response_flow_metrics.last_defer_timeout_ms.store(timeout_ms, std::memory_order_relaxed);
+}
+
+void record_response_defer_callback(uint64_t actual_delay_ms, uint64_t defer_count_for_request) {
+    g_response_flow_metrics.active_deferred_requests.fetch_sub(1, std::memory_order_relaxed);
+    g_response_flow_metrics.cumulative_defer_callbacks.fetch_add(1, std::memory_order_relaxed);
+    g_response_flow_metrics.last_defer_actual_ms.store(actual_delay_ms, std::memory_order_relaxed);
+    g_response_flow_metrics.last_defer_count_per_request.store(defer_count_for_request, std::memory_order_relaxed);
+    auto prev_max = g_response_flow_metrics.max_defer_actual_ms.load(std::memory_order_relaxed);
+    while (actual_delay_ms > prev_max &&
+           !g_response_flow_metrics.max_defer_actual_ms.compare_exchange_weak(prev_max, actual_delay_ms,
+                                                                              std::memory_order_relaxed)) {
+    }
+}
+
+void record_response_proceed() {
+    g_response_flow_metrics.cumulative_response_proceeds.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_response_send(bool final_send, uint64_t send_calls_for_request, uint64_t proceed_count_for_request,
+                          uint64_t defer_count_for_request, uint64_t first_send_delay_ms, uint64_t send_window_ms) {
+    g_response_flow_metrics.cumulative_response_send_calls.fetch_add(1, std::memory_order_relaxed);
+    if(final_send) {
+        g_response_flow_metrics.cumulative_response_final_sends.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    g_response_flow_metrics.last_send_calls_per_request.store(send_calls_for_request, std::memory_order_relaxed);
+    g_response_flow_metrics.last_proceed_count_per_request.store(proceed_count_for_request, std::memory_order_relaxed);
+    g_response_flow_metrics.last_defer_count_per_request.store(defer_count_for_request, std::memory_order_relaxed);
+    g_response_flow_metrics.last_first_send_delay_ms.store(first_send_delay_ms, std::memory_order_relaxed);
+    g_response_flow_metrics.last_send_window_ms.store(send_window_ms, std::memory_order_relaxed);
+    g_response_flow_metrics.last_final_sent.store(final_send, std::memory_order_relaxed);
+}
+
 void http_req::record_lifecycle_metrics(const http_req& req, const std::string& route, uint64_t total_ms) {
     const auto auth_ms = req.auth_duration_us.load(std::memory_order_relaxed) / 1000;
     const auto handler_dispatch_ts = req.handler_dispatch_ts_us.load(std::memory_order_relaxed);
@@ -190,6 +283,12 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     const auto response_dispatch_ts = req.response_dispatch_ts_us.load(std::memory_order_relaxed);
     const auto response_start_ts = req.response_start_ts_us.load(std::memory_order_relaxed);
     const auto response_progress_ts = req.response_progress_ts_us.load(std::memory_order_relaxed);
+    const auto response_first_send_ts = req.response_first_send_ts_us.load(std::memory_order_relaxed);
+    const auto response_last_send_ts = req.response_last_send_ts_us.load(std::memory_order_relaxed);
+    const auto response_send_calls = req.response_send_count.load(std::memory_order_relaxed);
+    const auto response_proceed_count = req.response_proceed_count.load(std::memory_order_relaxed);
+    const auto response_defer_count = req.response_defer_count.load(std::memory_order_relaxed);
+    const auto response_final_sent = req.response_final_sent.load(std::memory_order_relaxed);
 
     uint64_t handler_wait_ms = 0;
     if (handler_dispatch_ts != 0 && handler_start_ts >= handler_dispatch_ts) {
@@ -221,6 +320,16 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
         response_progress_ms = (response_progress_ts - response_start_ts) / 1000;
     }
 
+    uint64_t response_first_send_delay_ms = 0;
+    if (response_start_ts != 0 && response_first_send_ts >= response_start_ts) {
+        response_first_send_delay_ms = (response_first_send_ts - response_start_ts) / 1000;
+    }
+
+    uint64_t response_send_window_ms = 0;
+    if (response_first_send_ts != 0 && response_last_send_ts >= response_first_send_ts) {
+        response_send_window_ms = (response_last_send_ts - response_first_send_ts) / 1000;
+    }
+
     uint64_t attributed_ms = auth_ms + handler_wait_ms + handler_ms;
     uint64_t unattributed_ms = total_ms >= attributed_ms ? (total_ms - attributed_ms) : 0;
 
@@ -238,6 +347,12 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     g_http_request_metrics.last_response_dispatch_ms.store(response_dispatch_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_response_queue_ms.store(response_queue_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_response_progress_ms.store(response_progress_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_send_calls.store(response_send_calls, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_proceed_count.store(response_proceed_count, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_defer_count.store(response_defer_count, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_first_send_delay_ms.store(response_first_send_delay_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_send_window_ms.store(response_send_window_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_final_sent.store(response_final_sent, std::memory_order_relaxed);
     g_http_request_metrics.last_is_write.store(req.is_write.load(std::memory_order_relaxed), std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(g_http_request_metrics.last_route_mutex);

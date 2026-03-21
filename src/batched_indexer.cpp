@@ -152,7 +152,7 @@ void BatchedIndexer::enqueue(const std::shared_ptr<http_req>& req, const std::sh
 
     if(read_more_input) {
         // Tell the http library to read more input data
-        deferred_req_res_t* req_res = new deferred_req_res_t(req, res, server, true);
+        deferred_req_res_t* req_res = new deferred_req_res_t(req, res, server, true, http_req::now_ts_us(), 0);
         server->send_message(HttpServer::REQUEST_PROCEED_MESSAGE, req_res);
     }
 }

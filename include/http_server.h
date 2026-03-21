@@ -44,13 +44,17 @@ struct deferred_req_res_t {
     const std::shared_ptr<http_req> req;
     const std::shared_ptr<http_res> res;
     HttpServer* server;
+    uint64_t scheduled_ts_us;
+    size_t timeout_ms;
 
     // used to manage lifecycle of async actions
     bool destroy_after_use;
 
     deferred_req_res_t(const std::shared_ptr<http_req> &req, const std::shared_ptr<http_res> &res,
-                       HttpServer *server, bool destroy_after_use) :
-            req(req), res(res), server(server), destroy_after_use(destroy_after_use) {}
+                       HttpServer *server, bool destroy_after_use,
+                       uint64_t scheduled_ts_us, size_t timeout_ms) :
+            req(req), res(res), server(server), scheduled_ts_us(scheduled_ts_us), timeout_ms(timeout_ms),
+            destroy_after_use(destroy_after_use) {}
 
 };
 

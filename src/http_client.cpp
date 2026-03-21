@@ -72,7 +72,7 @@ long HttpClient::post_response_sse(const std::string &url, const std::string &bo
                                 const std::shared_ptr<http_res> response,
                                 HttpServer* server) {
     struct curl_slist* chunk = nullptr;
-    deferred_req_res_t* req_res = new deferred_req_res_t(request, response, server, false);
+    deferred_req_res_t* req_res = new deferred_req_res_t(request, response, server, false, http_req::now_ts_us(), 0);
     std::unique_ptr<deferred_req_res_t> req_res_guard(req_res);
 
     CURL *curl = init_curl_sse(url, timeout_ms, req_res);
@@ -102,7 +102,7 @@ long HttpClient::post_response_sse(const std::string &url, const std::string &bo
 long HttpClient::post_response_async(const std::string &url, const std::shared_ptr<http_req> request,
                                      const std::shared_ptr<http_res> response, HttpServer* server,
                                      bool send_ts_api_header) {
-    deferred_req_res_t* req_res = new deferred_req_res_t(request, response, server, false);
+    deferred_req_res_t* req_res = new deferred_req_res_t(request, response, server, false, http_req::now_ts_us(), 0);
     std::unique_ptr<deferred_req_res_t> req_res_guard(req_res);
     struct curl_slist* chunk = nullptr;
 

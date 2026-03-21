@@ -27,10 +27,6 @@ constexpr const char* kCollectionPrefix = "state/collections/";
 constexpr const char* kDocumentPrefix = "state/documents/";
 constexpr size_t kDocumentImportRaftChunkMaxDocs = 5000;
 constexpr size_t kDocumentImportRaftChunkMaxBytes = 4 * 1024 * 1024;
-// Keep this aligned with HttpServer::ACTIVE_STREAM_WINDOW_SIZE so the buffered
-// replay follows the same handler cadence as the old async import path.
-constexpr size_t kDocumentImportHandlerReplayChunkBytes = 196605;
-
 uint64_t elapsed_ms_since(const std::chrono::steady_clock::time_point& start_time) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
@@ -297,51 +293,29 @@ bool replay_buffered_import_handler(HttpServer* server,
                                     uint32_t& response_status_code,
                                     uint64_t& replay_chunks,
                                     std::string& error) {
-    auto replay_request = build_request_copy(*source_request);
-    replay_request->body.clear();
-    replay_request->chunk_len = 0;
-    replay_request->first_chunk_aggregate = false;
-    replay_request->last_chunk_aggregate = false;
-
+    auto replay_request = build_import_chunk_request(*source_request, source_request->body, true, true);
     auto replay_response = std::make_shared<http_res>(nullptr);
-    const std::string& source_body = source_request->body;
-    replay_chunks = 0;
+    replay_chunks = 1;
 
-    size_t offset = 0;
-    const bool has_body = !source_body.empty();
-    do {
-        const size_t bytes_to_append =
-            has_body ? std::min(kDocumentImportHandlerReplayChunkBytes, source_body.size() - offset) : 0;
-        if (bytes_to_append > 0) {
-            replay_request->body.append(source_body, offset, bytes_to_append);
-            offset += bytes_to_append;
-        }
+    const bool handler_ok = invoke_registered_handler(server, replay_request, replay_response, error);
+    if (!handler_ok && replay_response->status_code == 0) {
+        return false;
+    }
 
-        replay_request->chunk_len = bytes_to_append;
-        replay_request->last_chunk_aggregate = !has_body || offset >= source_body.size();
+    if (!replay_response->content_type_header.empty()) {
+        response_content_type = replay_response->content_type_header;
+    }
+    if (replay_response->status_code != 0) {
+        response_status_code = replay_response->status_code;
+    }
+    if (!replay_response->body.empty()) {
+        aggregated_response_body = replay_response->body;
+    }
 
-        const bool handler_ok = invoke_registered_handler(server, replay_request, replay_response, error);
-        replay_chunks++;
-        if (!handler_ok && replay_response->status_code == 0) {
-            return false;
-        }
-
-        if (!replay_response->content_type_header.empty()) {
-            response_content_type = replay_response->content_type_header;
-        }
-        if (replay_response->status_code != 0) {
-            response_status_code = replay_response->status_code;
-        }
-        if (!replay_response->body.empty()) {
-            aggregated_response_body += replay_response->body;
-        }
-
-        if (replay_response->status_code >= 400) {
-            aggregated_response_body = replay_response->body;
-            error.clear();
-            return false;
-        }
-    } while (offset < source_body.size());
+    if (replay_response->status_code >= 400) {
+        error.clear();
+        return false;
+    }
 
     error.clear();
     return true;
@@ -968,6 +942,14 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
     uint32_t response_status_code = 200;
     const auto import_start = std::chrono::steady_clock::now();
     uint64_t logical_chunks = 0;
+    uint64_t docs_estimate = 0;
+    if (!request->body.empty()) {
+        docs_estimate = 1;
+        docs_estimate += static_cast<uint64_t>(std::count(request->body.begin(), request->body.end(), '\n'));
+        if (!request->body.empty() && request->body.back() == '\n' && docs_estimate > 0) {
+            docs_estimate--;
+        }
+    }
 
     const auto consume_chunk = [&](std::string chunk_body,
                                    bool first_chunk,
@@ -1015,13 +997,20 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
         const uint64_t total_ms = elapsed_ms_since(import_start);
         cumulative_import_requests_.fetch_add(1, std::memory_order_relaxed);
         cumulative_import_bytes_.fetch_add(request->body.size(), std::memory_order_relaxed);
+        cumulative_import_docs_estimate_.fetch_add(docs_estimate, std::memory_order_relaxed);
         last_import_request_bytes_.store(request->body.size(), std::memory_order_relaxed);
+        last_import_docs_estimate_.store(docs_estimate, std::memory_order_relaxed);
         last_import_logical_chunks_.store(logical_chunks, std::memory_order_relaxed);
         last_import_replay_chunks_.store(replay_chunks, std::memory_order_relaxed);
         last_import_append_ms_.store(append_ms, std::memory_order_relaxed);
         last_import_replay_ms_.store(replay_ms, std::memory_order_relaxed);
         last_import_total_ms_.store(total_ms, std::memory_order_relaxed);
         last_import_response_bytes_.store(aggregated_response_body.size(), std::memory_order_relaxed);
+        last_import_docs_per_sec_.store(total_ms == 0 ? docs_estimate : (docs_estimate * 1000ULL) / total_ms,
+                                        std::memory_order_relaxed);
+        last_import_bytes_per_sec_.store(total_ms == 0 ? request->body.size() :
+                                         (static_cast<uint64_t>(request->body.size()) * 1000ULL) / total_ms,
+                                         std::memory_order_relaxed);
         max_import_total_ms_.store(std::max(max_import_total_ms_.load(std::memory_order_relaxed), total_ms),
                                    std::memory_order_relaxed);
         active_import_requests_.fetch_sub(1, std::memory_order_relaxed);
@@ -1033,13 +1022,20 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
     const uint64_t total_ms = elapsed_ms_since(import_start);
     cumulative_import_requests_.fetch_add(1, std::memory_order_relaxed);
     cumulative_import_bytes_.fetch_add(request->body.size(), std::memory_order_relaxed);
+    cumulative_import_docs_estimate_.fetch_add(docs_estimate, std::memory_order_relaxed);
     last_import_request_bytes_.store(request->body.size(), std::memory_order_relaxed);
+    last_import_docs_estimate_.store(docs_estimate, std::memory_order_relaxed);
     last_import_logical_chunks_.store(logical_chunks, std::memory_order_relaxed);
     last_import_replay_chunks_.store(replay_chunks, std::memory_order_relaxed);
     last_import_append_ms_.store(append_ms, std::memory_order_relaxed);
     last_import_replay_ms_.store(replay_ms, std::memory_order_relaxed);
     last_import_total_ms_.store(total_ms, std::memory_order_relaxed);
     last_import_response_bytes_.store(aggregated_response_body.size(), std::memory_order_relaxed);
+    last_import_docs_per_sec_.store(total_ms == 0 ? docs_estimate : (docs_estimate * 1000ULL) / total_ms,
+                                    std::memory_order_relaxed);
+    last_import_bytes_per_sec_.store(total_ms == 0 ? request->body.size() :
+                                     (static_cast<uint64_t>(request->body.size()) * 1000ULL) / total_ms,
+                                     std::memory_order_relaxed);
     max_import_total_ms_.store(std::max(max_import_total_ms_.load(std::memory_order_relaxed), total_ms),
                                std::memory_order_relaxed);
     active_import_requests_.fetch_sub(1, std::memory_order_relaxed);
@@ -1096,13 +1092,17 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         {"active_import_requests", active_import_requests_.load(std::memory_order_relaxed)},
         {"cumulative_import_requests", cumulative_import_requests_.load(std::memory_order_relaxed)},
         {"cumulative_import_bytes", cumulative_import_bytes_.load(std::memory_order_relaxed)},
+        {"cumulative_import_docs_estimate", cumulative_import_docs_estimate_.load(std::memory_order_relaxed)},
         {"last_import_request_bytes", last_import_request_bytes_.load(std::memory_order_relaxed)},
+        {"last_import_docs_estimate", last_import_docs_estimate_.load(std::memory_order_relaxed)},
         {"last_import_logical_chunks", last_import_logical_chunks_.load(std::memory_order_relaxed)},
         {"last_import_replay_chunks", last_import_replay_chunks_.load(std::memory_order_relaxed)},
         {"last_import_append_ms", last_import_append_ms_.load(std::memory_order_relaxed)},
         {"last_import_replay_ms", last_import_replay_ms_.load(std::memory_order_relaxed)},
         {"last_import_total_ms", last_import_total_ms_.load(std::memory_order_relaxed)},
         {"last_import_response_bytes", last_import_response_bytes_.load(std::memory_order_relaxed)},
+        {"last_import_docs_per_sec", last_import_docs_per_sec_.load(std::memory_order_relaxed)},
+        {"last_import_bytes_per_sec", last_import_bytes_per_sec_.load(std::memory_order_relaxed)},
         {"max_import_total_ms", max_import_total_ms_.load(std::memory_order_relaxed)},
     };
 
