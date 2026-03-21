@@ -70,6 +70,32 @@ struct collection_drop_metrics_snapshot_t {
     std::string last_collection_name;
 };
 
+struct search_route_metrics_snapshot_t {
+    uint64_t cumulative_calls = 0;
+    uint64_t last_total_ms = 0;
+    uint64_t last_nl_query_ms = 0;
+    uint64_t last_do_search_ms = 0;
+    uint64_t last_results_parse_ms = 0;
+    uint64_t last_results_dump_ms = 0;
+    std::string last_collection_name;
+};
+
+struct collections_route_metrics_snapshot_t {
+    uint64_t cumulative_calls = 0;
+    uint64_t last_total_ms = 0;
+    uint64_t last_api_key_collections_ms = 0;
+    uint64_t last_get_summaries_ms = 0;
+    uint64_t last_dump_ms = 0;
+    uint64_t last_collection_count = 0;
+};
+
+struct stats_route_metrics_snapshot_t {
+    uint64_t cumulative_calls = 0;
+    uint64_t last_total_ms = 0;
+    uint64_t last_app_metrics_ms = 0;
+    uint64_t last_dump_ms = 0;
+};
+
 namespace {
 
 struct collection_create_metrics_state_t {
@@ -93,8 +119,38 @@ struct collection_drop_metrics_state_t {
     std::string last_collection_name;
 };
 
+struct search_route_metrics_state_t {
+    std::atomic<uint64_t> cumulative_calls{0};
+    std::atomic<uint64_t> last_total_ms{0};
+    std::atomic<uint64_t> last_nl_query_ms{0};
+    std::atomic<uint64_t> last_do_search_ms{0};
+    std::atomic<uint64_t> last_results_parse_ms{0};
+    std::atomic<uint64_t> last_results_dump_ms{0};
+    std::mutex last_collection_mutex;
+    std::string last_collection_name;
+};
+
+struct collections_route_metrics_state_t {
+    std::atomic<uint64_t> cumulative_calls{0};
+    std::atomic<uint64_t> last_total_ms{0};
+    std::atomic<uint64_t> last_api_key_collections_ms{0};
+    std::atomic<uint64_t> last_get_summaries_ms{0};
+    std::atomic<uint64_t> last_dump_ms{0};
+    std::atomic<uint64_t> last_collection_count{0};
+};
+
+struct stats_route_metrics_state_t {
+    std::atomic<uint64_t> cumulative_calls{0};
+    std::atomic<uint64_t> last_total_ms{0};
+    std::atomic<uint64_t> last_app_metrics_ms{0};
+    std::atomic<uint64_t> last_dump_ms{0};
+};
+
 collection_create_metrics_state_t g_collection_create_metrics;
 collection_drop_metrics_state_t g_collection_drop_metrics;
+search_route_metrics_state_t g_search_route_metrics;
+collections_route_metrics_state_t g_collections_route_metrics;
+stats_route_metrics_state_t g_stats_route_metrics;
 
 collection_create_metrics_snapshot_t get_collection_create_metrics_snapshot() {
     collection_create_metrics_snapshot_t snapshot;
@@ -122,6 +178,43 @@ collection_drop_metrics_snapshot_t get_collection_drop_metrics_snapshot() {
         std::lock_guard<std::mutex> lock(g_collection_drop_metrics.last_collection_mutex);
         snapshot.last_collection_name = g_collection_drop_metrics.last_collection_name;
     }
+    return snapshot;
+}
+
+search_route_metrics_snapshot_t get_search_route_metrics_snapshot() {
+    search_route_metrics_snapshot_t snapshot;
+    snapshot.cumulative_calls = g_search_route_metrics.cumulative_calls.load(std::memory_order_relaxed);
+    snapshot.last_total_ms = g_search_route_metrics.last_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_nl_query_ms = g_search_route_metrics.last_nl_query_ms.load(std::memory_order_relaxed);
+    snapshot.last_do_search_ms = g_search_route_metrics.last_do_search_ms.load(std::memory_order_relaxed);
+    snapshot.last_results_parse_ms = g_search_route_metrics.last_results_parse_ms.load(std::memory_order_relaxed);
+    snapshot.last_results_dump_ms = g_search_route_metrics.last_results_dump_ms.load(std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_search_route_metrics.last_collection_mutex);
+        snapshot.last_collection_name = g_search_route_metrics.last_collection_name;
+    }
+    return snapshot;
+}
+
+collections_route_metrics_snapshot_t get_collections_route_metrics_snapshot() {
+    collections_route_metrics_snapshot_t snapshot;
+    snapshot.cumulative_calls = g_collections_route_metrics.cumulative_calls.load(std::memory_order_relaxed);
+    snapshot.last_total_ms = g_collections_route_metrics.last_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_api_key_collections_ms =
+        g_collections_route_metrics.last_api_key_collections_ms.load(std::memory_order_relaxed);
+    snapshot.last_get_summaries_ms =
+        g_collections_route_metrics.last_get_summaries_ms.load(std::memory_order_relaxed);
+    snapshot.last_dump_ms = g_collections_route_metrics.last_dump_ms.load(std::memory_order_relaxed);
+    snapshot.last_collection_count = g_collections_route_metrics.last_collection_count.load(std::memory_order_relaxed);
+    return snapshot;
+}
+
+stats_route_metrics_snapshot_t get_stats_route_metrics_snapshot() {
+    stats_route_metrics_snapshot_t snapshot;
+    snapshot.cumulative_calls = g_stats_route_metrics.cumulative_calls.load(std::memory_order_relaxed);
+    snapshot.last_total_ms = g_stats_route_metrics.last_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_app_metrics_ms = g_stats_route_metrics.last_app_metrics_ms.load(std::memory_order_relaxed);
+    snapshot.last_dump_ms = g_stats_route_metrics.last_dump_ms.load(std::memory_order_relaxed);
     return snapshot;
 }
 
@@ -417,6 +510,7 @@ index_operation_t get_index_operation(const std::string& action) {
 }
 
 bool get_collections(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
+    const auto total_start = std::chrono::steady_clock::now();
     CollectionManager & collectionManager = CollectionManager::get_instance();
 
     uint32_t offset = 0, limit = 0;
@@ -446,17 +540,34 @@ bool get_collections(const std::shared_ptr<http_req>& req, const std::shared_ptr
     }
 
     AuthManager &auth_manager = collectionManager.getAuthManager();
+    const auto api_key_collections_start = std::chrono::steady_clock::now();
     auto api_key_collections = auth_manager.get_api_key_collections(req->api_auth_key);
+    const auto api_key_collections_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - api_key_collections_start).count();
 
+    const auto summaries_start = std::chrono::steady_clock::now();
     auto collections_summaries_op = collectionManager.get_collection_summaries(limit, offset, exclude_fields,
                                                                                api_key_collections);
+    const auto get_summaries_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - summaries_start).count();
     if(!collections_summaries_op.ok()) {
         res->set(collections_summaries_op.code(), collections_summaries_op.error());
         return false;
     }
 
     nlohmann::json json_response = collections_summaries_op.get();
+    const auto dump_start = std::chrono::steady_clock::now();
     res->set_200(json_response.dump());
+    const auto dump_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - dump_start).count();
+    const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - total_start).count();
+    g_collections_route_metrics.cumulative_calls.fetch_add(1, std::memory_order_relaxed);
+    g_collections_route_metrics.last_total_ms.store(total_ms, std::memory_order_relaxed);
+    g_collections_route_metrics.last_api_key_collections_ms.store(api_key_collections_ms, std::memory_order_relaxed);
+    g_collections_route_metrics.last_get_summaries_ms.store(get_summaries_ms, std::memory_order_relaxed);
+    g_collections_route_metrics.last_dump_ms.store(dump_ms, std::memory_order_relaxed);
+    g_collections_route_metrics.last_collection_count.store(json_response.size(), std::memory_order_relaxed);
     return true;
 }
 
@@ -984,6 +1095,29 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["collection_drop_last_total_ms"] = collection_drop_metrics.last_total_ms;
     result["collection_drop_last_status_code"] = collection_drop_metrics.last_status_code;
 
+    const auto search_route_metrics = get_search_route_metrics_snapshot();
+    result["search_route_cumulative_calls"] = search_route_metrics.cumulative_calls;
+    result["search_route_last_collection_name"] = search_route_metrics.last_collection_name;
+    result["search_route_last_total_ms"] = search_route_metrics.last_total_ms;
+    result["search_route_last_nl_query_ms"] = search_route_metrics.last_nl_query_ms;
+    result["search_route_last_do_search_ms"] = search_route_metrics.last_do_search_ms;
+    result["search_route_last_results_parse_ms"] = search_route_metrics.last_results_parse_ms;
+    result["search_route_last_results_dump_ms"] = search_route_metrics.last_results_dump_ms;
+
+    const auto collections_route_metrics = get_collections_route_metrics_snapshot();
+    result["collections_route_cumulative_calls"] = collections_route_metrics.cumulative_calls;
+    result["collections_route_last_total_ms"] = collections_route_metrics.last_total_ms;
+    result["collections_route_last_api_key_collections_ms"] = collections_route_metrics.last_api_key_collections_ms;
+    result["collections_route_last_get_summaries_ms"] = collections_route_metrics.last_get_summaries_ms;
+    result["collections_route_last_dump_ms"] = collections_route_metrics.last_dump_ms;
+    result["collections_route_last_collection_count"] = collections_route_metrics.last_collection_count;
+
+    const auto stats_route_metrics = get_stats_route_metrics_snapshot();
+    result["stats_route_cumulative_calls"] = stats_route_metrics.cumulative_calls;
+    result["stats_route_last_total_ms"] = stats_route_metrics.last_total_ms;
+    result["stats_route_last_app_metrics_ms"] = stats_route_metrics.last_app_metrics_ms;
+    result["stats_route_last_dump_ms"] = stats_route_metrics.last_dump_ms;
+
     const auto http_request_metrics = http_req::get_metrics_snapshot();
     result["http_request_cumulative_requests"] = http_request_metrics.cumulative_requests;
     result["http_request_cumulative_slow_requests"] = http_request_metrics.cumulative_slow_requests;
@@ -1034,6 +1168,36 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         http_request_metrics.import_avg_response_pre_dispatch_wait_ms;
     result["http_import_avg_response_queue_ms"] = http_request_metrics.import_avg_response_queue_ms;
     result["http_import_max_total_ms"] = http_request_metrics.import_max_total_ms;
+
+    const auto hot_http_route_metrics = get_hot_http_route_metrics_snapshot();
+    const auto add_hot_http_route_metrics = [&](const std::string& prefix,
+                                                const http_route_lifecycle_metrics_snapshot_t& metrics) {
+        result[prefix + "_cumulative_requests"] = metrics.cumulative_requests;
+        result[prefix + "_last_total_ms"] = metrics.last_total_ms;
+        result[prefix + "_last_auth_ms"] = metrics.last_auth_ms;
+        result[prefix + "_last_handler_wait_ms"] = metrics.last_handler_wait_ms;
+        result[prefix + "_last_handler_ms"] = metrics.last_handler_ms;
+        result[prefix + "_last_unattributed_ms"] = metrics.last_unattributed_ms;
+        result[prefix + "_last_conn_to_start_ms"] = metrics.last_conn_to_start_ms;
+        result[prefix + "_last_response_dispatch_ms"] = metrics.last_response_dispatch_ms;
+        result[prefix + "_last_response_pre_dispatch_wait_ms"] = metrics.last_response_pre_dispatch_wait_ms;
+        result[prefix + "_last_response_queue_ms"] = metrics.last_response_queue_ms;
+        result[prefix + "_last_response_progress_ms"] = metrics.last_response_progress_ms;
+        result[prefix + "_max_total_ms"] = metrics.max_total_ms;
+        result[prefix + "_avg_total_ms"] = metrics.avg_total_ms;
+        result[prefix + "_avg_auth_ms"] = metrics.avg_auth_ms;
+        result[prefix + "_avg_handler_wait_ms"] = metrics.avg_handler_wait_ms;
+        result[prefix + "_avg_handler_ms"] = metrics.avg_handler_ms;
+        result[prefix + "_avg_unattributed_ms"] = metrics.avg_unattributed_ms;
+        result[prefix + "_avg_conn_to_start_ms"] = metrics.avg_conn_to_start_ms;
+        result[prefix + "_avg_response_queue_ms"] = metrics.avg_response_queue_ms;
+        result[prefix + "_avg_response_pre_dispatch_wait_ms"] = metrics.avg_response_pre_dispatch_wait_ms;
+    };
+    add_hot_http_route_metrics("http_route_health", hot_http_route_metrics.health);
+    add_hot_http_route_metrics("http_route_collections", hot_http_route_metrics.collections);
+    add_hot_http_route_metrics("http_route_stats_json", hot_http_route_metrics.stats_json);
+    add_hot_http_route_metrics("http_route_metrics_json", hot_http_route_metrics.metrics_json);
+    add_hot_http_route_metrics("http_route_search", hot_http_route_metrics.search);
 
     const auto message_dispatch_metrics = get_message_dispatch_metrics_snapshot();
     result["message_dispatch_stream_response_queued"] = message_dispatch_metrics.stream_response.queued;
@@ -1107,10 +1271,22 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
 }
 
 bool get_stats_json(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
+    const auto total_start = std::chrono::steady_clock::now();
+    const auto app_metrics_start = std::chrono::steady_clock::now();
     nlohmann::json result = nlohmann::json::parse(AppMetrics::get_instance().get_serialized());
+    const auto app_metrics_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - app_metrics_start).count();
     result["pending_write_batches"] = server->get_num_queued_writes();
-
+    const auto dump_start = std::chrono::steady_clock::now();
     res->set_body(200, result.dump(2));
+    const auto dump_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - dump_start).count();
+    const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - total_start).count();
+    g_stats_route_metrics.cumulative_calls.fetch_add(1, std::memory_order_relaxed);
+    g_stats_route_metrics.last_total_ms.store(total_ms, std::memory_order_relaxed);
+    g_stats_route_metrics.last_app_metrics_ms.store(app_metrics_ms, std::memory_order_relaxed);
+    g_stats_route_metrics.last_dump_ms.store(dump_ms, std::memory_order_relaxed);
     return true;
 }
 
@@ -1136,6 +1312,7 @@ uint64_t hash_request(const std::shared_ptr<http_req>& req) {
 }
 
 bool get_search(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
+    const auto total_start = std::chrono::steady_clock::now();
     const auto use_cache_it = req->params.find("use_cache");
     bool use_cache = (use_cache_it != req->params.end()) && (use_cache_it->second == "1" || use_cache_it->second == "true");
     uint64_t req_hash = 0;
@@ -1256,12 +1433,18 @@ bool get_search(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
         prompt_cache_ttl = std::stoull(req->params["nl_query_prompt_cache_ttl"]);
     }
 
+    const auto nl_query_start = std::chrono::steady_clock::now();
     auto nl_search_op = NaturalLanguageSearchModelManager::process_nl_query_and_augment_params(req->params, prompt_cache_ttl);
     uint64_t nl_search_time_ms = nl_search_op.ok() ? nl_search_op.get() : 0;
+    const auto nl_query_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - nl_query_start).count();
 
     std::string results_json_str;
+    const auto do_search_start = std::chrono::steady_clock::now();
     Option<bool> search_op = CollectionManager::do_search(req->params, req->embedded_params_vec[0],
                                                           results_json_str, req->conn_ts);
+    const auto do_search_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - do_search_start).count();
     if(!search_op.ok()) {
         nlohmann::json error_json;
         NaturalLanguageSearchModelManager::add_nl_query_data_to_results(error_json, &(req->params), nl_search_time_ms, true);
@@ -1274,8 +1457,13 @@ bool get_search(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
         stream_response(req, res);
         return false;
     }
+    uint64_t results_parse_ms = 0;
+    uint64_t results_dump_ms = 0;
     if(conversation) {
+        const auto parse_start = std::chrono::steady_clock::now();
         nlohmann::json results_json = nlohmann::json::parse(results_json_str);
+        results_parse_ms += std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - parse_start).count();
         results_json["conversation"] = nlohmann::json::object();
         results_json["conversation"]["query"] = query;
 
@@ -1384,13 +1572,22 @@ bool get_search(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
         results_json["request_params"]["q"] = raw_query;
         results_json["request_params"]["first_q"] = raw_query;
 
+        const auto dump_start = std::chrono::steady_clock::now();
         results_json_str = results_json.dump();
+        results_dump_ms += std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - dump_start).count();
 
     }
 
+    const auto final_parse_start = std::chrono::steady_clock::now();
     nlohmann::json results_json = nlohmann::json::parse(results_json_str);
+    results_parse_ms += std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - final_parse_start).count();
     NaturalLanguageSearchModelManager::add_nl_query_data_to_results(results_json, &(req->params), nl_search_time_ms);
+    const auto final_dump_start = std::chrono::steady_clock::now();
     results_json_str = results_json.dump();
+    results_dump_ms += std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - final_dump_start).count();
 
     // if the response is an event stream, we need to add the data: prefix
     if(conversation_stream) {
@@ -1401,6 +1598,19 @@ bool get_search(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
     res->set_200(results_json_str);
     res->final = true;
     stream_response(req, res);
+    const auto total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - total_start).count();
+    g_search_route_metrics.cumulative_calls.fetch_add(1, std::memory_order_relaxed);
+    g_search_route_metrics.last_total_ms.store(total_ms, std::memory_order_relaxed);
+    g_search_route_metrics.last_nl_query_ms.store(nl_query_ms, std::memory_order_relaxed);
+    g_search_route_metrics.last_do_search_ms.store(do_search_ms, std::memory_order_relaxed);
+    g_search_route_metrics.last_results_parse_ms.store(results_parse_ms, std::memory_order_relaxed);
+    g_search_route_metrics.last_results_dump_ms.store(results_dump_ms, std::memory_order_relaxed);
+    {
+        std::lock_guard<std::mutex> lock(g_search_route_metrics.last_collection_mutex);
+        g_search_route_metrics.last_collection_name =
+            req->params.count("collection") ? req->params["collection"] : "";
+    }
 
     // we will cache only successful requests
     if(use_cache && !conversation_stream) {

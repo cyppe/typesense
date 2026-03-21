@@ -57,6 +57,39 @@ struct http_request_metrics_state_t {
 
 http_request_metrics_state_t g_http_request_metrics;
 
+struct http_route_lifecycle_metrics_state_t {
+    std::atomic<uint64_t> cumulative_requests{0};
+    std::atomic<uint64_t> last_total_ms{0};
+    std::atomic<uint64_t> last_auth_ms{0};
+    std::atomic<uint64_t> last_handler_wait_ms{0};
+    std::atomic<uint64_t> last_handler_ms{0};
+    std::atomic<uint64_t> last_unattributed_ms{0};
+    std::atomic<uint64_t> last_conn_to_start_ms{0};
+    std::atomic<uint64_t> last_response_dispatch_ms{0};
+    std::atomic<uint64_t> last_response_pre_dispatch_wait_ms{0};
+    std::atomic<uint64_t> last_response_queue_ms{0};
+    std::atomic<uint64_t> last_response_progress_ms{0};
+    std::atomic<uint64_t> cumulative_total_ms{0};
+    std::atomic<uint64_t> cumulative_auth_ms{0};
+    std::atomic<uint64_t> cumulative_handler_wait_ms{0};
+    std::atomic<uint64_t> cumulative_handler_ms{0};
+    std::atomic<uint64_t> cumulative_unattributed_ms{0};
+    std::atomic<uint64_t> cumulative_conn_to_start_ms{0};
+    std::atomic<uint64_t> cumulative_response_queue_ms{0};
+    std::atomic<uint64_t> cumulative_response_pre_dispatch_wait_ms{0};
+    std::atomic<uint64_t> max_total_ms{0};
+};
+
+struct hot_http_route_metrics_state_t {
+    http_route_lifecycle_metrics_state_t health;
+    http_route_lifecycle_metrics_state_t collections;
+    http_route_lifecycle_metrics_state_t stats_json;
+    http_route_lifecycle_metrics_state_t metrics_json;
+    http_route_lifecycle_metrics_state_t search;
+};
+
+hot_http_route_metrics_state_t g_hot_http_route_metrics;
+
 struct message_dispatch_type_metrics_state_t {
     std::atomic<uint64_t> queued{0};
     std::atomic<uint64_t> cumulative_messages{0};
@@ -92,6 +125,104 @@ struct response_flow_metrics_state_t {
 };
 
 response_flow_metrics_state_t g_response_flow_metrics;
+
+uint64_t average_or_zero(uint64_t total, uint64_t count) {
+    return count == 0 ? 0 : (total / count);
+}
+
+http_route_lifecycle_metrics_snapshot_t snapshot_hot_http_route_metrics(
+    const http_route_lifecycle_metrics_state_t& state) {
+    http_route_lifecycle_metrics_snapshot_t snapshot;
+    snapshot.cumulative_requests = state.cumulative_requests.load(std::memory_order_relaxed);
+    snapshot.last_total_ms = state.last_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_auth_ms = state.last_auth_ms.load(std::memory_order_relaxed);
+    snapshot.last_handler_wait_ms = state.last_handler_wait_ms.load(std::memory_order_relaxed);
+    snapshot.last_handler_ms = state.last_handler_ms.load(std::memory_order_relaxed);
+    snapshot.last_unattributed_ms = state.last_unattributed_ms.load(std::memory_order_relaxed);
+    snapshot.last_conn_to_start_ms = state.last_conn_to_start_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_dispatch_ms = state.last_response_dispatch_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_pre_dispatch_wait_ms =
+        state.last_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_queue_ms = state.last_response_queue_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_progress_ms = state.last_response_progress_ms.load(std::memory_order_relaxed);
+    snapshot.max_total_ms = state.max_total_ms.load(std::memory_order_relaxed);
+    snapshot.avg_total_ms = average_or_zero(
+        state.cumulative_total_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
+    snapshot.avg_auth_ms = average_or_zero(
+        state.cumulative_auth_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
+    snapshot.avg_handler_wait_ms = average_or_zero(
+        state.cumulative_handler_wait_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
+    snapshot.avg_handler_ms = average_or_zero(
+        state.cumulative_handler_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
+    snapshot.avg_unattributed_ms = average_or_zero(
+        state.cumulative_unattributed_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
+    snapshot.avg_conn_to_start_ms = average_or_zero(
+        state.cumulative_conn_to_start_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
+    snapshot.avg_response_queue_ms = average_or_zero(
+        state.cumulative_response_queue_ms.load(std::memory_order_relaxed), snapshot.cumulative_requests);
+    snapshot.avg_response_pre_dispatch_wait_ms = average_or_zero(
+        state.cumulative_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed),
+        snapshot.cumulative_requests);
+    return snapshot;
+}
+
+http_route_lifecycle_metrics_state_t* get_hot_http_route_metrics_state(const http_req& req) {
+    if(req.http_method == "GET") {
+        if(req.path_without_query == "/health") {
+            return &g_hot_http_route_metrics.health;
+        }
+
+        if(req.path_without_query == "/collections") {
+            return &g_hot_http_route_metrics.collections;
+        }
+
+        if(req.path_without_query == "/stats.json") {
+            return &g_hot_http_route_metrics.stats_json;
+        }
+
+        if(req.path_without_query == "/metrics.json") {
+            return &g_hot_http_route_metrics.metrics_json;
+        }
+    }
+
+    if(req.path_without_query == "/multi_search" ||
+       StringUtils::ends_with(req.path_without_query, "/documents/search")) {
+        return &g_hot_http_route_metrics.search;
+    }
+
+    return nullptr;
+}
+
+void record_hot_http_route_metrics(http_route_lifecycle_metrics_state_t& state, uint64_t total_ms, uint64_t auth_ms,
+                                   uint64_t handler_wait_ms, uint64_t handler_ms, uint64_t unattributed_ms,
+                                   uint64_t conn_to_start_ms, uint64_t response_dispatch_ms,
+                                   uint64_t response_pre_dispatch_wait_ms, uint64_t response_queue_ms,
+                                   uint64_t response_progress_ms) {
+    state.cumulative_requests.fetch_add(1, std::memory_order_relaxed);
+    state.last_total_ms.store(total_ms, std::memory_order_relaxed);
+    state.last_auth_ms.store(auth_ms, std::memory_order_relaxed);
+    state.last_handler_wait_ms.store(handler_wait_ms, std::memory_order_relaxed);
+    state.last_handler_ms.store(handler_ms, std::memory_order_relaxed);
+    state.last_unattributed_ms.store(unattributed_ms, std::memory_order_relaxed);
+    state.last_conn_to_start_ms.store(conn_to_start_ms, std::memory_order_relaxed);
+    state.last_response_dispatch_ms.store(response_dispatch_ms, std::memory_order_relaxed);
+    state.last_response_pre_dispatch_wait_ms.store(response_pre_dispatch_wait_ms, std::memory_order_relaxed);
+    state.last_response_queue_ms.store(response_queue_ms, std::memory_order_relaxed);
+    state.last_response_progress_ms.store(response_progress_ms, std::memory_order_relaxed);
+    state.cumulative_total_ms.fetch_add(total_ms, std::memory_order_relaxed);
+    state.cumulative_auth_ms.fetch_add(auth_ms, std::memory_order_relaxed);
+    state.cumulative_handler_wait_ms.fetch_add(handler_wait_ms, std::memory_order_relaxed);
+    state.cumulative_handler_ms.fetch_add(handler_ms, std::memory_order_relaxed);
+    state.cumulative_unattributed_ms.fetch_add(unattributed_ms, std::memory_order_relaxed);
+    state.cumulative_conn_to_start_ms.fetch_add(conn_to_start_ms, std::memory_order_relaxed);
+    state.cumulative_response_queue_ms.fetch_add(response_queue_ms, std::memory_order_relaxed);
+    state.cumulative_response_pre_dispatch_wait_ms.fetch_add(response_pre_dispatch_wait_ms, std::memory_order_relaxed);
+
+    auto prev_max = state.max_total_ms.load(std::memory_order_relaxed);
+    while(total_ms > prev_max &&
+          !state.max_total_ms.compare_exchange_weak(prev_max, total_ms, std::memory_order_relaxed)) {
+    }
+}
 
 message_dispatch_type_metrics_state_t& get_message_dispatch_metrics_state(std::string_view type) {
     if (type == "STREAM_RESPONSE") {
@@ -199,6 +330,16 @@ std::string route_path::_get_action() {
     return resource_path + ":" + operation;
 }
 
+hot_http_route_metrics_snapshot_t get_hot_http_route_metrics_snapshot() {
+    hot_http_route_metrics_snapshot_t snapshot;
+    snapshot.health = snapshot_hot_http_route_metrics(g_hot_http_route_metrics.health);
+    snapshot.collections = snapshot_hot_http_route_metrics(g_hot_http_route_metrics.collections);
+    snapshot.stats_json = snapshot_hot_http_route_metrics(g_hot_http_route_metrics.stats_json);
+    snapshot.metrics_json = snapshot_hot_http_route_metrics(g_hot_http_route_metrics.metrics_json);
+    snapshot.search = snapshot_hot_http_route_metrics(g_hot_http_route_metrics.search);
+    return snapshot;
+}
+
 bool http_req::do_resource_check() {
     return http_method != "DELETE" && path_without_query != "/health" && path_without_query != "/config";
 }
@@ -257,23 +398,27 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
     snapshot.import_cumulative_requests =
         g_http_request_metrics.import_cumulative_requests.load(std::memory_order_relaxed);
     const uint64_t import_cumulative_requests = snapshot.import_cumulative_requests;
-    const auto average_or_zero = [import_cumulative_requests](uint64_t total) -> uint64_t {
-        return import_cumulative_requests == 0 ? 0 : (total / import_cumulative_requests);
-    };
     snapshot.import_avg_total_ms = average_or_zero(
-        g_http_request_metrics.import_cumulative_total_ms.load(std::memory_order_relaxed));
+        g_http_request_metrics.import_cumulative_total_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
     snapshot.import_avg_auth_ms = average_or_zero(
-        g_http_request_metrics.import_cumulative_auth_ms.load(std::memory_order_relaxed));
+        g_http_request_metrics.import_cumulative_auth_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
     snapshot.import_avg_handler_wait_ms = average_or_zero(
-        g_http_request_metrics.import_cumulative_handler_wait_ms.load(std::memory_order_relaxed));
+        g_http_request_metrics.import_cumulative_handler_wait_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
     snapshot.import_avg_handler_ms = average_or_zero(
-        g_http_request_metrics.import_cumulative_handler_ms.load(std::memory_order_relaxed));
+        g_http_request_metrics.import_cumulative_handler_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
     snapshot.import_avg_unattributed_ms = average_or_zero(
-        g_http_request_metrics.import_cumulative_unattributed_ms.load(std::memory_order_relaxed));
+        g_http_request_metrics.import_cumulative_unattributed_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
     snapshot.import_avg_response_queue_ms = average_or_zero(
-        g_http_request_metrics.import_cumulative_response_queue_ms.load(std::memory_order_relaxed));
+        g_http_request_metrics.import_cumulative_response_queue_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
     snapshot.import_avg_response_pre_dispatch_wait_ms = average_or_zero(
-        g_http_request_metrics.import_cumulative_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed));
+        g_http_request_metrics.import_cumulative_response_pre_dispatch_wait_ms.load(std::memory_order_relaxed),
+        import_cumulative_requests);
     snapshot.import_max_total_ms = g_http_request_metrics.import_max_total_ms.load(std::memory_order_relaxed);
     return snapshot;
 }
@@ -465,5 +610,12 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
         if (total_ms > prev_max) {
             g_http_request_metrics.import_max_total_ms.store(total_ms, std::memory_order_relaxed);
         }
+    }
+
+    auto* hot_route_metrics = get_hot_http_route_metrics_state(req);
+    if(hot_route_metrics != nullptr) {
+        record_hot_http_route_metrics(*hot_route_metrics, total_ms, auth_ms, handler_wait_ms, handler_ms,
+                                      unattributed_ms, conn_to_start_ms, response_dispatch_ms,
+                                      response_pre_dispatch_wait_ms, response_queue_ms, response_progress_ms);
     }
 }

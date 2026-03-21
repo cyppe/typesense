@@ -342,6 +342,10 @@ class ScenarioResult:
     metrics_timeline_summary_by_phase: dict[str, dict[str, dict[str, float | int]]]
     metrics_label_summary_by_phase: dict[str, dict[str, dict[str, int]]]
     final_metrics: dict[str, Any]
+    profile_command: str | None
+    profile_exit_code: int | None
+    profile_stdout_log: str | None
+    profile_stderr_log: str | None
     stdout_log: str
     stderr_log: str
 
@@ -388,6 +392,12 @@ class TypesenseProcess:
         self.base_url = f"http://{DEFAULT_HOST}:{self.listen_port}"
         self.process: subprocess.Popen[str] | None = None
         self._help_text: str | None = None
+
+    @property
+    def pid(self) -> int:
+        if self.process is None or self.process.pid is None:
+            raise RuntimeError("typesense-server process is not running")
+        return self.process.pid
 
     def supported_flags(self) -> set[str]:
         if self._help_text is None:
@@ -669,6 +679,69 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "collection_search_last_run_lock_wait_ms",
                 "collection_write_last_memory_lock_wait_ms",
                 "collection_write_last_memory_lock_hold_ms",
+                "search_route_last_total_ms",
+                "search_route_last_nl_query_ms",
+                "search_route_last_do_search_ms",
+                "search_route_last_results_parse_ms",
+                "search_route_last_results_dump_ms",
+                "collections_route_last_total_ms",
+                "collections_route_last_api_key_collections_ms",
+                "collections_route_last_get_summaries_ms",
+                "collections_route_last_dump_ms",
+                "collections_route_last_collection_count",
+                "stats_route_last_total_ms",
+                "stats_route_last_app_metrics_ms",
+                "stats_route_last_dump_ms",
+                "http_route_health_last_total_ms",
+                "http_route_health_last_auth_ms",
+                "http_route_health_last_handler_wait_ms",
+                "http_route_health_last_handler_ms",
+                "http_route_health_last_response_queue_ms",
+                "http_route_health_avg_total_ms",
+                "http_route_health_avg_auth_ms",
+                "http_route_health_avg_handler_wait_ms",
+                "http_route_health_avg_handler_ms",
+                "http_route_health_avg_response_queue_ms",
+                "http_route_collections_last_total_ms",
+                "http_route_collections_last_auth_ms",
+                "http_route_collections_last_handler_wait_ms",
+                "http_route_collections_last_handler_ms",
+                "http_route_collections_last_response_queue_ms",
+                "http_route_collections_avg_total_ms",
+                "http_route_collections_avg_auth_ms",
+                "http_route_collections_avg_handler_wait_ms",
+                "http_route_collections_avg_handler_ms",
+                "http_route_collections_avg_response_queue_ms",
+                "http_route_stats_json_last_total_ms",
+                "http_route_stats_json_last_auth_ms",
+                "http_route_stats_json_last_handler_wait_ms",
+                "http_route_stats_json_last_handler_ms",
+                "http_route_stats_json_last_response_queue_ms",
+                "http_route_stats_json_avg_total_ms",
+                "http_route_stats_json_avg_auth_ms",
+                "http_route_stats_json_avg_handler_wait_ms",
+                "http_route_stats_json_avg_handler_ms",
+                "http_route_stats_json_avg_response_queue_ms",
+                "http_route_metrics_json_last_total_ms",
+                "http_route_metrics_json_last_auth_ms",
+                "http_route_metrics_json_last_handler_wait_ms",
+                "http_route_metrics_json_last_handler_ms",
+                "http_route_metrics_json_last_response_queue_ms",
+                "http_route_metrics_json_avg_total_ms",
+                "http_route_metrics_json_avg_auth_ms",
+                "http_route_metrics_json_avg_handler_wait_ms",
+                "http_route_metrics_json_avg_handler_ms",
+                "http_route_metrics_json_avg_response_queue_ms",
+                "http_route_search_last_total_ms",
+                "http_route_search_last_auth_ms",
+                "http_route_search_last_handler_wait_ms",
+                "http_route_search_last_handler_ms",
+                "http_route_search_last_response_queue_ms",
+                "http_route_search_avg_total_ms",
+                "http_route_search_avg_auth_ms",
+                "http_route_search_avg_handler_wait_ms",
+                "http_route_search_avg_handler_ms",
+                "http_route_search_avg_response_queue_ms",
                 "config_import_batch_size",
                 "http_request_last_total_ms",
                 "http_request_last_response_queue_ms",
@@ -933,10 +1006,107 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "collection_search_last_run_lock_wait_ms",
         "collection_write_last_memory_lock_wait_ms",
         "collection_write_last_memory_lock_hold_ms",
+        "search_route_last_collection_name",
+        "search_route_last_total_ms",
+        "search_route_last_nl_query_ms",
+        "search_route_last_do_search_ms",
+        "search_route_last_results_parse_ms",
+        "search_route_last_results_dump_ms",
+        "collections_route_last_total_ms",
+        "collections_route_last_api_key_collections_ms",
+        "collections_route_last_get_summaries_ms",
+        "collections_route_last_dump_ms",
+        "collections_route_last_collection_count",
+        "stats_route_last_total_ms",
+        "stats_route_last_app_metrics_ms",
+        "stats_route_last_dump_ms",
+        "http_route_health_last_total_ms",
+        "http_route_health_last_auth_ms",
+        "http_route_health_last_handler_wait_ms",
+        "http_route_health_last_handler_ms",
+        "http_route_health_last_response_queue_ms",
+        "http_route_health_avg_total_ms",
+        "http_route_health_avg_auth_ms",
+        "http_route_health_avg_handler_wait_ms",
+        "http_route_health_avg_handler_ms",
+        "http_route_health_avg_response_queue_ms",
+        "http_route_collections_last_total_ms",
+        "http_route_collections_last_auth_ms",
+        "http_route_collections_last_handler_wait_ms",
+        "http_route_collections_last_handler_ms",
+        "http_route_collections_last_response_queue_ms",
+        "http_route_collections_avg_total_ms",
+        "http_route_collections_avg_auth_ms",
+        "http_route_collections_avg_handler_wait_ms",
+        "http_route_collections_avg_handler_ms",
+        "http_route_collections_avg_response_queue_ms",
+        "http_route_stats_json_last_total_ms",
+        "http_route_stats_json_last_auth_ms",
+        "http_route_stats_json_last_handler_wait_ms",
+        "http_route_stats_json_last_handler_ms",
+        "http_route_stats_json_last_response_queue_ms",
+        "http_route_stats_json_avg_total_ms",
+        "http_route_stats_json_avg_auth_ms",
+        "http_route_stats_json_avg_handler_wait_ms",
+        "http_route_stats_json_avg_handler_ms",
+        "http_route_stats_json_avg_response_queue_ms",
+        "http_route_metrics_json_last_total_ms",
+        "http_route_metrics_json_last_auth_ms",
+        "http_route_metrics_json_last_handler_wait_ms",
+        "http_route_metrics_json_last_handler_ms",
+        "http_route_metrics_json_last_response_queue_ms",
+        "http_route_metrics_json_avg_total_ms",
+        "http_route_metrics_json_avg_auth_ms",
+        "http_route_metrics_json_avg_handler_wait_ms",
+        "http_route_metrics_json_avg_handler_ms",
+        "http_route_metrics_json_avg_response_queue_ms",
+        "http_route_search_last_total_ms",
+        "http_route_search_last_auth_ms",
+        "http_route_search_last_handler_wait_ms",
+        "http_route_search_last_handler_ms",
+        "http_route_search_last_response_queue_ms",
+        "http_route_search_avg_total_ms",
+        "http_route_search_avg_auth_ms",
+        "http_route_search_avg_handler_wait_ms",
+        "http_route_search_avg_handler_ms",
+        "http_route_search_avg_response_queue_ms",
         "collection_create_last_total_ms",
         "collection_drop_last_total_ms",
     ]
     return {key: payload.get(key) for key in interesting if key in payload}
+
+
+def start_profile_command(
+    command: str,
+    process: TypesenseProcess,
+    api_key: str,
+    label: str,
+) -> tuple[subprocess.Popen[str], Path, Path]:
+    stdout_log = process.temp_dir / f"profile-{label}-stdout.log"
+    stderr_log = process.temp_dir / f"profile-{label}-stderr.log"
+    env = os.environ.copy()
+    env.update(
+        {
+            "TYPESENSE_PID": str(process.pid),
+            "TYPESENSE_BASE_URL": process.base_url,
+            "TYPESENSE_API_KEY": api_key,
+            "TYPESENSE_TEMP_DIR": str(process.temp_dir),
+            "TYPESENSE_BINARY": str(process.binary),
+            "TYPESENSE_PROFILE_LABEL": label,
+        }
+    )
+    stdout_file = stdout_log.open("w", encoding="utf-8")
+    stderr_file = stderr_log.open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        command,
+        shell=True,
+        executable="/bin/bash",
+        env=env,
+        stdout=stdout_file,
+        stderr=stderr_file,
+        text=True,
+    )
+    return proc, stdout_log, stderr_log
 
 
 def run_scenario(
@@ -946,6 +1116,10 @@ def run_scenario(
     args: argparse.Namespace,
 ) -> ScenarioResult:
     process = TypesenseProcess(binary, args.api_key, args.server_arg)
+    profile_proc: subprocess.Popen[str] | None = None
+    profile_stdout_log: Path | None = None
+    profile_stderr_log: Path | None = None
+    profile_exit_code: int | None = None
     try:
         process.start()
         create_timings: dict[str, float] = {}
@@ -1058,6 +1232,14 @@ def run_scenario(
             thread.start()
         metrics_thread.start()
 
+        if args.profile_cmd:
+            profile_proc, profile_stdout_log, profile_stderr_log = start_profile_command(
+                args.profile_cmd,
+                process,
+                args.api_key,
+                label,
+            )
+
         started = now_ms()
         import_stats = run_imports(
             process.base_url,
@@ -1112,6 +1294,17 @@ def run_scenario(
             thread.join(timeout=2.0)
         metrics_thread.join(timeout=2.0)
 
+        if profile_proc is not None:
+            try:
+                profile_exit_code = profile_proc.wait(timeout=args.profile_wait_timeout)
+            except subprocess.TimeoutExpired:
+                profile_proc.terminate()
+                try:
+                    profile_exit_code = profile_proc.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    profile_proc.kill()
+                    profile_exit_code = profile_proc.wait(timeout=5.0)
+
         final_metrics = collect_final_metrics(process.base_url, args.api_key, args.timeout)
         import_summary = summarize_latencies(import_stats.batch_latencies_ms)
         import_summary.update(
@@ -1149,10 +1342,21 @@ def run_scenario(
             metrics_timeline_summary_by_phase=metrics_timeline_summary_by_phase,
             metrics_label_summary_by_phase=metrics_label_summary_by_phase,
             final_metrics=final_metrics,
+            profile_command=args.profile_cmd,
+            profile_exit_code=profile_exit_code,
+            profile_stdout_log=str(profile_stdout_log) if profile_stdout_log is not None else None,
+            profile_stderr_log=str(profile_stderr_log) if profile_stderr_log is not None else None,
             stdout_log=str(process.stdout_log),
             stderr_log=str(process.stderr_log),
         )
     finally:
+        if profile_proc is not None and profile_proc.poll() is None:
+            profile_proc.terminate()
+            try:
+                profile_proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                profile_proc.kill()
+                profile_proc.wait(timeout=5.0)
         process.stop()
         process.cleanup(args.keep_temp)
 
@@ -1231,6 +1435,14 @@ def print_result(result: ScenarioResult) -> None:
             print(f"  [{phase}]")
             for key in sorted(result.metrics_label_summary_by_phase[phase].keys()):
                 print(f"    {key}: {result.metrics_label_summary_by_phase[phase][key]}")
+    if result.profile_command:
+        print(
+            "Profiler:\n"
+            f"  command={result.profile_command}\n"
+            f"  exit_code={result.profile_exit_code}\n"
+            f"  stdout={result.profile_stdout_log}\n"
+            f"  stderr={result.profile_stderr_log}"
+        )
     print(f"Logs: stdout={result.stdout_log} stderr={result.stderr_log}")
 
 
@@ -1300,6 +1512,20 @@ def parse_args() -> argparse.Namespace:
         default=0.0,
         help="Optional delay between streamed client-side import chunks.",
     )
+    parser.add_argument(
+        "--profile-cmd",
+        help=(
+            "Optional shell command to run after the server starts and before imports begin. "
+            "The command receives TYPESENSE_PID, TYPESENSE_BASE_URL, TYPESENSE_API_KEY, "
+            "TYPESENSE_TEMP_DIR, TYPESENSE_BINARY, and TYPESENSE_PROFILE_LABEL in its environment."
+        ),
+    )
+    parser.add_argument(
+        "--profile-wait-timeout",
+        type=float,
+        default=30.0,
+        help="How long to wait for --profile-cmd to exit after the workload finishes before terminating it.",
+    )
     parser.add_argument("--keep-temp", action="store_true", help="Keep temporary data/log directories for inspection.")
     parser.add_argument("--server-arg", action="append", default=[], help="Extra arg passed through to typesense-server.")
     parser.add_argument("--json-output", type=Path, help="Optional path to write the final summary JSON.")
@@ -1354,6 +1580,10 @@ def main() -> int:
                 "metrics_timeline_summary_by_phase": result.metrics_timeline_summary_by_phase,
                 "metrics_label_summary_by_phase": result.metrics_label_summary_by_phase,
                 "final_metrics": result.final_metrics,
+                "profile_command": result.profile_command,
+                "profile_exit_code": result.profile_exit_code,
+                "profile_stdout_log": result.profile_stdout_log,
+                "profile_stderr_log": result.profile_stderr_log,
                 "stdout_log": result.stdout_log,
                 "stderr_log": result.stderr_log,
             }

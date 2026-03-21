@@ -306,6 +306,37 @@ struct http_request_metrics_snapshot_t {
     uint64_t import_max_total_ms = 0;
 };
 
+struct http_route_lifecycle_metrics_snapshot_t {
+    uint64_t cumulative_requests = 0;
+    uint64_t last_total_ms = 0;
+    uint64_t last_auth_ms = 0;
+    uint64_t last_handler_wait_ms = 0;
+    uint64_t last_handler_ms = 0;
+    uint64_t last_unattributed_ms = 0;
+    uint64_t last_conn_to_start_ms = 0;
+    uint64_t last_response_dispatch_ms = 0;
+    uint64_t last_response_pre_dispatch_wait_ms = 0;
+    uint64_t last_response_queue_ms = 0;
+    uint64_t last_response_progress_ms = 0;
+    uint64_t max_total_ms = 0;
+    uint64_t avg_total_ms = 0;
+    uint64_t avg_auth_ms = 0;
+    uint64_t avg_handler_wait_ms = 0;
+    uint64_t avg_handler_ms = 0;
+    uint64_t avg_unattributed_ms = 0;
+    uint64_t avg_conn_to_start_ms = 0;
+    uint64_t avg_response_queue_ms = 0;
+    uint64_t avg_response_pre_dispatch_wait_ms = 0;
+};
+
+struct hot_http_route_metrics_snapshot_t {
+    http_route_lifecycle_metrics_snapshot_t health;
+    http_route_lifecycle_metrics_snapshot_t collections;
+    http_route_lifecycle_metrics_snapshot_t stats_json;
+    http_route_lifecycle_metrics_snapshot_t metrics_json;
+    http_route_lifecycle_metrics_snapshot_t search;
+};
+
 struct message_dispatch_type_metrics_snapshot_t {
     uint64_t queued = 0;
     uint64_t cumulative_messages = 0;
@@ -338,6 +369,7 @@ struct response_flow_metrics_snapshot_t {
     bool last_final_sent = false;
 };
 
+hot_http_route_metrics_snapshot_t get_hot_http_route_metrics_snapshot();
 message_dispatch_metrics_snapshot_t get_message_dispatch_metrics_snapshot();
 void record_message_dispatch_enqueue(std::string_view type);
 void record_message_dispatch_dequeue(std::string_view type, uint64_t wait_ms);
