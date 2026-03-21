@@ -953,6 +953,10 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["collection_import_last_batch_response_ms"] =
         collection_import_metrics.last_batch_index_response_ms;
     result["collection_import_last_batch_total_ms"] = collection_import_metrics.last_batch_index_total_ms;
+    result["collection_search_last_init_lock_wait_ms"] = collection_import_metrics.last_search_init_lock_wait_ms;
+    result["collection_search_last_run_lock_wait_ms"] = collection_import_metrics.last_search_run_lock_wait_ms;
+    result["collection_write_last_memory_lock_wait_ms"] = collection_import_metrics.last_write_memory_lock_wait_ms;
+    result["collection_write_last_memory_lock_hold_ms"] = collection_import_metrics.last_write_memory_lock_hold_ms;
 
     result["import_handler_cumulative_calls"] = g_import_handler_metrics.cumulative_calls.load(std::memory_order_relaxed);
     result["import_handler_cumulative_docs"] = g_import_handler_metrics.cumulative_docs.load(std::memory_order_relaxed);

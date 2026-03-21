@@ -70,6 +70,10 @@ struct CollectionImportMetricsSnapshot {
     uint64_t last_batch_index_response_ms = 0;
     uint64_t last_batch_index_total_ms = 0;
     uint64_t last_batch_index_async_reference_updates = 0;
+    uint64_t last_search_init_lock_wait_ms = 0;
+    uint64_t last_search_run_lock_wait_ms = 0;
+    uint64_t last_write_memory_lock_wait_ms = 0;
+    uint64_t last_write_memory_lock_hold_ms = 0;
     std::string last_collection_name;
 };
 

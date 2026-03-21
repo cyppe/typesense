@@ -70,6 +70,10 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> last_batch_index_response_ms{0};
     std::atomic<uint64_t> last_batch_index_total_ms{0};
     std::atomic<uint64_t> last_batch_index_async_reference_updates{0};
+    std::atomic<uint64_t> last_search_init_lock_wait_ms{0};
+    std::atomic<uint64_t> last_search_run_lock_wait_ms{0};
+    std::atomic<uint64_t> last_write_memory_lock_wait_ms{0};
+    std::atomic<uint64_t> last_write_memory_lock_hold_ms{0};
     std::mutex collection_name_mutex;
     std::string last_collection_name;
 };
@@ -506,6 +510,14 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
     snapshot.last_batch_index_total_ms = g_collection_import_metrics.last_batch_index_total_ms.load(std::memory_order_relaxed);
     snapshot.last_batch_index_async_reference_updates =
         g_collection_import_metrics.last_batch_index_async_reference_updates.load(std::memory_order_relaxed);
+    snapshot.last_search_init_lock_wait_ms =
+        g_collection_import_metrics.last_search_init_lock_wait_ms.load(std::memory_order_relaxed);
+    snapshot.last_search_run_lock_wait_ms =
+        g_collection_import_metrics.last_search_run_lock_wait_ms.load(std::memory_order_relaxed);
+    snapshot.last_write_memory_lock_wait_ms =
+        g_collection_import_metrics.last_write_memory_lock_wait_ms.load(std::memory_order_relaxed);
+    snapshot.last_write_memory_lock_hold_ms =
+        g_collection_import_metrics.last_write_memory_lock_hold_ms.load(std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(g_collection_import_metrics.collection_name_mutex);
         snapshot.last_collection_name = g_collection_import_metrics.last_collection_name;
@@ -1280,7 +1292,9 @@ size_t Collection::batch_index_in_memory(std::vector<index_record>& index_record
                     remote_embedding_timeout_ms, remote_embedding_num_tries, generate_embeddings);
     const uint64_t validate_ms = elapsed_ms_since(validate_start);
     shlock.unlock();
+    const auto memory_lock_wait_start = std::chrono::steady_clock::now();
     std::unique_lock lock(mutex);
+    const uint64_t memory_lock_wait_ms = elapsed_ms_since(memory_lock_wait_start);
     const auto collection_name = name;
     std::unordered_set<std::string> found_fields;
     const auto memory_start = std::chrono::steady_clock::now();
@@ -1299,6 +1313,10 @@ size_t Collection::batch_index_in_memory(std::vector<index_record>& index_record
             found_async_referenced_ins.insert(std::make_pair(it->first, it->second));
         }
     }
+
+    const uint64_t memory_lock_hold_ms = elapsed_ms_since(memory_start);
+    g_collection_import_metrics.last_write_memory_lock_wait_ms.store(memory_lock_wait_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_write_memory_lock_hold_ms.store(memory_lock_hold_ms, std::memory_order_relaxed);
 
     lock.unlock();
 
@@ -2403,7 +2421,10 @@ Option<bool> Collection::init_index_search_args_with_lock(collection_search_args
                                                           nlohmann::json& curation_metadata,
                                                           const bool& is_union_search,
                                                           const uint32_t& union_search_index) const {
+    const auto lock_wait_start = std::chrono::steady_clock::now();
     std::shared_lock lock(mutex);
+    g_collection_import_metrics.last_search_init_lock_wait_ms.store(elapsed_ms_since(lock_wait_start),
+                                                                    std::memory_order_relaxed);
     return init_index_search_args(coll_args, index_args, query, included_ids, include_fields_full, exclude_fields_full, q_tokens,
                                   conversation_standalone_query, vector_query, facets, per_page, transcribed_query,
                                   curation_metadata, is_union_search, union_search_index);
@@ -3889,7 +3910,10 @@ void Collection::do_highlighting(const tsl::htrie_map<char, field>& search_schem
 }
 
 Option<bool> Collection::run_search_with_lock(search_args* search_params) const {
+    const auto lock_wait_start = std::chrono::steady_clock::now();
     std::shared_lock lock(mutex);
+    g_collection_import_metrics.last_search_run_lock_wait_ms.store(elapsed_ms_since(lock_wait_start),
+                                                                   std::memory_order_relaxed);
     return index->run_search(search_params);
 }
 Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,

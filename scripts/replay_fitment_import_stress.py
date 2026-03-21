@@ -680,6 +680,10 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_import_max_total_ms",
         "collection_import_last_total_ms",
         "collection_import_last_reference_helper_ms",
+        "collection_search_last_init_lock_wait_ms",
+        "collection_search_last_run_lock_wait_ms",
+        "collection_write_last_memory_lock_wait_ms",
+        "collection_write_last_memory_lock_hold_ms",
         "collection_create_last_total_ms",
         "collection_drop_last_total_ms",
     ]
