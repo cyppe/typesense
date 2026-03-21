@@ -5,7 +5,6 @@ import http.client
 import json
 import os
 import shutil
-import signal
 import socket
 import statistics
 import subprocess
@@ -1139,22 +1138,14 @@ def start_perf_record(
             str(data_path),
             "-p",
             str(process.pid),
+            "--",
+            "sleep",
+            str(seconds),
         ],
         stdout=stdout_file,
         stderr=stderr_file,
         text=True,
-        preexec_fn=os.setsid,
     )
-
-    def stop_later() -> None:
-        time.sleep(seconds)
-        if proc.poll() is None:
-            try:
-                os.killpg(proc.pid, signal.SIGINT)
-            except ProcessLookupError:
-                pass
-
-    threading.Thread(target=stop_later, daemon=True).start()
     return proc, data_path, stdout_log, stderr_log
 
 
@@ -1371,24 +1362,15 @@ def run_scenario(
             try:
                 perf_exit_code = perf_proc.wait(timeout=args.profile_wait_timeout)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(perf_proc.pid, signal.SIGINT)
-                except ProcessLookupError:
-                    pass
+                perf_proc.terminate()
                 try:
                     perf_exit_code = perf_proc.wait(timeout=10.0)
                 except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(perf_proc.pid, signal.SIGTERM)
-                    except ProcessLookupError:
-                        pass
+                    perf_proc.terminate()
                     try:
                         perf_exit_code = perf_proc.wait(timeout=5.0)
                     except subprocess.TimeoutExpired:
-                        try:
-                            os.killpg(perf_proc.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
+                        perf_proc.kill()
                         perf_exit_code = perf_proc.wait(timeout=5.0)
 
         final_metrics = collect_final_metrics(process.base_url, args.api_key, args.timeout)
@@ -1448,17 +1430,11 @@ def run_scenario(
                 profile_proc.kill()
                 profile_proc.wait(timeout=5.0)
         if perf_proc is not None and perf_proc.poll() is None:
-            try:
-                os.killpg(perf_proc.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+            perf_proc.terminate()
             try:
                 perf_proc.wait(timeout=5.0)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(perf_proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+                perf_proc.kill()
                 perf_proc.wait(timeout=5.0)
         process.stop()
         process.cleanup(args.keep_temp)
