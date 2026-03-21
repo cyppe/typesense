@@ -11,9 +11,42 @@ Historical note: Runs 14-26 below are archival pre-cutover measurements from whe
 
 ---
 
-## Benchmark Scope Warning (2026-03-20)
+## Benchmark Scope Warning (2026-03-20, updated 2026-03-21)
 
-Current benchmark wins are real for the lanes they measure, but they do **not** yet prove that the server stays operationally responsive during sustained heavy imports. A real DDEV import against the fork on March 20, 2026 produced repeated slow requests on cheap endpoints like `/metrics.json`, `/health`, `/collections`, `/aliases`, and `/keys` in the `2.5-4.7s` range while the import was in progress, and related Laravel import jobs eventually timed out at `600s`. The canonical `quick/core` and `standard/core` lanes do not exercise that shape: they measure import completion and then post-import search, not "live reads while imports are saturating the node". Treat current benchmark results as incomplete for that question until the harness adds a concurrent import + live-read responsiveness lane.
+The canonical `quick/core` and `standard/core` lanes still do **not** measure "live reads while imports are saturating the node"; they measure import completion and then post-import search. A real DDEV import against the fork on March 20, 2026 produced repeated slow requests on cheap endpoints like `/metrics.json`, `/health`, `/collections`, `/aliases`, and `/keys` in the `2.5-4.7s` range while the import was in progress, and related Laravel import jobs eventually timed out at `600s`.
+
+That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_stress.py` lane. The March 21 replay/fix cycle materially changed the conclusion: after moving write requests off the HTTP-side request path and onto the worker pool, the local mixed fitment lane no longer reproduces the old "node becomes operationally unusable during imports" failure. Keep using the replay lane for heavy-import claims, because the canonical benchmark matrix still does not encode this behavior directly.
+
+---
+
+## Run 33: Heavy-Import Responsiveness Recovered On The Local Fitment Replay Lane (2026-03-21)
+
+**Commit:** local working tree on top of `HEAD` at run time
+**Commands:**
+- `TYPESENSE_IMPORT_BATCH_SIZE=1000 python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --total-fitment-docs 50000 --batch-docs 5000 --import-workers 3 --product-docs 15000 --vehicle-docs 15000 --probe-interval 0.2 --seed-target-order never --json-output /tmp/upstream-vs-fork-fitment-50k-never-b1000-writepool.json`
+- `TYPESENSE_IMPORT_BATCH_SIZE=1000 python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --total-fitment-docs 100000 --batch-docs 5000 --import-workers 3 --product-docs 30000 --vehicle-docs 30000 --probe-interval 0.2 --seed-target-order after --json-output /tmp/upstream-vs-fork-fitment-100k-after-b1000-writepool.json`
+**Scenario:** rerun the local `product_vehicle_fitments_se` replay after moving write requests off the HTTP-side request path and onto the main worker pool, then check both the isolated fitment-upsert lane and the more realistic mixed lane where fitments arrive before referenced docs exist and late async-reference work follows.
+
+### Findings
+
+- The main root cause on this branch was request-path scheduling, not Raft lag or collection import cost alone: `HttpServer::process_request()` had been running write requests inline on the HTTP-side path. Moving writes onto the worker pool collapsed the old request-shell gap and removed the catastrophic live-read starvation seen in DDEV and the earlier local replays.
+- The isolated fitment-upsert lane is now faster than upstream on import throughput. At `50k` docs with `--seed-target-order never`, the fork improved from `61756.8 docs/s` in Run 32 to `86242.9 docs/s`, while upstream stayed at `73247.2 docs/s`.
+- The realistic mixed lane also now holds up. At `100k` docs with late reference seeding (`--seed-target-order after`), the fork slightly beat upstream on import throughput (`76492.8 docs/s` vs `74857.6 docs/s`) while keeping cheap reads and search operational during the import instead of drifting into the old multi-second failure mode.
+- Request-lifecycle instrumentation now shows the remaining gap is much smaller and much better explained: on the mixed `100k` fork run, `http_import_avg_total_ms=169`, `http_import_avg_handler_ms=153`, `http_import_avg_response_queue_ms=7`, and `http_import_avg_unattributed_ms=5`. The earlier `~72ms` unattributed shell is no longer the dominant story.
+- The fork is not yet strictly equal to upstream on every live-read metric during import. In the mixed `100k` lane, `/metrics.json`, `/stats.json`, and search are still slower than upstream, but they are now measured in tens of milliseconds rather than the earlier seconds-long operational degradation.
+
+### Summary Table
+
+| Lane | Import avg | Docs/sec | `/health` avg | `/metrics.json` avg | `/stats.json` avg | Search avg |
+|---|---:|---:|---:|---:|---:|---:|
+| upstream `30.1`, `100k`, `after` | `177.5 ms` | `74857.6` | `2.7 ms` | `102.8 ms` | `1.5 ms` | `6.4 ms` |
+| fork current, `100k`, `after` | `175.2 ms` | `76492.8` | `4.3 ms` | `117.2 ms` | `17.6 ms` | `19.2 ms` |
+
+### Decision
+
+- Treat the heavy-import responsiveness regression as materially fixed on the local replay lane. The old "dashboard and cheap reads basically stop responding during heavy imports" symptom is no longer reproduced here after the write-offload change.
+- Keep `TYPESENSE_IMPORT_BATCH_SIZE=1000` as a high-throughput replay/benchmark override, not as a new default product setting.
+- Keep the local fitment replay as the canonical reproduction and regression lane for this class of issue. The remaining work is optimization and broader validation, not root-cause uncertainty.
 
 ---
 

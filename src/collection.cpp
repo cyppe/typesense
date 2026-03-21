@@ -293,20 +293,63 @@ uint32_t Collection::get_next_seq_id() {
     return next_seq_id++;
 }
 
+inline const nlohmann::json* get_field_node(const nlohmann::json& doc, const std::string& field_name) {
+    auto it = doc.find(field_name);
+    if (it != doc.end()) {
+        return &(*it);
+    }
+
+    std::vector<std::string> path_parts;
+    StringUtils::split(field_name, path_parts, ".");
+    if (path_parts.empty()) {
+        return nullptr;
+    }
+
+    const nlohmann::json* current = &doc;
+    for (const auto& part : path_parts) {
+        if (!current->is_object()) {
+            return nullptr;
+        }
+
+        auto child = current->find(part);
+        if (child == current->end()) {
+            return nullptr;
+        }
+
+        current = &(*child);
+    }
+
+    return current;
+}
+
+inline bool has_field_value(const nlohmann::json& doc, const std::string& field_name) {
+    return get_field_node(doc, field_name) != nullptr;
+}
+
 inline std::string get_field_value(const nlohmann::json& doc, const std::string& field_name) {
-    return doc[field_name].is_number_integer() ?
-                std::to_string(doc[field_name].get<int64_t>()) :
-           doc[field_name].is_string() ?
-                doc[field_name].get<std::string>() :
-                doc[field_name].dump();
+    const auto* field_node = get_field_node(doc, field_name);
+    if (field_node == nullptr) {
+        return "null";
+    }
+
+    return field_node->is_number_integer() ?
+                std::to_string(field_node->get<int64_t>()) :
+           field_node->is_string() ?
+                field_node->get<std::string>() :
+                field_node->dump();
 }
 
 inline std::string get_array_field_value(const nlohmann::json& doc, const std::string& field_name, const size_t& index) {
-    return doc[field_name][index].is_number_integer() ?
-                std::to_string(doc[field_name][index].get<int64_t>()) :
-           doc[field_name][index].is_string() ?
-                doc[field_name][index].get<std::string>() :
-                doc[field_name][index].dump();
+    const auto* field_node = get_field_node(doc, field_name);
+    if (field_node == nullptr || !field_node->is_array() || index >= field_node->size()) {
+        return "null";
+    }
+
+    return (*field_node)[index].is_number_integer() ?
+                std::to_string((*field_node)[index].get<int64_t>()) :
+           (*field_node)[index].is_string() ?
+                (*field_node)[index].get<std::string>() :
+                (*field_node)[index].dump();
 }
 
 Option<bool> Collection::update_async_references_with_lock(
@@ -411,15 +454,11 @@ Option<bool> Collection::update_async_references_with_lock(
         if (field.is_singular()) {
             // Referenced value is guaranteed to be unique.
             // Set reference helper field of all the docs that matched filter to `ref_seq_id`.
-            if (!existing_document.contains(field_name)) {
+            if (!has_field_value(existing_document, field_name)) {
                 return Option<bool>(400, "Expected document `id: " + id + "` to have `" + field_name + "` field.");
             }
 
-            const auto referenced_value = existing_document[field_name].is_number_integer() ?
-                std::to_string(existing_document[field_name].get<int64_t>()) :
-                existing_document[field_name].is_string() ?
-                    existing_document[field_name].get<std::string>() :
-                    existing_document[field_name].dump();
+            const auto referenced_value = get_field_value(existing_document, field_name);
             const auto ref_seq_id_it = value_to_ref_seq_id.find(referenced_value);
             if (ref_seq_id_it == value_to_ref_seq_id.end()) {
                 continue;
@@ -427,20 +466,22 @@ Option<bool> Collection::update_async_references_with_lock(
 
             nlohmann::json update_document;
             update_document["id"] = id;
-            update_document[field_name] = existing_document[field_name];
+            update_document[field_name] = *get_field_node(existing_document, field_name);
             update_document[reference_helper_field_name] = ref_seq_id_it->second;
 
             buffer.push_back(update_document.dump());
         } else {
-            if (!existing_document.contains(field_name) || !existing_document[field_name].is_array()) {
+            const auto* referenced_array = get_field_node(existing_document, field_name);
+            const auto* helper_array = get_field_node(existing_document, reference_helper_field_name);
+
+            if (referenced_array == nullptr || !referenced_array->is_array()) {
                 return Option<bool>(400, "Expected document `id: " + id + "` to have `" += field_name + "` array field "
                                             "that is `" += get_field_value(existing_document, field_name) + "` instead.");
-            } else if (!existing_document.contains(reference_helper_field_name) ||
-                        !existing_document[reference_helper_field_name].is_array()) {
+            } else if (helper_array == nullptr || !helper_array->is_array()) {
                 return Option<bool>(400, "Expected document `id: " + id + "` to have `" += reference_helper_field_name +
                                             "` array field that is `" += get_field_value(existing_document, field_name) +
                                             "` instead.");
-            } else if (existing_document[field_name].size() != existing_document[reference_helper_field_name].size()) {
+            } else if (referenced_array->size() != helper_array->size()) {
                 return Option<bool>(400, "Expected document `id: " + id + "` to have equal count of elements in `" +=
                                             field_name + ": " += get_field_value(existing_document, field_name) +
                                             "` field and `" += reference_helper_field_name + ": " +=
@@ -449,11 +490,11 @@ Option<bool> Collection::update_async_references_with_lock(
 
             nlohmann::json update_document;
             update_document["id"] = id;
-            update_document[field_name] = existing_document[field_name];
-            update_document[reference_helper_field_name] = existing_document[reference_helper_field_name];
+            update_document[field_name] = *referenced_array;
+            update_document[reference_helper_field_name] = *helper_array;
 
             auto should_update = false;
-            for (uint32_t j = 0; j < existing_document[field_name].size(); j++) {
+            for (uint32_t j = 0; j < referenced_array->size(); j++) {
                 auto const& ref_value = get_array_field_value(existing_document, field_name, j);
                 const auto ref_seq_id_it = value_to_ref_seq_id.find(ref_value);
                 if (ref_seq_id_it == value_to_ref_seq_id.end()) {
