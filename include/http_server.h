@@ -98,6 +98,10 @@ public:
         return res->notify();
     }
 
+    const std::shared_ptr<http_req>& get_req() {
+        return req;
+    }
+
     stream_response_state_t& get_res_state() {
         return req->res_state;
     }

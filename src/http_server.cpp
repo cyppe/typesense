@@ -901,6 +901,7 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
         if(!rpath->async_res) {
             // lifecycle of non async res will be owned by stream responder
             auto req_res = new async_req_res_t(request, response, true);
+            request->mark_response_dispatch();
             message_dispatcher->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
         }
         //TS_LOG(INFO) << "Response done " << response.get();
@@ -990,6 +991,7 @@ void HttpServer::response_abort(h2o_generator_t *generator, h2o_req_t *req) {
 void HttpServer::response_proceed(h2o_generator_t *generator, h2o_req_t *req) {
     //TS_LOG(INFO) << "response_proceed called";
     h2o_custom_generator_t* custom_generator = reinterpret_cast<h2o_custom_generator_t*>(generator);
+    custom_generator->req()->mark_response_progress();
 
     //TS_LOG(INFO) << "proxied_stream: " << custom_generator->response->proxied_stream;
     //TS_LOG(INFO) << "response.final: " <<  custom_generator->response->final;
@@ -1188,6 +1190,7 @@ bool HttpServer::on_stream_response_message(void *data) {
     // NOTE: access to `req` and `res` objects must be synchronized and wrapped by `req_res`
 
     if(req_res->is_alive()) {
+        req_res->get_req()->mark_response_start();
         stream_response(req_res->get_res_state());
     } else {
         // serialized request or generator has been disposed (underlying request is probably dead)

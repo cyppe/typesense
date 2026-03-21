@@ -14,6 +14,9 @@ struct http_request_metrics_state_t {
     std::atomic<uint64_t> last_handler_ms{0};
     std::atomic<uint64_t> last_unattributed_ms{0};
     std::atomic<uint64_t> last_conn_to_start_ms{0};
+    std::atomic<uint64_t> last_response_dispatch_ms{0};
+    std::atomic<uint64_t> last_response_queue_ms{0};
+    std::atomic<uint64_t> last_response_progress_ms{0};
     std::atomic<bool> last_is_write{false};
     std::mutex last_route_mutex;
     std::string last_route;
@@ -100,6 +103,9 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
     snapshot.last_handler_ms = g_http_request_metrics.last_handler_ms.load(std::memory_order_relaxed);
     snapshot.last_unattributed_ms = g_http_request_metrics.last_unattributed_ms.load(std::memory_order_relaxed);
     snapshot.last_conn_to_start_ms = g_http_request_metrics.last_conn_to_start_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_dispatch_ms = g_http_request_metrics.last_response_dispatch_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_queue_ms = g_http_request_metrics.last_response_queue_ms.load(std::memory_order_relaxed);
+    snapshot.last_response_progress_ms = g_http_request_metrics.last_response_progress_ms.load(std::memory_order_relaxed);
     snapshot.last_is_write = g_http_request_metrics.last_is_write.load(std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(g_http_request_metrics.last_route_mutex);
@@ -113,6 +119,9 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     const auto handler_dispatch_ts = req.handler_dispatch_ts_us.load(std::memory_order_relaxed);
     const auto handler_start_ts = req.handler_start_ts_us.load(std::memory_order_relaxed);
     const auto handler_end_ts = req.handler_end_ts_us.load(std::memory_order_relaxed);
+    const auto response_dispatch_ts = req.response_dispatch_ts_us.load(std::memory_order_relaxed);
+    const auto response_start_ts = req.response_start_ts_us.load(std::memory_order_relaxed);
+    const auto response_progress_ts = req.response_progress_ts_us.load(std::memory_order_relaxed);
 
     uint64_t handler_wait_ms = 0;
     if (handler_dispatch_ts != 0 && handler_start_ts >= handler_dispatch_ts) {
@@ -129,6 +138,21 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
         conn_to_start_ms = (req.start_ts - req.conn_ts) / 1000;
     }
 
+    uint64_t response_dispatch_ms = 0;
+    if (handler_end_ts != 0 && response_dispatch_ts >= handler_end_ts) {
+        response_dispatch_ms = (response_dispatch_ts - handler_end_ts) / 1000;
+    }
+
+    uint64_t response_queue_ms = 0;
+    if (response_dispatch_ts != 0 && response_start_ts >= response_dispatch_ts) {
+        response_queue_ms = (response_start_ts - response_dispatch_ts) / 1000;
+    }
+
+    uint64_t response_progress_ms = 0;
+    if (response_start_ts != 0 && response_progress_ts >= response_start_ts) {
+        response_progress_ms = (response_progress_ts - response_start_ts) / 1000;
+    }
+
     uint64_t attributed_ms = auth_ms + handler_wait_ms + handler_ms;
     uint64_t unattributed_ms = total_ms >= attributed_ms ? (total_ms - attributed_ms) : 0;
 
@@ -143,6 +167,9 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
     g_http_request_metrics.last_handler_ms.store(handler_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_unattributed_ms.store(unattributed_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_conn_to_start_ms.store(conn_to_start_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_dispatch_ms.store(response_dispatch_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_queue_ms.store(response_queue_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_progress_ms.store(response_progress_ms, std::memory_order_relaxed);
     g_http_request_metrics.last_is_write.store(req.is_write.load(std::memory_order_relaxed), std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(g_http_request_metrics.last_route_mutex);

@@ -296,6 +296,7 @@ void stream_response(const std::shared_ptr<http_req>& req, const std::shared_ptr
     res->wait();
 
     auto req_res = new async_req_res_t(req, res, true);
+    req->mark_response_dispatch();
     server->get_message_dispatcher()->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
 }
 
@@ -973,6 +974,9 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_request_last_handler_ms"] = http_request_metrics.last_handler_ms;
     result["http_request_last_unattributed_ms"] = http_request_metrics.last_unattributed_ms;
     result["http_request_last_conn_to_start_ms"] = http_request_metrics.last_conn_to_start_ms;
+    result["http_request_last_response_dispatch_ms"] = http_request_metrics.last_response_dispatch_ms;
+    result["http_request_last_response_queue_ms"] = http_request_metrics.last_response_queue_ms;
+    result["http_request_last_response_progress_ms"] = http_request_metrics.last_response_progress_ms;
 
     res->set_body(200, result.dump(2));
     return true;

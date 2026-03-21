@@ -265,6 +265,9 @@ struct http_request_metrics_snapshot_t {
     uint64_t last_handler_ms = 0;
     uint64_t last_unattributed_ms = 0;
     uint64_t last_conn_to_start_ms = 0;
+    uint64_t last_response_dispatch_ms = 0;
+    uint64_t last_response_queue_ms = 0;
+    uint64_t last_response_progress_ms = 0;
     bool last_is_write = false;
     std::string last_route;
 };
@@ -328,6 +331,9 @@ struct http_req {
     std::atomic<uint64_t> handler_dispatch_ts_us{0};
     std::atomic<uint64_t> handler_start_ts_us{0};
     std::atomic<uint64_t> handler_end_ts_us{0};
+    std::atomic<uint64_t> response_dispatch_ts_us{0};
+    std::atomic<uint64_t> response_start_ts_us{0};
+    std::atomic<uint64_t> response_progress_ts_us{0};
 
     bool (*async_res_set_headers_callback)(const std::string&, const std::shared_ptr<http_req>, long, std::string&) = nullptr;
     void (*async_res_write_callback)(std::string&, const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&) = nullptr;
@@ -518,6 +524,18 @@ struct http_req {
 
     void mark_handler_end() {
         handler_end_ts_us.store(now_ts_us(), std::memory_order_relaxed);
+    }
+
+    void mark_response_dispatch() {
+        response_dispatch_ts_us.store(now_ts_us(), std::memory_order_relaxed);
+    }
+
+    void mark_response_start() {
+        response_start_ts_us.store(now_ts_us(), std::memory_order_relaxed);
+    }
+
+    void mark_response_progress() {
+        response_progress_ts_us.store(now_ts_us(), std::memory_order_relaxed);
     }
 
     static uint64_t now_ts_us();
