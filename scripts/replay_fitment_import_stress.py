@@ -1293,6 +1293,13 @@ def generate_perf_artifacts(
     maybe_chown_to_current_user(data_path)
     outputs[f"{prefix}_data_path"] = str(data_path)
 
+    if flamegraph_max_bytes >= 0 and data_path.stat().st_size > flamegraph_max_bytes:
+        outputs[f"{prefix}_report_skipped"] = (
+            f"capture too large for automatic perf post-processing ({data_path.stat().st_size} bytes > {flamegraph_max_bytes})"
+        )
+        outputs[f"{prefix}_flamegraph_skipped"] = outputs[f"{prefix}_report_skipped"]
+        return outputs
+
     report_path = temp_dir / f"{data_path.stem}.report.txt"
     report_stderr_log = temp_dir / f"{data_path.stem}.report.stderr.log"
     with report_path.open("w", encoding="utf-8") as report_file, report_stderr_log.open("w", encoding="utf-8") as err_file:
@@ -1325,12 +1332,6 @@ def generate_perf_artifacts(
     if not (shutil.which("inferno-collapse-perf") and shutil.which("inferno-flamegraph")):
         outputs[f"{prefix}_flamegraph_skipped"] = "inferno tools not installed"
         return outputs
-    if flamegraph_max_bytes >= 0 and data_path.stat().st_size > flamegraph_max_bytes:
-        outputs[f"{prefix}_flamegraph_skipped"] = (
-            f"capture too large for automatic flamegraph ({data_path.stat().st_size} bytes > {flamegraph_max_bytes})"
-        )
-        return outputs
-
     folded_path = temp_dir / f"{data_path.stem}.folded"
     flamegraph_path = temp_dir / f"{data_path.stem}.svg"
     flamegraph_stderr_log = temp_dir / f"{data_path.stem}.flamegraph.stderr.log"
