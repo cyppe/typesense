@@ -36,6 +36,8 @@ HttpServer::HttpServer(const std::string & version, const std::string & listen_a
 
     message_dispatcher = new http_message_dispatcher;
     message_dispatcher->init(ctx.loop);
+    response_message_dispatcher = new http_message_dispatcher;
+    response_message_dispatcher->init(ctx.loop);
 
     // used during destructor
     ssl_refresh_timer.timer.expire_at = 0;
@@ -325,7 +327,7 @@ void HttpServer::stop() {
     exit_loop = true;
 
     // send a message to activate the idle event loop to exit, just in case
-    message_dispatcher->send_message(STOP_SERVER_MESSAGE, nullptr);
+    send_message(STOP_SERVER_MESSAGE, nullptr);
 }
 
 h2o_pathconf_t* HttpServer::register_handler(h2o_hostconf_t *hostconf, const char *path,
@@ -883,15 +885,13 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
         return 0;
     }
 
-    auto message_dispatcher = handler->http_server->get_message_dispatcher();
-
     auto thread_pool = use_meta_thread_pool ? handler->http_server->get_meta_thread_pool() :
                        handler->http_server->get_thread_pool();
 
     // TS_LOG(INFO) << "Before enqueue res: " << response
     thread_pool->log_exhaustion();
     request->mark_handler_dispatch();
-    thread_pool->enqueue([rpath, message_dispatcher, request, response]() {
+    thread_pool->enqueue([rpath, request, response, server = handler->http_server]() {
         // call the API handler
         //TS_LOG(INFO) << "Wait for response " << response.get() << ", action: " << rpath->_get_action();
         request->mark_handler_start();
@@ -902,7 +902,7 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
             // lifecycle of non async res will be owned by stream responder
             auto req_res = new async_req_res_t(request, response, true);
             request->mark_response_dispatch();
-            message_dispatcher->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
+            server->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
         }
         //TS_LOG(INFO) << "Response done " << response.get();
     });
@@ -965,7 +965,8 @@ void HttpServer::defer_processing(const std::shared_ptr<http_req>& req, const st
 }
 
 void HttpServer::send_message(const std::string & type, void* data) {
-    message_dispatcher->send_message(type, data);
+    auto* dispatcher = (type == STREAM_RESPONSE_MESSAGE) ? response_message_dispatcher : message_dispatcher;
+    dispatcher->send_message(type, data);
 }
 
 int HttpServer::send_response(h2o_req_t *req, int status_code, const std::string & message) {
@@ -1111,10 +1112,12 @@ void HttpServer::del(const std::string & path, bool (*handler)(const std::shared
 }
 
 void HttpServer::on(const std::string & message, bool (*handler)(void*)) {
-    message_dispatcher->on(message, handler);
+    auto* dispatcher = (message == STREAM_RESPONSE_MESSAGE) ? response_message_dispatcher : message_dispatcher;
+    dispatcher->on(message, handler);
 }
 
 HttpServer::~HttpServer() {
+    delete response_message_dispatcher;
     delete message_dispatcher;
 
     if(ssl_refresh_timer.timer.expire_at != 0) {
@@ -1172,7 +1175,8 @@ bool HttpServer::get_route(uint64_t hash, route_path** found_rpath) {
 }
 
 bool HttpServer::should_use_meta_thread_pool(std::string_view root_resource) {
-    return root_resource == "status" || root_resource == "health";
+    return root_resource == "status" || root_resource == "health" ||
+           root_resource == "metrics.json" || root_resource == "stats.json";
 }
 
 uint64_t HttpServer::node_state() const {

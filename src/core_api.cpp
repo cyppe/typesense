@@ -297,13 +297,13 @@ void stream_response(const std::shared_ptr<http_req>& req, const std::shared_ptr
 
     auto req_res = new async_req_res_t(req, res, true);
     req->mark_response_dispatch();
-    server->get_message_dispatcher()->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
+    server->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
 }
 
 void defer_processing(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res, size_t timeout_ms) {
     defer_processing_t* defer = new defer_processing_t(req, res, timeout_ms, server);
     //TS_LOG(INFO) << "core_api req " << req.get() << ", use count: " << req.use_count();
-    server->get_message_dispatcher()->send_message(HttpServer::DEFER_PROCESSING_MESSAGE, defer);
+    server->send_message(HttpServer::DEFER_PROCESSING_MESSAGE, defer);
 }
 
 // we cannot return errors here because that will end up as auth failure and won't convey
@@ -977,6 +977,56 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_request_last_response_dispatch_ms"] = http_request_metrics.last_response_dispatch_ms;
     result["http_request_last_response_queue_ms"] = http_request_metrics.last_response_queue_ms;
     result["http_request_last_response_progress_ms"] = http_request_metrics.last_response_progress_ms;
+
+    const auto message_dispatch_metrics = get_message_dispatch_metrics_snapshot();
+    result["message_dispatch_stream_response_queued"] = message_dispatch_metrics.stream_response.queued;
+    result["message_dispatch_stream_response_cumulative_messages"] =
+        message_dispatch_metrics.stream_response.cumulative_messages;
+    result["message_dispatch_stream_response_last_queue_ms"] =
+        message_dispatch_metrics.stream_response.last_queue_ms;
+    result["message_dispatch_stream_response_max_queue_ms"] =
+        message_dispatch_metrics.stream_response.max_queue_ms;
+    result["message_dispatch_request_proceed_queued"] = message_dispatch_metrics.request_proceed.queued;
+    result["message_dispatch_request_proceed_cumulative_messages"] =
+        message_dispatch_metrics.request_proceed.cumulative_messages;
+    result["message_dispatch_request_proceed_last_queue_ms"] =
+        message_dispatch_metrics.request_proceed.last_queue_ms;
+    result["message_dispatch_request_proceed_max_queue_ms"] =
+        message_dispatch_metrics.request_proceed.max_queue_ms;
+    result["message_dispatch_defer_processing_queued"] = message_dispatch_metrics.defer_processing.queued;
+    result["message_dispatch_defer_processing_cumulative_messages"] =
+        message_dispatch_metrics.defer_processing.cumulative_messages;
+    result["message_dispatch_defer_processing_last_queue_ms"] =
+        message_dispatch_metrics.defer_processing.last_queue_ms;
+    result["message_dispatch_defer_processing_max_queue_ms"] =
+        message_dispatch_metrics.defer_processing.max_queue_ms;
+    result["message_dispatch_other_queued"] = message_dispatch_metrics.other.queued;
+    result["message_dispatch_other_cumulative_messages"] =
+        message_dispatch_metrics.other.cumulative_messages;
+    result["message_dispatch_other_last_queue_ms"] =
+        message_dispatch_metrics.other.last_queue_ms;
+    result["message_dispatch_other_max_queue_ms"] =
+        message_dispatch_metrics.other.max_queue_ms;
+
+    const auto app_thread_pool_metrics = server->get_thread_pool()->get_metrics_snapshot();
+    result["thread_pool_queued_tasks"] = app_thread_pool_metrics.queued_tasks;
+    result["thread_pool_active_workers"] = app_thread_pool_metrics.active_workers;
+    result["thread_pool_cumulative_enqueued"] = app_thread_pool_metrics.cumulative_enqueued;
+    result["thread_pool_cumulative_executed"] = app_thread_pool_metrics.cumulative_executed;
+    result["thread_pool_last_wait_ms"] = app_thread_pool_metrics.last_wait_ms;
+    result["thread_pool_max_wait_ms"] = app_thread_pool_metrics.max_wait_ms;
+    result["thread_pool_max_queued_tasks"] = app_thread_pool_metrics.max_queued_tasks;
+    result["thread_pool_worker_count"] = app_thread_pool_metrics.worker_count;
+
+    const auto meta_thread_pool_metrics = server->get_meta_thread_pool()->get_metrics_snapshot();
+    result["meta_thread_pool_queued_tasks"] = meta_thread_pool_metrics.queued_tasks;
+    result["meta_thread_pool_active_workers"] = meta_thread_pool_metrics.active_workers;
+    result["meta_thread_pool_cumulative_enqueued"] = meta_thread_pool_metrics.cumulative_enqueued;
+    result["meta_thread_pool_cumulative_executed"] = meta_thread_pool_metrics.cumulative_executed;
+    result["meta_thread_pool_last_wait_ms"] = meta_thread_pool_metrics.last_wait_ms;
+    result["meta_thread_pool_max_wait_ms"] = meta_thread_pool_metrics.max_wait_ms;
+    result["meta_thread_pool_max_queued_tasks"] = meta_thread_pool_metrics.max_queued_tasks;
+    result["meta_thread_pool_worker_count"] = meta_thread_pool_metrics.worker_count;
 
     res->set_body(200, result.dump(2));
     return true;

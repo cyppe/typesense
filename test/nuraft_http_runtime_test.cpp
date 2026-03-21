@@ -487,6 +487,11 @@ TEST_F(NuRaftHttpRuntimeTest, ExposesImportDiagnosticsInMetricsJson) {
     EXPECT_TRUE(metrics.contains("http_request_last_response_dispatch_ms")) << "runtime log: " << node1_.log_path();
     EXPECT_TRUE(metrics.contains("http_request_last_response_queue_ms")) << "runtime log: " << node1_.log_path();
     EXPECT_TRUE(metrics.contains("http_request_last_response_progress_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("message_dispatch_stream_response_last_queue_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("message_dispatch_request_proceed_last_queue_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("message_dispatch_defer_processing_last_queue_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("thread_pool_last_wait_ms")) << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(metrics.contains("meta_thread_pool_last_wait_ms")) << "runtime log: " << node1_.log_path();
     EXPECT_EQ(2, metrics["collection_import_last_docs"].get<int>()) << "runtime log: " << node1_.log_path();
     EXPECT_EQ(2, metrics["import_handler_last_docs"].get<int>()) << "runtime log: " << node1_.log_path();
     EXPECT_GT(metrics["nuraft_last_import_request_bytes"].get<int64_t>(), 0) << "runtime log: " << node1_.log_path();

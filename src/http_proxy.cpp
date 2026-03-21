@@ -110,7 +110,7 @@ bool HttpProxy::call_sse(const std::string& url, const std::string& method,
         res->status_code = 400;
         res->body = "{\"message\": \"SSE only supports POST method.\"}";
         res->final = true;
-        server->get_message_dispatcher()->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, new async_req_res_t(req, res, true));
+        server->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, new async_req_res_t(req, res, true));
         return false;
     }
     HttpClient& client = HttpClient::get_instance();

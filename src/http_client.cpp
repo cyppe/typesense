@@ -293,7 +293,7 @@ size_t HttpClient::curl_req_send_callback(char* buffer, size_t size, size_t nite
 
         HttpServer *server = req_res->server;
 
-        server->get_message_dispatcher()->send_message(HttpServer::REQUEST_PROCEED_MESSAGE, req_res);
+        server->send_message(HttpServer::REQUEST_PROCEED_MESSAGE, req_res);
 
         if(!req_res->req->last_chunk_aggregate) {
             //TS_LOG(INFO) << "Waiting for request body to be ready";
@@ -365,7 +365,7 @@ size_t HttpClient::curl_write_async(char *buffer, size_t size, size_t nmemb, voi
     req_res->res->wait();
 
     async_req_res_t* async_req_res = new async_req_res_t(req_res->req, req_res->res, true);
-    req_res->server->get_message_dispatcher()->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, async_req_res);
+    req_res->server->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, async_req_res);
 
     // wait until response is sent
     //TS_LOG(INFO) << "Response sent";
@@ -424,7 +424,7 @@ size_t HttpClient::curl_write_async_done(void *context, curl_socket_t item) {
     req_res->res->wait();
 
     async_req_res_t* async_req_res = new async_req_res_t(req_res->req, req_res->res, true);
-    req_res->server->get_message_dispatcher()->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, async_req_res);
+    req_res->server->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, async_req_res);
 
     // Close the socket as we've overridden the close socket handler!
     close(item);

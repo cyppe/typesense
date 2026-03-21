@@ -746,7 +746,7 @@ void NuRaftHttpRuntimeService::send_response(const std::shared_ptr<http_req>& re
 
     response->wait();
     auto* req_res = new async_req_res_t(request, response, true);
-    server_->get_message_dispatcher()->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
+    server_->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
 }
 
 void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,

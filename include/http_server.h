@@ -137,6 +137,7 @@ private:
     h2o_custom_timer_t metrics_refresh_timer;
 
     http_message_dispatcher* message_dispatcher;
+    http_message_dispatcher* response_message_dispatcher;
 
     ReplicationService* replication_state;
 

@@ -7,6 +7,7 @@
 #include <future>
 #include <chrono>
 #include <iomanip>
+#include <string_view>
 #include "json.hpp"
 #include "string_utils.h"
 #include "logger.h"
@@ -271,6 +272,24 @@ struct http_request_metrics_snapshot_t {
     bool last_is_write = false;
     std::string last_route;
 };
+
+struct message_dispatch_type_metrics_snapshot_t {
+    uint64_t queued = 0;
+    uint64_t cumulative_messages = 0;
+    uint64_t last_queue_ms = 0;
+    uint64_t max_queue_ms = 0;
+};
+
+struct message_dispatch_metrics_snapshot_t {
+    message_dispatch_type_metrics_snapshot_t stream_response;
+    message_dispatch_type_metrics_snapshot_t request_proceed;
+    message_dispatch_type_metrics_snapshot_t defer_processing;
+    message_dispatch_type_metrics_snapshot_t other;
+};
+
+message_dispatch_metrics_snapshot_t get_message_dispatch_metrics_snapshot();
+void record_message_dispatch_enqueue(std::string_view type);
+void record_message_dispatch_dequeue(std::string_view type, uint64_t wait_ms);
 
 struct http_req {
     static constexpr const char* AUTH_HEADER = "x-typesense-api-key";
@@ -581,6 +600,7 @@ struct h2o_custom_res_message_t {
     std::map<std::string, bool (*)(void*)> *message_handlers;
     std::string type;
     void* data;
+    uint64_t enqueue_ts_us;
 };
 
 struct http_message_dispatcher {
@@ -608,6 +628,13 @@ struct http_message_dispatcher {
         while (!h2o_linklist_is_empty(messages)) {
             h2o_multithread_message_t *message = H2O_STRUCT_FROM_MEMBER(h2o_multithread_message_t, link, messages->next);
             h2o_custom_res_message_t *custom_message = reinterpret_cast<h2o_custom_res_message_t*>(message);
+            const uint64_t now_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count());
+            const auto wait_ms = now_us >= custom_message->enqueue_ts_us
+                ? (now_us - custom_message->enqueue_ts_us) / 1000
+                : 0;
+
+            record_message_dispatch_dequeue(custom_message->type, wait_ms);
 
             const std::map<std::string, bool (*)(void*)>::const_iterator handler_itr =
                     custom_message->message_handlers->find(custom_message->type);
@@ -623,7 +650,12 @@ struct http_message_dispatcher {
     }
 
     void send_message(const std::string & type, void* data) {
-        h2o_custom_res_message_t* message = new h2o_custom_res_message_t{{{nullptr, nullptr}}, &message_handlers, type, data};
+        const uint64_t enqueue_ts_us = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+        record_message_dispatch_enqueue(type);
+        h2o_custom_res_message_t* message = new h2o_custom_res_message_t{
+            {{nullptr, nullptr}}, &message_handlers, type, data, enqueue_ts_us
+        };
         h2o_multithread_send_message(message_receiver, &message->super);
     }
 

@@ -24,6 +24,48 @@ struct http_request_metrics_state_t {
 
 http_request_metrics_state_t g_http_request_metrics;
 
+struct message_dispatch_type_metrics_state_t {
+    std::atomic<uint64_t> queued{0};
+    std::atomic<uint64_t> cumulative_messages{0};
+    std::atomic<uint64_t> last_queue_ms{0};
+    std::atomic<uint64_t> max_queue_ms{0};
+};
+
+struct message_dispatch_metrics_state_t {
+    message_dispatch_type_metrics_state_t stream_response;
+    message_dispatch_type_metrics_state_t request_proceed;
+    message_dispatch_type_metrics_state_t defer_processing;
+    message_dispatch_type_metrics_state_t other;
+};
+
+message_dispatch_metrics_state_t g_message_dispatch_metrics;
+
+message_dispatch_type_metrics_state_t& get_message_dispatch_metrics_state(std::string_view type) {
+    if (type == "STREAM_RESPONSE") {
+        return g_message_dispatch_metrics.stream_response;
+    }
+
+    if (type == "REQUEST_PROCEED") {
+        return g_message_dispatch_metrics.request_proceed;
+    }
+
+    if (type == "DEFER_PROCESSING") {
+        return g_message_dispatch_metrics.defer_processing;
+    }
+
+    return g_message_dispatch_metrics.other;
+}
+
+message_dispatch_type_metrics_snapshot_t snapshot_message_dispatch_type(
+    const message_dispatch_type_metrics_state_t& state) {
+    message_dispatch_type_metrics_snapshot_t snapshot;
+    snapshot.queued = state.queued.load(std::memory_order_relaxed);
+    snapshot.cumulative_messages = state.cumulative_messages.load(std::memory_order_relaxed);
+    snapshot.last_queue_ms = state.last_queue_ms.load(std::memory_order_relaxed);
+    snapshot.max_queue_ms = state.max_queue_ms.load(std::memory_order_relaxed);
+    return snapshot;
+}
+
 }
 
 std::string route_path::_get_action() {
@@ -112,6 +154,32 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
         snapshot.last_route = g_http_request_metrics.last_route;
     }
     return snapshot;
+}
+
+message_dispatch_metrics_snapshot_t get_message_dispatch_metrics_snapshot() {
+    message_dispatch_metrics_snapshot_t snapshot;
+    snapshot.stream_response = snapshot_message_dispatch_type(g_message_dispatch_metrics.stream_response);
+    snapshot.request_proceed = snapshot_message_dispatch_type(g_message_dispatch_metrics.request_proceed);
+    snapshot.defer_processing = snapshot_message_dispatch_type(g_message_dispatch_metrics.defer_processing);
+    snapshot.other = snapshot_message_dispatch_type(g_message_dispatch_metrics.other);
+    return snapshot;
+}
+
+void record_message_dispatch_enqueue(std::string_view type) {
+    auto& state = get_message_dispatch_metrics_state(type);
+    state.queued.fetch_add(1, std::memory_order_relaxed);
+    state.cumulative_messages.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_message_dispatch_dequeue(std::string_view type, uint64_t wait_ms) {
+    auto& state = get_message_dispatch_metrics_state(type);
+    state.queued.fetch_sub(1, std::memory_order_relaxed);
+    state.last_queue_ms.store(wait_ms, std::memory_order_relaxed);
+
+    auto prev_max = state.max_queue_ms.load(std::memory_order_relaxed);
+    while (wait_ms > prev_max &&
+           !state.max_queue_ms.compare_exchange_weak(prev_max, wait_ms, std::memory_order_relaxed)) {
+    }
 }
 
 void http_req::record_lifecycle_metrics(const http_req& req, const std::string& route, uint64_t total_ms) {
