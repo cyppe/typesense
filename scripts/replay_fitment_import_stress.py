@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import http.client
 import json
 import os
 import shutil
@@ -32,7 +33,28 @@ DEFAULT_PROBE_INTERVAL = 0.5
 DEFAULT_TIMEOUT = 120.0
 DEFAULT_PRODUCT_DOCS = 30_000
 DEFAULT_VEHICLE_DOCS = 30_000
+DEFAULT_PROBE_WORKERS = 1
+DEFAULT_SEARCH_WORKERS = 1
+DEFAULT_PROBE_PROFILE = "standard"
 DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parent.parent / "benchmark" / "data" / "fitment_replay_schemas"
+STANDARD_PROBE_ROUTES = [
+    "/health",
+    "/metrics.json",
+    "/stats.json",
+]
+DASHBOARD_PROBE_ROUTES = [
+    "/health",
+    "/metrics.json",
+    "/stats.json",
+    "/collections",
+    "/aliases",
+    "/analytics/rules",
+    "/keys",
+    "/presets",
+    "/stemming/dictionaries",
+    "/stopwords",
+    "/debug",
+]
 
 
 def pick_free_port() -> int:
@@ -58,6 +80,24 @@ def now_ms() -> float:
     return time.perf_counter() * 1000.0
 
 
+def build_probe_routes(profile: str, extra_routes: list[str]) -> list[str]:
+    if profile == "standard":
+        base_routes = STANDARD_PROBE_ROUTES
+    elif profile == "dashboard":
+        base_routes = DASHBOARD_PROBE_ROUTES
+    else:
+        raise RuntimeError(f"Unknown probe profile: {profile}")
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for route in [*base_routes, *extra_routes]:
+        normalized = route if route.startswith("/") else f"/{route}"
+        if normalized not in seen:
+            deduped.append(normalized)
+            seen.add(normalized)
+    return deduped
+
+
 def http_request(
     method: str,
     url: str,
@@ -66,14 +106,41 @@ def http_request(
     timeout: float = DEFAULT_TIMEOUT,
     extra_headers: dict[str, str] | None = None,
     retries: int = 0,
+    stream_chunk_bytes: int | None = None,
+    stream_chunk_delay_ms: float = 0.0,
 ) -> tuple[int, bytes]:
     headers = {"x-typesense-api-key": api_key}
     if extra_headers:
         headers.update(extra_headers)
-    request = urllib.request.Request(url, data=body, headers=headers, method=method)
     attempt = 0
     while True:
         try:
+            if body is not None and stream_chunk_bytes is not None and stream_chunk_bytes > 0:
+                parsed = urllib.parse.urlsplit(url)
+                path = parsed.path or "/"
+                if parsed.query:
+                    path = f"{path}?{parsed.query}"
+                connection_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+                connection = connection_cls(parsed.hostname, parsed.port, timeout=timeout)
+                try:
+                    connection.putrequest(method, path)
+                    for key, value in headers.items():
+                        connection.putheader(key, value)
+                    connection.putheader("content-length", str(len(body)))
+                    connection.endheaders()
+                    for start in range(0, len(body), stream_chunk_bytes):
+                        connection.send(body[start:start + stream_chunk_bytes])
+                        if stream_chunk_delay_ms > 0 and start + stream_chunk_bytes < len(body):
+                            time.sleep(stream_chunk_delay_ms / 1000.0)
+                    response = connection.getresponse()
+                    try:
+                        return response.status, response.read()
+                    finally:
+                        response.close()
+                finally:
+                    connection.close()
+
+            request = urllib.request.Request(url, data=body, headers=headers, method=method)
             with urllib.request.urlopen(request, timeout=timeout) as response:
                 return response.status, response.read()
         except urllib.error.HTTPError as exc:
@@ -258,6 +325,7 @@ class SearchStats:
 @dataclass
 class MetricsSample:
     ts_ms: float
+    phase: str
     values: dict[str, Any]
 
 
@@ -267,11 +335,44 @@ class ScenarioResult:
     create_timings_ms: dict[str, float]
     import_stats: dict[str, Any]
     probe_stats: dict[str, dict[str, float | int]]
+    probe_phase_stats: dict[str, dict[str, dict[str, float | int]]]
     search_stats: dict[str, float | int]
+    search_phase_stats: dict[str, dict[str, float | int]]
     metrics_timeline_summary: dict[str, dict[str, float | int]]
+    metrics_timeline_summary_by_phase: dict[str, dict[str, dict[str, float | int]]]
+    metrics_label_summary_by_phase: dict[str, dict[str, dict[str, int]]]
     final_metrics: dict[str, Any]
     stdout_log: str
     stderr_log: str
+
+
+@dataclass
+class ProbeSample:
+    route: str
+    phase: str
+    latency_ms: float
+    success: bool
+
+
+@dataclass
+class SearchSample:
+    phase: str
+    latency_ms: float
+    success: bool
+
+
+class PhaseTracker:
+    def __init__(self, initial_phase: str) -> None:
+        self._phase = initial_phase
+        self._lock = threading.Lock()
+
+    def get(self) -> str:
+        with self._lock:
+            return self._phase
+
+    def set(self, phase: str) -> None:
+        with self._lock:
+            self._phase = phase
 
 
 class TypesenseProcess:
@@ -372,6 +473,8 @@ def import_ndjson(
     body: bytes,
     timeout: float,
     server_batch_size: int | None,
+    client_chunk_bytes: int | None,
+    client_chunk_delay_ms: float,
 ) -> tuple[int, bytes, float]:
     query_params: dict[str, str | int] = {"action": "upsert", "collection": collection}
     if server_batch_size is not None:
@@ -386,6 +489,8 @@ def import_ndjson(
         body=body,
         timeout=timeout,
         extra_headers={"content-type": "text/plain"},
+        stream_chunk_bytes=client_chunk_bytes,
+        stream_chunk_delay_ms=client_chunk_delay_ms,
     )
     return status, payload, now_ms() - started
 
@@ -399,6 +504,8 @@ def seed_target_collection(
     batch_docs: int,
     timeout: float,
     server_batch_size: int | None,
+    client_chunk_bytes: int | None,
+    client_chunk_delay_ms: float,
 ) -> None:
     start = 1
     while start <= total_docs:
@@ -407,7 +514,16 @@ def seed_target_collection(
         for value in range(start, end + 1):
             lines.append(json.dumps({"id": f"{collection}-{value}", id_field: value, "runId": 1}, separators=(",", ":")))
         body = ("\n".join(lines) + "\n").encode("utf-8")
-        status, payload, _ = import_ndjson(base_url, api_key, collection, body, timeout, server_batch_size)
+        status, payload, _ = import_ndjson(
+            base_url,
+            api_key,
+            collection,
+            body,
+            timeout,
+            server_batch_size,
+            client_chunk_bytes,
+            client_chunk_delay_ms,
+        )
         ensure_success(status, payload.decode("utf-8", errors="replace"), f"seed {collection}")
         start = end + 1
 
@@ -453,22 +569,31 @@ def run_probes(
     timeout: float,
     interval_s: float,
     stop_event: threading.Event,
+    routes: list[str],
     stats: dict[str, ProbeStats],
+    phase_tracker: PhaseTracker,
+    samples: list[ProbeSample],
+    lock: threading.Lock,
 ) -> None:
-    routes = ["/health", "/metrics.json", "/stats.json"]
     while not stop_event.is_set():
         for route in routes:
             started = now_ms()
+            phase = phase_tracker.get()
             try:
                 status, _ = http_request("GET", base_url + route, api_key, timeout=timeout)
                 elapsed = now_ms() - started
-                probe = stats[route]
-                if 200 <= status < 300:
-                    probe.latencies_ms.append(elapsed)
-                else:
-                    probe.failures += 1
+                with lock:
+                    probe = stats[route]
+                    if 200 <= status < 300:
+                        probe.latencies_ms.append(elapsed)
+                        samples.append(ProbeSample(route=route, phase=phase, latency_ms=elapsed, success=True))
+                    else:
+                        probe.failures += 1
+                        samples.append(ProbeSample(route=route, phase=phase, latency_ms=elapsed, success=False))
             except Exception:
-                stats[route].failures += 1
+                with lock:
+                    stats[route].failures += 1
+                    samples.append(ProbeSample(route=route, phase=phase, latency_ms=0.0, success=False))
             if stop_event.wait(interval_s):
                 return
 
@@ -481,20 +606,29 @@ def run_search_probe(
     interval_s: float,
     stop_event: threading.Event,
     stats: SearchStats,
+    phase_tracker: PhaseTracker,
+    samples: list[SearchSample],
+    lock: threading.Lock,
 ) -> None:
     params = urllib.parse.urlencode({"q": "*", "filter_by": "variant_pid:>0", "per_page": 10})
     url = f"{base_url}/collections/{collection}/documents/search?{params}"
     while not stop_event.is_set():
         started = now_ms()
+        phase = phase_tracker.get()
         try:
             status, _ = http_request("GET", url, api_key, timeout=timeout)
             elapsed = now_ms() - started
-            if 200 <= status < 300:
-                stats.latencies_ms.append(elapsed)
-            else:
-                stats.failures += 1
+            with lock:
+                if 200 <= status < 300:
+                    stats.latencies_ms.append(elapsed)
+                    samples.append(SearchSample(phase=phase, latency_ms=elapsed, success=True))
+                else:
+                    stats.failures += 1
+                    samples.append(SearchSample(phase=phase, latency_ms=elapsed, success=False))
         except Exception:
-            stats.failures += 1
+            with lock:
+                stats.failures += 1
+                samples.append(SearchSample(phase=phase, latency_ms=0.0, success=False))
         if stop_event.wait(interval_s):
             return
 
@@ -509,10 +643,18 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "nuraft_last_import_docs_per_sec",
                 "nuraft_last_import_bytes_per_sec",
                 "nuraft_last_import_replay_chunks",
+                "nuraft_commit_lag",
+                "nuraft_live_apply_lag",
+                "nuraft_state_machine_apply_lag",
+                "nuraft_read_caught_up",
+                "nuraft_write_caught_up",
                 "import_handler_last_split_ms",
                 "import_handler_last_add_many_ms",
                 "import_handler_last_total_ms",
                 "collection_import_last_total_ms",
+                "collection_import_last_collection_name",
+                "collection_import_last_docs",
+                "collection_import_last_num_indexed",
                 "collection_import_last_doc_parse_ms",
                 "collection_import_last_schema_update_ms",
                 "collection_import_last_batch_calls",
@@ -523,9 +665,14 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "collection_import_last_batch_write_ms",
                 "collection_import_last_batch_response_ms",
                 "collection_import_last_batch_async_reference_ms",
+                "collection_search_last_init_lock_wait_ms",
+                "collection_search_last_run_lock_wait_ms",
+                "collection_write_last_memory_lock_wait_ms",
+                "collection_write_last_memory_lock_hold_ms",
                 "config_import_batch_size",
                 "http_request_last_total_ms",
                 "http_request_last_response_queue_ms",
+                "http_request_last_route",
                 "http_import_last_total_ms",
                 "http_import_last_auth_ms",
                 "http_import_last_handler_wait_ms",
@@ -533,11 +680,28 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "http_import_last_unattributed_ms",
                 "http_import_last_conn_to_start_ms",
                 "http_import_last_response_dispatch_ms",
+                "http_import_last_response_pre_dispatch_wait_ms",
                 "http_import_last_response_queue_ms",
                 "http_import_last_response_progress_ms",
+                "http_import_avg_total_ms",
+                "http_import_avg_auth_ms",
+                "http_import_avg_handler_wait_ms",
+                "http_import_avg_handler_ms",
+                "http_import_avg_unattributed_ms",
+                "http_import_avg_response_pre_dispatch_wait_ms",
+                "http_import_avg_response_queue_ms",
                 "thread_pool_last_wait_ms",
+                "thread_pool_queued_tasks",
                 "meta_thread_pool_last_wait_ms",
+                "meta_thread_pool_queued_tasks",
                 "response_flow_active_deferred_requests",
+                "message_dispatch_stream_response_last_queue_ms",
+                "message_dispatch_stream_response_max_queue_ms",
+                "queued_writes",
+                "pending_write_batches",
+                "system_cpu_active_percentage",
+                "system_memory_used_bytes",
+                "system_memory_used_swap_bytes",
             ]
             return {key: payload.get(key) for key in interesting if key in payload}
     except Exception:
@@ -551,6 +715,7 @@ def run_metrics_sampler(
     timeout: float,
     interval_s: float,
     stop_event: threading.Event,
+    phase_tracker: PhaseTracker,
     samples: list[MetricsSample],
     lock: threading.Lock,
 ) -> None:
@@ -558,7 +723,7 @@ def run_metrics_sampler(
         values = collect_metrics_sample(base_url, api_key, timeout)
         if values is not None:
             with lock:
-                samples.append(MetricsSample(ts_ms=now_ms(), values=values))
+                samples.append(MetricsSample(ts_ms=now_ms(), phase=phase_tracker.get(), values=values))
         if stop_event.wait(interval_s):
             return
 
@@ -584,6 +749,62 @@ def summarize_metrics_timeline(samples: list[MetricsSample]) -> dict[str, dict[s
     return summary
 
 
+def summarize_metrics_timeline_by_phase(
+    samples: list[MetricsSample],
+) -> dict[str, dict[str, dict[str, float | int]]]:
+    grouped: dict[str, list[MetricsSample]] = {}
+    for sample in samples:
+        grouped.setdefault(sample.phase, []).append(sample)
+    return {phase: summarize_metrics_timeline(phase_samples) for phase, phase_samples in grouped.items()}
+
+
+def summarize_metric_labels_by_phase(
+    samples: list[MetricsSample],
+) -> dict[str, dict[str, dict[str, int]]]:
+    grouped: dict[str, dict[str, dict[str, int]]] = {}
+    for sample in samples:
+        phase_summary = grouped.setdefault(sample.phase, {})
+        for key, value in sample.values.items():
+            if isinstance(value, str) and value:
+                key_summary = phase_summary.setdefault(key, {})
+                key_summary[value] = key_summary.get(value, 0) + 1
+    return grouped
+
+
+def summarize_probe_samples_by_phase(
+    samples: list[ProbeSample],
+) -> dict[str, dict[str, dict[str, float | int]]]:
+    grouped: dict[str, dict[str, ProbeStats]] = {}
+    for sample in samples:
+        route_stats = grouped.setdefault(sample.phase, {})
+        probe = route_stats.setdefault(sample.route, ProbeStats(sample.route))
+        if sample.success:
+            probe.latencies_ms.append(sample.latency_ms)
+        else:
+            probe.failures += 1
+    return {
+        phase: {
+            route: {**summarize_latencies(probe.latencies_ms), "failures": probe.failures}
+            for route, probe in route_stats.items()
+        }
+        for phase, route_stats in grouped.items()
+    }
+
+
+def summarize_search_samples_by_phase(samples: list[SearchSample]) -> dict[str, dict[str, float | int]]:
+    grouped: dict[str, SearchStats] = {}
+    for sample in samples:
+        stats = grouped.setdefault(sample.phase, SearchStats())
+        if sample.success:
+            stats.latencies_ms.append(sample.latency_ms)
+        else:
+            stats.failures += 1
+    return {
+        phase: {**summarize_latencies(stats.latencies_ms), "failures": stats.failures}
+        for phase, stats in grouped.items()
+    }
+
+
 def run_imports(
     base_url: str,
     api_key: str,
@@ -595,6 +816,8 @@ def run_imports(
     import_workers: int,
     timeout: float,
     server_batch_size: int | None,
+    client_chunk_bytes: int | None,
+    client_chunk_delay_ms: float,
 ) -> ImportStats:
     stats = ImportStats()
     lock = threading.Lock()
@@ -613,7 +836,14 @@ def run_imports(
             body = build_fitment_batch(start_index, count, product_docs, vehicle_docs)
             try:
                 status, payload, elapsed = import_ndjson(
-                    base_url, api_key, collection, body, timeout, server_batch_size
+                    base_url,
+                    api_key,
+                    collection,
+                    body,
+                    timeout,
+                    server_batch_size,
+                    client_chunk_bytes,
+                    client_chunk_delay_ms,
                 )
                 with lock:
                     stats.batch_latencies_ms.append(elapsed)
@@ -659,10 +889,13 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "response_flow_last_defer_actual_ms",
         "response_flow_max_defer_actual_ms",
         "message_dispatch_stream_response_last_queue_ms",
+        "message_dispatch_stream_response_max_queue_ms",
         "message_dispatch_request_proceed_last_queue_ms",
         "message_dispatch_defer_processing_last_queue_ms",
         "thread_pool_last_wait_ms",
+        "thread_pool_queued_tasks",
         "meta_thread_pool_last_wait_ms",
+        "meta_thread_pool_queued_tasks",
         "nuraft_last_import_total_ms",
         "nuraft_last_import_replay_ms",
         "nuraft_last_import_request_bytes",
@@ -680,7 +913,21 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_import_avg_response_pre_dispatch_wait_ms",
         "http_import_avg_response_queue_ms",
         "http_import_max_total_ms",
+        "config_import_batch_size",
+        "queued_writes",
+        "pending_write_batches",
+        "nuraft_commit_lag",
+        "nuraft_live_apply_lag",
+        "nuraft_state_machine_apply_lag",
+        "system_cpu_active_percentage",
+        "system_memory_used_bytes",
+        "system_memory_used_swap_bytes",
         "collection_import_last_total_ms",
+        "collection_import_last_collection_name",
+        "collection_import_last_docs",
+        "collection_import_last_num_indexed",
+        "collection_import_last_batch_calls",
+        "collection_import_last_effective_index_batch_size",
         "collection_import_last_reference_helper_ms",
         "collection_search_last_init_lock_wait_ms",
         "collection_search_last_run_lock_wait_ms",
@@ -726,6 +973,8 @@ def run_scenario(
                 max(1, min(args.batch_docs, 5_000)),
                 args.timeout,
                 args.server_batch_size,
+                args.client_chunk_bytes,
+                args.client_chunk_delay_ms,
             )
             seed_target_collection(
                 process.base_url,
@@ -736,31 +985,59 @@ def run_scenario(
                 max(1, min(args.batch_docs, 5_000)),
                 args.timeout,
                 args.server_batch_size,
+                args.client_chunk_bytes,
+                args.client_chunk_delay_ms,
             )
 
         stop_event = threading.Event()
-        probe_stats = {route: ProbeStats(route) for route in ["/health", "/metrics.json", "/stats.json"]}
+        phase_tracker = PhaseTracker("source_import")
+        probe_routes = build_probe_routes(args.probe_profile, args.probe_route)
+        probe_stats = {route: ProbeStats(route) for route in probe_routes}
+        probe_samples: list[ProbeSample] = []
         search_stats = SearchStats()
+        search_samples: list[SearchSample] = []
         metrics_samples: list[MetricsSample] = []
         metrics_lock = threading.Lock()
-        probe_thread = threading.Thread(
-            target=run_probes,
-            args=(process.base_url, args.api_key, args.timeout, args.probe_interval, stop_event, probe_stats),
-            daemon=True,
-        )
-        search_thread = threading.Thread(
-            target=run_search_probe,
-            args=(
-                process.base_url,
-                args.api_key,
-                args.source_collection,
-                args.timeout,
-                args.probe_interval,
-                stop_event,
-                search_stats,
-            ),
-            daemon=True,
-        )
+        probe_lock = threading.Lock()
+        search_lock = threading.Lock()
+        probe_threads = [
+            threading.Thread(
+                target=run_probes,
+                args=(
+                    process.base_url,
+                    args.api_key,
+                    args.timeout,
+                    args.probe_interval,
+                    stop_event,
+                    probe_routes,
+                    probe_stats,
+                    phase_tracker,
+                    probe_samples,
+                    probe_lock,
+                ),
+                daemon=True,
+            )
+            for _ in range(args.probe_workers)
+        ]
+        search_threads = [
+            threading.Thread(
+                target=run_search_probe,
+                args=(
+                    process.base_url,
+                    args.api_key,
+                    args.source_collection,
+                    args.timeout,
+                    args.probe_interval,
+                    stop_event,
+                    search_stats,
+                    phase_tracker,
+                    search_samples,
+                    search_lock,
+                ),
+                daemon=True,
+            )
+            for _ in range(args.search_workers)
+        ]
         metrics_thread = threading.Thread(
             target=run_metrics_sampler,
             args=(
@@ -769,13 +1046,16 @@ def run_scenario(
                 args.timeout,
                 args.probe_interval,
                 stop_event,
+                phase_tracker,
                 metrics_samples,
                 metrics_lock,
             ),
             daemon=True,
         )
-        probe_thread.start()
-        search_thread.start()
+        for thread in probe_threads:
+            thread.start()
+        for thread in search_threads:
+            thread.start()
         metrics_thread.start()
 
         started = now_ms()
@@ -790,10 +1070,13 @@ def run_scenario(
             args.import_workers,
             args.timeout,
             args.server_batch_size,
+            args.client_chunk_bytes,
+            args.client_chunk_delay_ms,
         )
         elapsed_ms = now_ms() - started
 
         if args.seed_target_order == "after":
+            phase_tracker.set("reference_seed")
             seed_target_collection(
                 process.base_url,
                 args.api_key,
@@ -803,6 +1086,8 @@ def run_scenario(
                 max(1, min(args.batch_docs, 5_000)),
                 args.timeout,
                 args.server_batch_size,
+                args.client_chunk_bytes,
+                args.client_chunk_delay_ms,
             )
             seed_target_collection(
                 process.base_url,
@@ -813,13 +1098,18 @@ def run_scenario(
                 max(1, min(args.batch_docs, 5_000)),
                 args.timeout,
                 args.server_batch_size,
+                args.client_chunk_bytes,
+                args.client_chunk_delay_ms,
             )
         elif args.seed_target_order == "never":
             pass
 
+        phase_tracker.set("cooldown")
         stop_event.set()
-        probe_thread.join(timeout=2.0)
-        search_thread.join(timeout=2.0)
+        for thread in probe_threads:
+            thread.join(timeout=2.0)
+        for thread in search_threads:
+            thread.join(timeout=2.0)
         metrics_thread.join(timeout=2.0)
 
         final_metrics = collect_final_metrics(process.base_url, args.api_key, args.timeout)
@@ -841,13 +1131,23 @@ def run_scenario(
         search_summary = {**summarize_latencies(search_stats.latencies_ms), "failures": search_stats.failures}
         with metrics_lock:
             metrics_timeline_summary = summarize_metrics_timeline(metrics_samples)
+            metrics_timeline_summary_by_phase = summarize_metrics_timeline_by_phase(metrics_samples)
+            metrics_label_summary_by_phase = summarize_metric_labels_by_phase(metrics_samples)
+        with probe_lock:
+            probe_phase_summary = summarize_probe_samples_by_phase(probe_samples)
+        with search_lock:
+            search_phase_summary = summarize_search_samples_by_phase(search_samples)
         return ScenarioResult(
             label=label,
             create_timings_ms=create_timings,
             import_stats=import_summary,
             probe_stats=probe_summary,
+            probe_phase_stats=probe_phase_summary,
             search_stats=search_summary,
+            search_phase_stats=search_phase_summary,
             metrics_timeline_summary=metrics_timeline_summary,
+            metrics_timeline_summary_by_phase=metrics_timeline_summary_by_phase,
+            metrics_label_summary_by_phase=metrics_label_summary_by_phase,
             final_metrics=final_metrics,
             stdout_log=str(process.stdout_log),
             stderr_log=str(process.stderr_log),
@@ -878,6 +1178,15 @@ def print_result(result: ScenarioResult) -> None:
             f"  {route}: count={summary['count']} failures={summary['failures']} "
             f"avg={summary['avg_ms']:.1f}ms p95={summary['p95_ms']:.1f}ms max={summary['max_ms']:.1f}ms"
         )
+    if result.probe_phase_stats:
+        print("Probe summary by phase:")
+        for phase in sorted(result.probe_phase_stats.keys()):
+            print(f"  [{phase}]")
+            for route, summary in sorted(result.probe_phase_stats[phase].items()):
+                print(
+                    f"    {route}: count={summary['count']} failures={summary['failures']} "
+                    f"avg={summary['avg_ms']:.1f}ms p95={summary['p95_ms']:.1f}ms max={summary['max_ms']:.1f}ms"
+                )
 
     search_summary = result.search_stats
     print(
@@ -885,6 +1194,14 @@ def print_result(result: ScenarioResult) -> None:
         f"  count={search_summary['count']} failures={search_summary['failures']} "
         f"avg={search_summary['avg_ms']:.1f}ms p95={search_summary['p95_ms']:.1f}ms max={search_summary['max_ms']:.1f}ms"
     )
+    if result.search_phase_stats:
+        print("Search summary by phase:")
+        for phase in sorted(result.search_phase_stats.keys()):
+            summary = result.search_phase_stats[phase]
+            print(
+                f"  [{phase}] count={summary['count']} failures={summary['failures']} "
+                f"avg={summary['avg_ms']:.1f}ms p95={summary['p95_ms']:.1f}ms max={summary['max_ms']:.1f}ms"
+            )
 
     print("Selected server metrics:")
     for key in sorted(result.final_metrics.keys()):
@@ -898,6 +1215,22 @@ def print_result(result: ScenarioResult) -> None:
                 f"  {key}: count={summary['count']} avg={summary['avg']:.1f} "
                 f"p95={summary['p95']:.1f} max={summary['max']:.1f}"
             )
+    if result.metrics_timeline_summary_by_phase:
+        print("Metrics timeline summary by phase:")
+        for phase in sorted(result.metrics_timeline_summary_by_phase.keys()):
+            print(f"  [{phase}]")
+            for key in sorted(result.metrics_timeline_summary_by_phase[phase].keys()):
+                summary = result.metrics_timeline_summary_by_phase[phase][key]
+                print(
+                    f"    {key}: count={summary['count']} avg={summary['avg']:.1f} "
+                    f"p95={summary['p95']:.1f} max={summary['max']:.1f}"
+                )
+    if result.metrics_label_summary_by_phase:
+        print("Metrics label summary by phase:")
+        for phase in sorted(result.metrics_label_summary_by_phase.keys()):
+            print(f"  [{phase}]")
+            for key in sorted(result.metrics_label_summary_by_phase[phase].keys()):
+                print(f"    {key}: {result.metrics_label_summary_by_phase[phase][key]}")
     print(f"Logs: stdout={result.stdout_log} stderr={result.stderr_log}")
 
 
@@ -927,6 +1260,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--product-docs", type=int, default=DEFAULT_PRODUCT_DOCS)
     parser.add_argument("--vehicle-docs", type=int, default=DEFAULT_VEHICLE_DOCS)
     parser.add_argument("--probe-interval", type=float, default=DEFAULT_PROBE_INTERVAL)
+    parser.add_argument("--probe-workers", type=int, default=DEFAULT_PROBE_WORKERS)
+    parser.add_argument("--search-workers", type=int, default=DEFAULT_SEARCH_WORKERS)
+    parser.add_argument(
+        "--probe-profile",
+        choices=["standard", "dashboard"],
+        default=DEFAULT_PROBE_PROFILE,
+        help="Which GET routes to probe during import. 'dashboard' mirrors the Typesense dashboard control-plane view.",
+    )
+    parser.add_argument(
+        "--probe-route",
+        action="append",
+        default=[],
+        help="Additional GET route to probe during import. May be passed multiple times.",
+    )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
     parser.add_argument(
         "--seed-target-order",
@@ -941,6 +1288,17 @@ def parse_args() -> argparse.Namespace:
         "--server-batch-size",
         type=int,
         help="Optional import API batch_size query parameter to mimic a specific server-side batching setup.",
+    )
+    parser.add_argument(
+        "--client-chunk-bytes",
+        type=int,
+        help="Optionally stream import requests in fixed-size chunks instead of sending the whole body at once.",
+    )
+    parser.add_argument(
+        "--client-chunk-delay-ms",
+        type=float,
+        default=0.0,
+        help="Optional delay between streamed client-side import chunks.",
     )
     parser.add_argument("--keep-temp", action="store_true", help="Keep temporary data/log directories for inspection.")
     parser.add_argument("--server-arg", action="append", default=[], help="Extra arg passed through to typesense-server.")
@@ -989,8 +1347,12 @@ def main() -> int:
                 "create_timings_ms": result.create_timings_ms,
                 "import_stats": result.import_stats,
                 "probe_stats": result.probe_stats,
+                "probe_phase_stats": result.probe_phase_stats,
                 "search_stats": result.search_stats,
+                "search_phase_stats": result.search_phase_stats,
                 "metrics_timeline_summary": result.metrics_timeline_summary,
+                "metrics_timeline_summary_by_phase": result.metrics_timeline_summary_by_phase,
+                "metrics_label_summary_by_phase": result.metrics_label_summary_by_phase,
                 "final_metrics": result.final_metrics,
                 "stdout_log": result.stdout_log,
                 "stderr_log": result.stderr_log,

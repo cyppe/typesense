@@ -1107,8 +1107,7 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
 }
 
 bool get_stats_json(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
-    nlohmann::json result;
-    AppMetrics::get_instance().get("requests_per_second", "latency_ms", result);
+    nlohmann::json result = nlohmann::json::parse(AppMetrics::get_instance().get_serialized());
     result["pending_write_batches"] = server->get_num_queued_writes();
 
     res->set_body(200, result.dump(2));

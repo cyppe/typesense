@@ -126,11 +126,11 @@ Done. Audit complete — stabilized grouping, curation ordering, embedding polli
 ## Priority Queue
 
 1. [ ] Run the broad local validation sweep now that the heavy-import replay lane is healthy again.
-   Current state: the March 21 write-offload fix in `HttpServer::process_request()` moved write requests off the HTTP-side path and onto the worker pool, which changed the local fitment replay from a clear fork regression into a mostly healthy result. On the realistic mixed lane (`--seed-target-order after`, `100000` fitments, `5000` docs/request, `3` workers, `TYPESENSE_IMPORT_BATCH_SIZE=1000`) the fork now measures `175.2ms` avg import / `76492.8 docs/s` vs upstream `177.5ms` / `74857.6 docs/s`, with `/health 4.3ms`, `/metrics.json 117.2ms`, `/stats.json 17.6ms`, and search `19.2ms` during import. Next step is full local build/test/API verification before release promotion.
-2. [ ] Decide whether the remaining mixed-lane read/search gap needs another optimization pass before release.
-   Current state: the catastrophic multi-second starvation is gone, but the fork is still slower than upstream on some live-read metrics during the mixed lane (`/stats.json` and search in particular). Request-lifecycle attribution is now much tighter (`http_import_avg_total_ms=169`, `http_import_avg_handler_ms=153`, `http_import_avg_response_queue_ms=7`, `http_import_avg_unattributed_ms=5`), so any further tuning should be narrow and measured rather than another broad instrumentation sweep.
-3. [ ] If the validation sweep is green, prepare release artifacts and Docker tags from the fixed build.
-   Current state: release work should wait until the local replay numbers are accepted and the broader suites pass. Do not cut a new binary/tag from replay-only evidence.
+   Current state: the lighter March 21 fitment replay is still healthy after the write-offload fix, but the new DDEV-parity dashboard replay reopened a material upstream gap. On `50000` fitments with `--seed-target-order after`, explicit `--server-batch-size 40`, `--probe-profile dashboard`, `--probe-workers 4`, and `--search-workers 2`, the fork now keeps `/health` around `4.2ms` after inlining cheap GET routes, but it still trails upstream on import throughput (`34362.6 docs/s` vs `72814.7`), `/metrics.json` (`232.0ms` vs `103.2ms`), `/stats.json` (`192.4ms` vs `0.4ms`), `/collections` (`226.4ms` vs `0.4ms`), and search (`124.9ms` vs `4.4ms`) during import.
+2. [ ] Explain and reduce the remaining `/stats.json` / search slowdown under low-batch concurrent import.
+   Current state: both the live DDEV samples and the new dashboard replay show that the fork is no longer bottlenecked by Raft lag or thread-pool backlog (`queued_writes=0`, `pending_write_batches=0`, `nuraft_commit_lag=0`, thread-pool queue metrics `0`). The remaining issue is a narrower low-batch request/read/search responsiveness gap.
+3. [ ] Defer broad validation / release promotion until the harsher dashboard lane is acceptable.
+   Current state: targeted verification is green for the touched route class (`scripts/bazel_in_docker.sh build //:typesense-server`, `scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-secrets tests/health.test.ts`, `scripts/run_api_tests.sh -- --no-secrets tests/collections.test.ts`, and the upgraded fitment replay), but do not cut a new release while the DDEV-parity replay still trails upstream materially.
 
 ## Priority 1 - Build And Dependency Modernization
 
@@ -1659,9 +1659,11 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 
 10. **Import `batch_size` is a secondary throughput knob on this dataset.** A/B checks (`40` vs `1000`) showed only marginal import delta (~0.2% in current runs). Keep default `40` for mixed workloads; use larger values only as deliberate ingest-window overrides.
 
-11. **Dockerized API harness should force IPv4 localhost.** Inside the API Bun container, `localhost` health checks can miss servers that are listening on IPv4 only. Set `TYPESENSE_API_HOST=127.0.0.1` in the wrapper to keep Dockerized API runs reliable.
+11. **The lighter fitment replay can miss DDEV-style control-plane regressions.** Keep a separate dashboard replay posture with explicit `batch_size=40` plus concurrent `/collections`, `/aliases`, `/keys`, `/presets`, `/stemming/dictionaries`, `/stopwords`, `/debug`, `/health`, `/metrics.json`, `/stats.json`, and search probes when judging whether heavy-import responsiveness is actually release-ready.
 
-12. **Upstream ships self-contained core CPU artifacts, and this fork now matches that on the promoted local target.** Keep checking with `ldd` after future ORT/build-graph changes so the repo does not silently regress back to a `libonnxruntime.so.1` runtime dependency.
+12. **Dockerized API harness should force IPv4 localhost.** Inside the API Bun container, `localhost` health checks can miss servers that are listening on IPv4 only. Set `TYPESENSE_API_HOST=127.0.0.1` in the wrapper to keep Dockerized API runs reliable.
+
+13. **Upstream ships self-contained core CPU artifacts, and this fork now matches that on the promoted local target.** Keep checking with `ldd` after future ORT/build-graph changes so the repo does not silently regress back to a `libonnxruntime.so.1` runtime dependency.
 
 14. **Sanitizer flags leak into `rules_foreign_cc` configure scripts.** Bazel's `--copt -fsanitize=X` applies globally, breaking autoconf detection in deps like kakasi and iconv. Fix by adding `env = select({"@@//:asan_mode": {"CFLAGS": "-fno-sanitize=address", ...}})` to each foreign_cc target. Note: `@@//` (not `@//`) is required in Bazel 9 Bzlmod to reference main-repo config_settings from external BUILD files.
 

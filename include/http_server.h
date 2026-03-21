@@ -206,11 +206,14 @@ private:
     static void on_res_generator_dispose(void *self);
 
     static int send_response(h2o_req_t *req, int status_code, const std::string & message);
+    static int send_prepared_response(h2o_req_t *req, const std::shared_ptr<http_req>& request,
+                                      const std::shared_ptr<http_res>& response);
 
     static int async_req_cb(void *ctx, int is_end_stream);
 
     static bool is_write_request(const std::string& root_resource, const std::string& http_method,
                                  bool (*handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&));
+    static bool should_handle_inline_route(std::string_view root_resource, const route_path& rpath);
 
 public:
     static Option<bool> handle_gzip(const std::shared_ptr<http_req>& request);

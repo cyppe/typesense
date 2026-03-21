@@ -22,6 +22,7 @@ private:
     // stores the current window
     spp::sparse_hash_map<std::string, uint64_t>* current_counts;
     spp::sparse_hash_map<std::string, TDigest>* current_durations;
+    std::string serialized_window_snapshot;
 
     std::string access_log_path;
     std::ofstream access_log;
@@ -32,6 +33,7 @@ private:
 
         current_durations = new spp::sparse_hash_map<std::string, TDigest>();
         durations = new spp::sparse_hash_map<std::string, TDigest>();
+        serialized_window_snapshot = "{}";
 
         access_log_path = Config::get_instance().get_access_log_path();
         if(Config::get_instance().get_enable_access_logging() && !access_log_path.empty()) {
@@ -85,4 +87,8 @@ public:
     void window_reset();
 
     void get(const std::string& rps_key, const std::string& latency_key, nlohmann::json &result) const;
+    std::string get_serialized() const {
+        std::shared_lock lock(mutex);
+        return serialized_window_snapshot;
+    }
 };

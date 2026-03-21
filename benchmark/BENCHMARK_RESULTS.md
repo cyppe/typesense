@@ -19,6 +19,35 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 34: Dashboard-Style `batch_size=40` Replay Reopens The Remaining DDEV-Parity Gap (2026-03-21)
+
+**Commit:** local working tree on top of `HEAD` at run time
+**Command:** `python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --total-fitment-docs 50000 --batch-docs 5000 --import-workers 3 --product-docs 15000 --vehicle-docs 15000 --seed-target-order after --server-batch-size 40 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --json-output /tmp/upstream-vs-fork-dashboard-50k-b40-r2.json`
+**Scenario:** upgrade the local fitment replay to look more like the real DDEV control plane by probing the same dashboard GET routes during import and by explicitly forcing the historical low server-side import batching posture (`batch_size=40`).
+
+### Findings
+
+- The replay harness is now good enough to catch the control-plane class of regression directly. The new `--probe-profile dashboard` lane exercises `/collections`, `/aliases`, `/analytics/rules`, `/keys`, `/presets`, `/stemming/dictionaries`, `/stopwords`, and `/debug` alongside `/health`, `/metrics.json`, `/stats.json`, and search while the fitment import is active.
+- The inline-response fast path for cheap GET routes is worthwhile. On this harsher lane the fork now keeps `/health` at `4.2ms` average, `/aliases` at `5.6ms`, `/stemming/dictionaries` at `7.3ms`, and `/debug` at `1.8ms` instead of forcing even those endpoints through the worker-pool plus shared response-dispatch path.
+- That said, the low-batch DDEV-parity gap is still real. Upstream stayed at `72814.7 docs/s`, `/metrics.json 103.2ms`, `/stats.json 0.4ms`, `/collections 0.4ms`, and search `4.4ms`, while the fork measured `34362.6 docs/s`, `/metrics.json 232.0ms`, `/stats.json 192.4ms`, `/collections 226.4ms`, and search `124.9ms`.
+- This remaining gap still does **not** look like a Raft backlog or thread-pool exhaustion problem. On the fork run, `queued_writes=0`, `pending_write_batches=0`, `nuraft_commit_lag=0`, `nuraft_state_machine_apply_lag=0`, and both thread-pool queue metrics stayed at `0`.
+- The next local investigation target is therefore narrower than before: keep the new inline fast path for cheap control-plane routes, but keep working on the remaining low-batch search/stats responsiveness and import-throughput gap under concurrent dashboard pressure.
+
+### Summary Table
+
+| Lane | Import avg | Docs/sec | `/health` avg | `/metrics.json` avg | `/stats.json` avg | `/collections` avg | Search avg |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| upstream `30.1`, `50k`, `after`, dashboard probes, `batch_size=40` | `170.7 ms` | `72814.7` | `1.4 ms` | `103.2 ms` | `0.4 ms` | `0.4 ms` | `4.4 ms` |
+| fork current, same lane | `380.6 ms` | `34362.6` | `4.2 ms` | `232.0 ms` | `192.4 ms` | `226.4 ms` | `124.9 ms` |
+
+### Decision
+
+- Keep the new dashboard replay lane as the canonical DDEV-parity regression lane for heavy-import work. The earlier lighter fitment replay remains useful, but it no longer has enough control-plane pressure to represent the remaining problem by itself.
+- Keep the inline response fast path for cheap GET routes. It clearly improves `/health` and the metadata endpoints, even though it does not yet solve the heavier `/stats.json` / search gap.
+- Do **not** treat the heavy-import issue as fully solved for release purposes while this harsher lane still trails upstream materially.
+
+---
+
 ## Run 33: Heavy-Import Responsiveness Recovered On The Local Fitment Replay Lane (2026-03-21)
 
 **Commit:** local working tree on top of `HEAD` at run time

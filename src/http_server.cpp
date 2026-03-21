@@ -640,23 +640,30 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
         request->add_auth_duration_us(immediate_auth_duration_us);
     }
 
-    // add custom generator with a dispose function for cleaning up resources
-    h2o_custom_generator_t* custom_gen = new h2o_custom_generator_t;
-    std::shared_ptr<http_res> response = std::make_shared<http_res>(custom_gen);
+    const bool handle_inline = should_handle_inline_route(root_resource, *rpath);
+    std::shared_ptr<http_res> response;
+    h2o_custom_generator_t* custom_gen = nullptr;
+    if(handle_inline) {
+        response = std::make_shared<http_res>(nullptr);
+    } else {
+        // add custom generator with a dispose function for cleaning up resources
+        custom_gen = new h2o_custom_generator_t;
+        response = std::make_shared<http_res>(custom_gen);
 
-    custom_gen->h2o_generator = h2o_generator_t {response_proceed, response_abort};
-    custom_gen->request = request;
-    custom_gen->response = response;
-    custom_gen->rpath = rpath;
-    custom_gen->h2o_handler = h2o_handler;
+        custom_gen->h2o_generator = h2o_generator_t {response_proceed, response_abort};
+        custom_gen->request = request;
+        custom_gen->response = response;
+        custom_gen->rpath = rpath;
+        custom_gen->h2o_handler = h2o_handler;
 
-    h2o_custom_generator_t** allocated_generator = static_cast<h2o_custom_generator_t**>(
-        h2o_mem_alloc_shared(&req->pool, sizeof(*allocated_generator), on_res_generator_dispose)
-    );
-    *allocated_generator = custom_gen;
+        h2o_custom_generator_t** allocated_generator = static_cast<h2o_custom_generator_t**>(
+            h2o_mem_alloc_shared(&req->pool, sizeof(*allocated_generator), on_res_generator_dispose)
+        );
+        *allocated_generator = custom_gen;
 
-    // ensures that the first response need not wait for previous chunk to be done sending
-    response->notify();
+        // ensures that the first response need not wait for previous chunk to be done sending
+        response->notify();
+    }
 
     //TS_LOG(INFO) << "Init res: " << custom_gen->response << ", ref count: " << custom_gen->response.use_count();
 
@@ -697,6 +704,15 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
         } catch (const nlohmann::json::parse_error& e) {
             request->metadata = sole::uuid4().str();
         }
+    }
+
+    if(handle_inline) {
+        request->mark_handler_dispatch();
+        request->mark_handler_start();
+        (rpath->handler)(request, response);
+        request->mark_handler_end();
+        request->mark_response_dispatch();
+        return send_prepared_response(req, request, response);
     }
 
     if(req->proceed_req == nullptr) {
@@ -745,6 +761,30 @@ bool HttpServer::is_write_request(const std::string& root_resource, const std::s
     }
 
     return false;
+}
+
+bool HttpServer::should_handle_inline_route(std::string_view root_resource, const route_path& rpath) {
+    if(rpath.async_req || rpath.async_res) {
+        return false;
+    }
+
+    if(rpath.http_method == "GET" &&
+       (rpath.handler == get_collections ||
+        rpath.handler == get_aliases ||
+        rpath.handler == get_analytics_rules ||
+        rpath.handler == get_keys ||
+        rpath.handler == get_presets ||
+        rpath.handler == get_stemming_dictionaries ||
+        rpath.handler == get_stopwords)) {
+        return true;
+    }
+
+    return root_resource == "status" ||
+           root_resource == "health" ||
+           root_resource == "health_with_rusage" ||
+           root_resource == "metrics.json" ||
+           root_resource == "stats.json" ||
+           root_resource == "debug";
 }
 
 bool HttpServer::curl_only_http1(std::string_view ua) {
@@ -988,6 +1028,26 @@ int HttpServer::send_response(h2o_req_t *req, int status_code, const std::string
     req->res.reason = http_res::get_status_reason(req->res.status);
     h2o_add_header(&req->pool, &req->res.headers, H2O_TOKEN_CONTENT_TYPE, nullptr, H2O_STRLIT("application/json; charset=utf-8"));
     h2o_start_response(req, &generator);
+    h2o_send(req, &body, 1, H2O_SEND_STATE_FINAL);
+    return 0;
+}
+
+int HttpServer::send_prepared_response(h2o_req_t *req, const std::shared_ptr<http_req>& request,
+                                       const std::shared_ptr<http_res>& response) {
+    h2o_generator_t generator = {nullptr, nullptr};
+    h2o_iovec_t body = h2o_strdup(&req->pool, response->body.c_str(), response->body.size());
+    req->res.status = response->status_code == 0 ? 200 : static_cast<int>(response->status_code);
+    req->res.reason = http_res::get_status_reason(req->res.status);
+
+    const std::string& content_type =
+        response->content_type_header.empty() ? std::string("application/json; charset=utf-8")
+                                              : response->content_type_header;
+    h2o_add_header_by_str(&req->pool, &req->res.headers, H2O_STRLIT("content-type"), 0, nullptr,
+                          content_type.data(), content_type.size());
+
+    request->mark_response_start();
+    h2o_start_response(req, &generator);
+    request->mark_response_send(true);
     h2o_send(req, &body, 1, H2O_SEND_STATE_FINAL);
     return 0;
 }
