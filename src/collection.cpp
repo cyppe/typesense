@@ -63,7 +63,9 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> last_batch_index_validate_ms{0};
     std::atomic<uint64_t> last_batch_index_memory_ms{0};
     std::atomic<uint64_t> last_batch_index_async_reference_ms{0};
+    std::atomic<uint64_t> last_batch_index_store_prep_ms{0};
     std::atomic<uint64_t> last_batch_index_write_ms{0};
+    std::atomic<uint64_t> last_batch_index_response_ms{0};
     std::atomic<uint64_t> last_batch_index_total_ms{0};
     std::atomic<uint64_t> last_batch_index_async_reference_updates{0};
     std::mutex collection_name_mutex;
@@ -85,7 +87,9 @@ void record_collection_batch_index_metrics(const std::string& collection_name,
     g_collection_import_metrics.last_batch_index_validate_ms.store(metrics.validate_ms, std::memory_order_relaxed);
     g_collection_import_metrics.last_batch_index_memory_ms.store(metrics.memory_ms, std::memory_order_relaxed);
     g_collection_import_metrics.last_batch_index_async_reference_ms.store(metrics.async_reference_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_store_prep_ms.store(metrics.store_prep_ms, std::memory_order_relaxed);
     g_collection_import_metrics.last_batch_index_write_ms.store(metrics.write_ms, std::memory_order_relaxed);
+    g_collection_import_metrics.last_batch_index_response_ms.store(metrics.response_ms, std::memory_order_relaxed);
     g_collection_import_metrics.last_batch_index_total_ms.store(metrics.total_ms, std::memory_order_relaxed);
     g_collection_import_metrics.last_batch_index_async_reference_updates.store(metrics.async_reference_updates,
                                                                                std::memory_order_relaxed);
@@ -445,7 +449,11 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
     snapshot.last_batch_index_memory_ms = g_collection_import_metrics.last_batch_index_memory_ms.load(std::memory_order_relaxed);
     snapshot.last_batch_index_async_reference_ms =
         g_collection_import_metrics.last_batch_index_async_reference_ms.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_store_prep_ms =
+        g_collection_import_metrics.last_batch_index_store_prep_ms.load(std::memory_order_relaxed);
     snapshot.last_batch_index_write_ms = g_collection_import_metrics.last_batch_index_write_ms.load(std::memory_order_relaxed);
+    snapshot.last_batch_index_response_ms =
+        g_collection_import_metrics.last_batch_index_response_ms.load(std::memory_order_relaxed);
     snapshot.last_batch_index_total_ms = g_collection_import_metrics.last_batch_index_total_ms.load(std::memory_order_relaxed);
     snapshot.last_batch_index_async_reference_updates =
         g_collection_import_metrics.last_batch_index_async_reference_updates.load(std::memory_order_relaxed);
@@ -1022,6 +1030,7 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
     rocksdb::WriteBatch aggregated_batch;
     std::vector<size_t> batch_record_indices;  // track which records are in the batch
 
+    const auto store_prep_start = std::chrono::steady_clock::now();
     for(size_t i = 0; i < index_records.size(); i++) {
         auto& index_record = index_records[i];
         if(!index_record.indexed.ok()) continue;
@@ -1050,6 +1059,7 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
         }
         batch_record_indices.push_back(i);
     }
+    metrics.store_prep_ms = elapsed_ms_since(store_prep_start);
 
     // Attempt single aggregated write (covers both inserts and updates)
     if(!batch_record_indices.empty()) {
@@ -1102,23 +1112,8 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
         }
     }
 
-    metrics.total_ms = elapsed_ms_since(batch_index_start);
-    record_collection_batch_index_metrics(name, metrics);
-
-    if (metrics.total_ms >= 1000) {
-        TS_LOG(INFO) << "Collection batch_index timing: collection=" << name
-                     << " docs=" << metrics.docs
-                     << " indexed=" << metrics.num_indexed
-                     << " found_fields=" << metrics.found_fields
-                     << " validate_ms=" << metrics.validate_ms
-                     << " memory_ms=" << metrics.memory_ms
-                     << " async_reference_ms=" << metrics.async_reference_ms
-                     << " async_reference_updates=" << metrics.async_reference_updates
-                     << " write_ms=" << metrics.write_ms
-                     << " total_ms=" << metrics.total_ms;
-    }
-
     // Build response JSON for all records
+    const auto response_start = std::chrono::steady_clock::now();
     for(auto& index_record: index_records) {
         nlohmann::json res;
 
@@ -1168,6 +1163,24 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
 
         json_out[index_record.position] = res.dump(-1, ' ', false,
                                                    nlohmann::detail::error_handler_t::ignore);
+    }
+    metrics.response_ms = elapsed_ms_since(response_start);
+    metrics.total_ms = elapsed_ms_since(batch_index_start);
+    record_collection_batch_index_metrics(name, metrics);
+
+    if (metrics.total_ms >= 1000) {
+        TS_LOG(INFO) << "Collection batch_index timing: collection=" << name
+                     << " docs=" << metrics.docs
+                     << " indexed=" << metrics.num_indexed
+                     << " found_fields=" << metrics.found_fields
+                     << " validate_ms=" << metrics.validate_ms
+                     << " memory_ms=" << metrics.memory_ms
+                     << " async_reference_ms=" << metrics.async_reference_ms
+                     << " async_reference_updates=" << metrics.async_reference_updates
+                     << " store_prep_ms=" << metrics.store_prep_ms
+                     << " write_ms=" << metrics.write_ms
+                     << " response_ms=" << metrics.response_ms
+                     << " total_ms=" << metrics.total_ms;
     }
 }
 

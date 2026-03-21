@@ -944,7 +944,11 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         collection_import_metrics.last_batch_index_async_reference_ms;
     result["collection_import_last_batch_async_reference_updates"] =
         collection_import_metrics.last_batch_index_async_reference_updates;
+    result["collection_import_last_batch_store_prep_ms"] =
+        collection_import_metrics.last_batch_index_store_prep_ms;
     result["collection_import_last_batch_write_ms"] = collection_import_metrics.last_batch_index_write_ms;
+    result["collection_import_last_batch_response_ms"] =
+        collection_import_metrics.last_batch_index_response_ms;
     result["collection_import_last_batch_total_ms"] = collection_import_metrics.last_batch_index_total_ms;
 
     result["import_handler_cumulative_calls"] = g_import_handler_metrics.cumulative_calls.load(std::memory_order_relaxed);

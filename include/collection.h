@@ -36,7 +36,9 @@ struct CollectionBatchIndexMetrics {
     uint64_t validate_ms = 0;
     uint64_t memory_ms = 0;
     uint64_t async_reference_ms = 0;
+    uint64_t store_prep_ms = 0;
     uint64_t write_ms = 0;
+    uint64_t response_ms = 0;
     uint64_t total_ms = 0;
     uint64_t async_reference_updates = 0;
 };
@@ -61,7 +63,9 @@ struct CollectionImportMetricsSnapshot {
     uint64_t last_batch_index_validate_ms = 0;
     uint64_t last_batch_index_memory_ms = 0;
     uint64_t last_batch_index_async_reference_ms = 0;
+    uint64_t last_batch_index_store_prep_ms = 0;
     uint64_t last_batch_index_write_ms = 0;
+    uint64_t last_batch_index_response_ms = 0;
     uint64_t last_batch_index_total_ms = 0;
     uint64_t last_batch_index_async_reference_updates = 0;
     std::string last_collection_name;
