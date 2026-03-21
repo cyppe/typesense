@@ -3,6 +3,39 @@
 #include <collection_manager.h>
 #include <timsort.hpp>
 
+namespace {
+
+nlohmann::json& ensure_helper_field_list(nlohmann::json& document, size_t reserve_hint = 0) {
+    auto helper_fields_it = document.find(fields::reference_helper_fields);
+    if (helper_fields_it == document.end() || !helper_fields_it->is_array()) {
+        document[fields::reference_helper_fields] = nlohmann::json::array();
+        helper_fields_it = document.find(fields::reference_helper_fields);
+    }
+
+    if (reserve_hint > 0) {
+        helper_fields_it->get_ref<nlohmann::json::array_t&>().reserve(reserve_hint);
+    }
+
+    return helper_fields_it.value();
+}
+
+nlohmann::json& create_helper_array_field(nlohmann::json& document,
+                                         const std::string& field_name,
+                                         size_t reserve_hint = 0) {
+    auto& helper_value = document[field_name];
+    helper_value = nlohmann::json::array();
+    if (reserve_hint > 0) {
+        helper_value.get_ref<nlohmann::json::array_t&>().reserve(reserve_hint);
+    }
+    return helper_value;
+}
+
+void append_helper_field_name(nlohmann::json& helper_fields, const std::string& helper_field_name) {
+    helper_fields.push_back(helper_field_name);
+}
+
+}  // namespace
+
 Option<bool> Join::single_value_filter_query(nlohmann::json& document, const std::string& field_name,
                                              const std::string& ref_field_type, std::string& filter_value,
                                              const bool& is_reference_value) {
@@ -73,34 +106,43 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
         }
     }
 
+    nlohmann::json* helper_fields = nullptr;
+    if (!reference_fields.empty()) {
+        helper_fields = &ensure_helper_field_list(document, reference_fields.size());
+    }
+
     // Add reference helper fields in the document.
     for (auto const& pair: reference_fields) {
-        auto field_name = pair.first;
+        const auto& field_name = pair.first;
         auto const reference_helper_field = field_name + fields::REFERENCE_HELPER_FIELD_SUFFIX;
 
         auto const& field = schema.at(field_name);
         auto const& optional = field.optional;
         auto const& is_async_reference = field.is_async_reference;
+        const auto document_field_it = document.find(field_name);
+        const bool has_document_field = document_field_it != document.end();
         // Strict checking for presence of non-optional reference field during indexing operation.
         auto is_required = !is_update && !optional;
-        if (is_required && document.count(field_name) != 1) {
+        if (is_required && !has_document_field) {
             return Option<bool>(400, "Missing the required reference field `" + field_name
                                      + "` in the document.");
-        } else if (document.count(field_name) != 1) {
+        } else if (!has_document_field) {
             if (is_update) {
-                document[fields::reference_helper_fields] += reference_helper_field;
+                append_helper_field_name(*helper_fields, reference_helper_field);
             }
             continue;
         }
+        auto& document_field = document_field_it.value();
 
         const auto& ref_info = pair.second;
         const auto& reference_collection_name = ref_info.collection;
         const auto& reference_field_name = ref_info.field;
+        const auto reference_helper_it = document.find(reference_helper_field);
 
-        if (is_update && document.contains(reference_helper_field) &&
-            (!document[field_name].is_array() || document[field_name].size() == document[reference_helper_field].size())) {
+        if (is_update && reference_helper_it != document.end() &&
+            (!document_field.is_array() || document_field.size() == reference_helper_it->size())) {
 
-            document[fields::reference_helper_fields] += reference_helper_field;
+            append_helper_field_name(*helper_fields, reference_helper_field);
             // No need to look up the reference collection since reference helper field is already populated.
             // Saves needless computation in cases where references are known beforehand. For example, when cascade
             // deleting the related docs.
@@ -109,13 +151,13 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
 
         if (CollectionManager::get_instance().get_collection(reference_collection_name) == nullptr) {
             if (is_async_reference) {
-                document[fields::reference_helper_fields] += reference_helper_field;
-                if (document[field_name].is_array()) {
-                    document[reference_helper_field] = nlohmann::json::array();
+                append_helper_field_name(*helper_fields, reference_helper_field);
+                if (document_field.is_array()) {
+                    auto& helper_value = create_helper_array_field(document, reference_helper_field, document_field.size());
                     // Having the same number of values makes it easier to update the references in the future.
-                    document[reference_helper_field].insert(document[reference_helper_field].begin(),
-                                                            document[field_name].size(),
-                                                            Join::reference_helper_sentinel_value);
+                    for (size_t i = 0; i < document_field.size(); ++i) {
+                        helper_value.push_back(Join::reference_helper_sentinel_value);
+                    }
                 } else {
                     document[reference_helper_field] = Join::reference_helper_sentinel_value;
                 }
@@ -128,47 +170,48 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
 
         bool is_object_reference_field = flat_fields.count(field_name) != 0;
         std::string object_key;
+        std::string object_child_key;
         bool is_object_array = false;
         if (is_object_reference_field) {
             object_reference_helper_fields.insert(reference_helper_field);
 
-            std::vector<std::string> tokens;
-            StringUtils::split(field_name, tokens, ".");
-            if (schema.count(tokens[0]) == 0) {
-                return Option<bool>(400, "Could not find `" + tokens[0] + "` object/object[] field in the schema.");
+            const auto dot_pos = field_name.find('.');
+            if (dot_pos == std::string::npos) {
+                return Option<bool>(400, "Expected nested reference field `" + field_name + "` to contain `.`.");
             }
-            object_key = tokens[0];
+            object_key = field_name.substr(0, dot_pos);
+            object_child_key = field_name.substr(dot_pos + 1);
+            if (schema.count(object_key) == 0) {
+                return Option<bool>(400, "Could not find `" + object_key + "` object/object[] field in the schema.");
+            }
             is_object_array = schema.at(object_key).is_array();
         }
 
         if (reference_field_name == "id") {
             auto id_field_type_error_op =  Option<bool>(400, "Field `" + field_name + "` must have string value.");
             if (is_object_array) {
-                if (!document[field_name].is_array()) {
+                if (!document_field.is_array()) {
                     return Option<bool>(400, "Expected `" + field_name + "` to be an array.");
                 }
 
-                document[reference_helper_field] = nlohmann::json::array();
-                document[fields::reference_helper_fields] += reference_helper_field;
-
-                std::vector<std::string> keys;
-                StringUtils::split(field_name, keys, ".");
-                auto const& object_array = document[keys[0]];
+                auto& helper_value = create_helper_array_field(document, reference_helper_field, document_field.size());
+                append_helper_field_name(*helper_fields, reference_helper_field);
+                auto const& object_array = document[object_key];
 
                 for (uint32_t i = 0; i < object_array.size(); i++) {
-                    if (optional && object_array[i].count(keys[1]) == 0) {
+                    const auto object_field_it = object_array[i].find(object_child_key);
+                    if (optional && object_field_it == object_array[i].end()) {
                         continue;
-                    } else if (object_array[i].count(keys[1]) == 0) {
+                    } else if (object_field_it == object_array[i].end()) {
                         return Option<bool>(400, "Object at index `" + std::to_string(i) + "` is missing `" + field_name + "`.");
-                    } else if (!object_array[i].at(keys[1]).is_string()) {
+                    } else if (!object_field_it.value().is_string()) {
                         return id_field_type_error_op;
                     }
 
-                    auto id = object_array[i].at(keys[1]).get<std::string>();
+                    auto id = object_field_it.value().get<std::string>();
                     auto ref_doc_id_op = CollectionManager::doc_id_to_seq_id(reference_collection_name, id);
                     if (!ref_doc_id_op.ok() && is_async_reference) {
-                        auto const& value = nlohmann::json::array({i, Join::reference_helper_sentinel_value});
-                        document[reference_helper_field] += value;
+                        helper_value.push_back(nlohmann::json::array({i, Join::reference_helper_sentinel_value}));
                     } else if (!ref_doc_id_op.ok()) {
                         return Option<bool>(400, "Referenced document having `id: " + id +
                                                  "` not found in the collection `" +=
@@ -176,14 +219,14 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
                     } else {
                         // Adding the index of the object along with referenced doc id to account for the scenario where a
                         // reference field of an object array might be optional and missing.
-                        document[reference_helper_field] += nlohmann::json::array({i, ref_doc_id_op.get()});
+                        helper_value.push_back(nlohmann::json::array({i, ref_doc_id_op.get()}));
                     }
                 }
-            } else if (document[field_name].is_array()) {
-                document[reference_helper_field] = nlohmann::json::array();
-                document[fields::reference_helper_fields] += reference_helper_field;
+            } else if (document_field.is_array()) {
+                auto& helper_value = create_helper_array_field(document, reference_helper_field, document_field.size());
+                append_helper_field_name(*helper_fields, reference_helper_field);
 
-                for (const auto &item: document[field_name].items()) {
+                for (const auto &item: document_field.items()) {
                     if (optional && item.value().is_null()) {
                         continue;
                     } else if (!item.value().is_string()) {
@@ -193,19 +236,19 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
                     auto id = item.value().get<std::string>();
                     auto ref_doc_id_op = CollectionManager::doc_id_to_seq_id(reference_collection_name, id);
                     if (!ref_doc_id_op.ok() && is_async_reference) {
-                        document[reference_helper_field] += Join::reference_helper_sentinel_value;
+                        helper_value.push_back(Join::reference_helper_sentinel_value);
                     } else if (!ref_doc_id_op.ok()) {
                         return Option<bool>(400, "Referenced document having `id: " + id +
                                                  "` not found in the collection `" +=
                                                  reference_collection_name + "`." );
                     } else {
-                        document[reference_helper_field] += ref_doc_id_op.get();
+                        helper_value.push_back(ref_doc_id_op.get());
                     }
                 }
-            } else if (document[field_name].is_string()) {
-                document[fields::reference_helper_fields] += reference_helper_field;
+            } else if (document_field.is_string()) {
+                append_helper_field_name(*helper_fields, reference_helper_field);
 
-                auto id = document[field_name].get<std::string>();
+                auto id = document_field.get<std::string>();
                 auto ref_doc_id_op = CollectionManager::doc_id_to_seq_id(reference_collection_name, id);
                 if (!ref_doc_id_op.ok() && is_async_reference) {
                     document[reference_helper_field] = Join::reference_helper_sentinel_value;
@@ -216,7 +259,7 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
                 } else {
                     document[reference_helper_field] = ref_doc_id_op.get();
                 }
-            } else if (optional && document[field_name].is_null()) {
+            } else if (optional && document_field.is_null()) {
                 // Reference helper field should also be removed along with reference field.
                 if (is_update) {
                     document[reference_helper_field] = nullptr;
@@ -250,26 +293,24 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
         }
 
         if (is_object_array) {
-            if (!document[field_name].is_array()) {
+            if (!document_field.is_array()) {
                 return Option<bool>(400, "Expected `" + field_name + "` to be an array.");
             }
 
-            document[reference_helper_field] = nlohmann::json::array();
-            document[fields::reference_helper_fields] += reference_helper_field;
+            auto& helper_value = create_helper_array_field(document, reference_helper_field, document_field.size());
+            append_helper_field_name(*helper_fields, reference_helper_field);
             nlohmann::json temp_doc; // To store singular values of `field_name` field.
-
-            std::vector<std::string> keys;
-            StringUtils::split(field_name, keys, ".");
-            auto const& object_array = document[keys[0]];
+            auto const& object_array = document[object_key];
 
             for (uint32_t i = 0; i < object_array.size(); i++) {
-                if (optional && object_array[i].count(keys[1]) == 0) {
+                const auto object_field_it = object_array[i].find(object_child_key);
+                if (optional && object_field_it == object_array[i].end()) {
                     continue;
-                } else if (object_array[i].count(keys[1]) == 0) {
+                } else if (object_field_it == object_array[i].end()) {
                     return Option<bool>(400, "Object at index `" + std::to_string(i) + "` is missing `" + field_name + "`.");
                 }
 
-                temp_doc[field_name] = object_array[i].at(keys[1]);
+                temp_doc[field_name] = object_field_it.value();
                 std::string filter_query = reference_field_name + ":= ";
 
                 auto single_value_filter_query_op = single_value_filter_query(temp_doc, field_name, ref_field_type,
@@ -289,7 +330,7 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
                 }
 
                 if (filter_result.count == 0 && is_async_reference) {
-                    document[reference_helper_field] += nlohmann::json::array({i, Join::reference_helper_sentinel_value});
+                    helper_value.push_back(nlohmann::json::array({i, Join::reference_helper_sentinel_value}));
                 } else if (filter_result.count != 1) {
                     // Constraints similar to foreign key apply here. The reference match must be unique and not null.
                     return  Option<bool>(400, filter_result.count < 1 ?
@@ -300,7 +341,7 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
                 } else {
                     // Adding the index of the object along with referenced doc id to account for the scenario where a
                     // reference field of an object array might be optional and missing.
-                    document[reference_helper_field] += nlohmann::json::array({i, filter_result.docs[0]});
+                    helper_value.push_back(nlohmann::json::array({i, filter_result.docs[0]}));
                 }
             }
             continue;
@@ -309,18 +350,19 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
         auto const is_reference_array_field = field.is_array();
         std::vector<std::string> filter_values;
         if (is_reference_array_field) {
-            if (document[field_name].is_null()) {
-                document[reference_helper_field] = nlohmann::json::array();
-                document[fields::reference_helper_fields] += reference_helper_field;
+            if (document_field.is_null()) {
+                create_helper_array_field(document, reference_helper_field);
+                append_helper_field_name(*helper_fields, reference_helper_field);
 
                 continue;
-            } else if (!document[field_name].is_array()) {
+            } else if (!document_field.is_array()) {
                 return Option<bool>(400, "Expected `" + field_name + "` to be an array.");
             }
 
             nlohmann::json temp_doc;
-            for (size_t i = 0; i < document[field_name].size(); i++) {
-                temp_doc[field_name] = document[field_name].at(i);
+            filter_values.reserve(document_field.size());
+            for (size_t i = 0; i < document_field.size(); i++) {
+                temp_doc[field_name] = document_field.at(i);
                 std::string value;
                 auto single_value_filter_query_op = single_value_filter_query(temp_doc, field_name, ref_field_type,
                                                                               value);
@@ -331,8 +373,8 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
                 filter_values.emplace_back(value);
             }
 
-            document[reference_helper_field] = nlohmann::json::array();
-            document[fields::reference_helper_fields] += reference_helper_field;
+            create_helper_array_field(document, reference_helper_field, filter_values.size());
+            append_helper_field_name(*helper_fields, reference_helper_field);
 
             if (filter_values.empty()) {
                 continue;
@@ -352,9 +394,10 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
             }
 
             filter_values.emplace_back(value);
-            document[fields::reference_helper_fields] += reference_helper_field;
+            append_helper_field_name(*helper_fields, reference_helper_field);
         }
 
+        auto& helper_value = document[reference_helper_field];
         for (const auto& filter_value: filter_values) {
             std::string filter_query = reference_field_name + (field.is_string() ? ":= " : ": ") += filter_value;
             filter_result_t filter_result;
@@ -366,7 +409,7 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
 
             if (filter_result.count == 0 && is_async_reference) {
                 if (is_reference_array_field) {
-                    document[reference_helper_field] += Join::reference_helper_sentinel_value;
+                    helper_value.push_back(Join::reference_helper_sentinel_value);
                 } else {
                     document[reference_helper_field] = Join::reference_helper_sentinel_value;
                 }
@@ -379,7 +422,7 @@ Option<bool> Join::populate_reference_helper_fields(nlohmann::json& document,
                                           reference_collection_name + "`.");
             } else {
                 if (is_reference_array_field) {
-                    document[reference_helper_field] += filter_result.docs[0];
+                    helper_value.push_back(filter_result.docs[0]);
                 } else {
                     document[reference_helper_field] = filter_result.docs[0];
                 }
