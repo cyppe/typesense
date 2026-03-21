@@ -142,6 +142,7 @@ private:
 
     http_message_dispatcher* message_dispatcher;
     http_message_dispatcher* response_message_dispatcher;
+    http_message_dispatcher* write_response_message_dispatcher;
 
     ReplicationService* replication_state;
 
@@ -213,6 +214,7 @@ private:
     static bool is_write_request(const std::string& root_resource, const std::string& http_method,
                                  bool (*handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&));
     static bool should_handle_inline_route(std::string_view root_resource, const route_path& rpath);
+    static bool is_write_stream_response(const std::string& type, void* data);
 
 public:
     static Option<bool> handle_gzip(const std::shared_ptr<http_req>& request);

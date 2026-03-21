@@ -25,7 +25,6 @@ namespace {
 
 constexpr const char* kCollectionPrefix = "state/collections/";
 constexpr const char* kDocumentPrefix = "state/documents/";
-constexpr size_t kDocumentImportRaftChunkMaxDocs = 5000;
 constexpr size_t kDocumentImportRaftChunkMaxBytes = 4 * 1024 * 1024;
 uint64_t elapsed_ms_since(const std::chrono::steady_clock::time_point& start_time) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -215,6 +214,7 @@ NuRaftAppliedRequest build_applied_request(const http_req& request) {
 
 template <typename ConsumeChunk>
 bool for_each_import_body_chunk(const std::string& body,
+                                size_t max_docs_per_chunk,
                                 ConsumeChunk&& consume_chunk,
                                 std::string& error) {
     if (body.empty()) {
@@ -234,7 +234,7 @@ bool for_each_import_body_chunk(const std::string& body,
         const size_t line_bytes = next_cursor - line_start;
 
         if (docs_in_chunk > 0 &&
-            (docs_in_chunk >= kDocumentImportRaftChunkMaxDocs ||
+            (docs_in_chunk >= max_docs_per_chunk ||
              chunk_bytes + line_bytes > kDocumentImportRaftChunkMaxBytes)) {
             if (!consume_chunk(body.substr(chunk_start, line_start - chunk_start), first_chunk, false, error)) {
                 return false;
@@ -299,41 +299,6 @@ bool invoke_registered_handler(HttpServer* server,
 
     error.clear();
     return false;
-}
-
-bool replay_buffered_import_handler(HttpServer* server,
-                                    const std::shared_ptr<http_req>& source_request,
-                                    std::string& aggregated_response_body,
-                                    std::string& response_content_type,
-                                    uint32_t& response_status_code,
-                                    uint64_t& replay_chunks,
-                                    std::string& error) {
-    auto replay_request = build_import_chunk_request(*source_request, source_request->body, true, true);
-    auto replay_response = std::make_shared<http_res>(nullptr);
-    replay_chunks = 1;
-
-    const bool handler_ok = invoke_registered_handler(server, replay_request, replay_response, error);
-    if (!handler_ok && replay_response->status_code == 0) {
-        return false;
-    }
-
-    if (!replay_response->content_type_header.empty()) {
-        response_content_type = replay_response->content_type_header;
-    }
-    if (replay_response->status_code != 0) {
-        response_status_code = replay_response->status_code;
-    }
-    if (!replay_response->body.empty()) {
-        aggregated_response_body = replay_response->body;
-    }
-
-    if (replay_response->status_code >= 400) {
-        error.clear();
-        return false;
-    }
-
-    error.clear();
-    return true;
 }
 
 bool should_replay_live_product_state(const NuRaftAppliedRequest& applied_request) {
@@ -645,6 +610,19 @@ bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
     auto state_is_caught_up = [&](uint64_t local_applied_index) {
         return live_product_state_applied_index_.load(std::memory_order_relaxed) >= local_applied_index;
     };
+    auto wait_for_inflight_import_apply = [&](uint64_t target_index) {
+        if (active_import_requests_.load(std::memory_order_relaxed) == 0 ||
+            inflight_import_target_index_.load(std::memory_order_relaxed) < target_index) {
+            return false;
+        }
+
+        std::unique_lock<std::mutex> progress_lock(live_state_progress_mutex_);
+        live_state_progress_cv_.wait_for(progress_lock, std::chrono::milliseconds(100), [&] {
+            return state_is_caught_up(target_index) ||
+                   active_import_requests_.load(std::memory_order_relaxed) == 0;
+        });
+        return state_is_caught_up(target_index);
+    };
 
     uint64_t local_applied_index = 0;
     {
@@ -665,6 +643,13 @@ bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
                 return true;
             }
         }
+    }
+
+    if (wait_for_inflight_import_apply(local_applied_index)) {
+        error.clear();
+        cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
+        finish_sync_metrics(0);
+        return true;
     }
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
@@ -694,7 +679,7 @@ bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
                                                   error);
         const uint64_t replay_ms = elapsed_ms_since(replay_start);
         if (ok) {
-            live_product_state_applied_index_.store(replayed_through_index, std::memory_order_relaxed);
+            advance_live_product_state_applied_index(replayed_through_index);
             cumulative_sync_replay_calls_.fetch_add(1, std::memory_order_relaxed);
         }
         finish_sync_metrics(replay_ms);
@@ -710,7 +695,7 @@ bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
         TS_LOG(WARNING) << "NuRaft sync replay deferred: " << error;
         error.clear();
     } else {
-        live_product_state_applied_index_.store(replayed_through_index, std::memory_order_relaxed);
+        advance_live_product_state_applied_index(replayed_through_index);
         cumulative_sync_replay_calls_.fetch_add(1, std::memory_order_relaxed);
     }
     finish_sync_metrics(elapsed_ms_since(replay_start));
@@ -739,7 +724,7 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         materialized_state_sink_.reset();
         return false;
     }
-    live_product_state_applied_index_.store(replayed_through_index, std::memory_order_relaxed);
+    advance_live_product_state_applied_index(replayed_through_index);
 
     {
         std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
@@ -784,6 +769,20 @@ void NuRaftHttpRuntimeService::send_response(const std::shared_ptr<http_req>& re
     auto* req_res = new async_req_res_t(request, response, true);
     request->mark_response_dispatch();
     server_->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
+}
+
+void NuRaftHttpRuntimeService::advance_live_product_state_applied_index(uint64_t applied_index) {
+    uint64_t current = live_product_state_applied_index_.load(std::memory_order_relaxed);
+    while (current < applied_index &&
+           !live_product_state_applied_index_.compare_exchange_weak(current,
+                                                                    applied_index,
+                                                                    std::memory_order_relaxed,
+                                                                    std::memory_order_relaxed)) {
+    }
+
+    if (current < applied_index) {
+        live_state_progress_cv_.notify_all();
+    }
 }
 
 void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
@@ -864,7 +863,7 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         }
         const uint64_t applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
         if (committed_index > applied_index) {
-            live_product_state_applied_index_.store(committed_index, std::memory_order_relaxed);
+            advance_live_product_state_applied_index(committed_index);
         }
         send_response(request, response);
         return;
@@ -890,7 +889,7 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         }
         const uint64_t applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
         if (committed_index > applied_index) {
-            live_product_state_applied_index_.store(committed_index, std::memory_order_relaxed);
+            advance_live_product_state_applied_index(committed_index);
         }
 
         if (route != nullptr && (route->async_req || route->async_res)) {
@@ -912,7 +911,7 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     }
     const uint64_t applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
     if (committed_index > applied_index) {
-        live_product_state_applied_index_.store(committed_index, std::memory_order_relaxed);
+        advance_live_product_state_applied_index(committed_index);
     }
 
     update_single_node_document_cache(*request, route_kind);
@@ -1022,12 +1021,19 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
     committed_index = 0;
     forwarded_to_leader = false;
     active_import_requests_.fetch_add(1, std::memory_order_relaxed);
+    const auto finish_import_request = [&]() {
+        active_import_requests_.fetch_sub(1, std::memory_order_relaxed);
+        live_state_progress_cv_.notify_all();
+    };
 
     std::string aggregated_response_body;
     std::string response_content_type = "text/plain; charset=utf-8";
     uint32_t response_status_code = 200;
     const auto import_start = std::chrono::steady_clock::now();
     uint64_t logical_chunks = 0;
+    uint64_t replay_chunks = 0;
+    uint64_t append_ms = 0;
+    uint64_t replay_ms = 0;
     uint64_t docs_estimate = 0;
     if (!request->body.empty()) {
         docs_estimate = 1;
@@ -1036,52 +1042,15 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
             docs_estimate--;
         }
     }
-
-    const auto consume_chunk = [&](std::string chunk_body,
-                                   bool first_chunk,
-                                   bool last_chunk,
-                                   std::string& chunk_error) -> bool {
-        auto chunk_request = build_import_chunk_request(*request, std::move(chunk_body), first_chunk, last_chunk);
-        const std::string request_payload = build_applied_request(*chunk_request).encode_binary();
-
-        uint64_t chunk_committed_index = 0;
-        bool chunk_forwarded_to_leader = false;
-        if (!append_via_raft(request_payload,
-                             NuRaftRequestEnvelope::kAppliedRequestBinaryEncoding,
-                             *chunk_request,
-                             chunk_committed_index,
-                             chunk_forwarded_to_leader,
-                             chunk_error)) {
-            return false;
-        }
-
-        committed_index = chunk_committed_index;
-        forwarded_to_leader = forwarded_to_leader || chunk_forwarded_to_leader;
-        logical_chunks++;
-        return true;
-    };
-
-    // Buffer the HTTP request once, then feed raft bounded logical import chunks
-    // keyed by the same request start_ts. This avoids per-transport-chunk raft
-    // commits without storing the full 1M-document body in one raft entry.
-    const auto append_start = std::chrono::steady_clock::now();
-    if (!for_each_import_body_chunk(request->body, consume_chunk, error)) {
-        active_import_requests_.fetch_sub(1, std::memory_order_relaxed);
-        return false;
+    size_t logical_chunk_max_docs = Config::get_instance().get_import_batch_size();
+    const auto batch_size_it = request->params.find("batch_size");
+    if (batch_size_it != request->params.end() &&
+        StringUtils::is_uint32_t(batch_size_it->second)) {
+        logical_chunk_max_docs = std::stoul(batch_size_it->second);
     }
-    const uint64_t append_ms = elapsed_ms_since(append_start);
+    logical_chunk_max_docs = std::max<size_t>(1, logical_chunk_max_docs);
 
-    uint64_t replay_chunks = 0;
-    const auto replay_start = std::chrono::steady_clock::now();
-    if (!replay_buffered_import_handler(server_,
-                                        request,
-                                        aggregated_response_body,
-                                        response_content_type,
-                                        response_status_code,
-                                        replay_chunks,
-                                        error)) {
-        const uint64_t replay_ms = elapsed_ms_since(replay_start);
-        const uint64_t total_ms = elapsed_ms_since(import_start);
+    const auto record_import_metrics = [&](uint64_t total_ms) {
         cumulative_import_requests_.fetch_add(1, std::memory_order_relaxed);
         cumulative_import_bytes_.fetch_add(request->body.size(), std::memory_order_relaxed);
         cumulative_import_docs_estimate_.fetch_add(docs_estimate, std::memory_order_relaxed);
@@ -1100,32 +1069,88 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
                                          std::memory_order_relaxed);
         max_import_total_ms_.store(std::max(max_import_total_ms_.load(std::memory_order_relaxed), total_ms),
                                    std::memory_order_relaxed);
-        active_import_requests_.fetch_sub(1, std::memory_order_relaxed);
-        response->set_content(response_status_code, response_content_type, error.empty() ? aggregated_response_body : error, true);
+    };
+
+    const auto consume_chunk = [&](std::string chunk_body,
+                                   bool first_chunk,
+                                   bool last_chunk,
+                                   std::string& chunk_error) -> bool {
+        auto chunk_request = build_import_chunk_request(*request, std::move(chunk_body), first_chunk, last_chunk);
+        const std::string request_payload = build_applied_request(*chunk_request).encode_binary();
+
+        uint64_t chunk_committed_index = 0;
+        bool chunk_forwarded_to_leader = false;
+        const auto chunk_append_start = std::chrono::steady_clock::now();
+        if (!append_via_raft(request_payload,
+                             NuRaftRequestEnvelope::kAppliedRequestBinaryEncoding,
+                             *chunk_request,
+                             chunk_committed_index,
+                             chunk_forwarded_to_leader,
+                             chunk_error)) {
+            append_ms += elapsed_ms_since(chunk_append_start);
+            return false;
+        }
+        append_ms += elapsed_ms_since(chunk_append_start);
+
+        committed_index = chunk_committed_index;
+        forwarded_to_leader = forwarded_to_leader || chunk_forwarded_to_leader;
+        uint64_t current_target = inflight_import_target_index_.load(std::memory_order_relaxed);
+        while (current_target < chunk_committed_index &&
+               !inflight_import_target_index_.compare_exchange_weak(current_target,
+                                                                    chunk_committed_index,
+                                                                    std::memory_order_relaxed,
+                                                                    std::memory_order_relaxed)) {
+        }
+        logical_chunks++;
+
+        auto chunk_response = std::make_shared<http_res>(nullptr);
+        const auto chunk_replay_start = std::chrono::steady_clock::now();
+        const bool handler_ok = invoke_registered_handler(server_, chunk_request, chunk_response, chunk_error);
+        replay_ms += elapsed_ms_since(chunk_replay_start);
+        if (!handler_ok && chunk_response->status_code == 0) {
+            return false;
+        }
+
+        if (!chunk_response->content_type_header.empty()) {
+            response_content_type = chunk_response->content_type_header;
+        }
+        if (chunk_response->status_code != 0) {
+            response_status_code = chunk_response->status_code;
+        }
+        if (!chunk_response->body.empty()) {
+            if (!aggregated_response_body.empty()) {
+                aggregated_response_body.push_back('\n');
+            }
+            aggregated_response_body += chunk_response->body;
+        }
+        if (chunk_response->status_code >= 400) {
+            chunk_error.clear();
+            return false;
+        }
+
+        advance_live_product_state_applied_index(chunk_committed_index);
+        replay_chunks++;
+        return true;
+    };
+
+    // Buffer the HTTP request once, then feed raft bounded logical import chunks
+    // keyed by the same request start_ts. This avoids per-transport-chunk raft
+    // commits without storing the full 1M-document body in one raft entry.
+    if (!for_each_import_body_chunk(request->body, logical_chunk_max_docs, consume_chunk, error)) {
+        const uint64_t total_ms = elapsed_ms_since(import_start);
+        record_import_metrics(total_ms);
+        finish_import_request();
+        if (response_status_code >= 400) {
+            response->set_content(response_status_code,
+                                  response_content_type,
+                                  error.empty() ? aggregated_response_body : error,
+                                  true);
+        }
         return false;
     }
-
-    const uint64_t replay_ms = elapsed_ms_since(replay_start);
     const uint64_t total_ms = elapsed_ms_since(import_start);
-    cumulative_import_requests_.fetch_add(1, std::memory_order_relaxed);
-    cumulative_import_bytes_.fetch_add(request->body.size(), std::memory_order_relaxed);
-    cumulative_import_docs_estimate_.fetch_add(docs_estimate, std::memory_order_relaxed);
-    last_import_request_bytes_.store(request->body.size(), std::memory_order_relaxed);
-    last_import_docs_estimate_.store(docs_estimate, std::memory_order_relaxed);
-    last_import_logical_chunks_.store(logical_chunks, std::memory_order_relaxed);
-    last_import_replay_chunks_.store(replay_chunks, std::memory_order_relaxed);
-    last_import_append_ms_.store(append_ms, std::memory_order_relaxed);
-    last_import_replay_ms_.store(replay_ms, std::memory_order_relaxed);
-    last_import_total_ms_.store(total_ms, std::memory_order_relaxed);
-    last_import_response_bytes_.store(aggregated_response_body.size(), std::memory_order_relaxed);
-    last_import_docs_per_sec_.store(total_ms == 0 ? docs_estimate : (docs_estimate * 1000ULL) / total_ms,
-                                    std::memory_order_relaxed);
-    last_import_bytes_per_sec_.store(total_ms == 0 ? request->body.size() :
-                                     (static_cast<uint64_t>(request->body.size()) * 1000ULL) / total_ms,
-                                     std::memory_order_relaxed);
-    max_import_total_ms_.store(std::max(max_import_total_ms_.load(std::memory_order_relaxed), total_ms),
-                               std::memory_order_relaxed);
-    active_import_requests_.fetch_sub(1, std::memory_order_relaxed);
+    record_import_metrics(total_ms);
+    finish_import_request();
 
     if (total_ms >= 2000) {
         TS_LOG(INFO) << "NuRaft import timing: bytes=" << request->body.size()

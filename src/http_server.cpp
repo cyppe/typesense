@@ -38,6 +38,8 @@ HttpServer::HttpServer(const std::string & version, const std::string & listen_a
     message_dispatcher->init(ctx.loop);
     response_message_dispatcher = new http_message_dispatcher;
     response_message_dispatcher->init(ctx.loop);
+    write_response_message_dispatcher = new http_message_dispatcher;
+    write_response_message_dispatcher->init(ctx.loop);
 
     // used during destructor
     ssl_refresh_timer.timer.expire_at = 0;
@@ -1012,7 +1014,10 @@ void HttpServer::defer_processing(const std::shared_ptr<http_req>& req, const st
 }
 
 void HttpServer::send_message(const std::string & type, void* data) {
-    auto* dispatcher = (type == STREAM_RESPONSE_MESSAGE) ? response_message_dispatcher : message_dispatcher;
+    http_message_dispatcher* dispatcher = message_dispatcher;
+    if(type == STREAM_RESPONSE_MESSAGE) {
+        dispatcher = is_write_stream_response(type, data) ? write_response_message_dispatcher : response_message_dispatcher;
+    }
     dispatcher->send_message(type, data);
 }
 
@@ -1212,11 +1217,17 @@ void HttpServer::del(const std::string & path, bool (*handler)(const std::shared
 }
 
 void HttpServer::on(const std::string & message, bool (*handler)(void*)) {
-    auto* dispatcher = (message == STREAM_RESPONSE_MESSAGE) ? response_message_dispatcher : message_dispatcher;
-    dispatcher->on(message, handler);
+    if(message == STREAM_RESPONSE_MESSAGE) {
+        response_message_dispatcher->on(message, handler);
+        write_response_message_dispatcher->on(message, handler);
+        return;
+    }
+
+    message_dispatcher->on(message, handler);
 }
 
 HttpServer::~HttpServer() {
+    delete write_response_message_dispatcher;
     delete response_message_dispatcher;
     delete message_dispatcher;
 
@@ -1261,6 +1272,15 @@ ReplicationService* HttpServer::get_replication_state() const {
 
 bool HttpServer::is_alive() const {
     return !is_shutdown_triggered && replication_state->is_alive();
+}
+
+bool HttpServer::is_write_stream_response(const std::string& type, void* data) {
+    if(type != STREAM_RESPONSE_MESSAGE || data == nullptr) {
+        return false;
+    }
+
+    auto* req_res = static_cast<async_req_res_t*>(data);
+    return req_res->get_req()->is_write;
 }
 
 bool HttpServer::get_route(uint64_t hash, route_path** found_rpath) {

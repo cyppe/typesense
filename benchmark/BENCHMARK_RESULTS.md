@@ -19,6 +19,39 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 37: Interleaved Logical Import Replay Makes Live Visibility Match The Fast Lane (2026-03-21)
+
+**Commit:** local working tree on top of `HEAD` at run time
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --total-fitment-docs 500000 --batch-docs 5000 --import-workers 3 --product-docs 80000 --vehicle-docs 80000 --seed-target-order never --server-batch-size 1000 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --json-output /tmp/upstream-vs-fork-interleaved-import-500k.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --total-fitment-docs 1000000 --batch-docs 5000 --import-workers 3 --product-docs 150000 --vehicle-docs 150000 --seed-target-order never --server-batch-size 1000 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --json-output /tmp/fork-interleaved-import-1m.json`
+
+**Scenario:** the remaining mixed-lane gap was no longer “mystery shell time”; reads were waiting for a whole 5k-doc NuRaft import request to finish replaying into the live engine before `live_product_state_applied_index_` advanced. The fix was to keep the import request buffered for transport, but append and replay it as smaller logical chunks tied to the effective import `batch_size`, advancing the live applied index after each committed chunk instead of only once at the end of the full request.
+
+### Findings
+
+- The previous wait-before-replay fix helped, but it still made reads wait for the entire request-sized replay window. Interleaving append + handler replay per logical chunk collapses that visibility window without reintroducing duplicate catch-up replays.
+- On the upstream-comparable `500k` dashboard lane, the fork now reaches `133529.1 docs/s` versus upstream `69724.7 docs/s`, while search improves to `18.5ms` avg instead of the earlier `57.4ms`.
+- The internal metrics show the remaining live-read path is now mostly real search work again rather than scheduling overhead: `http_route_search_avg_total_ms=13`, `http_route_search_avg_handler_ms=13`, `http_route_search_avg_response_queue_ms=0`, `nuraft_sync_avg_total_ms=7`, and `nuraft_sync_cumulative_replay_calls=0`.
+- Control-plane reads are now close to upstream on the same lane. The fork’s `/health`, `/metrics.json`, `/stats.json`, and `/collections` averages are `1.8ms`, `7.7ms`, `2.5ms`, and `2.1ms` respectively, versus upstream `1.2ms`, `104.1ms`, `0.2ms`, and `1.1ms`.
+- The heavier fork-only `1M` confirmation lane stays healthy: `121710.1 docs/s`, search `36.9ms` avg, `/metrics.json 6.8ms`, `/stats.json 1.0ms`, `/collections 3.9ms`, and zero sync replay calls. The import path now reports `nuraft_last_import_replay_chunks=5`, confirming that live visibility is advancing in smaller logical units instead of one opaque request-sized replay.
+
+### Summary Table
+
+| Lane | Import avg | Docs/sec | `/health` avg | `/metrics.json` avg | `/stats.json` avg | `/collections` avg | Search avg |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| upstream `30.1`, `500k`, `batch_size=1000` | `200.5 ms` | `69724.7` | `1.2 ms` | `104.1 ms` | `0.2 ms` | `1.1 ms` | `14.0 ms` |
+| fork current, same `500k` lane | `98.6 ms` | `133529.1` | `1.8 ms` | `7.7 ms` | `2.5 ms` | `2.1 ms` | `18.5 ms` |
+| fork current, `1M` confirmation | `110.1 ms` | `121710.1` | `13.5 ms` | `6.8 ms` | `1.0 ms` | `3.9 ms` | `36.9 ms` |
+
+### Decision
+
+- Keep logical import replay chunked and visibility-advancing. Do **not** go back to replaying the entire buffered import request into the live engine as one opaque step.
+- Keep the chunk sizing tied to the same import `batch_size` semantics that the fork already exposes end-to-end. Do **not** add a second hidden hardcoded “live replay chunk size” knob.
+- Treat the heavy-import replay as effectively green now: the fork is materially faster than upstream on the realistic mixed fitment lane while keeping search and control-plane reads in the low-millisecond to low-tens-of-milliseconds range instead of degrading into operational starvation.
+
+---
+
 ## Run 36: Cached CPU Sampling Removes The Last `metrics.json` Handler Stall (2026-03-21)
 
 **Commit:** local working tree on top of `HEAD` at run time

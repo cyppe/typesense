@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -125,6 +126,7 @@ private:
     bool prefers_materialized_reads(const std::string& collection) const;
     void send_response(const std::shared_ptr<http_req>& request,
                        const std::shared_ptr<http_res>& response) const;
+    void advance_live_product_state_applied_index(uint64_t applied_index);
 
     HttpServer* server_;
     NuRaftHttpServerOptions options_;
@@ -138,6 +140,7 @@ private:
     mutable std::shared_mutex read_preference_mutex_;
     mutable std::unordered_set<std::string> materialized_read_preferred_collections_;
     std::atomic<uint64_t> live_product_state_applied_index_{0};
+    std::atomic<uint64_t> inflight_import_target_index_{0};
     std::atomic<uint64_t> active_import_requests_{0};
     std::atomic<uint64_t> cumulative_import_requests_{0};
     std::atomic<uint64_t> cumulative_import_bytes_{0};
@@ -161,6 +164,8 @@ private:
     std::atomic<uint64_t> last_sync_total_ms_{0};
     std::atomic<uint64_t> last_sync_replay_ms_{0};
     std::atomic<uint64_t> max_sync_total_ms_{0};
+    std::mutex live_state_progress_mutex_;
+    std::condition_variable live_state_progress_cv_;
     mutable std::shared_mutex mutex_;
 
     // Real NuRaft consensus members.
