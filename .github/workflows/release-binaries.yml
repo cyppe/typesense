@@ -749,7 +749,7 @@ jobs:
           VERSION_LABEL: ${{ inputs.version_label }}
         run: |
           set -euo pipefail
-          SHORT_SHA="${GITHUB_SHA::8}"
+          SHORT_SHA="$(git rev-parse --short=8 HEAD)"
           BRANCH_TAG="${GITHUB_REF_NAME//\//-}"
           echo "SHORT_SHA=${SHORT_SHA}" >>"$GITHUB_ENV"
           echo "BRANCH_TAG=${BRANCH_TAG}" >>"$GITHUB_ENV"
