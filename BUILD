@@ -184,6 +184,7 @@ cc_library(
         "@icu",
         "@nuraft",
         "@rocksdb",
+        "@yyjson//:yyjson",
     ],
 )
 

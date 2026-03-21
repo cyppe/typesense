@@ -12,6 +12,7 @@
 #include <rocksdb/table.h>
 #include <rocksdb/write_batch.h>
 #include <rocksdb/utilities/checkpoint.h>
+#include <yyjson.h>
 
 #include "json.hpp"
 #include "string_utils.h"
@@ -93,6 +94,50 @@ bool parse_json_body(const std::string& body, nlohmann::json& parsed, std::strin
     }
 }
 
+bool parse_json_object_and_extract_id(std::string_view body,
+                                      std::string* document_id,
+                                      std::string& error) {
+    yyjson_read_err read_error{};
+    yyjson_doc* document = yyjson_read_opts(const_cast<char*>(body.data()), body.size(), 0, nullptr, &read_error);
+    if (document == nullptr) {
+        error = std::string("Failed to parse NuRaft request body: ") +
+                (read_error.msg != nullptr ? read_error.msg : "unknown yyjson parse error");
+        return false;
+    }
+
+    yyjson_val* root = yyjson_doc_get_root(document);
+    if (!yyjson_is_obj(root)) {
+        yyjson_doc_free(document);
+        error = "NuRaft materialized import replay needs each line to be a complete JSON object";
+        return false;
+    }
+
+    if (document_id != nullptr) {
+        yyjson_val* id_value = yyjson_obj_get(root, "id");
+        if (id_value == nullptr) {
+            yyjson_doc_free(document);
+            error = "NuRaft materialized sink needs a document id for this route";
+            return false;
+        }
+
+        if (yyjson_is_str(id_value)) {
+            document_id->assign(yyjson_get_str(id_value), yyjson_get_len(id_value));
+        } else if (yyjson_is_sint(id_value)) {
+            *document_id = std::to_string(yyjson_get_sint(id_value));
+        } else if (yyjson_is_uint(id_value)) {
+            *document_id = std::to_string(yyjson_get_uint(id_value));
+        } else {
+            yyjson_doc_free(document);
+            error = "NuRaft materialized sink only supports string or integer document ids";
+            return false;
+        }
+    }
+
+    yyjson_doc_free(document);
+    error.clear();
+    return true;
+}
+
 bool resolve_collection_name(const NuRaftAppliedRequest& request,
                              std::string& collection,
                              std::string& error) {
@@ -131,38 +176,6 @@ bool resolve_document_id(const NuRaftAppliedRequest& request,
 
     nlohmann::json parsed;
     if (!parse_json_body(request.body, parsed, error)) {
-        return false;
-    }
-    if (!parsed.is_object() || !parsed.contains("id")) {
-        error = "NuRaft materialized sink needs a document id for this route";
-        return false;
-    }
-
-    if (parsed["id"].is_string()) {
-        document_id = parsed["id"].get<std::string>();
-        error.clear();
-        return true;
-    }
-    if (parsed["id"].is_number_integer()) {
-        document_id = std::to_string(parsed["id"].get<int64_t>());
-        error.clear();
-        return true;
-    }
-    if (parsed["id"].is_number_unsigned()) {
-        document_id = std::to_string(parsed["id"].get<uint64_t>());
-        error.clear();
-        return true;
-    }
-
-    error = "NuRaft materialized sink only supports string or integer document ids";
-    return false;
-}
-
-bool resolve_document_id_from_body(const std::string& body,
-                                   std::string& document_id,
-                                   std::string& error) {
-    nlohmann::json parsed;
-    if (!parse_json_body(body, parsed, error)) {
         return false;
     }
     if (!parsed.is_object() || !parsed.contains("id")) {
@@ -294,9 +307,11 @@ bool read_import_session(rocksdb::DB* db,
 bool parse_import_documents(const std::string& body,
                             bool last_chunk_aggregate,
                             std::vector<std::string>& documents,
+                            std::vector<std::string>& document_ids,
                             std::string& pending_body,
                             std::string& error) {
     documents.clear();
+    document_ids.clear();
     pending_body.clear();
     if (body.empty()) {
         error.clear();
@@ -305,20 +320,20 @@ bool parse_import_documents(const std::string& body,
 
     StringUtils::split(body, documents, "\n", false, false);
     if (!last_chunk_aggregate && !documents.empty()) {
-        nlohmann::json parsed_tail;
-        if (!parse_json_body(documents.back(), parsed_tail, error) || !parsed_tail.is_object()) {
+        if (!parse_json_object_and_extract_id(documents.back(), nullptr, error)) {
             pending_body = documents.back();
             documents.pop_back();
             error.clear();
         }
     }
 
+    document_ids.reserve(documents.size());
     for (const auto& document : documents) {
-        nlohmann::json parsed_document;
-        if (!parse_json_body(document, parsed_document, error) || !parsed_document.is_object()) {
-            error = "NuRaft materialized import replay needs each line to be a complete JSON object";
+        std::string document_id;
+        if (!parse_json_object_and_extract_id(document, &document_id, error)) {
             return false;
         }
+        document_ids.emplace_back(std::move(document_id));
     }
 
     if (last_chunk_aggregate && !pending_body.empty()) {
@@ -356,21 +371,19 @@ bool apply_import_mutation(rocksdb::DB* db,
     ImportReplaySession& session = session_it->second;
     const std::string combined_body = session.pending_body + request.body;
     std::vector<std::string> documents;
+    std::vector<std::string> document_ids;
     std::string pending_body;
     if (!parse_import_documents(combined_body,
                                 request.last_chunk_aggregate,
                                 documents,
+                                document_ids,
                                 pending_body,
                                 error)) {
         return false;
     }
 
-    for (const auto& document : documents) {
-        std::string document_id;
-        if (!resolve_document_id_from_body(document, document_id, error)) {
-            return false;
-        }
-        batch.Put(document_key(collection, document_id), document);
+    for (size_t i = 0; i < documents.size(); ++i) {
+        batch.Put(document_key(collection, document_ids[i]), documents[i]);
     }
 
     session.last_index = request.index;

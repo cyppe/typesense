@@ -1351,11 +1351,15 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
     // Build response JSON for all records
     const auto response_start = std::chrono::steady_clock::now();
     for(auto& index_record: index_records) {
+        if(index_record.indexed.ok() && !return_doc && !return_id) {
+            json_out[index_record.position].clear();
+            continue;
+        }
+
         nlohmann::json res;
 
         if(index_record.indexed.ok()) {
-
-            res["success"] = index_record.indexed.ok();
+            res["success"] = true;
 
             if (return_doc & index_record.indexed.ok()) {
                 res["document"] = index_record.is_update ? index_record.new_doc : index_record.doc;
@@ -1363,23 +1367,6 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
 
             if (return_id & index_record.indexed.ok()) {
                 res["id"] = index_record.is_update ? index_record.new_doc["id"] : index_record.doc["id"];
-            }
-
-          if(!index_record.indexed.ok()) {
-                if(return_doc) {
-                    if(original_json_lines != nullptr) {
-                        res["document"] = std::string((*original_json_lines)[index_record.position]);
-                    } else {
-                        res["document"] = json_out[index_record.position];
-                    }
-                }
-                res["error"] = index_record.indexed.error();
-                if (!index_record.embedding_res.empty()) {
-                    res["embedding_error"] = nlohmann::json::object();
-                    res["embedding_error"] = index_record.embedding_res;
-                    res["error"] = index_record.embedding_res["error"];
-                }
-                res["code"] = index_record.indexed.code();
             }
         } else {
             res["success"] = false;

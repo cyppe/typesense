@@ -98,6 +98,57 @@ struct stats_route_metrics_snapshot_t {
 
 namespace {
 
+constexpr std::string_view kImportSuccessResponseLine = R"({"success":true})";
+
+std::string build_success_only_import_response(size_t line_count) {
+    if(line_count == 0) {
+        return {};
+    }
+
+    std::string response;
+    response.reserve(line_count * (kImportSuccessResponseLine.size() + 1) - 1);
+    for(size_t i = 0; i < line_count; ++i) {
+        if(i != 0) {
+            response.push_back('\n');
+        }
+        response.append(kImportSuccessResponseLine);
+    }
+
+    return response;
+}
+
+std::string build_import_response_body(const std::vector<std::string>& json_responses,
+                                       bool all_success_default_mode) {
+    if(json_responses.empty()) {
+        return {};
+    }
+
+    if(all_success_default_mode) {
+        return build_success_only_import_response(json_responses.size());
+    }
+
+    size_t total_bytes = 0;
+    for(const auto& response : json_responses) {
+        total_bytes += response.empty() ? kImportSuccessResponseLine.size() : response.size();
+    }
+    total_bytes += json_responses.size() - 1;
+
+    std::string response_body;
+    response_body.reserve(total_bytes);
+    for(size_t i = 0; i < json_responses.size(); ++i) {
+        if(i != 0) {
+            response_body.push_back('\n');
+        }
+        if(json_responses[i].empty()) {
+            response_body.append(kImportSuccessResponseLine);
+        } else {
+            response_body.append(json_responses[i]);
+        }
+    }
+
+    return response_body;
+}
+
 struct collection_create_metrics_state_t {
     std::atomic<uint64_t> cumulative_calls{0};
     std::atomic<uint64_t> cumulative_failures{0};

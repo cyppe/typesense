@@ -1523,7 +1523,9 @@ def start_perf_record(
         command.append("--off-cpu")
     else:
         command.extend(["-F", str(frequency)])
-    command.extend(["--call-graph", call_graph, "--", "sleep", str(seconds)])
+    if call_graph.lower() != "none":
+        command.extend(["--call-graph", call_graph])
+    command.extend(["--", "sleep", str(seconds)])
     proc = subprocess.Popen(
         command,
         stdout=stdout_file,
@@ -2381,7 +2383,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--perf-call-graph",
         default="dwarf,16384",
-        help="Call graph mode passed to perf record when --perf-seconds/--perf-offcpu-seconds are enabled.",
+        help=(
+            "Call graph mode passed to perf record when --perf-seconds/--perf-offcpu-seconds are enabled. "
+            "Use `none` to skip callgraph capture and keep perf.data small for quick top-symbol reports."
+        ),
     )
     parser.add_argument(
         "--perf-flamegraph-max-bytes",
