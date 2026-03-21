@@ -2564,7 +2564,7 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
 
     // When only one partial record arrives as a chunk, an empty body is pushed to response stream
     bool single_partial_record_body = (json_lines.empty() && !next_body.empty());
-    std::stringstream response_stream;
+    std::string response_body;
 
     //TS_LOG(INFO) << "single_partial_record_body: " << single_partial_record_body;
 
@@ -2587,20 +2587,10 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
         //const std::string& import_summary_json = json_res->dump();
         //response_stream << import_summary_json << "\n";
 
-        for (size_t i = 0; i < json_responses.size(); i++) {
-            bool res_start = (res->status_code == 0) && (i == 0);
-
-            if(res_start) {
-                // indicates first import result to be streamed
-                response_stream << json_responses[i];
-            } else {
-                response_stream << "\n" << json_responses[i];
-            }
-        }
-
-        // Since we use `res->status_code == 0` for flagging `res_start`, we will only set this
-        // when we have accumulated enough response data to stream.
-        // Otherwise, we will send an empty line as first response.
+        response_body = build_import_response_body(
+            json_responses,
+            json_res["success"].get<bool>() && !return_doc && !return_id
+        );
         res->status_code = 200;
 
         const uint64_t total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2625,7 +2615,7 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
 
     req->body = std::move(next_body);
     res->content_type_header = "text/plain; charset=utf-8";
-    res->body = response_stream.str();
+    res->body = std::move(response_body);
 
     res->final.store(req->last_chunk_aggregate);
     stream_response(req, res);
