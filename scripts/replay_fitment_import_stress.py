@@ -3,8 +3,11 @@
 import argparse
 import http.client
 import json
+import math
 import os
+import shlex
 import shutil
+import signal
 import socket
 import statistics
 import subprocess
@@ -342,6 +345,7 @@ class ScenarioResult:
     metrics_timeline_summary_by_phase: dict[str, dict[str, dict[str, float | int]]]
     metrics_label_summary_by_phase: dict[str, dict[str, dict[str, int]]]
     final_metrics: dict[str, Any]
+    profiling_outputs: dict[str, Any]
     profile_command: str | None
     profile_exit_code: int | None
     profile_stdout_log: str | None
@@ -1109,6 +1113,7 @@ def start_profile_command(
         stdout=stdout_file,
         stderr=stderr_file,
         text=True,
+        start_new_session=True,
     )
     return proc, stdout_log, stderr_log
 
@@ -1119,34 +1124,217 @@ def start_perf_record(
     seconds: float,
     frequency: int,
     call_graph: str,
+    offcpu: bool = False,
 ) -> tuple[subprocess.Popen[str], Path, Path, Path]:
-    data_path = process.temp_dir / f"{label}.perf"
-    stdout_log = process.temp_dir / f"perf-{label}-stdout.log"
-    stderr_log = process.temp_dir / f"perf-{label}-stderr.log"
+    profile_label = f"{label}-offcpu" if offcpu else label
+    data_path = process.temp_dir / f"{profile_label}.perf"
+    stdout_log = process.temp_dir / f"perf-{profile_label}-stdout.log"
+    stderr_log = process.temp_dir / f"perf-{profile_label}-stderr.log"
     stdout_file = stdout_log.open("w", encoding="utf-8")
     stderr_file = stderr_log.open("w", encoding="utf-8")
+    command = [
+        "sudo",
+        "perf",
+        "record",
+        "-B",
+        "-N",
+        "-o",
+        str(data_path),
+        "-p",
+        str(process.pid),
+    ]
+    if offcpu:
+        command.append("--off-cpu")
+    else:
+        command.extend(["-F", str(frequency)])
+    command.extend(["--call-graph", call_graph, "--", "sleep", str(seconds)])
+    proc = subprocess.Popen(
+        command,
+        stdout=stdout_file,
+        stderr=stderr_file,
+        text=True,
+        start_new_session=True,
+    )
+    return proc, data_path, stdout_log, stderr_log
+
+
+def start_perf_stat(
+    process: TypesenseProcess,
+    label: str,
+    seconds: float,
+    events: str,
+) -> tuple[subprocess.Popen[str], Path]:
+    output_path = process.temp_dir / f"{label}.perf-stat.txt"
+    output_file = output_path.open("w", encoding="utf-8")
     proc = subprocess.Popen(
         [
             "sudo",
             "perf",
-            "record",
-            "-F",
-            str(frequency),
-            "--call-graph",
-            call_graph,
-            "-o",
-            str(data_path),
+            "stat",
+            "-e",
+            events,
             "-p",
             str(process.pid),
             "--",
             "sleep",
             str(seconds),
         ],
-        stdout=stdout_file,
+        stdout=subprocess.DEVNULL,
+        stderr=output_file,
+        text=True,
+        start_new_session=True,
+    )
+    return proc, output_path
+
+
+def start_runqlat(
+    process: TypesenseProcess,
+    label: str,
+    seconds: float,
+) -> tuple[subprocess.Popen[str], Path, Path]:
+    output_path = process.temp_dir / f"{label}.runqlat.txt"
+    stderr_log = process.temp_dir / f"{label}.runqlat.stderr.log"
+    output_file = output_path.open("w", encoding="utf-8")
+    stderr_file = stderr_log.open("w", encoding="utf-8")
+    count = max(1, math.ceil(seconds))
+    proc = subprocess.Popen(
+        [
+            "sudo",
+            "runqlat",
+            "-m",
+            "-P",
+            "-p",
+            str(process.pid),
+            "1",
+            str(count),
+        ],
+        stdout=output_file,
         stderr=stderr_file,
         text=True,
+        start_new_session=True,
     )
-    return proc, data_path, stdout_log, stderr_log
+    return proc, output_path, stderr_log
+
+
+def wait_for_capture_process(proc: subprocess.Popen[str], timeout: float) -> int:
+    try:
+        return proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        try:
+            return proc.wait(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                return proc.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                return proc.wait(timeout=5.0)
+
+
+def maybe_chown_to_current_user(path: Path | None) -> None:
+    if path is None or not path.exists():
+        return
+    subprocess.run(
+        ["sudo", "chown", f"{os.getuid()}:{os.getgid()}", str(path)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+
+
+def generate_perf_artifacts(data_path: Path, prefix: str, temp_dir: Path) -> dict[str, Any]:
+    outputs: dict[str, Any] = {}
+    if not data_path.exists():
+        outputs[f"{prefix}_artifact_error"] = f"missing data file: {data_path}"
+        return outputs
+
+    maybe_chown_to_current_user(data_path)
+    outputs[f"{prefix}_data_path"] = str(data_path)
+
+    report_path = temp_dir / f"{data_path.stem}.report.txt"
+    report_stderr_log = temp_dir / f"{data_path.stem}.report.stderr.log"
+    with report_path.open("w", encoding="utf-8") as report_file, report_stderr_log.open("w", encoding="utf-8") as err_file:
+        report_proc = subprocess.run(
+            [
+                "timeout",
+                "60",
+                "perf",
+                "report",
+                "-f",
+                "--stdio",
+                "--no-children",
+                "--percent-limit",
+                "0",
+                "-n",
+                "-i",
+                str(data_path),
+                "--sort",
+                "comm,dso,symbol",
+            ],
+            stdout=report_file,
+            stderr=err_file,
+            text=True,
+            check=False,
+        )
+    outputs[f"{prefix}_report_path"] = str(report_path)
+    outputs[f"{prefix}_report_stderr_log"] = str(report_stderr_log)
+    outputs[f"{prefix}_report_exit_code"] = report_proc.returncode
+
+    if not (shutil.which("inferno-collapse-perf") and shutil.which("inferno-flamegraph")):
+        outputs[f"{prefix}_flamegraph_skipped"] = "inferno tools not installed"
+        return outputs
+    folded_path = temp_dir / f"{data_path.stem}.folded"
+    flamegraph_path = temp_dir / f"{data_path.stem}.svg"
+    flamegraph_stderr_log = temp_dir / f"{data_path.stem}.flamegraph.stderr.log"
+    shell_command = (
+        f"timeout 120 perf script -i {shlex.quote(str(data_path))} "
+        f"| inferno-collapse-perf > {shlex.quote(str(folded_path))} "
+        f"&& inferno-flamegraph < {shlex.quote(str(folded_path))} > {shlex.quote(str(flamegraph_path))}"
+    )
+    with flamegraph_stderr_log.open("w", encoding="utf-8") as err_file:
+        flamegraph_proc = subprocess.run(
+            ["/bin/bash", "-lc", shell_command],
+            stdout=subprocess.DEVNULL,
+            stderr=err_file,
+            text=True,
+            check=False,
+        )
+    outputs[f"{prefix}_folded_path"] = str(folded_path)
+    outputs[f"{prefix}_flamegraph_path"] = str(flamegraph_path)
+    outputs[f"{prefix}_flamegraph_stderr_log"] = str(flamegraph_stderr_log)
+    outputs[f"{prefix}_flamegraph_exit_code"] = flamegraph_proc.returncode
+    if flamegraph_proc.returncode == 0 and folded_path.exists():
+        top_path = temp_dir / f"{data_path.stem}.top-stacks.txt"
+        rows: list[tuple[int, str]] = []
+        with folded_path.open("r", encoding="utf-8", errors="replace") as folded_file:
+            for line in folded_file:
+                stripped = line.rstrip()
+                if not stripped:
+                    continue
+                frames, sep, count_text = stripped.rpartition(" ")
+                if not sep:
+                    continue
+                try:
+                    count = int(count_text)
+                except ValueError:
+                    continue
+                rows.append((count, frames))
+        rows.sort(key=lambda item: item[0], reverse=True)
+        with top_path.open("w", encoding="utf-8") as top_file:
+            for count, frames in rows[:50]:
+                top_file.write(f"{count:>12} {frames}\n")
+        outputs[f"{prefix}_top_stacks_path"] = str(top_path)
+    return outputs
 
 
 def run_scenario(
@@ -1160,11 +1348,24 @@ def run_scenario(
     profile_stdout_log: Path | None = None
     profile_stderr_log: Path | None = None
     profile_exit_code: int | None = None
+    profiling_outputs: dict[str, Any] = {}
     perf_proc: subprocess.Popen[str] | None = None
     perf_data_path: Path | None = None
     perf_stdout_log: Path | None = None
     perf_stderr_log: Path | None = None
     perf_exit_code: int | None = None
+    perf_offcpu_proc: subprocess.Popen[str] | None = None
+    perf_offcpu_data_path: Path | None = None
+    perf_offcpu_stdout_log: Path | None = None
+    perf_offcpu_stderr_log: Path | None = None
+    perf_offcpu_exit_code: int | None = None
+    perf_stat_proc: subprocess.Popen[str] | None = None
+    perf_stat_output_path: Path | None = None
+    perf_stat_exit_code: int | None = None
+    runqlat_proc: subprocess.Popen[str] | None = None
+    runqlat_output_path: Path | None = None
+    runqlat_stderr_log: Path | None = None
+    runqlat_exit_code: int | None = None
     try:
         process.start()
         create_timings: dict[str, float] = {}
@@ -1292,6 +1493,28 @@ def run_scenario(
                 args.perf_frequency,
                 args.perf_call_graph,
             )
+        if args.perf_offcpu_seconds > 0:
+            perf_offcpu_proc, perf_offcpu_data_path, perf_offcpu_stdout_log, perf_offcpu_stderr_log = start_perf_record(
+                process,
+                label,
+                args.perf_offcpu_seconds,
+                args.perf_frequency,
+                args.perf_call_graph,
+                offcpu=True,
+            )
+        if args.perf_stat_seconds > 0:
+            perf_stat_proc, perf_stat_output_path = start_perf_stat(
+                process,
+                label,
+                args.perf_stat_seconds,
+                args.perf_stat_events,
+            )
+        if args.runqlat_seconds > 0:
+            runqlat_proc, runqlat_output_path, runqlat_stderr_log = start_runqlat(
+                process,
+                label,
+                args.runqlat_seconds,
+            )
 
         started = now_ms()
         import_stats = run_imports(
@@ -1348,30 +1571,41 @@ def run_scenario(
         metrics_thread.join(timeout=2.0)
 
         if profile_proc is not None:
-            try:
-                profile_exit_code = profile_proc.wait(timeout=args.profile_wait_timeout)
-            except subprocess.TimeoutExpired:
-                profile_proc.terminate()
-                try:
-                    profile_exit_code = profile_proc.wait(timeout=5.0)
-                except subprocess.TimeoutExpired:
-                    profile_proc.kill()
-                    profile_exit_code = profile_proc.wait(timeout=5.0)
+            profile_exit_code = wait_for_capture_process(profile_proc, args.profile_wait_timeout)
 
         if perf_proc is not None:
-            try:
-                perf_exit_code = perf_proc.wait(timeout=args.profile_wait_timeout)
-            except subprocess.TimeoutExpired:
-                perf_proc.terminate()
-                try:
-                    perf_exit_code = perf_proc.wait(timeout=10.0)
-                except subprocess.TimeoutExpired:
-                    perf_proc.terminate()
-                    try:
-                        perf_exit_code = perf_proc.wait(timeout=5.0)
-                    except subprocess.TimeoutExpired:
-                        perf_proc.kill()
-                        perf_exit_code = perf_proc.wait(timeout=5.0)
+            perf_exit_code = wait_for_capture_process(perf_proc, args.profile_wait_timeout)
+            if perf_data_path is not None:
+                profiling_outputs.update(generate_perf_artifacts(perf_data_path, "perf_oncpu", process.temp_dir))
+            if perf_stdout_log is not None:
+                profiling_outputs["perf_oncpu_stdout_log"] = str(perf_stdout_log)
+            if perf_stderr_log is not None:
+                profiling_outputs["perf_oncpu_stderr_log"] = str(perf_stderr_log)
+            profiling_outputs["perf_oncpu_exit_code"] = perf_exit_code
+
+        if perf_offcpu_proc is not None:
+            perf_offcpu_exit_code = wait_for_capture_process(perf_offcpu_proc, args.profile_wait_timeout)
+            if perf_offcpu_data_path is not None:
+                profiling_outputs.update(generate_perf_artifacts(perf_offcpu_data_path, "perf_offcpu", process.temp_dir))
+            if perf_offcpu_stdout_log is not None:
+                profiling_outputs["perf_offcpu_stdout_log"] = str(perf_offcpu_stdout_log)
+            if perf_offcpu_stderr_log is not None:
+                profiling_outputs["perf_offcpu_stderr_log"] = str(perf_offcpu_stderr_log)
+            profiling_outputs["perf_offcpu_exit_code"] = perf_offcpu_exit_code
+
+        if perf_stat_proc is not None:
+            perf_stat_exit_code = wait_for_capture_process(perf_stat_proc, args.profile_wait_timeout)
+            profiling_outputs["perf_stat_exit_code"] = perf_stat_exit_code
+            if perf_stat_output_path is not None:
+                profiling_outputs["perf_stat_output_path"] = str(perf_stat_output_path)
+
+        if runqlat_proc is not None:
+            runqlat_exit_code = wait_for_capture_process(runqlat_proc, args.profile_wait_timeout)
+            profiling_outputs["runqlat_exit_code"] = runqlat_exit_code
+            if runqlat_output_path is not None:
+                profiling_outputs["runqlat_output_path"] = str(runqlat_output_path)
+            if runqlat_stderr_log is not None:
+                profiling_outputs["runqlat_stderr_log"] = str(runqlat_stderr_log)
 
         final_metrics = collect_final_metrics(process.base_url, args.api_key, args.timeout)
         import_summary = summarize_latencies(import_stats.batch_latencies_ms)
@@ -1410,6 +1644,7 @@ def run_scenario(
             metrics_timeline_summary_by_phase=metrics_timeline_summary_by_phase,
             metrics_label_summary_by_phase=metrics_label_summary_by_phase,
             final_metrics=final_metrics,
+            profiling_outputs=profiling_outputs,
             profile_command=args.profile_cmd,
             profile_exit_code=profile_exit_code,
             profile_stdout_log=str(profile_stdout_log) if profile_stdout_log is not None else None,
@@ -1423,19 +1658,15 @@ def run_scenario(
         )
     finally:
         if profile_proc is not None and profile_proc.poll() is None:
-            profile_proc.terminate()
-            try:
-                profile_proc.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                profile_proc.kill()
-                profile_proc.wait(timeout=5.0)
+            wait_for_capture_process(profile_proc, 0.1)
         if perf_proc is not None and perf_proc.poll() is None:
-            perf_proc.terminate()
-            try:
-                perf_proc.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                perf_proc.kill()
-                perf_proc.wait(timeout=5.0)
+            wait_for_capture_process(perf_proc, 0.1)
+        if perf_offcpu_proc is not None and perf_offcpu_proc.poll() is None:
+            wait_for_capture_process(perf_offcpu_proc, 0.1)
+        if perf_stat_proc is not None and perf_stat_proc.poll() is None:
+            wait_for_capture_process(perf_stat_proc, 0.1)
+        if runqlat_proc is not None and runqlat_proc.poll() is None:
+            wait_for_capture_process(runqlat_proc, 0.1)
         process.stop()
         process.cleanup(args.keep_temp)
 
@@ -1514,6 +1745,10 @@ def print_result(result: ScenarioResult) -> None:
             print(f"  [{phase}]")
             for key in sorted(result.metrics_label_summary_by_phase[phase].keys()):
                 print(f"    {key}: {result.metrics_label_summary_by_phase[phase][key]}")
+    if result.profiling_outputs:
+        print("Profiling outputs:")
+        for key in sorted(result.profiling_outputs.keys()):
+            print(f"  {key}: {result.profiling_outputs[key]}")
     if result.profile_command:
         print(
             "Profiler:\n"
@@ -1620,6 +1855,12 @@ def parse_args() -> argparse.Namespace:
         help="Optionally capture a host-side perf record attached to the server PID for this many seconds.",
     )
     parser.add_argument(
+        "--perf-offcpu-seconds",
+        type=float,
+        default=0.0,
+        help="Optionally capture a host-side perf off-CPU profile attached to the server PID for this many seconds.",
+    )
+    parser.add_argument(
         "--perf-frequency",
         type=int,
         default=199,
@@ -1628,7 +1869,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--perf-call-graph",
         default="dwarf,16384",
-        help="Call graph mode passed to perf record when --perf-seconds is enabled.",
+        help="Call graph mode passed to perf record when --perf-seconds/--perf-offcpu-seconds are enabled.",
+    )
+    parser.add_argument(
+        "--perf-stat-seconds",
+        type=float,
+        default=0.0,
+        help="Optionally capture a host-side perf stat summary for this many seconds.",
+    )
+    parser.add_argument(
+        "--perf-stat-events",
+        default="task-clock,context-switches,cpu-migrations,page-faults",
+        help="Comma-separated perf stat events used when --perf-stat-seconds is enabled.",
+    )
+    parser.add_argument(
+        "--runqlat-seconds",
+        type=float,
+        default=0.0,
+        help="Optionally capture run queue latency histograms for this many seconds with runqlat.",
     )
     parser.add_argument("--keep-temp", action="store_true", help="Keep temporary data/log directories for inspection.")
     parser.add_argument("--server-arg", action="append", default=[], help="Extra arg passed through to typesense-server.")
@@ -1684,6 +1942,7 @@ def main() -> int:
                 "metrics_timeline_summary_by_phase": result.metrics_timeline_summary_by_phase,
                 "metrics_label_summary_by_phase": result.metrics_label_summary_by_phase,
                 "final_metrics": result.final_metrics,
+                "profiling_outputs": result.profiling_outputs,
                 "profile_command": result.profile_command,
                 "profile_exit_code": result.profile_exit_code,
                 "profile_stdout_log": result.profile_stdout_log,
