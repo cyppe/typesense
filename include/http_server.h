@@ -204,7 +204,6 @@ private:
     static void response_abort(h2o_generator_t *generator, h2o_req_t *req);
 
     static void on_res_generator_dispose(void *self);
-
     static int send_response(h2o_req_t *req, int status_code, const std::string & message);
     static int send_prepared_response(h2o_req_t *req, const std::shared_ptr<http_req>& request,
                                       const std::shared_ptr<http_res>& response);

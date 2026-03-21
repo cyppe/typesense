@@ -265,6 +265,7 @@ struct http_request_metrics_snapshot_t {
     uint64_t last_handler_wait_ms = 0;
     uint64_t last_handler_ms = 0;
     uint64_t last_unattributed_ms = 0;
+    uint64_t last_request_entry_ms = 0;
     uint64_t last_conn_to_start_ms = 0;
     uint64_t last_response_dispatch_ms = 0;
     uint64_t last_response_pre_dispatch_wait_ms = 0;
@@ -290,6 +291,7 @@ struct http_request_metrics_snapshot_t {
     uint64_t import_last_handler_wait_ms = 0;
     uint64_t import_last_handler_ms = 0;
     uint64_t import_last_unattributed_ms = 0;
+    uint64_t import_last_request_entry_ms = 0;
     uint64_t import_last_conn_to_start_ms = 0;
     uint64_t import_last_response_dispatch_ms = 0;
     uint64_t import_last_response_pre_dispatch_wait_ms = 0;
@@ -313,6 +315,7 @@ struct http_request_metrics_snapshot_t {
     uint64_t import_avg_handler_wait_ms = 0;
     uint64_t import_avg_handler_ms = 0;
     uint64_t import_avg_unattributed_ms = 0;
+    uint64_t import_avg_request_entry_ms = 0;
     uint64_t import_avg_response_queue_ms = 0;
     uint64_t import_avg_response_pre_dispatch_wait_ms = 0;
     uint64_t import_avg_h2o_request_total_ms = 0;
@@ -329,6 +332,7 @@ struct http_route_lifecycle_metrics_snapshot_t {
     uint64_t last_handler_wait_ms = 0;
     uint64_t last_handler_ms = 0;
     uint64_t last_unattributed_ms = 0;
+    uint64_t last_request_entry_ms = 0;
     uint64_t last_conn_to_start_ms = 0;
     uint64_t last_response_dispatch_ms = 0;
     uint64_t last_response_pre_dispatch_wait_ms = 0;
@@ -342,6 +346,7 @@ struct http_route_lifecycle_metrics_snapshot_t {
     uint64_t avg_handler_wait_ms = 0;
     uint64_t avg_handler_ms = 0;
     uint64_t avg_unattributed_ms = 0;
+    uint64_t avg_request_entry_ms = 0;
     uint64_t avg_conn_to_start_ms = 0;
     uint64_t avg_response_queue_ms = 0;
     uint64_t avg_response_pre_dispatch_wait_ms = 0;
@@ -429,6 +434,7 @@ struct http_req {
     h2o_custom_timer_t defer_timer;
 
     uint64_t start_ts;
+    uint64_t request_entry_ts_us;
 
     // timestamp from the underlying http library
     uint64_t conn_ts;
@@ -482,18 +488,21 @@ struct http_req {
         start_ts = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
 
+        request_entry_ts_us = start_ts;
         conn_ts = start_ts;
 
     }
 
-    http_req(h2o_req_t* _req, const std::string & http_method, const std::string & path_without_query, uint64_t route_hash,
-            const std::map<std::string, std::string>& params, std::vector<nlohmann::json>& embedded_params_vec,
-            const std::string& api_auth_key, const std::string& body, const std::string& client_ip, bool is_binary_body):
-            _req(_req), http_method(http_method), path_without_query(path_without_query), route_hash(route_hash),
-            params(params), embedded_params_vec(embedded_params_vec), api_auth_key(api_auth_key),
+    http_req(h2o_req_t* _req, std::string http_method, std::string path_without_query, uint64_t route_hash,
+            std::map<std::string, std::string> params, std::vector<nlohmann::json> embedded_params_vec,
+            std::string api_auth_key, std::string body, std::string client_ip, bool is_binary_body,
+            uint64_t request_entry_ts_us = 0):
+            _req(_req), http_method(std::move(http_method)), path_without_query(std::move(path_without_query)),
+            route_hash(route_hash), params(std::move(params)), embedded_params_vec(std::move(embedded_params_vec)),
+            api_auth_key(std::move(api_auth_key)),
             first_chunk_aggregate(true), last_chunk_aggregate(false),
-            chunk_len(0), body(body), body_index(0), data(nullptr), ready(false),
-            log_index(0), is_diposed(false), client_ip(client_ip), is_binary_body(is_binary_body) {
+            chunk_len(0), body(std::move(body)), body_index(0), data(nullptr), ready(false),
+            log_index(0), is_diposed(false), client_ip(std::move(client_ip)), is_binary_body(is_binary_body) {
 
         if(_req != nullptr) {
             const auto& tv = _req->processed_at.at;
@@ -505,6 +514,9 @@ struct http_req {
 
         start_ts = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::system_clock::now().time_since_epoch()).count();
+        this->request_entry_ts_us = request_entry_ts_us != 0 ? request_entry_ts_us : start_ts;
+
+        reserve_body_from_content_length();
     }
 
     ~http_req() {
@@ -647,6 +659,26 @@ struct http_req {
 
     void add_auth_duration_us(uint64_t duration_us) {
         auth_duration_us.fetch_add(duration_us, std::memory_order_relaxed);
+    }
+
+    void reserve_body_from_content_length() {
+        if(_req == nullptr || _req->content_length == SIZE_MAX || _req->content_length <= body.capacity()) {
+            return;
+        }
+
+        // Large import requests arrive in multiple chunks. Reserve once from the advertised
+        // content length to avoid repeated body reallocations on the hot ingress path.
+        body.reserve(_req->content_length);
+    }
+
+    void append_body_chunk(std::string_view chunk) {
+        if(chunk.empty()) {
+            return;
+        }
+
+        reserve_body_from_content_length();
+        body.append(chunk.data(), chunk.size());
+        chunk_len += chunk.size();
     }
 
     void mark_handler_dispatch() {

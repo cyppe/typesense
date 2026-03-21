@@ -1148,6 +1148,7 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_request_last_handler_wait_ms"] = http_request_metrics.last_handler_wait_ms;
     result["http_request_last_handler_ms"] = http_request_metrics.last_handler_ms;
     result["http_request_last_unattributed_ms"] = http_request_metrics.last_unattributed_ms;
+    result["http_request_last_request_entry_ms"] = http_request_metrics.last_request_entry_ms;
     result["http_request_last_conn_to_start_ms"] = http_request_metrics.last_conn_to_start_ms;
     result["http_request_last_response_dispatch_ms"] = http_request_metrics.last_response_dispatch_ms;
     result["http_request_last_response_pre_dispatch_wait_ms"] = http_request_metrics.last_response_pre_dispatch_wait_ms;
@@ -1170,6 +1171,7 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_import_last_handler_wait_ms"] = http_request_metrics.import_last_handler_wait_ms;
     result["http_import_last_handler_ms"] = http_request_metrics.import_last_handler_ms;
     result["http_import_last_unattributed_ms"] = http_request_metrics.import_last_unattributed_ms;
+    result["http_import_last_request_entry_ms"] = http_request_metrics.import_last_request_entry_ms;
     result["http_import_last_conn_to_start_ms"] = http_request_metrics.import_last_conn_to_start_ms;
     result["http_import_last_response_dispatch_ms"] = http_request_metrics.import_last_response_dispatch_ms;
     result["http_import_last_response_pre_dispatch_wait_ms"] =
@@ -1196,6 +1198,7 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_import_avg_handler_wait_ms"] = http_request_metrics.import_avg_handler_wait_ms;
     result["http_import_avg_handler_ms"] = http_request_metrics.import_avg_handler_ms;
     result["http_import_avg_unattributed_ms"] = http_request_metrics.import_avg_unattributed_ms;
+    result["http_import_avg_request_entry_ms"] = http_request_metrics.import_avg_request_entry_ms;
     result["http_import_avg_response_pre_dispatch_wait_ms"] =
         http_request_metrics.import_avg_response_pre_dispatch_wait_ms;
     result["http_import_avg_response_queue_ms"] = http_request_metrics.import_avg_response_queue_ms;
@@ -1214,6 +1217,7 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         result[prefix + "_last_handler_wait_ms"] = metrics.last_handler_wait_ms;
         result[prefix + "_last_handler_ms"] = metrics.last_handler_ms;
         result[prefix + "_last_unattributed_ms"] = metrics.last_unattributed_ms;
+        result[prefix + "_last_request_entry_ms"] = metrics.last_request_entry_ms;
         result[prefix + "_last_conn_to_start_ms"] = metrics.last_conn_to_start_ms;
         result[prefix + "_last_response_dispatch_ms"] = metrics.last_response_dispatch_ms;
         result[prefix + "_last_response_pre_dispatch_wait_ms"] = metrics.last_response_pre_dispatch_wait_ms;
@@ -1227,6 +1231,7 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         result[prefix + "_avg_handler_wait_ms"] = metrics.avg_handler_wait_ms;
         result[prefix + "_avg_handler_ms"] = metrics.avg_handler_ms;
         result[prefix + "_avg_unattributed_ms"] = metrics.avg_unattributed_ms;
+        result[prefix + "_avg_request_entry_ms"] = metrics.avg_request_entry_ms;
         result[prefix + "_avg_conn_to_start_ms"] = metrics.avg_conn_to_start_ms;
         result[prefix + "_avg_response_queue_ms"] = metrics.avg_response_queue_ms;
         result[prefix + "_avg_response_pre_dispatch_wait_ms"] = metrics.avg_response_pre_dispatch_wait_ms;

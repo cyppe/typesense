@@ -345,6 +345,7 @@ h2o_pathconf_t* HttpServer::register_handler(h2o_hostconf_t *hostconf, const cha
     compress_args.brotli.quality = -1;  // disable, not widely supported
     compress_args.gzip.quality = 1;     // fastest
     h2o_compress_register(pathconf, &compress_args);
+    h2o_server_timing_register(pathconf, 0);
 
     return pathconf;
 }
@@ -399,9 +400,11 @@ void HttpServer::on_res_generator_dispose(void *self) {
 
 int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
     h2o_custom_req_handler_t* h2o_handler = (h2o_custom_req_handler_t *)_h2o_handler;
+    constexpr char DEBUG_SERVER_TIMING_HEADER[] = "x-typesense-debug-server-timing";
+    const uint64_t request_entry_ts_us = http_req::now_ts_us();
 
-    const std::string & http_method = std::string(req->method.base, req->method.len);
-    const std::string & path = std::string(req->path.base, req->path.len);
+    const std::string http_method(req->method.base, req->method.len);
+    const std::string path(req->path.base, req->path.len);
     std::vector<std::string> path_with_query_parts;
 
     // These guards have been added to debug a strange issue of `path_with_query_parts` being empty sometimes
@@ -503,6 +506,10 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
     std::map<std::string, std::string> query_map;
     StringUtils::parse_query_string(query_str, query_map);
 
+    if(h2o_find_header_by_str(&req->headers, DEBUG_SERVER_TIMING_HEADER, sizeof(DEBUG_SERVER_TIMING_HEADER) - 1, -1) != -1) {
+        req->send_server_timing = H2O_SEND_SERVER_TIMING_BASIC;
+    }
+
     // cache ttl can be applied only from an embedded key: cannot be a get param
     query_map.erase("cache_ttl");
 
@@ -572,7 +579,7 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
         }
     }
 
-    const std::string& body = std::string(req->entity.base, req->entity.len);
+    std::string body(req->entity.base, req->entity.len);
     std::vector<nlohmann::json> embedded_params_vec;
 
     if(RateLimitManager::getInstance()->is_rate_limited({RateLimitedEntityType::api_key, api_auth_key_sent}, {RateLimitedEntityType::ip, client_ip})) {
@@ -633,9 +640,11 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
         is_binary_body = (content_type == http_req::OCTET_STREAM_HEADER_VALUE);
     }
 
-    std::shared_ptr<http_req> request = std::make_shared<http_req>(req, rpath->http_method, path_without_query,
-                                                                   route_hash, query_map, embedded_params_vec,
-                                                                   api_auth_key_sent, body, client_ip, is_binary_body);
+    std::shared_ptr<http_req> request = std::make_shared<http_req>(
+        req, rpath->http_method, path_without_query, route_hash, std::move(query_map),
+        std::move(embedded_params_vec), std::move(api_auth_key_sent), std::move(body),
+        std::move(client_ip), is_binary_body, request_entry_ts_us
+    );
     if(immediate_auth_duration_us != 0) {
         request->add_auth_duration_us(immediate_auth_duration_us);
     }
@@ -669,7 +678,8 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
 
     if(root_resource == "multi_search") {
         // format is <length of api_auth_key_sent>:<api_auth_key_sent><client_ip>
-        std::string multi_search_key = std::to_string(api_auth_key_sent.length()) + ":" + api_auth_key_sent + client_ip;
+        std::string multi_search_key =
+            std::to_string(request->api_auth_key.length()) + ":" + request->api_auth_key + request->client_ip;
         request->metadata = multi_search_key;
     }
 
@@ -876,9 +886,7 @@ int HttpServer::async_req_cb(void *ctx, int is_end_stream) {
         }
     }
 
-    std::string chunk_str(chunk.base, chunk.len);
-    request->body += chunk_str;
-    request->chunk_len += chunk.len;
+    request->append_body_chunk(std::string_view(chunk.base, chunk.len));
 
     /*TS_LOG(INFO) << "entity: " << std::string(request->req->entity.base, std::min<size_t>(40, request->req->entity.len))
               << ", chunk len: " << std::string(chunk.base, std::min<size_t>(40, chunk.len));*/
@@ -1052,7 +1060,17 @@ int HttpServer::send_response(h2o_req_t *req, int status_code, const std::string
 
 int HttpServer::send_prepared_response(h2o_req_t *req, const std::shared_ptr<http_req>& request,
                                        const std::shared_ptr<http_res>& response) {
-    h2o_generator_t generator = {nullptr, nullptr};
+    auto* custom_generator = new h2o_custom_generator_t;
+    custom_generator->h2o_generator = h2o_generator_t{nullptr, response_abort};
+    custom_generator->h2o_handler = nullptr;
+    custom_generator->rpath = nullptr;
+    custom_generator->request = request;
+    custom_generator->response = response;
+    h2o_custom_generator_t** allocated_generator = static_cast<h2o_custom_generator_t**>(
+        h2o_mem_alloc_shared(&req->pool, sizeof(*allocated_generator), on_res_generator_dispose)
+    );
+    *allocated_generator = custom_generator;
+
     h2o_iovec_t body = h2o_strdup(&req->pool, response->body.c_str(), response->body.size());
     req->res.status = response->status_code == 0 ? 200 : static_cast<int>(response->status_code);
     req->res.reason = http_res::get_status_reason(req->res.status);
@@ -1064,7 +1082,7 @@ int HttpServer::send_prepared_response(h2o_req_t *req, const std::shared_ptr<htt
                           content_type.data(), content_type.size());
 
     request->mark_response_start();
-    h2o_start_response(req, &generator);
+    h2o_start_response(req, &custom_generator->h2o_generator);
     request->mark_response_send(true);
     h2o_send(req, &body, 1, H2O_SEND_STATE_FINAL);
     return 0;

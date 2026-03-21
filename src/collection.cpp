@@ -970,6 +970,32 @@ nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, s
     uint64_t batch_index_ms = 0;
     //bool exceeds_memory_limit = false;
 
+    struct detect_new_fields_snapshot_t {
+        std::string fallback_field_type;
+        std::unordered_map<std::string, field> dynamic_fields;
+        tsl::htrie_map<char, field> nested_fields;
+        spp::sparse_hash_map<std::string, reference_info_t> reference_fields;
+        tsl::htrie_map<char, field> search_schema;
+        bool has_async_referenced_ins = false;
+
+        bool needs_detection() const {
+            return !fallback_field_type.empty() || !dynamic_fields.empty() || !nested_fields.empty() ||
+                   !reference_fields.empty() || has_async_referenced_ins;
+        }
+    };
+
+    detect_new_fields_snapshot_t detect_new_fields_snapshot;
+    auto refresh_detect_new_fields_snapshot = [&]() {
+        std::shared_lock lock(mutex);
+        detect_new_fields_snapshot.fallback_field_type = fallback_field_type;
+        detect_new_fields_snapshot.dynamic_fields = dynamic_fields;
+        detect_new_fields_snapshot.nested_fields = nested_fields;
+        detect_new_fields_snapshot.reference_fields = reference_fields;
+        detect_new_fields_snapshot.search_schema = search_schema;
+        detect_new_fields_snapshot.has_async_referenced_ins = !async_referenced_ins.empty();
+    };
+    refresh_detect_new_fields_snapshot();
+
     // ensures that document IDs are not repeated within the same batch
     std::set<std::string> batch_doc_ids;
     bool found_batch_new_field = false;
@@ -1013,37 +1039,19 @@ nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, s
             }
 
             batch_doc_ids.insert(doc_id);
-
-            std::string fallback_field_type_copy;
-            std::unordered_map<std::string, field> dynamic_fields_copy;
-            tsl::htrie_map<char, field> nested_fields_copy;
-            spp::sparse_hash_map<std::string, reference_info_t> reference_fields_copy;
-            spp::sparse_hash_map<std::string, std::set<reference_pair_t>> async_referenced_ins_copy;
-            tsl::htrie_map<char, field> search_schema_copy;
-            tsl::htrie_set<char> object_reference_fields_copy;
-            {
-                std::shared_lock lock(mutex);
-                fallback_field_type_copy = fallback_field_type;
-                dynamic_fields_copy = dynamic_fields;
-                nested_fields_copy = nested_fields;
-                reference_fields_copy = reference_fields;
-                async_referenced_ins_copy = async_referenced_ins;
-                search_schema_copy = search_schema;
-                object_reference_fields_copy = object_reference_fields;
-            }
-
-            // if `fallback_field_type` or `dynamic_fields` is enabled, update schema first before indexing
-            if(!fallback_field_type_copy.empty() || !dynamic_fields_copy.empty() || !nested_fields_copy.empty() ||
-                !reference_fields_copy.empty() || !async_referenced_ins_copy.empty()) {
-
+            // Snapshot expensive schema/reference state once per batch instead of once per document.
+            if(detect_new_fields_snapshot.needs_detection()) {
+                tsl::htrie_set<char> object_reference_helper_fields;
                 Option<bool> new_fields_op = detect_new_fields(record.doc, dirty_values,
-                                                               search_schema_copy, dynamic_fields_copy,
-                                                               nested_fields_copy,
-                                                               fallback_field_type_copy,
+                                                               detect_new_fields_snapshot.search_schema,
+                                                               detect_new_fields_snapshot.dynamic_fields,
+                                                               detect_new_fields_snapshot.nested_fields,
+                                                               detect_new_fields_snapshot.fallback_field_type,
                                                                record.is_update,
                                                                new_fields,
                                                                enable_nested_fields,
-                                                               reference_fields_copy, object_reference_fields_copy);
+                                                               detect_new_fields_snapshot.reference_fields,
+                                                               object_reference_helper_fields);
                 if(!new_fields_op.ok()) {
                     record.index_failure(new_fields_op.code(), new_fields_op.error());
                 }
@@ -1072,6 +1080,7 @@ nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, s
                 rebuild_read_state_snapshot_unlocked();
             }
             schema_update_ms += elapsed_ms_since(schema_update_start);
+            refresh_detect_new_fields_snapshot();
         }
 
         index_records.emplace_back(std::move(record));
@@ -1099,6 +1108,7 @@ nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, s
 
             index_records.clear();
             batch_doc_ids.clear();
+            refresh_detect_new_fields_snapshot();
         }
     }
 

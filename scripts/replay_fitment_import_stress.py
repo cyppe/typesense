@@ -40,6 +40,7 @@ DEFAULT_PROBE_WORKERS = 1
 DEFAULT_SEARCH_WORKERS = 1
 DEFAULT_PROBE_PROFILE = "standard"
 DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parent.parent / "benchmark" / "data" / "fitment_replay_schemas"
+DEBUG_SERVER_TIMING_HEADER = "x-typesense-debug-server-timing"
 STANDARD_PROBE_ROUTES = [
     "/health",
     "/metrics.json",
@@ -101,7 +102,7 @@ def build_probe_routes(profile: str, extra_routes: list[str]) -> list[str]:
     return deduped
 
 
-def http_request(
+def http_request_ex(
     method: str,
     url: str,
     api_key: str,
@@ -137,7 +138,11 @@ def http_request(
                             time.sleep(stream_chunk_delay_ms / 1000.0)
                     response = connection.getresponse()
                     try:
-                        return response.status, response.read()
+                        return HttpResponseData(
+                            status=response.status,
+                            body=response.read(),
+                            headers=normalize_response_headers(response.getheaders()),
+                        )
                     finally:
                         response.close()
                 finally:
@@ -145,14 +150,47 @@ def http_request(
 
             request = urllib.request.Request(url, data=body, headers=headers, method=method)
             with urllib.request.urlopen(request, timeout=timeout) as response:
-                return response.status, response.read()
+                return HttpResponseData(
+                    status=response.status,
+                    body=response.read(),
+                    headers=normalize_response_headers(response.headers),
+                )
         except urllib.error.HTTPError as exc:
-            return exc.code, exc.read()
+            return HttpResponseData(
+                status=exc.code,
+                body=exc.read(),
+                headers=normalize_response_headers(exc.headers),
+            )
         except (ConnectionResetError, TimeoutError, urllib.error.URLError, HTTPException) as exc:
             if attempt >= retries:
                 raise RuntimeError(f"{method} {url} failed after {attempt + 1} attempt(s): {exc}") from exc
             attempt += 1
             time.sleep(min(0.25 * attempt, 1.0))
+
+
+def http_request(
+    method: str,
+    url: str,
+    api_key: str,
+    body: bytes | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    extra_headers: dict[str, str] | None = None,
+    retries: int = 0,
+    stream_chunk_bytes: int | None = None,
+    stream_chunk_delay_ms: float = 0.0,
+) -> tuple[int, bytes]:
+    response = http_request_ex(
+        method,
+        url,
+        api_key,
+        body=body,
+        timeout=timeout,
+        extra_headers=extra_headers,
+        retries=retries,
+        stream_chunk_bytes=stream_chunk_bytes,
+        stream_chunk_delay_ms=stream_chunk_delay_ms,
+    )
+    return response.status, response.body
 
 
 def json_request(
@@ -309,6 +347,7 @@ class ProbeStats:
     route: str
     latencies_ms: list[float] = field(default_factory=list)
     failures: int = 0
+    server_timing_ms: dict[str, list[float]] = field(default_factory=dict)
 
 
 @dataclass
@@ -323,6 +362,14 @@ class ImportStats:
 class SearchStats:
     latencies_ms: list[float] = field(default_factory=list)
     failures: int = 0
+    server_timing_ms: dict[str, list[float]] = field(default_factory=dict)
+
+
+@dataclass
+class HttpResponseData:
+    status: int
+    body: bytes
+    headers: dict[str, str]
 
 
 @dataclass
@@ -339,8 +386,12 @@ class ScenarioResult:
     import_stats: dict[str, Any]
     probe_stats: dict[str, dict[str, float | int]]
     probe_phase_stats: dict[str, dict[str, dict[str, float | int]]]
+    probe_server_timing_stats: dict[str, dict[str, dict[str, float]]]
+    probe_server_timing_phase_stats: dict[str, dict[str, dict[str, dict[str, float]]]]
     search_stats: dict[str, float | int]
     search_phase_stats: dict[str, dict[str, float | int]]
+    search_server_timing_stats: dict[str, dict[str, float]]
+    search_server_timing_phase_stats: dict[str, dict[str, dict[str, float]]]
     metrics_timeline_summary: dict[str, dict[str, float | int]]
     metrics_timeline_summary_by_phase: dict[str, dict[str, dict[str, float | int]]]
     metrics_label_summary_by_phase: dict[str, dict[str, dict[str, int]]]
@@ -371,6 +422,7 @@ class ProbeSample:
     phase: str
     latency_ms: float
     success: bool
+    server_timing_ms: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass
@@ -378,6 +430,97 @@ class SearchSample:
     phase: str
     latency_ms: float
     success: bool
+    server_timing_ms: dict[str, float] = field(default_factory=dict)
+
+
+def normalize_response_headers(raw_headers: Any) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    if raw_headers is None:
+        return headers
+    if hasattr(raw_headers, "items"):
+        items = raw_headers.items()
+    else:
+        items = raw_headers
+    for key, value in items:
+        headers[str(key).lower()] = str(value)
+    return headers
+
+
+def parse_server_timing_header(value: str | None) -> dict[str, float]:
+    if not value:
+        return {}
+    timings: dict[str, float] = {}
+    for entry in value.split(","):
+        token = entry.strip()
+        if not token:
+            continue
+        metric_name = token.split(";", 1)[0].strip()
+        if not metric_name:
+            continue
+        for parameter in token.split(";")[1:]:
+            name, sep, raw_value = parameter.strip().partition("=")
+            if sep != "=" or name != "dur":
+                continue
+            try:
+                timings[metric_name] = float(raw_value.strip().strip("\""))
+            except ValueError:
+                pass
+            break
+    return timings
+
+
+class PersistentHttpClient:
+    def __init__(self, base_url: str, api_key: str, timeout: float) -> None:
+        self._parsed = urllib.parse.urlsplit(base_url)
+        self._api_key = api_key
+        self._timeout = timeout
+        self._connection: http.client.HTTPConnection | http.client.HTTPSConnection | None = None
+
+    def close(self) -> None:
+        if self._connection is not None:
+            try:
+                self._connection.close()
+            except Exception:
+                pass
+            self._connection = None
+
+    def _connect(self) -> http.client.HTTPConnection | http.client.HTTPSConnection:
+        if self._connection is None:
+            connection_cls = http.client.HTTPSConnection if self._parsed.scheme == "https" else http.client.HTTPConnection
+            self._connection = connection_cls(self._parsed.hostname, self._parsed.port, timeout=self._timeout)
+        return self._connection
+
+    def request(
+        self,
+        method: str,
+        path: str,
+        body: bytes | None = None,
+        extra_headers: dict[str, str] | None = None,
+        retries: int = 1,
+    ) -> HttpResponseData:
+        headers = {"x-typesense-api-key": self._api_key, "connection": "keep-alive"}
+        if extra_headers:
+            headers.update(extra_headers)
+        attempt = 0
+        while True:
+            connection = self._connect()
+            try:
+                connection.request(method, path, body=body, headers=headers)
+                response = connection.getresponse()
+                try:
+                    return HttpResponseData(
+                        status=response.status,
+                        body=response.read(),
+                        headers=normalize_response_headers(response.getheaders()),
+                    )
+                finally:
+                    response.close()
+            except (ConnectionResetError, TimeoutError, urllib.error.URLError, HTTPException, OSError) as exc:
+                self.close()
+                if attempt >= retries:
+                    raise RuntimeError(f"{method} {path} failed after {attempt + 1} attempt(s): {exc}") from exc
+                attempt += 1
+                time.sleep(min(0.1 * attempt, 0.5))
 
 
 class PhaseTracker:
@@ -599,28 +742,64 @@ def run_probes(
     phase_tracker: PhaseTracker,
     samples: list[ProbeSample],
     lock: threading.Lock,
+    enable_server_timing: bool,
+    keepalive: bool,
 ) -> None:
+    extra_headers = {DEBUG_SERVER_TIMING_HEADER: "1"} if enable_server_timing else None
+    client = PersistentHttpClient(base_url, api_key, timeout) if keepalive else None
     while not stop_event.is_set():
         for route in routes:
             started = now_ms()
             phase = phase_tracker.get()
             try:
-                status, _ = http_request("GET", base_url + route, api_key, timeout=timeout)
+                if client is not None:
+                    response = client.request("GET", route, extra_headers=extra_headers)
+                else:
+                    response = http_request_ex(
+                        "GET",
+                        base_url + route,
+                        api_key,
+                        timeout=timeout,
+                        extra_headers=extra_headers,
+                    )
                 elapsed = now_ms() - started
+                server_timing = parse_server_timing_header(response.headers.get("server-timing"))
                 with lock:
                     probe = stats[route]
-                    if 200 <= status < 300:
+                    if 200 <= response.status < 300:
                         probe.latencies_ms.append(elapsed)
-                        samples.append(ProbeSample(route=route, phase=phase, latency_ms=elapsed, success=True))
+                        for name, value in server_timing.items():
+                            probe.server_timing_ms.setdefault(name, []).append(value)
+                        samples.append(
+                            ProbeSample(
+                                route=route,
+                                phase=phase,
+                                latency_ms=elapsed,
+                                success=True,
+                                server_timing_ms=server_timing,
+                            )
+                        )
                     else:
                         probe.failures += 1
-                        samples.append(ProbeSample(route=route, phase=phase, latency_ms=elapsed, success=False))
+                        samples.append(
+                            ProbeSample(
+                                route=route,
+                                phase=phase,
+                                latency_ms=elapsed,
+                                success=False,
+                                server_timing_ms=server_timing,
+                            )
+                        )
             except Exception:
                 with lock:
                     stats[route].failures += 1
                     samples.append(ProbeSample(route=route, phase=phase, latency_ms=0.0, success=False))
             if stop_event.wait(interval_s):
+                if client is not None:
+                    client.close()
                 return
+    if client is not None:
+        client.close()
 
 
 def run_search_probe(
@@ -634,33 +813,72 @@ def run_search_probe(
     phase_tracker: PhaseTracker,
     samples: list[SearchSample],
     lock: threading.Lock,
+    enable_server_timing: bool,
+    keepalive: bool,
 ) -> None:
     params = urllib.parse.urlencode({"q": "*", "filter_by": "variant_pid:>0", "per_page": 10})
-    url = f"{base_url}/collections/{collection}/documents/search?{params}"
+    path = f"/collections/{collection}/documents/search?{params}"
+    url = f"{base_url}{path}"
+    extra_headers = {DEBUG_SERVER_TIMING_HEADER: "1"} if enable_server_timing else None
+    client = PersistentHttpClient(base_url, api_key, timeout) if keepalive else None
     while not stop_event.is_set():
         started = now_ms()
         phase = phase_tracker.get()
         try:
-            status, _ = http_request("GET", url, api_key, timeout=timeout)
+            if client is not None:
+                response = client.request("GET", path, extra_headers=extra_headers)
+            else:
+                response = http_request_ex("GET", url, api_key, timeout=timeout, extra_headers=extra_headers)
             elapsed = now_ms() - started
+            server_timing = parse_server_timing_header(response.headers.get("server-timing"))
             with lock:
-                if 200 <= status < 300:
+                if 200 <= response.status < 300:
                     stats.latencies_ms.append(elapsed)
-                    samples.append(SearchSample(phase=phase, latency_ms=elapsed, success=True))
+                    for name, value in server_timing.items():
+                        stats.server_timing_ms.setdefault(name, []).append(value)
+                    samples.append(
+                        SearchSample(
+                            phase=phase,
+                            latency_ms=elapsed,
+                            success=True,
+                            server_timing_ms=server_timing,
+                        )
+                    )
                 else:
                     stats.failures += 1
-                    samples.append(SearchSample(phase=phase, latency_ms=elapsed, success=False))
+                    samples.append(
+                        SearchSample(
+                            phase=phase,
+                            latency_ms=elapsed,
+                            success=False,
+                            server_timing_ms=server_timing,
+                        )
+                    )
         except Exception:
             with lock:
                 stats.failures += 1
                 samples.append(SearchSample(phase=phase, latency_ms=0.0, success=False))
         if stop_event.wait(interval_s):
+            if client is not None:
+                client.close()
             return
+    if client is not None:
+        client.close()
 
 
-def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[str, Any] | None:
+def collect_metrics_sample(
+    base_url: str,
+    api_key: str,
+    timeout: float,
+    client: PersistentHttpClient | None = None,
+) -> dict[str, Any] | None:
     try:
-        status, payload = json_request("GET", base_url + "/metrics.json", api_key, timeout=timeout)
+        if client is not None:
+            response = client.request("GET", "/metrics.json")
+            status = response.status
+            payload = json.loads(response.body.decode("utf-8")) if response.body else {}
+        else:
+            status, payload = json_request("GET", base_url + "/metrics.json", api_key, timeout=timeout)
         if 200 <= status < 300:
             interesting = [
                 "nuraft_last_import_total_ms",
@@ -711,16 +929,19 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "http_route_health_last_auth_ms",
                 "http_route_health_last_handler_wait_ms",
                 "http_route_health_last_handler_ms",
+                "http_route_health_last_request_entry_ms",
                 "http_route_health_last_response_queue_ms",
                 "http_route_health_avg_total_ms",
                 "http_route_health_avg_auth_ms",
                 "http_route_health_avg_handler_wait_ms",
                 "http_route_health_avg_handler_ms",
+                "http_route_health_avg_request_entry_ms",
                 "http_route_health_avg_response_queue_ms",
                 "http_route_collections_last_total_ms",
                 "http_route_collections_last_auth_ms",
                 "http_route_collections_last_handler_wait_ms",
                 "http_route_collections_last_handler_ms",
+                "http_route_collections_last_request_entry_ms",
                 "http_route_collections_last_response_queue_ms",
                 "http_route_collections_last_h2o_request_total_ms",
                 "http_route_collections_last_h2o_total_ms",
@@ -728,6 +949,7 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "http_route_collections_avg_auth_ms",
                 "http_route_collections_avg_handler_wait_ms",
                 "http_route_collections_avg_handler_ms",
+                "http_route_collections_avg_request_entry_ms",
                 "http_route_collections_avg_response_queue_ms",
                 "http_route_collections_avg_h2o_request_total_ms",
                 "http_route_collections_avg_h2o_total_ms",
@@ -735,16 +957,19 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "http_route_stats_json_last_auth_ms",
                 "http_route_stats_json_last_handler_wait_ms",
                 "http_route_stats_json_last_handler_ms",
+                "http_route_stats_json_last_request_entry_ms",
                 "http_route_stats_json_last_response_queue_ms",
                 "http_route_stats_json_avg_total_ms",
                 "http_route_stats_json_avg_auth_ms",
                 "http_route_stats_json_avg_handler_wait_ms",
                 "http_route_stats_json_avg_handler_ms",
+                "http_route_stats_json_avg_request_entry_ms",
                 "http_route_stats_json_avg_response_queue_ms",
                 "http_route_metrics_json_last_total_ms",
                 "http_route_metrics_json_last_auth_ms",
                 "http_route_metrics_json_last_handler_wait_ms",
                 "http_route_metrics_json_last_handler_ms",
+                "http_route_metrics_json_last_request_entry_ms",
                 "http_route_metrics_json_last_response_queue_ms",
                 "http_route_metrics_json_last_h2o_request_total_ms",
                 "http_route_metrics_json_last_h2o_total_ms",
@@ -752,6 +977,7 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "http_route_metrics_json_avg_auth_ms",
                 "http_route_metrics_json_avg_handler_wait_ms",
                 "http_route_metrics_json_avg_handler_ms",
+                "http_route_metrics_json_avg_request_entry_ms",
                 "http_route_metrics_json_avg_response_queue_ms",
                 "http_route_metrics_json_avg_h2o_request_total_ms",
                 "http_route_metrics_json_avg_h2o_total_ms",
@@ -759,6 +985,7 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "http_route_search_last_auth_ms",
                 "http_route_search_last_handler_wait_ms",
                 "http_route_search_last_handler_ms",
+                "http_route_search_last_request_entry_ms",
                 "http_route_search_last_response_queue_ms",
                 "http_route_search_last_h2o_request_total_ms",
                 "http_route_search_last_h2o_total_ms",
@@ -766,11 +993,13 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "http_route_search_avg_auth_ms",
                 "http_route_search_avg_handler_wait_ms",
                 "http_route_search_avg_handler_ms",
+                "http_route_search_avg_request_entry_ms",
                 "http_route_search_avg_response_queue_ms",
                 "http_route_search_avg_h2o_request_total_ms",
                 "http_route_search_avg_h2o_total_ms",
                 "config_import_batch_size",
                 "http_request_last_total_ms",
+                "http_request_last_request_entry_ms",
                 "http_request_last_response_queue_ms",
                 "http_request_last_h2o_header_ms",
                 "http_request_last_h2o_body_ms",
@@ -784,6 +1013,7 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "http_import_last_handler_wait_ms",
                 "http_import_last_handler_ms",
                 "http_import_last_unattributed_ms",
+                "http_import_last_request_entry_ms",
                 "http_import_last_conn_to_start_ms",
                 "http_import_last_response_dispatch_ms",
                 "http_import_last_response_pre_dispatch_wait_ms",
@@ -800,6 +1030,7 @@ def collect_metrics_sample(base_url: str, api_key: str, timeout: float) -> dict[
                 "http_import_avg_handler_wait_ms",
                 "http_import_avg_handler_ms",
                 "http_import_avg_unattributed_ms",
+                "http_import_avg_request_entry_ms",
                 "http_import_avg_response_pre_dispatch_wait_ms",
                 "http_import_avg_response_queue_ms",
                 "http_import_avg_h2o_request_total_ms",
@@ -835,13 +1066,16 @@ def run_metrics_sampler(
     samples: list[MetricsSample],
     lock: threading.Lock,
 ) -> None:
+    client = PersistentHttpClient(base_url, api_key, timeout)
     while not stop_event.is_set():
-        values = collect_metrics_sample(base_url, api_key, timeout)
+        values = collect_metrics_sample(base_url, api_key, timeout, client=client)
         if values is not None:
             with lock:
                 samples.append(MetricsSample(ts_ms=now_ms(), phase=phase_tracker.get(), values=values))
         if stop_event.wait(interval_s):
+            client.close()
             return
+    client.close()
 
 
 def summarize_metrics_timeline(samples: list[MetricsSample]) -> dict[str, dict[str, float | int]]:
@@ -921,6 +1155,59 @@ def summarize_search_samples_by_phase(samples: list[SearchSample]) -> dict[str, 
     }
 
 
+def summarize_named_latency_series(series: dict[str, list[float]]) -> dict[str, dict[str, float]]:
+    return {name: summarize_latencies(values) for name, values in sorted(series.items()) if values}
+
+
+def summarize_probe_server_timing(
+    probe_stats: dict[str, ProbeStats],
+) -> dict[str, dict[str, dict[str, float]]]:
+    return {
+        route: summarize_named_latency_series(stats.server_timing_ms)
+        for route, stats in probe_stats.items()
+        if stats.server_timing_ms
+    }
+
+
+def summarize_probe_server_timing_by_phase(
+    samples: list[ProbeSample],
+) -> dict[str, dict[str, dict[str, dict[str, float]]]]:
+    grouped: dict[str, dict[str, dict[str, list[float]]]] = {}
+    for sample in samples:
+        if not sample.success or not sample.server_timing_ms:
+            continue
+        route_metrics = grouped.setdefault(sample.phase, {}).setdefault(sample.route, {})
+        for name, value in sample.server_timing_ms.items():
+            route_metrics.setdefault(name, []).append(value)
+    return {
+        phase: {
+            route: summarize_named_latency_series(metric_map)
+            for route, metric_map in sorted(route_map.items())
+        }
+        for phase, route_map in sorted(grouped.items())
+    }
+
+
+def summarize_search_server_timing(stats: SearchStats) -> dict[str, dict[str, float]]:
+    return summarize_named_latency_series(stats.server_timing_ms)
+
+
+def summarize_search_server_timing_by_phase(
+    samples: list[SearchSample],
+) -> dict[str, dict[str, dict[str, float]]]:
+    grouped: dict[str, dict[str, list[float]]] = {}
+    for sample in samples:
+        if not sample.success or not sample.server_timing_ms:
+            continue
+        phase_metrics = grouped.setdefault(sample.phase, {})
+        for name, value in sample.server_timing_ms.items():
+            phase_metrics.setdefault(name, []).append(value)
+    return {
+        phase: summarize_named_latency_series(metric_map)
+        for phase, metric_map in sorted(grouped.items())
+    }
+
+
 def run_imports(
     base_url: str,
     api_key: str,
@@ -993,6 +1280,7 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
     interesting = [
         "http_request_last_route",
         "http_request_last_total_ms",
+        "http_request_last_request_entry_ms",
         "http_request_last_response_pre_dispatch_wait_ms",
         "http_request_last_response_queue_ms",
         "http_request_last_response_send_window_ms",
@@ -1032,6 +1320,7 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_import_avg_handler_wait_ms",
         "http_import_avg_handler_ms",
         "http_import_avg_unattributed_ms",
+        "http_import_avg_request_entry_ms",
         "http_import_avg_response_pre_dispatch_wait_ms",
         "http_import_avg_response_queue_ms",
         "http_import_avg_h2o_request_total_ms",
@@ -1077,16 +1366,19 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_route_health_last_auth_ms",
         "http_route_health_last_handler_wait_ms",
         "http_route_health_last_handler_ms",
+        "http_route_health_last_request_entry_ms",
         "http_route_health_last_response_queue_ms",
         "http_route_health_avg_total_ms",
         "http_route_health_avg_auth_ms",
         "http_route_health_avg_handler_wait_ms",
         "http_route_health_avg_handler_ms",
+        "http_route_health_avg_request_entry_ms",
         "http_route_health_avg_response_queue_ms",
         "http_route_collections_last_total_ms",
         "http_route_collections_last_auth_ms",
         "http_route_collections_last_handler_wait_ms",
         "http_route_collections_last_handler_ms",
+        "http_route_collections_last_request_entry_ms",
         "http_route_collections_last_response_queue_ms",
         "http_route_collections_last_h2o_request_total_ms",
         "http_route_collections_last_h2o_total_ms",
@@ -1094,6 +1386,7 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_route_collections_avg_auth_ms",
         "http_route_collections_avg_handler_wait_ms",
         "http_route_collections_avg_handler_ms",
+        "http_route_collections_avg_request_entry_ms",
         "http_route_collections_avg_response_queue_ms",
         "http_route_collections_avg_h2o_request_total_ms",
         "http_route_collections_avg_h2o_total_ms",
@@ -1101,16 +1394,19 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_route_stats_json_last_auth_ms",
         "http_route_stats_json_last_handler_wait_ms",
         "http_route_stats_json_last_handler_ms",
+        "http_route_stats_json_last_request_entry_ms",
         "http_route_stats_json_last_response_queue_ms",
         "http_route_stats_json_avg_total_ms",
         "http_route_stats_json_avg_auth_ms",
         "http_route_stats_json_avg_handler_wait_ms",
         "http_route_stats_json_avg_handler_ms",
+        "http_route_stats_json_avg_request_entry_ms",
         "http_route_stats_json_avg_response_queue_ms",
         "http_route_metrics_json_last_total_ms",
         "http_route_metrics_json_last_auth_ms",
         "http_route_metrics_json_last_handler_wait_ms",
         "http_route_metrics_json_last_handler_ms",
+        "http_route_metrics_json_last_request_entry_ms",
         "http_route_metrics_json_last_response_queue_ms",
         "http_route_metrics_json_last_h2o_request_total_ms",
         "http_route_metrics_json_last_h2o_total_ms",
@@ -1118,6 +1414,7 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_route_metrics_json_avg_auth_ms",
         "http_route_metrics_json_avg_handler_wait_ms",
         "http_route_metrics_json_avg_handler_ms",
+        "http_route_metrics_json_avg_request_entry_ms",
         "http_route_metrics_json_avg_response_queue_ms",
         "http_route_metrics_json_avg_h2o_request_total_ms",
         "http_route_metrics_json_avg_h2o_total_ms",
@@ -1125,6 +1422,7 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_route_search_last_auth_ms",
         "http_route_search_last_handler_wait_ms",
         "http_route_search_last_handler_ms",
+        "http_route_search_last_request_entry_ms",
         "http_route_search_last_response_queue_ms",
         "http_route_search_last_h2o_request_total_ms",
         "http_route_search_last_h2o_total_ms",
@@ -1132,6 +1430,7 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "http_route_search_avg_auth_ms",
         "http_route_search_avg_handler_wait_ms",
         "http_route_search_avg_handler_ms",
+        "http_route_search_avg_request_entry_ms",
         "http_route_search_avg_response_queue_ms",
         "http_route_search_avg_h2o_request_total_ms",
         "http_route_search_avg_h2o_total_ms",
@@ -1524,6 +1823,8 @@ def run_scenario(
                     phase_tracker,
                     probe_samples,
                     probe_lock,
+                    args.enable_server_timing,
+                    not args.no_probe_keepalive,
                 ),
                 daemon=True,
             )
@@ -1543,6 +1844,8 @@ def run_scenario(
                     phase_tracker,
                     search_samples,
                     search_lock,
+                    args.enable_server_timing,
+                    not args.no_probe_keepalive,
                 ),
                 daemon=True,
             )
@@ -1765,23 +2068,31 @@ def run_scenario(
             route: {**summarize_latencies(data.latencies_ms), "failures": data.failures}
             for route, data in probe_stats.items()
         }
+        probe_server_timing_summary = summarize_probe_server_timing(probe_stats)
         search_summary = {**summarize_latencies(search_stats.latencies_ms), "failures": search_stats.failures}
+        search_server_timing_summary = summarize_search_server_timing(search_stats)
         with metrics_lock:
             metrics_timeline_summary = summarize_metrics_timeline(metrics_samples)
             metrics_timeline_summary_by_phase = summarize_metrics_timeline_by_phase(metrics_samples)
             metrics_label_summary_by_phase = summarize_metric_labels_by_phase(metrics_samples)
         with probe_lock:
             probe_phase_summary = summarize_probe_samples_by_phase(probe_samples)
+            probe_server_timing_phase_summary = summarize_probe_server_timing_by_phase(probe_samples)
         with search_lock:
             search_phase_summary = summarize_search_samples_by_phase(search_samples)
+            search_server_timing_phase_summary = summarize_search_server_timing_by_phase(search_samples)
         return ScenarioResult(
             label=label,
             create_timings_ms=create_timings,
             import_stats=import_summary,
             probe_stats=probe_summary,
             probe_phase_stats=probe_phase_summary,
+            probe_server_timing_stats=probe_server_timing_summary,
+            probe_server_timing_phase_stats=probe_server_timing_phase_summary,
             search_stats=search_summary,
             search_phase_stats=search_phase_summary,
+            search_server_timing_stats=search_server_timing_summary,
+            search_server_timing_phase_stats=search_server_timing_phase_summary,
             metrics_timeline_summary=metrics_timeline_summary,
             metrics_timeline_summary_by_phase=metrics_timeline_summary_by_phase,
             metrics_label_summary_by_phase=metrics_label_summary_by_phase,
@@ -1847,6 +2158,26 @@ def print_result(result: ScenarioResult) -> None:
                     f"    {route}: count={summary['count']} failures={summary['failures']} "
                     f"avg={summary['avg_ms']:.1f}ms p95={summary['p95_ms']:.1f}ms max={summary['max_ms']:.1f}ms"
                 )
+    if result.probe_server_timing_stats:
+        print("Probe Server-Timing summary:")
+        for route in sorted(result.probe_server_timing_stats.keys()):
+            print(f"  {route}:")
+            for metric_name, summary in result.probe_server_timing_stats[route].items():
+                print(
+                    f"    {metric_name}: count={summary['count']} "
+                    f"avg={summary['avg_ms']:.1f}ms p95={summary['p95_ms']:.1f}ms max={summary['max_ms']:.1f}ms"
+                )
+    if result.probe_server_timing_phase_stats:
+        print("Probe Server-Timing by phase:")
+        for phase in sorted(result.probe_server_timing_phase_stats.keys()):
+            print(f"  [{phase}]")
+            for route in sorted(result.probe_server_timing_phase_stats[phase].keys()):
+                print(f"    {route}:")
+                for metric_name, summary in result.probe_server_timing_phase_stats[phase][route].items():
+                    print(
+                        f"      {metric_name}: count={summary['count']} "
+                        f"avg={summary['avg_ms']:.1f}ms p95={summary['p95_ms']:.1f}ms max={summary['max_ms']:.1f}ms"
+                    )
 
     search_summary = result.search_stats
     print(
@@ -1862,6 +2193,22 @@ def print_result(result: ScenarioResult) -> None:
                 f"  [{phase}] count={summary['count']} failures={summary['failures']} "
                 f"avg={summary['avg_ms']:.1f}ms p95={summary['p95_ms']:.1f}ms max={summary['max_ms']:.1f}ms"
             )
+    if result.search_server_timing_stats:
+        print("Search Server-Timing summary:")
+        for metric_name, summary in result.search_server_timing_stats.items():
+            print(
+                f"  {metric_name}: count={summary['count']} "
+                f"avg={summary['avg_ms']:.1f}ms p95={summary['p95_ms']:.1f}ms max={summary['max_ms']:.1f}ms"
+            )
+    if result.search_server_timing_phase_stats:
+        print("Search Server-Timing by phase:")
+        for phase in sorted(result.search_server_timing_phase_stats.keys()):
+            print(f"  [{phase}]")
+            for metric_name, summary in result.search_server_timing_phase_stats[phase].items():
+                print(
+                    f"    {metric_name}: count={summary['count']} "
+                    f"avg={summary['avg_ms']:.1f}ms p95={summary['p95_ms']:.1f}ms max={summary['max_ms']:.1f}ms"
+                )
 
     print("Selected server metrics:")
     for key in sorted(result.final_metrics.keys()):
@@ -1979,6 +2326,16 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=0.0,
         help="Optional delay between streamed client-side import chunks.",
+    )
+    parser.add_argument(
+        "--enable-server-timing",
+        action="store_true",
+        help="Request H2O Server-Timing headers on probe/search traffic for deeper latency phase breakdowns.",
+    )
+    parser.add_argument(
+        "--no-probe-keepalive",
+        action="store_true",
+        help="Disable persistent HTTP connections for probe/search/metrics sampler threads.",
     )
     parser.add_argument(
         "--profile-cmd",
@@ -2100,8 +2457,12 @@ def main() -> int:
                 "import_stats": result.import_stats,
                 "probe_stats": result.probe_stats,
                 "probe_phase_stats": result.probe_phase_stats,
+                "probe_server_timing_stats": result.probe_server_timing_stats,
+                "probe_server_timing_phase_stats": result.probe_server_timing_phase_stats,
                 "search_stats": result.search_stats,
                 "search_phase_stats": result.search_phase_stats,
+                "search_server_timing_stats": result.search_server_timing_stats,
+                "search_server_timing_phase_stats": result.search_server_timing_phase_stats,
                 "metrics_timeline_summary": result.metrics_timeline_summary,
                 "metrics_timeline_summary_by_phase": result.metrics_timeline_summary_by_phase,
                 "metrics_label_summary_by_phase": result.metrics_label_summary_by_phase,
