@@ -566,12 +566,12 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
     return snapshot;
 }
 
-Option<doc_seq_id_t> Collection::to_doc(const std::string & json_str, nlohmann::json& document,
+Option<doc_seq_id_t> Collection::to_doc(std::string_view json_str, nlohmann::json& document,
                                         const index_operation_t& operation,
                                         const DIRTY_VALUES dirty_values,
                                         const std::string& id) {
     try {
-        document = nlohmann::json::parse(json_str);
+        document = nlohmann::json::parse(json_str.begin(), json_str.end());
     } catch(const std::exception& e) {
         TS_LOG(ERROR) << "JSON error: " << e.what();
         return Option<doc_seq_id_t>(400, std::string("Bad JSON: ") + e.what());
@@ -642,6 +642,13 @@ Option<doc_seq_id_t> Collection::to_doc(const std::string & json_str, nlohmann::
             }
         }
     }
+}
+
+Option<doc_seq_id_t> Collection::to_doc(const std::string & json_str, nlohmann::json& document,
+                                        const index_operation_t& operation,
+                                        const DIRTY_VALUES dirty_values,
+                                        const std::string& id) {
+    return to_doc(std::string_view(json_str), document, operation, dirty_values, id);
 }
 
 nlohmann::json Collection::get_summary_json() const {
@@ -845,6 +852,25 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
                                     const size_t remote_embedding_timeout_ms,
                                     const size_t remote_embedding_num_tries,
                                     const size_t index_batch_size) {
+    std::vector<std::string_view> json_line_views;
+    json_line_views.reserve(json_lines.size());
+    for(const auto& json_line : json_lines) {
+        json_line_views.emplace_back(json_line);
+    }
+
+    return add_many(json_line_views, json_lines, document, operation, id, dirty_values, return_doc, return_id,
+                    remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries,
+                    index_batch_size);
+}
+
+nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, std::vector<std::string>& json_out,
+                                    nlohmann::json& document,
+                                    const index_operation_t& operation, const std::string& id,
+                                    const DIRTY_VALUES& dirty_values, const bool& return_doc, const bool& return_id,
+                                    const size_t remote_embedding_batch_size,
+                                    const size_t remote_embedding_timeout_ms,
+                                    const size_t remote_embedding_num_tries,
+                                    const size_t index_batch_size) {
     const auto add_many_start = std::chrono::steady_clock::now();
     g_collection_import_metrics.active_add_many_calls.fetch_add(1, std::memory_order_relaxed);
     std::vector<index_record> index_records;
@@ -861,8 +887,12 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
     std::set<std::string> batch_doc_ids;
     bool found_batch_new_field = false;
 
+    if(json_out.size() < json_lines.size()) {
+        json_out.resize(json_lines.size());
+    }
+
     for(size_t i=0; i < json_lines.size(); i++) {
-        const std::string & json_line = json_lines[i];
+        const std::string_view json_line = json_lines[i];
         nlohmann::json parsed_document;
         const auto doc_parse_start = std::chrono::steady_clock::now();
         Option<doc_seq_id_t> doc_seq_id_op = to_doc(json_line, parsed_document, operation, dirty_values, id);
@@ -963,7 +993,8 @@ nlohmann::json Collection::add_many(std::vector<std::string>& json_lines, nlohma
 
         if((i+1) % effective_index_batch_size == 0 || i == json_lines.size()-1 || repeated_doc) {
             const auto batch_index_start = std::chrono::steady_clock::now();
-            batch_index(index_records, json_lines, num_indexed, return_doc, return_id, remote_embedding_batch_size, remote_embedding_timeout_ms, remote_embedding_num_tries);
+            batch_index(index_records, json_out, num_indexed, return_doc, return_id, remote_embedding_batch_size,
+                        remote_embedding_timeout_ms, remote_embedding_num_tries, &json_lines);
             batch_calls++;
             batch_index_ms += elapsed_ms_since(batch_index_start);
 
@@ -1125,7 +1156,8 @@ Option<nlohmann::json> Collection::update_matching_filter(const std::string& fil
 }
 void Collection::batch_index(std::vector<index_record>& index_records, std::vector<std::string>& json_out,
                              size_t &num_indexed, const bool& return_doc, const bool& return_id, const size_t remote_embedding_batch_size,
-                             const size_t remote_embedding_timeout_ms, const size_t remote_embedding_num_tries) {
+                             const size_t remote_embedding_timeout_ms, const size_t remote_embedding_num_tries,
+                             const std::vector<std::string_view>* original_json_lines) {
     const auto batch_index_start = std::chrono::steady_clock::now();
     CollectionBatchIndexMetrics metrics;
 
@@ -1238,7 +1270,11 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
 
           if(!index_record.indexed.ok()) {
                 if(return_doc) {
-                    res["document"] = json_out[index_record.position];
+                    if(original_json_lines != nullptr) {
+                        res["document"] = std::string((*original_json_lines)[index_record.position]);
+                    } else {
+                        res["document"] = json_out[index_record.position];
+                    }
                 }
                 res["error"] = index_record.indexed.error();
                 if (!index_record.embedding_res.empty()) {
@@ -1254,7 +1290,11 @@ void Collection::batch_index(std::vector<index_record>& index_records, std::vect
             res["code"] = index_record.indexed.code();
 
             if(return_doc) {
-                res["document"] = json_out[index_record.position];
+                if(original_json_lines != nullptr) {
+                    res["document"] = std::string((*original_json_lines)[index_record.position]);
+                } else {
+                    res["document"] = json_out[index_record.position];
+                }
             }
 
             if (return_id && index_record.doc.contains("id")) {

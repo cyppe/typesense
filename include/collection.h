@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <shared_mutex>
 #include <atomic>
+#include <string_view>
 #include "art.h"
 #include "index.h"
 #include "number.h"
@@ -941,6 +942,11 @@ public:
 
     Option<bool> update_apikey(const nlohmann::json& model_config, const std::string& field_name);
 
+    Option<doc_seq_id_t> to_doc(std::string_view json_str, nlohmann::json& document,
+                                const index_operation_t& operation,
+                                const DIRTY_VALUES dirty_values,
+                                const std::string& id="");
+
     Option<doc_seq_id_t> to_doc(const std::string& json_str, nlohmann::json& document,
                                 const index_operation_t& operation,
                                 const DIRTY_VALUES dirty_values,
@@ -983,7 +989,8 @@ public:
 
     void batch_index(std::vector<index_record>& index_records, std::vector<std::string>& json_out, size_t &num_indexed,
                      const bool& return_doc, const bool& return_id, const size_t remote_embedding_batch_size = 200,
-                     const size_t remote_embedding_timeout_ms = 60000, const size_t remote_embedding_num_tries = 2);
+                     const size_t remote_embedding_timeout_ms = 60000, const size_t remote_embedding_num_tries = 2,
+                     const std::vector<std::string_view>* original_json_lines = nullptr);
 
     void parse_search_query(const std::string &query, std::vector<std::string>& q_include_tokens, std::vector<std::string>& q_include_tokens_non_stemmed,
                             std::vector<std::vector<std::string>>& q_exclude_tokens,
@@ -1017,6 +1024,15 @@ public:
     nlohmann::json add_many(std::vector<std::string>& json_lines, nlohmann::json& document,
                             const index_operation_t& operation=CREATE, const std::string& id="",
                             const DIRTY_VALUES& dirty_values=DIRTY_VALUES::COERCE_OR_REJECT,
+                            const bool& return_doc=false, const bool& return_id=false,
+                            const size_t remote_embedding_batch_size=200,
+                            const size_t remote_embedding_timeout_ms=60000,
+                            const size_t remote_embedding_num_tries=2,
+                            const size_t index_batch_size=1000);
+
+    nlohmann::json add_many(std::vector<std::string_view>& json_lines, std::vector<std::string>& json_out,
+                            nlohmann::json& document, const index_operation_t& operation=CREATE,
+                            const std::string& id="", const DIRTY_VALUES& dirty_values=DIRTY_VALUES::COERCE_OR_REJECT,
                             const bool& return_doc=false, const bool& return_id=false,
                             const size_t remote_embedding_batch_size=200,
                             const size_t remote_embedding_timeout_ms=60000,

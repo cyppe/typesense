@@ -331,6 +331,26 @@ std::string preview_request_body_around_offset_for_log(const std::string& body, 
     return preview;
 }
 
+void split_newline_views(const std::string& body, std::vector<std::string_view>& result) {
+    result.clear();
+    result.reserve(64);
+
+    size_t start = 0;
+    while(start <= body.size()) {
+        const size_t end = body.find('\n', start);
+        const size_t len = (end == std::string::npos) ? (body.size() - start) : (end - start);
+        if(len > 0) {
+            result.emplace_back(body.data() + start, len);
+        }
+
+        if(end == std::string::npos) {
+            break;
+        }
+
+        start = end + 1;
+    }
+}
+
 void init_api(uint32_t cache_num_entries) {
     std::unique_lock lock(mutex);
     res_cache.capacity(cache_num_entries);
@@ -2429,24 +2449,22 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
     //TS_LOG(INFO) << "Import, " << "req->body_index=" << req->body_index << ", req->body.size: " << req->body.size();
     //TS_LOG(INFO) << "req body %: " << (float(req->body_index)/req->body.size())*100;
 
-    std::vector<std::string> json_lines;
+    std::vector<std::string_view> json_lines;
     const auto split_start = std::chrono::steady_clock::now();
-    StringUtils::split(req->body, json_lines, "\n", false, false);
+    split_newline_views(req->body, json_lines);
     const uint64_t split_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - split_start).count();
 
     //TS_LOG(INFO) << "json_lines.size before: " << json_lines.size() << ", req->body_index: " << req->body_index;
 
-    if(req->last_chunk_aggregate) {
-        //TS_LOG(INFO) << "req->last_chunk_aggregate is true";
-        req->body = "";
-    } else {
+    std::string next_body;
+    if(!req->last_chunk_aggregate) {
         if(!json_lines.empty()) {
             // check if req->body had complete last record
             bool complete_document;
 
             try {
-                nlohmann::json document = nlohmann::json::parse(json_lines.back());
+                nlohmann::json document = nlohmann::json::parse(json_lines.back().begin(), json_lines.back().end());
                 complete_document = document.is_object();
             } catch(const std::exception& e) {
                 complete_document = false;
@@ -2454,10 +2472,8 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
 
             if(!complete_document) {
                 // eject partial record
-                req->body = json_lines.back();
+                next_body.assign(json_lines.back().data(), json_lines.back().size());
                 json_lines.pop_back();
-            } else {
-                req->body = "";
             }
         }
     }
@@ -2466,7 +2482,7 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
     //TS_LOG(INFO) << "json_lines.size: " << json_lines.size() << ", req->res_state: " << req->res_state;
 
     // When only one partial record arrives as a chunk, an empty body is pushed to response stream
-    bool single_partial_record_body = (json_lines.empty() && !req->body.empty());
+    bool single_partial_record_body = (json_lines.empty() && !next_body.empty());
     std::stringstream response_stream;
 
     //TS_LOG(INFO) << "single_partial_record_body: " << single_partial_record_body;
@@ -2475,12 +2491,13 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
 
     if(!single_partial_record_body) {
         nlohmann::json document;
+        std::vector<std::string> json_responses;
 
         const auto& dirty_values = collection->parse_dirty_values_option(req->params[DIRTY_VALUES]);
         const bool& return_doc = req->params[RETURN_DOC] == "true";
         const bool& return_id = req->params[RETURN_ID] == "true";
         const auto add_many_start = std::chrono::steady_clock::now();
-        nlohmann::json json_res = collection->add_many(json_lines, document, operation, "",
+        nlohmann::json json_res = collection->add_many(json_lines, json_responses, document, operation, "",
                                                        dirty_values, return_doc, return_id,
                                                        REMOTE_EMBEDDING_BATCH_SIZE_VAL, REMOTE_EMBEDDING_TIMEOUT_MS_VAL,
                                                        REMOTE_EMBEDDING_NUM_TRIES_VAL, IMPORT_BATCH_SIZE);
@@ -2489,14 +2506,14 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
         //const std::string& import_summary_json = json_res->dump();
         //response_stream << import_summary_json << "\n";
 
-        for (size_t i = 0; i < json_lines.size(); i++) {
+        for (size_t i = 0; i < json_responses.size(); i++) {
             bool res_start = (res->status_code == 0) && (i == 0);
 
             if(res_start) {
                 // indicates first import result to be streamed
-                response_stream << json_lines[i];
+                response_stream << json_responses[i];
             } else {
-                response_stream << "\n" << json_lines[i];
+                response_stream << "\n" << json_responses[i];
             }
         }
 
@@ -2525,6 +2542,7 @@ bool post_import_documents(const std::shared_ptr<http_req>& req, const std::shar
         }
     }
 
+    req->body = std::move(next_body);
     res->content_type_header = "text/plain; charset=utf-8";
     res->body = response_stream.str();
 
