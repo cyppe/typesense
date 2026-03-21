@@ -1017,6 +1017,14 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
     result["http_import_last_response_send_window_ms"] =
         http_request_metrics.import_last_response_send_window_ms;
     result["http_import_last_response_final_sent"] = http_request_metrics.import_last_response_final_sent;
+    result["http_import_cumulative_requests"] = http_request_metrics.import_cumulative_requests;
+    result["http_import_avg_total_ms"] = http_request_metrics.import_avg_total_ms;
+    result["http_import_avg_auth_ms"] = http_request_metrics.import_avg_auth_ms;
+    result["http_import_avg_handler_wait_ms"] = http_request_metrics.import_avg_handler_wait_ms;
+    result["http_import_avg_handler_ms"] = http_request_metrics.import_avg_handler_ms;
+    result["http_import_avg_unattributed_ms"] = http_request_metrics.import_avg_unattributed_ms;
+    result["http_import_avg_response_queue_ms"] = http_request_metrics.import_avg_response_queue_ms;
+    result["http_import_max_total_ms"] = http_request_metrics.import_max_total_ms;
 
     const auto message_dispatch_metrics = get_message_dispatch_metrics_snapshot();
     result["message_dispatch_stream_response_queued"] = message_dispatch_metrics.stream_response.queued;

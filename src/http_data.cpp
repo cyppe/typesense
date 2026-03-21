@@ -42,6 +42,14 @@ struct http_request_metrics_state_t {
     std::atomic<uint64_t> import_last_response_first_send_delay_ms{0};
     std::atomic<uint64_t> import_last_response_send_window_ms{0};
     std::atomic<bool> import_last_response_final_sent{false};
+    std::atomic<uint64_t> import_cumulative_requests{0};
+    std::atomic<uint64_t> import_cumulative_total_ms{0};
+    std::atomic<uint64_t> import_cumulative_auth_ms{0};
+    std::atomic<uint64_t> import_cumulative_handler_wait_ms{0};
+    std::atomic<uint64_t> import_cumulative_handler_ms{0};
+    std::atomic<uint64_t> import_cumulative_unattributed_ms{0};
+    std::atomic<uint64_t> import_cumulative_response_queue_ms{0};
+    std::atomic<uint64_t> import_max_total_ms{0};
 };
 
 http_request_metrics_state_t g_http_request_metrics;
@@ -239,6 +247,25 @@ http_request_metrics_snapshot_t http_req::get_metrics_snapshot() {
         g_http_request_metrics.import_last_response_send_window_ms.load(std::memory_order_relaxed);
     snapshot.import_last_response_final_sent =
         g_http_request_metrics.import_last_response_final_sent.load(std::memory_order_relaxed);
+    snapshot.import_cumulative_requests =
+        g_http_request_metrics.import_cumulative_requests.load(std::memory_order_relaxed);
+    const uint64_t import_cumulative_requests = snapshot.import_cumulative_requests;
+    const auto average_or_zero = [import_cumulative_requests](uint64_t total) -> uint64_t {
+        return import_cumulative_requests == 0 ? 0 : (total / import_cumulative_requests);
+    };
+    snapshot.import_avg_total_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_total_ms.load(std::memory_order_relaxed));
+    snapshot.import_avg_auth_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_auth_ms.load(std::memory_order_relaxed));
+    snapshot.import_avg_handler_wait_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_handler_wait_ms.load(std::memory_order_relaxed));
+    snapshot.import_avg_handler_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_handler_ms.load(std::memory_order_relaxed));
+    snapshot.import_avg_unattributed_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_unattributed_ms.load(std::memory_order_relaxed));
+    snapshot.import_avg_response_queue_ms = average_or_zero(
+        g_http_request_metrics.import_cumulative_response_queue_ms.load(std::memory_order_relaxed));
+    snapshot.import_max_total_ms = g_http_request_metrics.import_max_total_ms.load(std::memory_order_relaxed);
     return snapshot;
 }
 
@@ -411,5 +438,16 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
         g_http_request_metrics.import_last_response_send_window_ms.store(response_send_window_ms,
                                                                          std::memory_order_relaxed);
         g_http_request_metrics.import_last_response_final_sent.store(response_final_sent, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_requests.fetch_add(1, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_total_ms.fetch_add(total_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_auth_ms.fetch_add(auth_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_handler_wait_ms.fetch_add(handler_wait_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_handler_ms.fetch_add(handler_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_unattributed_ms.fetch_add(unattributed_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_response_queue_ms.fetch_add(response_queue_ms, std::memory_order_relaxed);
+        const uint64_t prev_max = g_http_request_metrics.import_max_total_ms.load(std::memory_order_relaxed);
+        if (total_ms > prev_max) {
+            g_http_request_metrics.import_max_total_ms.store(total_ms, std::memory_order_relaxed);
+        }
     }
 }

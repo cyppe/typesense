@@ -293,6 +293,14 @@ struct http_request_metrics_snapshot_t {
     uint64_t import_last_response_first_send_delay_ms = 0;
     uint64_t import_last_response_send_window_ms = 0;
     bool import_last_response_final_sent = false;
+    uint64_t import_cumulative_requests = 0;
+    uint64_t import_avg_total_ms = 0;
+    uint64_t import_avg_auth_ms = 0;
+    uint64_t import_avg_handler_wait_ms = 0;
+    uint64_t import_avg_handler_ms = 0;
+    uint64_t import_avg_unattributed_ms = 0;
+    uint64_t import_avg_response_queue_ms = 0;
+    uint64_t import_max_total_ms = 0;
 };
 
 struct message_dispatch_type_metrics_snapshot_t {

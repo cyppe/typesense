@@ -305,9 +305,13 @@ inline std::string get_array_field_value(const nlohmann::json& doc, const std::s
                 doc[field_name][index].dump();
 }
 
-Option<bool> Collection::update_async_references_with_lock(const std::string& ref_coll_name, const std::string& filter,
-                                                           const std::set<std::string>& filter_values,
-                                                           const uint32_t ref_seq_id, const std::string& field_name) {
+Option<bool> Collection::update_async_references_with_lock(
+    const std::unordered_map<std::string, uint32_t>& value_to_ref_seq_id,
+    const std::string& field_name) {
+    if (value_to_ref_seq_id.empty()) {
+        return Option<bool>(true);
+    }
+
     field field;
     {
         std::shared_lock lock(mutex);
@@ -318,6 +322,27 @@ Option<bool> Collection::update_async_references_with_lock(const std::string& re
         }
         field = it.value();
     }
+
+    std::string filter_value;
+    if (value_to_ref_seq_id.size() > 1) {
+        filter_value = "[";
+    }
+
+    bool first_value = true;
+    for (const auto& value_seq_id : value_to_ref_seq_id) {
+        if (!first_value) {
+            filter_value += ",";
+        }
+
+        filter_value += value_seq_id.first;
+        first_value = false;
+    }
+
+    if (value_to_ref_seq_id.size() > 1) {
+        filter_value += "]";
+    }
+
+    const auto filter = field_name + ":= " + filter_value;
 
     // Update reference helper field of the docs matching the filter.
     filter_result_t filter_result;
@@ -382,10 +407,24 @@ Option<bool> Collection::update_async_references_with_lock(const std::string& re
         if (field.is_singular()) {
             // Referenced value is guaranteed to be unique.
             // Set reference helper field of all the docs that matched filter to `ref_seq_id`.
+            if (!existing_document.contains(field_name)) {
+                return Option<bool>(400, "Expected document `id: " + id + "` to have `" + field_name + "` field.");
+            }
+
+            const auto referenced_value = existing_document[field_name].is_number_integer() ?
+                std::to_string(existing_document[field_name].get<int64_t>()) :
+                existing_document[field_name].is_string() ?
+                    existing_document[field_name].get<std::string>() :
+                    existing_document[field_name].dump();
+            const auto ref_seq_id_it = value_to_ref_seq_id.find(referenced_value);
+            if (ref_seq_id_it == value_to_ref_seq_id.end()) {
+                continue;
+            }
+
             nlohmann::json update_document;
             update_document["id"] = id;
             update_document[field_name] = existing_document[field_name];
-            update_document[reference_helper_field_name] = ref_seq_id;
+            update_document[reference_helper_field_name] = ref_seq_id_it->second;
 
             buffer.push_back(update_document.dump());
         } else {
@@ -412,13 +451,14 @@ Option<bool> Collection::update_async_references_with_lock(const std::string& re
             auto should_update = false;
             for (uint32_t j = 0; j < existing_document[field_name].size(); j++) {
                 auto const& ref_value = get_array_field_value(existing_document, field_name, j);
-                if (filter_values.count(ref_value) == 0) {
+                const auto ref_seq_id_it = value_to_ref_seq_id.find(ref_value);
+                if (ref_seq_id_it == value_to_ref_seq_id.end()) {
                     continue;
                 }
 
                 should_update = true;
                 // Set reference helper field to `ref_seq_id` at the index corresponding to where reference field has value.
-                update_document[reference_helper_field_name][j] = ref_seq_id;
+                update_document[reference_helper_field_name][j] = ref_seq_id_it->second;
             }
 
             if (should_update) {

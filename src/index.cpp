@@ -1244,6 +1244,21 @@ void Index::index_field_in_memory(const std::string& collection_name, const fiel
 
 void Index::update_async_references(const std::string& collection_name, std::vector<index_record>& iter_batch,
                                     const spp::sparse_hash_map<std::string, std::set<reference_pair_t>>& async_referenced_ins) {
+    struct async_reference_batch_key_t {
+        std::string referencing_collection_name;
+        std::string referencing_field_name;
+
+        bool operator<(const async_reference_batch_key_t& other) const {
+            if (referencing_collection_name != other.referencing_collection_name) {
+                return referencing_collection_name < other.referencing_collection_name;
+            }
+
+            return referencing_field_name < other.referencing_field_name;
+        }
+    };
+
+    std::map<async_reference_batch_key_t, std::unordered_map<std::string, uint32_t>> pending_updates;
+
     for (auto& record: iter_batch) {
         if (!record.indexed.ok() || record.is_update) {
             continue;
@@ -1326,15 +1341,28 @@ void Index::update_async_references(const std::string& collection_name, std::vec
                     break;
                 }
 
-                auto const ref_filter = referencing_field_name + ":= " += ref_filter_value;
-                auto update_op = referencing_coll->update_async_references_with_lock(collection_name, ref_filter, values, seq_id,
-                                                                                     referencing_field_name);
-                if (!update_op.ok()) {
-                    record.index_failure(400, "Error while updating async reference field `" + referencing_field_name +
-                                              "` of collection `" += referencing_collection_name + "`: " += update_op.error());
-                    break;
+                auto& value_to_ref_seq_id = pending_updates[{referencing_collection_name, referencing_field_name}];
+                for (const auto& value : values) {
+                    value_to_ref_seq_id[value] = seq_id;
                 }
             }
+        }
+    }
+
+    auto& cm = CollectionManager::get_instance();
+    for (auto& pending_update : pending_updates) {
+        auto& key = pending_update.first;
+        auto referencing_coll = cm.get_collection(key.referencing_collection_name);
+        if (referencing_coll == nullptr) {
+            continue;
+        }
+
+        auto update_op = referencing_coll->update_async_references_with_lock(
+            pending_update.second, key.referencing_field_name);
+        if (!update_op.ok()) {
+            TS_LOG(ERROR) << "Error while updating async reference field `" << key.referencing_field_name
+                          << "` of collection `" << key.referencing_collection_name << "`: "
+                          << update_op.error();
         }
     }
 }

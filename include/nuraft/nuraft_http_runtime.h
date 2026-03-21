@@ -140,7 +140,7 @@ private:
     mutable std::unordered_map<std::string, std::string> document_cache_;
     mutable std::shared_mutex read_preference_mutex_;
     mutable std::unordered_set<std::string> materialized_read_preferred_collections_;
-    uint64_t live_product_state_applied_index_;
+    std::atomic<uint64_t> live_product_state_applied_index_{0};
     std::atomic<uint64_t> active_import_requests_{0};
     std::atomic<uint64_t> cumulative_import_requests_{0};
     std::atomic<uint64_t> cumulative_import_bytes_{0};
@@ -156,7 +156,7 @@ private:
     std::atomic<uint64_t> last_import_docs_per_sec_{0};
     std::atomic<uint64_t> last_import_bytes_per_sec_{0};
     std::atomic<uint64_t> max_import_total_ms_{0};
-    mutable std::mutex mutex_;
+    mutable std::shared_mutex mutex_;
 
     // Real NuRaft consensus members.
     std::unique_ptr<nuraft::raft_launcher> raft_launcher_;

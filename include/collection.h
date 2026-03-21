@@ -1298,9 +1298,9 @@ public:
     Option<bool> get_related_ids_with_lock(const std::string& field_name, const std::vector<uint32_t>& seq_id_vec,
                                            std::vector<uint32_t>& result) const;
 
-    Option<bool> update_async_references_with_lock(const std::string& ref_coll_name, const std::string& filter,
-                                                   const std::set<std::string>& filter_values,
-                                                   const uint32_t ref_seq_id, const std::string& field_name);
+    Option<bool> update_async_references_with_lock(
+        const std::unordered_map<std::string, uint32_t>& value_to_ref_seq_id,
+        const std::string& field_name);
 
     Option<uint32_t> get_sort_index_value_with_lock(const std::string& field_name, const uint32_t& seq_id) const;
 

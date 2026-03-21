@@ -516,8 +516,7 @@ NuRaftHttpRuntimeService::NuRaftHttpRuntimeService(HttpServer* server, NuRaftHtt
     : server_(server),
       options_(std::move(options)),
       layout_(NuRaftStateLayout::from_data_dir(options_.startup_options.data_dir)),
-      initialized_(false),
-      live_product_state_applied_index_(0) {}
+      initialized_(false) {}
 
 bool NuRaftHttpRuntimeService::cache_enabled() const {
     return materialized_state_sink_ != nullptr;
@@ -612,7 +611,7 @@ bool replay_live_product_state(HttpServer* server,
 }
 
 bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
-    std::unique_lock<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     if (!initialized_.load()) {
         error.clear();
         return true;
@@ -645,24 +644,32 @@ bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
     }
 
     if (materialized_state_sink_ != nullptr) {
-        return replay_live_product_state(server_,
-                                         *materialized_state_sink_,
-                                         live_product_state_applied_index_,
-                                         error);
+        uint64_t replayed_through_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+        const bool ok = replay_live_product_state(server_,
+                                                  *materialized_state_sink_,
+                                                  replayed_through_index,
+                                                  error);
+        if (ok) {
+            live_product_state_applied_index_.store(replayed_through_index, std::memory_order_relaxed);
+        }
+        return ok;
     }
 
     NuRaftKvStateMachineSink sink(layout_);
+    uint64_t replayed_through_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
     if (!replay_live_product_state(server_, sink,
-                                   live_product_state_applied_index_,
+                                   replayed_through_index,
                                    error)) {
         TS_LOG(WARNING) << "NuRaft sync replay deferred: " << error;
         error.clear();
+    } else {
+        live_product_state_applied_index_.store(replayed_through_index, std::memory_order_relaxed);
     }
     return true;
 }
 
 bool NuRaftHttpRuntimeService::initialize(std::string& error) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
     if (!NuRaftStateInitializer::initialize(options_.startup_options, identity_, bootstrap_config_, error)) {
         return false;
     }
@@ -675,13 +682,15 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         return false;
     }
 
+    uint64_t replayed_through_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
     if (!replay_live_product_state(server_,
                                    *materialized_state_sink_,
-                                   live_product_state_applied_index_,
+                                   replayed_through_index,
                                    error)) {
         materialized_state_sink_.reset();
         return false;
     }
+    live_product_state_applied_index_.store(replayed_through_index, std::memory_order_relaxed);
 
     {
         std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
@@ -720,12 +729,28 @@ void NuRaftHttpRuntimeService::send_response(const std::shared_ptr<http_req>& re
 
     response->wait();
     auto* req_res = new async_req_res_t(request, response, true);
+    request->mark_response_dispatch();
     server_->send_message(HttpServer::STREAM_RESPONSE_MESSAGE, req_res);
 }
 
 void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
                                      const std::shared_ptr<http_res>& response) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    struct handler_scope_t {
+        std::shared_ptr<http_req> request;
+        explicit handler_scope_t(const std::shared_ptr<http_req>& req): request(req) {
+            if (request->handler_start_ts_us.load(std::memory_order_relaxed) == 0) {
+                request->mark_handler_start();
+            }
+        }
+
+        ~handler_scope_t() {
+            if (request->handler_end_ts_us.load(std::memory_order_relaxed) == 0) {
+                request->mark_handler_end();
+            }
+        }
+    } handler_scope(request);
+
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     std::string error;
     if (!initialized_.load()) {
         response->set_500("NuRaft runtime service is not initialized.");
@@ -784,8 +809,9 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
             send_response(request, response);
             return;
         }
-        if (committed_index > live_product_state_applied_index_) {
-            live_product_state_applied_index_ = committed_index;
+        const uint64_t applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+        if (committed_index > applied_index) {
+            live_product_state_applied_index_.store(committed_index, std::memory_order_relaxed);
         }
         send_response(request, response);
         return;
@@ -804,8 +830,9 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         if (!handler_ok && response->status_code == 0) {
             response->set_500(error);
         }
-        if (committed_index > live_product_state_applied_index_) {
-            live_product_state_applied_index_ = committed_index;
+        const uint64_t applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+        if (committed_index > applied_index) {
+            live_product_state_applied_index_.store(committed_index, std::memory_order_relaxed);
         }
 
         if (route != nullptr && (route->async_req || route->async_res)) {
@@ -825,8 +852,9 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         }
         error.clear();
     }
-    if (committed_index > live_product_state_applied_index_) {
-        live_product_state_applied_index_ = committed_index;
+    const uint64_t applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+    if (committed_index > applied_index) {
+        live_product_state_applied_index_.store(committed_index, std::memory_order_relaxed);
     }
 
     update_single_node_document_cache(*request, route_kind);
@@ -1075,7 +1103,7 @@ uint64_t NuRaftHttpRuntimeService::node_state() const {
 }
 
 nlohmann::json NuRaftHttpRuntimeService::get_status() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     uint64_t state_machine_applied_index = 0;
     std::string applied_index_error;
     const bool has_state_machine_applied_index =
@@ -1112,8 +1140,9 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         uint64_t last_idx = raft_server_->get_last_log_idx();
         status["last_index"] = last_idx;
         status["committed_index"] = committed_idx;
-        status["known_applied_index"] = live_product_state_applied_index_;
-        status["read_caught_up"] = initialized_.load() && live_product_state_applied_index_ >= committed_idx;
+        const uint64_t known_applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+        status["known_applied_index"] = known_applied_index;
+        status["read_caught_up"] = initialized_.load() && known_applied_index >= committed_idx;
         status["applying_index"] = 0;
         status["raft_leader_id"] = raft_server_->get_leader();
         status["raft_term"] = raft_server_->get_term();
@@ -1132,7 +1161,7 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
 void NuRaftHttpRuntimeService::do_snapshot(const std::string& snapshot_path,
                                            const std::shared_ptr<http_req>& req,
                                            const std::shared_ptr<http_res>& res) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
     std::string error;
     NuRaftKvStateMachineSink* snapshot_sink = materialized_state_sink_ != nullptr ? materialized_state_sink_.get() : nullptr;
     if (snapshot_sink == nullptr) {
