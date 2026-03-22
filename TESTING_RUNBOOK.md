@@ -320,7 +320,7 @@ Notes:
 - The harness now also summarizes important server warnings from `typesense-server` logs (`event=slow_request`, `Threadpool exhaustion detected`, and `Async reference helper slow path`) so regressions show up directly in the replay output instead of only in raw logs.
 - `/metrics.json` now exposes helper-level cumulative/max counters too, including the last helper field name plus retry/failure counters (`collection_import_last_async_reference_helper_field_name`, `collection_import_cumulative_async_reference_helper_*`, `collection_import_max_async_reference_helper_*`). Use those before diving into raw logs when a category/product fanout import looks suspicious.
 - The replay output now includes a `Reference seed summary` block split by `products` and `vehicles`, so late-reference regressions are visible even when the initial `product_vehicle_fitments_se` import stays fast.
-- The current helper policy is generic across all async-reference fields: late fanouts below about `1.5M` matched docs stay monolithic, while larger fanouts switch to bounded `50k` helper chunks. On the regression lane above, that should show up as `collection_import_last_async_reference_helper_chunks=1` on the `1M` lane and many chunks on the `3M` lane.
+- The current helper policy is generic across all async-reference fields: once the matched set exceeds about `100k` docs, the helper samples stored-doc size and only chunks if the estimated fetched JSON would exceed about `512 MiB`. Chunk size is then planned toward that byte budget with a `50k`-doc floor. On the regression lanes above, that should show up as `collection_import_last_async_reference_helper_chunks=1` on the `1M` lane, a small number of large chunks on the `3M` lane, and `4` chunks on the `180k` large-doc category lane below.
 - If you want to validate the import slow-request log payload itself, pass `--server-arg=--log-slow-requests-time-ms=<threshold>` to the replay and inspect the emitted `slow_request_samples` in the final log summary.
 - The replay also surfaces snapshot posture now (`nuraft_snapshot_distance`, `nuraft_snapshot_in_progress`, `nuraft_last_snapshot_*`, `nuraft_cumulative_snapshots`). If a DDEV-only timeout happens at a repeatable document count, validate this lane before changing import code again: a too-low snapshot distance can stall the commit thread inside `snapshot_and_compact()` and look like a generic write timeout from the client side.
 - For profiling, use host tools against the local replay PID rather than trying to hide `perf`/eBPF inside a container. The build/test flow remains Docker-first; the profiling flow is host-side because `perf`, `runqlat`, and related tools need direct kernel and PID-namespace visibility.
@@ -367,22 +367,24 @@ python3 scripts/replay_fitment_import_stress.py \
   --server-arg=10
 ```
 
-Synthetic category fanout replay:
+DDEV-scale large-doc category fanout replay:
 
 ```bash
 python3 scripts/replay_fitment_import_stress.py \
   --binary ./bazel-bin/typesense-server \
   --workload category_fanout \
-  --product-docs 100000 \
-  --category-docs 500 \
+  --product-docs 180000 \
+  --category-docs 711 \
+  --batch-docs 711 \
   --preseed-batch-docs 5000 \
-  --batch-docs 500 \
+  --import-workers 3 \
   --probe-profile dashboard \
-  --probe-workers 4 \
-  --search-workers 2 \
+  --probe-workers 2 \
+  --search-workers 1 \
   --probe-interval 0.2 \
+  --timeout 360 \
   --server-batch-size 1000 \
-  --fanout-product-extra-bytes 4096
+  --fanout-product-extra-bytes 12000
 ```
 
 Mixed DDEV-parity replay with a constrained worker pool:

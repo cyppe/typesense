@@ -19,6 +19,42 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 42: Byte-Aware Async-Reference Chunk Planning Fixes Medium-Count Large-Doc Fanout Without Regressing Huge Small-Doc Fanout (2026-03-22)
+
+**Baseline commit:** `8f4ebfd5`
+**Candidate:** local working tree on top of `HEAD` at run time
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 1000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 240 --server-batch-size 1000`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 3000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 360 --server-batch-size 1000`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload category_fanout --product-docs 180000 --category-docs 711 --batch-docs 711 --preseed-batch-docs 5000 --import-workers 3 --fanout-product-extra-bytes 12000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 360 --server-batch-size 1000`
+
+**Scenario:** DDEV on the current published image still reproduced one remaining generic fanout regression: a `categories_se` import rewrote only `177,813` `products_se` docs, but those stored product documents were large enough to fetch about `2.14 GiB` of JSON in one helper pass, resulting in a `33.99s` slow request with `helper_chunks=1`. The final helper policy therefore cannot key only off matched-doc count. Current HEAD now samples stored-doc size once the matched set is large enough to matter and then plans helper chunk size toward a `512 MiB` fetched-doc budget, with a `50k`-doc floor so the helper does not fragment into tiny writes.
+
+### Findings
+
+- The new rule preserves the good moderate-fitment behavior. On the `1M` late-reference fitment lane, the helper estimated about `191.5 MiB` of fetched JSON, stayed monolithic (`planned_chunk_docs=1,000,000`, `chunks=1`), and improved the critical late `vehicles_se` seed from the old baseline `6353.2ms` to `5121.1ms` with `slow_request_count=0` and `threadpool_exhaustion_count=0`.
+- The same rule also improves the very large small-doc lane without falling back to dozens of fixed `50k` chunks. On the `3M` late-reference fitment lane, the helper estimated about `574.0 MiB`, planned `2,805,706` docs per chunk, finished in `2` chunks, and improved the late `vehicles_se` seed to `18500.2ms` versus the old baseline `19197.8ms`, again with zero slow requests and zero thread-pool exhaustion.
+- The DDEV-like large-doc category lane now takes the bounded path automatically. On `category_fanout` with `180k` products, `711` categories, and `12KB` stored blobs, the helper estimated about `3.36 GiB`, planned `50,000` docs per chunk, ran in `4` chunks, completed the `categories_se` import in `18858.5ms`, and kept `/health` at `0.6ms`, `/metrics.json` at `3.7ms`, and search at `32.8ms` average / `42.2ms` p95.
+- The new helper planning telemetry is useful on its own. Slow helper logs and `/metrics.json` now expose the planned chunk docs, sample size, and estimated total fetched bytes (`planned_chunk_docs`, `chunk_plan_sample_docs`, `chunk_plan_estimated_total_doc_bytes`), which makes it obvious whether a regression is coming from many small docs or fewer huge ones.
+
+### Summary Table
+
+| Lane | Late product seed avg | Late vehicle/category seed avg | Helper matched docs | Planned chunk docs | Helper chunks | Outcome |
+|---|---:|---:|---:|---:|---:|---|
+| baseline `8f4ebfd5`, `1M` fitments | `1407.9 ms` | `6353.2 ms` | `1,000,000` | implicit monolithic | implicit monolithic | Healthy |
+| fork current byte-aware, `1M` fitments | `1172.4 ms` | `5121.1 ms` | `1,000,000` | `1,000,000` | `1` | Better moderate fanout |
+| baseline `8f4ebfd5`, `3M` fitments | `4142.4 ms` | `19197.8 ms` | `3,000,000` | implicit monolithic | implicit monolithic | Healthy but large one-shot rewrite |
+| fork current byte-aware, `3M` fitments | `3851.1 ms` | `18500.2 ms` | `3,000,000` | `2,805,706` | `2` | Large fanout bounded with better throughput |
+| fork current byte-aware, `category_fanout 180k` | — | `18858.5 ms` | `180,000` | `50,000` | `4` | Large-doc fanout bounded and DDEV-parity healthy |
+
+### Decision
+
+- Keep the generic byte-aware helper planner: once the matched set exceeds `100k` docs, sample stored-doc size, keep moderate total fetched bytes monolithic, and otherwise plan chunk size toward about `512 MiB` with a `50k`-doc floor.
+- Keep the `1M` and `3M` late-reference fitment lanes plus the `180k` large-doc `category_fanout` lane as the canonical local regression set for async-reference helper work.
+- Do **not** go back to a pure count-only helper threshold. It misses the real DDEV case where the matched-doc count looks moderate but the stored documents are huge.
+
+---
+
 ## Run 41: Generic Late-Reference Fanout Policy Validation (2026-03-22)
 
 **Baseline commit:** `8f4ebfd5`

@@ -45,9 +45,13 @@ const int ALTER_STATUS_MSG_COUNT = 5; // we keep track of last 5 status of alter
 namespace {
 
 // Keep helper fanout updates bounded so late reference seeding does not build one
-// giant fetch/reindex/write batch, but avoid slicing moderate fanouts too finely.
-constexpr uint32_t kAsyncReferenceHelperChunkDocs = 50'000;
-constexpr uint32_t kAsyncReferenceHelperChunkThresholdDocs = 1'500'000;
+// giant fetch/reindex/write batch. The chunk plan should react to document size,
+// not just raw match count, so medium fanout over very large stored docs gets
+// chunked while huge fanout over tiny docs can still stay mostly monolithic.
+constexpr uint32_t kAsyncReferenceHelperChunkMinDocs = 50'000;
+constexpr uint32_t kAsyncReferenceHelperChunkThresholdDocs = 100'000;
+constexpr uint32_t kAsyncReferenceHelperChunkPlanSampleDocs = 2'048;
+constexpr uint64_t kAsyncReferenceHelperChunkTargetBytes = 512ULL * 1024ULL * 1024ULL;
 
 bool yyjson_to_nlohmann(yyjson_val* value, nlohmann::json& out) {
     if(value == nullptr || yyjson_is_null(value)) {
@@ -145,6 +149,9 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> last_async_reference_helper_total_ms{0};
     std::atomic<uint64_t> last_async_reference_helper_chunks{0};
     std::atomic<uint64_t> last_async_reference_helper_max_chunk_docs{0};
+    std::atomic<uint64_t> last_async_reference_helper_planned_chunk_docs{0};
+    std::atomic<uint64_t> last_async_reference_helper_chunk_plan_sample_docs{0};
+    std::atomic<uint64_t> last_async_reference_helper_chunk_plan_estimated_total_doc_bytes{0};
     std::atomic<uint64_t> cumulative_async_reference_helper_invocations{0};
     std::atomic<uint64_t> cumulative_async_reference_helper_slow_paths{0};
     std::atomic<uint64_t> cumulative_async_reference_helper_matched_docs{0};
@@ -576,6 +583,9 @@ Option<bool> Collection::update_async_references_with_lock(
     uint64_t fetch_ms = 0;
     uint64_t helper_chunks = 0;
     uint64_t helper_max_chunk_docs = 0;
+    uint64_t helper_planned_chunk_docs = filter_result.count;
+    uint64_t helper_chunk_plan_sample_docs = 0;
+    uint64_t helper_chunk_plan_estimated_total_doc_bytes = 0;
     uint64_t total_updated_docs = 0;
 
     auto record_async_reference_helper_metrics = [&](uint64_t updated_docs, uint64_t total_ms) {
@@ -621,6 +631,12 @@ Option<bool> Collection::update_async_references_with_lock(
         g_collection_import_metrics.last_async_reference_helper_chunks.store(helper_chunks, std::memory_order_relaxed);
         g_collection_import_metrics.last_async_reference_helper_max_chunk_docs.store(helper_max_chunk_docs,
                                                                                     std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_planned_chunk_docs.store(
+            helper_planned_chunk_docs, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_chunk_plan_sample_docs.store(
+            helper_chunk_plan_sample_docs, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_chunk_plan_estimated_total_doc_bytes.store(
+            helper_chunk_plan_estimated_total_doc_bytes, std::memory_order_relaxed);
 
         if (total_ms >= 1000) {
             g_collection_import_metrics.cumulative_async_reference_helper_slow_paths.fetch_add(1,
@@ -830,9 +846,57 @@ Option<bool> Collection::update_async_references_with_lock(
         return Option<bool>(true);
     };
 
-    const uint32_t helper_chunk_docs = filter_result.count > kAsyncReferenceHelperChunkThresholdDocs
-                                           ? kAsyncReferenceHelperChunkDocs
-                                           : filter_result.count;
+    auto plan_helper_chunk_docs = [&]() -> uint32_t {
+        if (filter_result.count <= kAsyncReferenceHelperChunkThresholdDocs) {
+            return filter_result.count;
+        }
+
+        helper_chunk_plan_sample_docs = std::min<uint32_t>(filter_result.count, kAsyncReferenceHelperChunkPlanSampleDocs);
+
+        std::vector<std::string> sample_seq_id_keys;
+        sample_seq_id_keys.reserve(helper_chunk_plan_sample_docs);
+        for (uint32_t i = 0; i < helper_chunk_plan_sample_docs; i++) {
+            sample_seq_id_keys.emplace_back(get_seq_id_key(filter_result.docs[i]));
+        }
+
+        std::vector<StoreStatus> sample_doc_statuses;
+        std::vector<std::string> sample_docs;
+        const auto sample_fetch_start = std::chrono::steady_clock::now();
+        store->multi_get(sample_seq_id_keys, sample_doc_statuses, sample_docs, false);
+        fetch_ms += elapsed_ms_since(sample_fetch_start);
+
+        uint64_t sampled_doc_bytes = 0;
+        uint64_t sampled_docs_found = 0;
+        for (size_t i = 0; i < sample_doc_statuses.size() && i < sample_docs.size(); i++) {
+            if (sample_doc_statuses[i] != StoreStatus::FOUND) {
+                continue;
+            }
+            sampled_doc_bytes += sample_docs[i].size();
+            sampled_docs_found++;
+        }
+
+        if (sampled_docs_found == 0 || sampled_doc_bytes == 0) {
+            return std::min<uint32_t>(filter_result.count, kAsyncReferenceHelperChunkMinDocs);
+        }
+
+        const double avg_doc_bytes = static_cast<double>(sampled_doc_bytes) /
+                                     static_cast<double>(sampled_docs_found);
+        helper_chunk_plan_estimated_total_doc_bytes =
+            static_cast<uint64_t>(avg_doc_bytes * static_cast<double>(filter_result.count));
+
+        if (helper_chunk_plan_estimated_total_doc_bytes <= kAsyncReferenceHelperChunkTargetBytes) {
+            return filter_result.count;
+        }
+
+        uint64_t planned_docs = static_cast<uint64_t>(
+            static_cast<double>(kAsyncReferenceHelperChunkTargetBytes) / avg_doc_bytes);
+        planned_docs = std::max<uint64_t>(kAsyncReferenceHelperChunkMinDocs, planned_docs);
+        planned_docs = std::min<uint64_t>(filter_result.count, planned_docs);
+        return static_cast<uint32_t>(planned_docs);
+    };
+
+    const uint32_t helper_chunk_docs = plan_helper_chunk_docs();
+    helper_planned_chunk_docs = helper_chunk_docs;
     for (uint32_t chunk_begin = 0; chunk_begin < filter_result.count; chunk_begin += helper_chunk_docs) {
         const uint32_t chunk_end = std::min<uint32_t>(filter_result.count, chunk_begin + helper_chunk_docs);
         auto chunk_op = process_chunk(chunk_begin, chunk_end);
@@ -850,7 +914,10 @@ Option<bool> Collection::update_async_references_with_lock(
                         << " matched_docs=" << filter_result.count
                         << " updated_docs=" << total_updated_docs
                         << " chunks=" << helper_chunks
+                        << " planned_chunk_docs=" << helper_planned_chunk_docs
                         << " max_chunk_docs=" << helper_max_chunk_docs
+                        << " chunk_plan_sample_docs=" << helper_chunk_plan_sample_docs
+                        << " chunk_plan_estimated_total_doc_bytes=" << helper_chunk_plan_estimated_total_doc_bytes
                         << " filter_ms=" << filter_ms
                         << " fetch_ms=" << fetch_ms
                         << " parse_ms=" << parse_ms
@@ -919,6 +986,13 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
         g_collection_import_metrics.last_async_reference_helper_chunks.load(std::memory_order_relaxed);
     snapshot.last_async_reference_helper_max_chunk_docs =
         g_collection_import_metrics.last_async_reference_helper_max_chunk_docs.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_planned_chunk_docs =
+        g_collection_import_metrics.last_async_reference_helper_planned_chunk_docs.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_chunk_plan_sample_docs =
+        g_collection_import_metrics.last_async_reference_helper_chunk_plan_sample_docs.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_chunk_plan_estimated_total_doc_bytes =
+        g_collection_import_metrics.last_async_reference_helper_chunk_plan_estimated_total_doc_bytes.load(
+            std::memory_order_relaxed);
     snapshot.cumulative_async_reference_helper_invocations =
         g_collection_import_metrics.cumulative_async_reference_helper_invocations.load(std::memory_order_relaxed);
     snapshot.cumulative_async_reference_helper_slow_paths =
