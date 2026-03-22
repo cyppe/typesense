@@ -339,7 +339,7 @@ jobs:
           scripts/bazel_in_docker.sh "${args[@]}"
 
       - name: Upload Linux GPU provider build inputs
-        if: matrix.target_os == 'linux' && (matrix.release_suffix == '' || (inputs.target_scope == 'linux-arm64-lg-page16' && matrix.artifact_name == 'linux-arm64-lg-page16'))
+        if: inputs.build_gpu_deps && matrix.target_os == 'linux' && (matrix.release_suffix == '' || (inputs.target_scope == 'linux-arm64-lg-page16' && matrix.artifact_name == 'linux-arm64-lg-page16'))
         uses: actions/upload-artifact@v7
         with:
           name: gpu-provider-build-inputs-linux-${{ matrix.target_arch }}
