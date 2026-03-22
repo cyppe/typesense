@@ -125,8 +125,8 @@ Done. Audit complete — stabilized grouping, curation ordering, embedding polli
 
 ## Priority Queue
 
-1. [ ] Run the broad local validation sweep now that the heavy-import replay lane is healthy again.
-   Current state: the corrected upstream-comparable fitment replay is now green after two key fixes: lighten the NuRaft read/auth sync path and stop running heavier GET routes inline on the H2O event loop. On the corrected `--server-batch-size 1000` lane, the fork improved to `109922.5 docs/s` vs upstream `74892.6` at `100k`, and `106273.4 docs/s` vs `73030.5` at `200k`, while search and control-plane reads stayed operational during import. The next step is broader local validation (`scripts/run_api_tests.sh -- --no-secrets`, relevant C++ suite replay, and then the broader `//:typesense-test` lane if the faster checks stay green).
+1. [x] Run the broad local validation sweep now that the heavy-import replay lane is healthy again.
+   Current state: completed on March 21, 2026. `scripts/run_api_tests.sh -- --no-secrets` passed, `scripts/bazel_in_docker.sh test //:typesense-test` passed, and the corrected heavy-import replay stayed green through the stronger `500k` upstream compare and `1M` fork-only confirmation lanes (`133529.1 docs/s` with search `18.5ms` at `500k`, `121710.1 docs/s` with search `36.9ms` at `1M`). The next step is the real DDEV validation lane, not more local sweep work.
 2. [ ] Re-check the real DDEV lane with explicit `TYPESENSE_IMPORT_BATCH_SIZE=1000` before release promotion.
    Current state: the old `--server-batch-size 40` dashboard replay is now documented as a fork-only low-batch stress lane, not an upstream-comparable comparison, because upstream `v30.1` still batches internally at `1000`. The important remaining real-world question is how the corrected fork behaves in DDEV once the environment uses the same explicit `1000` ingest posture the corrected local replay uses.
 3. [ ] Trim the remaining control-plane gap only if it stays material after the validation sweep.
