@@ -456,6 +456,7 @@ class ScenarioResult:
     create_timings_ms: dict[str, float]
     import_stats: dict[str, Any]
     secondary_import_stats: dict[str, Any] | None
+    reference_seed_stats: dict[str, dict[str, Any]] | None
     probe_stats: dict[str, dict[str, float | int]]
     probe_phase_stats: dict[str, dict[str, dict[str, float | int]]]
     probe_server_timing_stats: dict[str, dict[str, dict[str, float]]]
@@ -747,7 +748,8 @@ def seed_target_collection(
     server_batch_size: int | None,
     client_chunk_bytes: int | None,
     client_chunk_delay_ms: float,
-) -> None:
+) -> ImportStats:
+    stats = ImportStats()
     start = 1
     while start <= total_docs:
         end = min(total_docs, start + batch_docs - 1)
@@ -755,7 +757,7 @@ def seed_target_collection(
         for value in range(start, end + 1):
             lines.append(json.dumps({"id": f"{collection}-{value}", id_field: value, "runId": 1}, separators=(",", ":")))
         body = ("\n".join(lines) + "\n").encode("utf-8")
-        status, payload, _ = import_ndjson(
+        status, payload, elapsed_ms = import_ndjson(
             base_url,
             api_key,
             collection,
@@ -766,7 +768,10 @@ def seed_target_collection(
             client_chunk_delay_ms,
         )
         ensure_success(status, payload.decode("utf-8", errors="replace"), f"seed {collection}")
+        stats.batch_latencies_ms.append(elapsed_ms)
+        stats.imported_docs += end - start + 1
         start = end + 1
+    return stats
 
 
 def build_fitment_batch(
@@ -1151,6 +1156,8 @@ def collect_metrics_sample(
                 "collection_import_last_async_reference_helper_fetched_doc_bytes",
                 "collection_import_last_async_reference_helper_written_doc_bytes",
                 "collection_import_last_async_reference_helper_max_doc_bytes",
+                "collection_import_last_async_reference_helper_chunks",
+                "collection_import_last_async_reference_helper_max_chunk_docs",
                 "collection_import_last_async_reference_helper_store_retry_writes",
                 "collection_import_last_async_reference_helper_write_failures",
                 "collection_import_last_async_reference_helper_total_ms",
@@ -1754,6 +1761,8 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "collection_import_last_async_reference_helper_fetched_doc_bytes",
         "collection_import_last_async_reference_helper_written_doc_bytes",
         "collection_import_last_async_reference_helper_max_doc_bytes",
+        "collection_import_last_async_reference_helper_chunks",
+        "collection_import_last_async_reference_helper_max_chunk_docs",
         "collection_import_last_async_reference_helper_store_retry_writes",
         "collection_import_last_async_reference_helper_write_failures",
         "collection_import_last_async_reference_helper_total_ms",
@@ -2196,6 +2205,7 @@ def run_scenario(
         fitment_product_collection = DEFAULT_PRODUCT_COLLECTION
         fitment_vehicle_collection = DEFAULT_VEHICLE_COLLECTION
         secondary_import_summary: dict[str, Any] | None = None
+        reference_seed_summary: dict[str, dict[str, Any]] | None = None
 
         if args.workload == "fitment":
             source_schema = schemas[args.source_collection]
@@ -2508,8 +2518,11 @@ def run_scenario(
             secondary_import_summary = summarize_import_stats(category_import_stats, elapsed_ms)
 
         if args.workload == "fitment" and args.seed_target_order == "after":
-            phase_tracker.set("reference_seed")
-            seed_target_collection(
+            reference_seed_summary = {}
+
+            phase_tracker.set("product_reference_seed")
+            product_seed_started = now_ms()
+            product_seed_stats = seed_target_collection(
                 process.base_url,
                 args.api_key,
                 fitment_product_collection,
@@ -2521,7 +2534,14 @@ def run_scenario(
                 args.client_chunk_bytes,
                 args.client_chunk_delay_ms,
             )
-            seed_target_collection(
+            reference_seed_summary["products"] = summarize_import_stats(
+                product_seed_stats,
+                now_ms() - product_seed_started,
+            )
+
+            phase_tracker.set("vehicle_reference_seed")
+            vehicle_seed_started = now_ms()
+            vehicle_seed_stats = seed_target_collection(
                 process.base_url,
                 args.api_key,
                 fitment_vehicle_collection,
@@ -2532,6 +2552,10 @@ def run_scenario(
                 args.server_batch_size,
                 args.client_chunk_bytes,
                 args.client_chunk_delay_ms,
+            )
+            reference_seed_summary["vehicles"] = summarize_import_stats(
+                vehicle_seed_stats,
+                now_ms() - vehicle_seed_started,
             )
         elif args.workload == "fitment" and args.seed_target_order == "never":
             pass
@@ -2643,6 +2667,7 @@ def run_scenario(
             create_timings_ms=create_timings,
             import_stats=import_summary,
             secondary_import_stats=secondary_import_summary,
+            reference_seed_stats=reference_seed_summary,
             probe_stats=probe_summary,
             probe_phase_stats=probe_phase_summary,
             probe_server_timing_stats=probe_server_timing_summary,
@@ -2709,6 +2734,16 @@ def print_result(result: ScenarioResult) -> None:
                 **result.secondary_import_stats
             )
         )
+    if result.reference_seed_stats is not None:
+        print("Reference seed summary:")
+        for seed_label, seed_stats in result.reference_seed_stats.items():
+            print(
+                "  {seed_label}: docs={docs} failed_docs={failed_docs} failed_batches={failed_batches} "
+                "avg={avg_ms:.1f}ms p95={p95_ms:.1f}ms max={max_ms:.1f}ms docs/s={docs_per_sec:.1f} batches/s={batches_per_sec:.2f}".format(
+                    seed_label=seed_label,
+                    **seed_stats,
+                )
+            )
 
     print("Probe summary:")
     for route, summary in result.probe_stats.items():
@@ -3074,6 +3109,7 @@ def main() -> int:
                 "create_timings_ms": result.create_timings_ms,
                 "import_stats": result.import_stats,
                 "secondary_import_stats": result.secondary_import_stats,
+                "reference_seed_stats": result.reference_seed_stats,
                 "probe_stats": result.probe_stats,
                 "probe_phase_stats": result.probe_phase_stats,
                 "probe_server_timing_stats": result.probe_server_timing_stats,

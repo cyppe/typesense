@@ -719,6 +719,8 @@ std::string http_req::get_slow_request_log_suffix(uint64_t total_ms) const {
            << ", helper_total_ms=" << import_metrics.last_async_reference_helper_total_ms
            << ", helper_matched_docs=" << import_metrics.last_async_reference_helper_matched_docs
            << ", helper_updated_docs=" << import_metrics.last_async_reference_helper_updated_docs
+           << ", helper_chunks=" << import_metrics.last_async_reference_helper_chunks
+           << ", helper_max_chunk_docs=" << import_metrics.last_async_reference_helper_max_chunk_docs
            << ", helper_store_retry_writes=" << import_metrics.last_async_reference_helper_store_retry_writes
            << ", helper_write_failures=" << import_metrics.last_async_reference_helper_write_failures
            << ", helper_slow_paths=" << import_metrics.cumulative_async_reference_helper_slow_paths

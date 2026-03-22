@@ -19,6 +19,43 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 41: Generic Late-Reference Fanout Policy Validation (2026-03-22)
+
+**Baseline commit:** `8f4ebfd5`
+**Candidate:** local working tree on top of `HEAD` at run time
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --binary /tmp/typesense-8f4ebfd5/bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 1000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 180 --server-batch-size 1000 --json-output /tmp/fitment-late-reference-fanout-base.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 1000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 180 --server-batch-size 1000 --json-output /tmp/fitment-late-reference-fanout-hybrid-1m.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary /tmp/typesense-8f4ebfd5/bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 3000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 240 --server-batch-size 1000 --json-output /tmp/fitment-late-reference-fanout-base-3m.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 3000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 240 --server-batch-size 1000 --json-output /tmp/fitment-late-reference-fanout-hybrid-3m.json`
+
+**Scenario:** validate the async-reference helper rewrite against two opposite fanout sizes without encoding collection-specific behavior. The moderate lane (`1M` fitments, `1k` vehicles) forces one late `vehicles_se` import to rewrite `1,000,000` fitment docs. The larger lane (`3M` fitments, same `1k` vehicles) forces one late `vehicles_se` import to rewrite `3,000,000` fitment docs. The final policy is generic: keep moderate fanouts monolithic, but switch to bounded `50k` helper chunks once the matched-doc set becomes large enough to threaten node responsiveness.
+
+### Findings
+
+- Always-on chunking was not the right generalization. Fixed `50k` chunks protected the multi-million-doc lane but added overhead on the `1M`-match case; fixed `100k` chunks improved the `1M` lane but regressed the `3M` lane again.
+- The best local policy is hybrid and collection-agnostic: keep helper rewrites monolithic until the matched set is large (`> 1.5M` docs), then process the helper work in bounded `50k` chunks.
+- On the moderate `1M` lane, the final hybrid build stayed monolithic (`collection_import_last_async_reference_helper_chunks=1`) and beat the old baseline on both late product seeding (`1407.9ms -> 1193.1ms`) and the critical late vehicle seed (`6353.2ms -> 5579.2ms`). It also kept `slow_request_count=0` and `threadpool_exhaustion_count=0`.
+- On the larger `3M` lane, the same hybrid build switched to `60` helper chunks of `50k` docs and still slightly beat the old baseline on the critical late vehicle seed (`19197.8ms -> 19002.2ms`) while keeping `slow_request_count=0` and `threadpool_exhaustion_count=0`.
+- The decision here should be based on the late reference-seed phases, not the initial fitment import throughput. The helper policy only runs during late `products_se` / `vehicles_se` seeding, so source-import throughput differences between separate runs are mostly environment noise and not the signal this lane is designed to optimize.
+
+### Summary Table
+
+| Lane | Late product seed avg | Late vehicle seed avg | Helper matched docs | Helper chunks | Slow requests | Outcome |
+|---|---:|---:|---:|---:|---:|---|
+| baseline `8f4ebfd5`, `1M` fitments | `1407.9 ms` | `6353.2 ms` | `1,000,000` | implicit monolithic | `0` | Healthy |
+| fork current hybrid, `1M` fitments | `1193.1 ms` | `5579.2 ms` | `1,000,000` | `1` | `0` | Better moderate fanout |
+| baseline `8f4ebfd5`, `3M` fitments | `4142.4 ms` | `19197.8 ms` | `3,000,000` | implicit monolithic | `0` | Healthy but large one-shot rewrite |
+| fork current hybrid, `3M` fitments | `4231.9 ms` | `19002.2 ms` | `3,000,000` | `60` | `0` | Large fanout bounded without regressions |
+
+### Decision
+
+- Keep the generic hybrid helper policy: monolithic below the large-fanout threshold, bounded `50k` helper chunks above it.
+- Keep the new `1M` and `3M` late-reference replay commands in `TESTING_RUNBOOK.md` as the canonical regression lanes for this issue class.
+- Do **not** add any collection-name-specific fast paths. The rule belongs to async-reference helper fanout size, not to `product_vehicle_fitments_se` or any other one schema.
+
+---
+
 ## Run 40: Update-Heavy Fitment Replay Isolates The Remaining DDEV Timeout To Snapshot Frequency (2026-03-22)
 
 **Commit:** local working tree on top of `HEAD` at run time

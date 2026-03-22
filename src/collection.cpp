@@ -44,6 +44,11 @@ const int ALTER_STATUS_MSG_COUNT = 5; // we keep track of last 5 status of alter
 
 namespace {
 
+// Keep helper fanout updates bounded so late reference seeding does not build one
+// giant fetch/reindex/write batch, but avoid slicing moderate fanouts too finely.
+constexpr uint32_t kAsyncReferenceHelperChunkDocs = 50'000;
+constexpr uint32_t kAsyncReferenceHelperChunkThresholdDocs = 1'500'000;
+
 bool yyjson_to_nlohmann(yyjson_val* value, nlohmann::json& out) {
     if(value == nullptr || yyjson_is_null(value)) {
         out = nullptr;
@@ -138,6 +143,8 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> last_async_reference_helper_store_retry_writes{0};
     std::atomic<uint64_t> last_async_reference_helper_write_failures{0};
     std::atomic<uint64_t> last_async_reference_helper_total_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_chunks{0};
+    std::atomic<uint64_t> last_async_reference_helper_max_chunk_docs{0};
     std::atomic<uint64_t> cumulative_async_reference_helper_invocations{0};
     std::atomic<uint64_t> cumulative_async_reference_helper_slow_paths{0};
     std::atomic<uint64_t> cumulative_async_reference_helper_matched_docs{0};
@@ -514,19 +521,11 @@ Option<bool> Collection::update_async_references_with_lock(
         return Option<bool>(true);
     }
 
-    std::vector<std::string> seq_id_keys;
-    seq_id_keys.reserve(filter_result.count);
-    for(uint32_t i = 0; i < filter_result.count; i++) {
-        seq_id_keys.emplace_back(get_seq_id_key(filter_result.docs[i]));
-    }
-
-    std::vector<StoreStatus> fetched_doc_statuses;
-    std::vector<std::string> fetched_docs;
-    const auto fetch_start = std::chrono::steady_clock::now();
-    store->multi_get(seq_id_keys, fetched_doc_statuses, fetched_docs, false);
-    const uint64_t fetch_ms = elapsed_ms_since(fetch_start);
-
-    auto load_existing_document = [&](uint32_t index, uint32_t seq_id, nlohmann::json& existing_document) -> bool {
+    auto load_existing_document = [&](const std::vector<StoreStatus>& fetched_doc_statuses,
+                                      const std::vector<std::string>& fetched_docs,
+                                      uint32_t index,
+                                      uint32_t seq_id,
+                                      nlohmann::json& existing_document) -> bool {
         if(index >= fetched_doc_statuses.size() || index >= fetched_docs.size()) {
             TS_LOG(ERROR) << "`" << name << "` collection: Missing fetched result for sequence ID `" << seq_id << "`.";
             return false;
@@ -574,6 +573,10 @@ Option<bool> Collection::update_async_references_with_lock(
     uint64_t fetched_doc_bytes = 0;
     uint64_t written_doc_bytes = 0;
     uint64_t max_doc_bytes = 0;
+    uint64_t fetch_ms = 0;
+    uint64_t helper_chunks = 0;
+    uint64_t helper_max_chunk_docs = 0;
+    uint64_t total_updated_docs = 0;
 
     auto record_async_reference_helper_metrics = [&](uint64_t updated_docs, uint64_t total_ms) {
         g_collection_import_metrics.cumulative_async_reference_helper_invocations.fetch_add(1, std::memory_order_relaxed);
@@ -615,6 +618,9 @@ Option<bool> Collection::update_async_references_with_lock(
         g_collection_import_metrics.last_async_reference_helper_write_failures.store(write_failures,
                                                                                     std::memory_order_relaxed);
         g_collection_import_metrics.last_async_reference_helper_total_ms.store(total_ms, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_chunks.store(helper_chunks, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_max_chunk_docs.store(helper_max_chunk_docs,
+                                                                                    std::memory_order_relaxed);
 
         if (total_ms >= 1000) {
             g_collection_import_metrics.cumulative_async_reference_helper_slow_paths.fetch_add(1,
@@ -626,191 +632,225 @@ Option<bool> Collection::update_async_references_with_lock(
         g_collection_import_metrics.last_async_reference_helper_field_name = field_name;
     };
 
-    for (uint32_t i = 0; i < filter_result.count; i++) {
-        auto const& seq_id = filter_result.docs[i];
+    auto process_chunk = [&](uint32_t chunk_begin, uint32_t chunk_end) -> Option<bool> {
+        helper_chunks++;
+        const auto chunk_docs = static_cast<uint64_t>(chunk_end - chunk_begin);
+        helper_max_chunk_docs = std::max<uint64_t>(helper_max_chunk_docs, chunk_docs);
 
-        nlohmann::json existing_document;
-        const auto parse_start = std::chrono::steady_clock::now();
-        if(!load_existing_document(i, seq_id, existing_document)) {
+        std::vector<std::string> seq_id_keys;
+        seq_id_keys.reserve(chunk_docs);
+        for (uint32_t i = chunk_begin; i < chunk_end; i++) {
+            seq_id_keys.emplace_back(get_seq_id_key(filter_result.docs[i]));
+        }
+
+        std::vector<StoreStatus> fetched_doc_statuses;
+        std::vector<std::string> fetched_docs;
+        const auto fetch_start = std::chrono::steady_clock::now();
+        store->multi_get(seq_id_keys, fetched_doc_statuses, fetched_docs, false);
+        fetch_ms += elapsed_ms_since(fetch_start);
+
+        std::vector<index_record> helper_updates;
+        helper_updates.reserve(chunk_docs);
+        std::vector<helper_storage_update_t> storage_updates;
+        storage_updates.reserve(chunk_docs);
+
+        for (uint32_t i = chunk_begin; i < chunk_end; i++) {
+            auto const& seq_id = filter_result.docs[i];
+            const auto fetched_index = i - chunk_begin;
+
+            nlohmann::json existing_document;
+            const auto parse_start = std::chrono::steady_clock::now();
+            if(!load_existing_document(fetched_doc_statuses, fetched_docs, fetched_index, seq_id, existing_document)) {
+                parse_ms += elapsed_ms_since(parse_start);
+                continue;
+            }
             parse_ms += elapsed_ms_since(parse_start);
-            continue;
-        }
-        parse_ms += elapsed_ms_since(parse_start);
-        if (i < fetched_docs.size()) {
-            fetched_doc_bytes += fetched_docs[i].size();
-            max_doc_bytes = std::max<uint64_t>(max_doc_bytes, fetched_docs[i].size());
-        }
-
-        if (!existing_document.contains("id") || !existing_document["id"].is_string()) {
-            TS_LOG(ERROR) << "`" << name << "` collection: Expected sequence ID `" << seq_id
-                          << "` to have string `id` field while updating async references.";
-            continue;
-        }
-
-        const auto id = existing_document["id"].get<std::string>();
-        const auto transform_start = std::chrono::steady_clock::now();
-        const auto* existing_helper_node = get_field_node(existing_document, reference_helper_field_name);
-        nlohmann::json old_helper_document = nlohmann::json::object();
-        if (existing_helper_node != nullptr) {
-            old_helper_document[reference_helper_field_name] = *existing_helper_node;
-        }
-        nlohmann::json new_helper_document = nlohmann::json::object();
-
-        if (reference_field.is_singular()) {
-            // Referenced value is guaranteed to be unique.
-            // Set reference helper field of all the docs that matched filter to `ref_seq_id`.
-            if (!has_field_value(existing_document, field_name)) {
-                return Option<bool>(400, "Expected document `id: " + id + "` to have `" + field_name + "` field.");
+            if (fetched_index < fetched_docs.size()) {
+                fetched_doc_bytes += fetched_docs[fetched_index].size();
+                max_doc_bytes = std::max<uint64_t>(max_doc_bytes, fetched_docs[fetched_index].size());
             }
 
-            const auto referenced_value = get_field_value(existing_document, field_name);
-            const auto ref_seq_id_it = value_to_ref_seq_id.find(referenced_value);
-            if (ref_seq_id_it == value_to_ref_seq_id.end()) {
+            if (!existing_document.contains("id") || !existing_document["id"].is_string()) {
+                TS_LOG(ERROR) << "`" << name << "` collection: Expected sequence ID `" << seq_id
+                              << "` to have string `id` field while updating async references.";
                 continue;
             }
 
-            const auto* helper_node = get_field_node(existing_document, reference_helper_field_name);
-            if (helper_node != nullptr &&
-                helper_node->is_number_unsigned() &&
-                helper_node->get<uint32_t>() == ref_seq_id_it->second) {
-                transform_ms += elapsed_ms_since(transform_start);
-                continue;
+            const auto id = existing_document["id"].get<std::string>();
+            const auto transform_start = std::chrono::steady_clock::now();
+            const auto* existing_helper_node = get_field_node(existing_document, reference_helper_field_name);
+            nlohmann::json old_helper_document = nlohmann::json::object();
+            if (existing_helper_node != nullptr) {
+                old_helper_document[reference_helper_field_name] = *existing_helper_node;
             }
+            nlohmann::json new_helper_document = nlohmann::json::object();
 
-            existing_document[reference_helper_field_name] = ref_seq_id_it->second;
-            new_helper_document[reference_helper_field_name] = ref_seq_id_it->second;
-        } else {
-            const auto* referenced_array = get_field_node(existing_document, field_name);
-            const auto* helper_array = get_field_node(existing_document, reference_helper_field_name);
+            if (reference_field.is_singular()) {
+                if (!has_field_value(existing_document, field_name)) {
+                    return Option<bool>(400, "Expected document `id: " + id + "` to have `" + field_name + "` field.");
+                }
 
-            if (referenced_array == nullptr || !referenced_array->is_array()) {
-                return Option<bool>(400, "Expected document `id: " + id + "` to have `" += field_name + "` array field "
-                                            "that is `" += get_field_value(existing_document, field_name) + "` instead.");
-            } else if (helper_array == nullptr || !helper_array->is_array()) {
-                return Option<bool>(400, "Expected document `id: " + id + "` to have `" += reference_helper_field_name +
-                                            "` array field that is `" += get_field_value(existing_document, field_name) +
-                                            "` instead.");
-            } else if (referenced_array->size() != helper_array->size()) {
-                return Option<bool>(400, "Expected document `id: " + id + "` to have equal count of elements in `" +=
-                                            field_name + ": " += get_field_value(existing_document, field_name) +
-                                            "` field and `" += reference_helper_field_name + ": " +=
-                                            get_field_value(existing_document, reference_helper_field_name) + "` field.");
-            }
-
-            auto should_update = false;
-            for (uint32_t j = 0; j < referenced_array->size(); j++) {
-                auto const& ref_value = get_array_field_value(existing_document, field_name, j);
-                const auto ref_seq_id_it = value_to_ref_seq_id.find(ref_value);
+                const auto referenced_value = get_field_value(existing_document, field_name);
+                const auto ref_seq_id_it = value_to_ref_seq_id.find(referenced_value);
                 if (ref_seq_id_it == value_to_ref_seq_id.end()) {
                     continue;
                 }
 
-                if ((*helper_array)[j].is_number_unsigned() &&
-                    (*helper_array)[j].get<uint32_t>() == ref_seq_id_it->second) {
+                const auto* helper_node = get_field_node(existing_document, reference_helper_field_name);
+                if (helper_node != nullptr &&
+                    helper_node->is_number_unsigned() &&
+                    helper_node->get<uint32_t>() == ref_seq_id_it->second) {
+                    transform_ms += elapsed_ms_since(transform_start);
                     continue;
                 }
 
-                should_update = true;
-                // Set reference helper field to `ref_seq_id` at the index corresponding to where reference field has value.
-                existing_document[reference_helper_field_name][j] = ref_seq_id_it->second;
+                existing_document[reference_helper_field_name] = ref_seq_id_it->second;
+                new_helper_document[reference_helper_field_name] = ref_seq_id_it->second;
+            } else {
+                const auto* referenced_array = get_field_node(existing_document, field_name);
+                const auto* helper_array = get_field_node(existing_document, reference_helper_field_name);
+
+                if (referenced_array == nullptr || !referenced_array->is_array()) {
+                    return Option<bool>(400, "Expected document `id: " + id + "` to have `" += field_name +
+                                                "` array field that is `" += get_field_value(existing_document, field_name) + "` instead.");
+                } else if (helper_array == nullptr || !helper_array->is_array()) {
+                    return Option<bool>(400, "Expected document `id: " + id + "` to have `" += reference_helper_field_name +
+                                                "` array field that is `" += get_field_value(existing_document, field_name) + "` instead.");
+                } else if (referenced_array->size() != helper_array->size()) {
+                    return Option<bool>(400, "Expected document `id: " + id + "` to have equal count of elements in `" +=
+                                                field_name + ": " += get_field_value(existing_document, field_name) +
+                                                "` field and `" += reference_helper_field_name + ": " +=
+                                                get_field_value(existing_document, reference_helper_field_name) + "` field.");
+                }
+
+                auto should_update = false;
+                for (uint32_t j = 0; j < referenced_array->size(); j++) {
+                    auto const& ref_value = get_array_field_value(existing_document, field_name, j);
+                    const auto ref_seq_id_it = value_to_ref_seq_id.find(ref_value);
+                    if (ref_seq_id_it == value_to_ref_seq_id.end()) {
+                        continue;
+                    }
+
+                    if ((*helper_array)[j].is_number_unsigned() &&
+                        (*helper_array)[j].get<uint32_t>() == ref_seq_id_it->second) {
+                        continue;
+                    }
+
+                    should_update = true;
+                    existing_document[reference_helper_field_name][j] = ref_seq_id_it->second;
+                }
+
+                if (!should_update) {
+                    transform_ms += elapsed_ms_since(transform_start);
+                    continue;
+                }
+
+                new_helper_document[reference_helper_field_name] = existing_document[reference_helper_field_name];
             }
 
-            if (!should_update) {
-                transform_ms += elapsed_ms_since(transform_start);
-                continue;
-            }
-
-            new_helper_document[reference_helper_field_name] = existing_document[reference_helper_field_name];
+            index_record update_record(0, seq_id, std::move(new_helper_document), index_operation_t::UPDATE, DIRTY_VALUES::REJECT);
+            update_record.old_doc = std::move(old_helper_document);
+            update_record.is_update = true;
+            update_record.index_success();
+            helper_updates.emplace_back(std::move(update_record));
+            storage_updates.push_back(helper_storage_update_t{seq_id, std::move(existing_document)});
+            transform_ms += elapsed_ms_since(transform_start);
         }
 
-        index_record update_record(0, seq_id, std::move(new_helper_document), index_operation_t::UPDATE, DIRTY_VALUES::REJECT);
-        update_record.old_doc = std::move(old_helper_document);
-        update_record.is_update = true;
-        update_record.index_success();
-        helper_updates.emplace_back(std::move(update_record));
-        storage_updates.push_back(helper_storage_update_t{seq_id, std::move(existing_document)});
-        transform_ms += elapsed_ms_since(transform_start);
-    }
+        if (helper_updates.empty()) {
+            return Option<bool>(true);
+        }
 
-    if (helper_updates.empty()) {
-        record_async_reference_helper_metrics(0, elapsed_ms_since(total_start));
+        const auto reindex_start = std::chrono::steady_clock::now();
+        auto reindex_op = index->reindex_field_in_memory(name, helper_field, helper_updates);
+        reindex_ms += elapsed_ms_since(reindex_start);
+        if (!reindex_op.ok()) {
+            return reindex_op;
+        }
+
+        std::vector<std::string> serialized_docs;
+        serialized_docs.reserve(storage_updates.size());
+        rocksdb::WriteBatch aggregated_batch;
+        const auto store_prep_start = std::chrono::steady_clock::now();
+        for (auto& storage_update : storage_updates) {
+            serialized_docs.emplace_back(storage_update.full_doc.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore));
+            written_doc_bytes += serialized_docs.back().size();
+            max_doc_bytes = std::max<uint64_t>(max_doc_bytes, serialized_docs.back().size());
+            aggregated_batch.Put(get_seq_id_key(storage_update.seq_id), serialized_docs.back());
+        }
+        store_prep_ms += elapsed_ms_since(store_prep_start);
+
+        {
+            const auto write_start = std::chrono::steady_clock::now();
+            const bool write_ok = store->batch_write(aggregated_batch);
+            write_ms += elapsed_ms_since(write_start);
+
+            if (!write_ok) {
+                std::vector<size_t> failed_record_indices;
+                failed_record_indices.reserve(helper_updates.size());
+
+                for (size_t i = 0; i < helper_updates.size(); i++) {
+                    store_retry_writes++;
+                    const auto single_write_start = std::chrono::steady_clock::now();
+                    const bool doc_write_ok = store->insert(get_seq_id_key(helper_updates[i].seq_id), serialized_docs[i]);
+                    write_ms += elapsed_ms_since(single_write_start);
+
+                    if (!doc_write_ok) {
+                        write_failures++;
+                        failed_record_indices.push_back(i);
+                    }
+                }
+
+                if (!failed_record_indices.empty()) {
+                    std::vector<index_record> revert_updates;
+                    revert_updates.reserve(failed_record_indices.size());
+                    for (const auto failed_index : failed_record_indices) {
+                        auto& failed_record = helper_updates[failed_index];
+                        index_record revert_record(0, failed_record.seq_id, failed_record.old_doc,
+                                                   index_operation_t::UPDATE, DIRTY_VALUES::REJECT);
+                        revert_record.old_doc = failed_record.doc;
+                        revert_record.is_update = true;
+                        revert_record.index_success();
+                        revert_updates.emplace_back(std::move(revert_record));
+                    }
+
+                    auto revert_op = index->reindex_field_in_memory(name, helper_field, revert_updates);
+                    if (!revert_op.ok()) {
+                        TS_LOG(ERROR) << "Error while reverting async reference helper updates for collection `" << name
+                                      << "` field `" << field_name << "` after store write failure: "
+                                      << revert_op.error();
+                    }
+
+                    return Option<bool>(500, "Could not write async reference updates to on-disk storage.");
+                }
+            }
+        }
+
+        total_updated_docs += helper_updates.size();
         return Option<bool>(true);
-    }
+    };
 
-    const auto reindex_start = std::chrono::steady_clock::now();
-    auto reindex_op = index->reindex_field_in_memory(name, helper_field, helper_updates);
-    reindex_ms = elapsed_ms_since(reindex_start);
-    if (!reindex_op.ok()) {
-        record_async_reference_helper_metrics(helper_updates.size(), elapsed_ms_since(total_start));
-        return reindex_op;
-    }
-
-    std::vector<std::string> serialized_docs;
-    serialized_docs.reserve(storage_updates.size());
-    rocksdb::WriteBatch aggregated_batch;
-    const auto store_prep_start = std::chrono::steady_clock::now();
-    for (auto& storage_update : storage_updates) {
-        serialized_docs.emplace_back(storage_update.full_doc.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore));
-        written_doc_bytes += serialized_docs.back().size();
-        max_doc_bytes = std::max<uint64_t>(max_doc_bytes, serialized_docs.back().size());
-        aggregated_batch.Put(get_seq_id_key(storage_update.seq_id), serialized_docs.back());
-    }
-    store_prep_ms = elapsed_ms_since(store_prep_start);
-
-    {
-        const auto write_start = std::chrono::steady_clock::now();
-        const bool write_ok = store->batch_write(aggregated_batch);
-        write_ms += elapsed_ms_since(write_start);
-
-        if (!write_ok) {
-            std::vector<size_t> failed_record_indices;
-            failed_record_indices.reserve(helper_updates.size());
-
-            for (size_t i = 0; i < helper_updates.size(); i++) {
-                store_retry_writes++;
-                const auto single_write_start = std::chrono::steady_clock::now();
-                const bool doc_write_ok = store->insert(get_seq_id_key(helper_updates[i].seq_id), serialized_docs[i]);
-                write_ms += elapsed_ms_since(single_write_start);
-
-                if (!doc_write_ok) {
-                    write_failures++;
-                    failed_record_indices.push_back(i);
-                }
-            }
-
-            if (!failed_record_indices.empty()) {
-                std::vector<index_record> revert_updates;
-                revert_updates.reserve(failed_record_indices.size());
-                for (const auto failed_index : failed_record_indices) {
-                    auto& failed_record = helper_updates[failed_index];
-                    index_record revert_record(0, failed_record.seq_id, failed_record.old_doc,
-                                               index_operation_t::UPDATE, DIRTY_VALUES::REJECT);
-                    revert_record.old_doc = failed_record.doc;
-                    revert_record.is_update = true;
-                    revert_record.index_success();
-                    revert_updates.emplace_back(std::move(revert_record));
-                }
-
-                auto revert_op = index->reindex_field_in_memory(name, helper_field, revert_updates);
-                if (!revert_op.ok()) {
-                    TS_LOG(ERROR) << "Error while reverting async reference helper updates for collection `" << name
-                                  << "` field `" << field_name << "` after store write failure: "
-                                  << revert_op.error();
-                }
-
-                record_async_reference_helper_metrics(helper_updates.size(), elapsed_ms_since(total_start));
-                return Option<bool>(500, "Could not write async reference updates to on-disk storage.");
-            }
+    const uint32_t helper_chunk_docs = filter_result.count > kAsyncReferenceHelperChunkThresholdDocs
+                                           ? kAsyncReferenceHelperChunkDocs
+                                           : filter_result.count;
+    for (uint32_t chunk_begin = 0; chunk_begin < filter_result.count; chunk_begin += helper_chunk_docs) {
+        const uint32_t chunk_end = std::min<uint32_t>(filter_result.count, chunk_begin + helper_chunk_docs);
+        auto chunk_op = process_chunk(chunk_begin, chunk_end);
+        if (!chunk_op.ok()) {
+            record_async_reference_helper_metrics(total_updated_docs, elapsed_ms_since(total_start));
+            return chunk_op;
         }
     }
 
     const uint64_t total_ms = elapsed_ms_since(total_start);
-    record_async_reference_helper_metrics(helper_updates.size(), total_ms);
+    record_async_reference_helper_metrics(total_updated_docs, total_ms);
     if (total_ms >= 1000) {
         TS_LOG(WARNING) << "Async reference helper slow path: collection=" << name
                         << " field=" << field_name
                         << " matched_docs=" << filter_result.count
-                        << " updated_docs=" << helper_updates.size()
+                        << " updated_docs=" << total_updated_docs
+                        << " chunks=" << helper_chunks
+                        << " max_chunk_docs=" << helper_max_chunk_docs
                         << " filter_ms=" << filter_ms
                         << " fetch_ms=" << fetch_ms
                         << " parse_ms=" << parse_ms
@@ -875,6 +915,10 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
         g_collection_import_metrics.last_async_reference_helper_write_failures.load(std::memory_order_relaxed);
     snapshot.last_async_reference_helper_total_ms =
         g_collection_import_metrics.last_async_reference_helper_total_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_chunks =
+        g_collection_import_metrics.last_async_reference_helper_chunks.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_max_chunk_docs =
+        g_collection_import_metrics.last_async_reference_helper_max_chunk_docs.load(std::memory_order_relaxed);
     snapshot.cumulative_async_reference_helper_invocations =
         g_collection_import_metrics.cumulative_async_reference_helper_invocations.load(std::memory_order_relaxed);
     snapshot.cumulative_async_reference_helper_slow_paths =

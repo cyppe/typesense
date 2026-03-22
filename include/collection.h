@@ -75,6 +75,8 @@ struct CollectionImportMetricsSnapshot {
     uint64_t last_async_reference_helper_store_retry_writes = 0;
     uint64_t last_async_reference_helper_write_failures = 0;
     uint64_t last_async_reference_helper_total_ms = 0;
+    uint64_t last_async_reference_helper_chunks = 0;
+    uint64_t last_async_reference_helper_max_chunk_docs = 0;
     uint64_t cumulative_async_reference_helper_invocations = 0;
     uint64_t cumulative_async_reference_helper_slow_paths = 0;
     uint64_t cumulative_async_reference_helper_matched_docs = 0;

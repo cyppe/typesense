@@ -1202,6 +1202,10 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         collection_import_metrics.last_async_reference_helper_write_failures;
     result["collection_import_last_async_reference_helper_total_ms"] =
         collection_import_metrics.last_async_reference_helper_total_ms;
+    result["collection_import_last_async_reference_helper_chunks"] =
+        collection_import_metrics.last_async_reference_helper_chunks;
+    result["collection_import_last_async_reference_helper_max_chunk_docs"] =
+        collection_import_metrics.last_async_reference_helper_max_chunk_docs;
     result["collection_import_cumulative_async_reference_helper_invocations"] =
         collection_import_metrics.cumulative_async_reference_helper_invocations;
     result["collection_import_cumulative_async_reference_helper_slow_paths"] =
