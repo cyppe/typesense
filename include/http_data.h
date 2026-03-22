@@ -564,7 +564,8 @@ struct http_req {
                 // NOTE: we log the `body` ONLY for multi-search query
                 TS_LOG(INFO) << "event=slow_request, time=" << ms_since_start << " ms"
                           << ", client_ip=" << client_ip << ", endpoint=" << full_url_path
-                          << ", body=" << (is_multi_search_query ? body : "");
+                          << ", body=" << (is_multi_search_query ? body : "")
+                          << get_slow_request_log_suffix(ms_since_start);
             }
         }
 
@@ -728,6 +729,7 @@ struct http_req {
         response_defer_count.fetch_add(1, std::memory_order_relaxed);
     }
 
+    std::string get_slow_request_log_suffix(uint64_t total_ms) const;
     static uint64_t now_ts_us();
     static http_request_metrics_snapshot_t get_metrics_snapshot();
     static void record_lifecycle_metrics(const http_req& req, const std::string& route, uint64_t total_ms);

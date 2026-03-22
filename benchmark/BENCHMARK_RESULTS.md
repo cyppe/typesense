@@ -19,6 +19,63 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 39: Helper Telemetry And Slow-Request Breakdown Validation On The DDEV-Parity Lane (2026-03-22)
+
+**Commit:** local working tree on top of `HEAD` at run time
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload mixed_category_fitment --product-docs 300000 --vehicle-docs 50000 --total-fitment-docs 200000 --category-docs 500 --batch-docs 5000 --import-workers 4 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --timeout 300 --server-batch-size 1000 --fanout-product-extra-bytes 8192 --server-arg=--thread-pool-size=4 --json-output /tmp/mixed-category-fitment-300k-thread4-post-metrics.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload category_fanout --product-docs 50000 --category-docs 500 --preseed-batch-docs 5000 --batch-docs 500 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --server-batch-size 1000 --fanout-product-extra-bytes 4096 --server-arg=--thread-pool-size=4 --server-arg=--log-slow-requests-time-ms=1000 --json-output /tmp/category-fanout-50k-slowlog.json`
+
+**Scenario:** keep the rewritten async-reference helper behavior unchanged, but add enough runtime telemetry that the next DDEV timeout can be explained from one replay run. The new signals include helper invocation counts, cumulative/max helper cost and bytes, helper write-retry/failure counters, the last helper field name, and import slow-request log lines that include upload/handler/response timing plus helper context.
+
+### Findings
+
+- The harsher mixed lane stayed green after the instrumentation pass. With `300k` products, `200k` concurrent fitments, `8KB` stored blobs, and `thread_pool_size=4`, fitment imports still averaged `135.3ms` while the long category fanout import completed in `24121.6ms`. `/health` stayed at `0.4ms`, `/metrics.json` at `3.1ms`, and search at `50.7ms` average / `87.5ms` p95.
+- The new helper metrics are now enough to identify the exact pathological field from `/metrics.json` alone. On the mixed lane above, the final metrics reported `collection_import_last_collection_name=categories_se`, `collection_import_last_async_reference_helper_field_name=primary_level_3_category_id`, `collection_import_last_async_reference_helper_total_ms=22955`, `collection_import_cumulative_async_reference_helper_invocations=1`, `collection_import_cumulative_async_reference_helper_slow_paths=1`, and zero helper store retries / write failures.
+- Thread-pool pressure is now easier to classify as well. The same mixed lane still logged `Threadpool exhaustion detected` nine times and captured `thread_pool_max_queued_tasks=7` / `thread_pool_max_wait_ms=81`, but cheap reads and search stayed responsive, which makes those warnings actionable context rather than automatic evidence of user-visible starvation.
+- The focused `category_fanout 50k` replay validated the new slow-request log suffix. With slow-request logging forced at `1000ms`, the log now includes `import_body_bytes`, `import_handler_ms`, `import_h2o_total_ms`, `helper_collection`, `helper_field`, `helper_total_ms`, `helper_matched_docs`, `helper_updated_docs`, and helper retry/failure counts on the same line as the `event=slow_request` record.
+
+### Decision
+
+- Keep the new async-reference helper cumulative/max metrics and slow-request import breakdowns. They materially reduce the time-to-root-cause for the remaining DDEV-only gap.
+- Treat the `mixed_category_fitment` lane plus the focused `category_fanout` slow-log lane as the canonical local observability checks before building another Docker image for DDEV validation.
+
+---
+
+## Run 38: Category-Fanout And Mixed DDEV-Parity Replays Stay Healthy On Current HEAD (2026-03-22)
+
+**Commit:** local working tree on top of `HEAD` at run time
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --baseline-binary /tmp/typesense-upstream-bin/typesense-server --baseline-label upstream-30.1 --candidate-binary ./bazel-bin/typesense-server --candidate-label fork-current --workload category_fanout --product-docs 100000 --category-docs 500 --preseed-batch-docs 5000 --batch-docs 500 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --server-batch-size 1000 --fanout-product-extra-bytes 4096 --json-output /tmp/category-fanout-100k-upstream-vs-fork.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload mixed_category_fitment --product-docs 100000 --vehicle-docs 30000 --total-fitment-docs 100000 --category-docs 500 --batch-docs 5000 --import-workers 3 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --server-batch-size 1000 --fanout-product-extra-bytes 4096 --server-arg=--thread-pool-size=4 --json-output /tmp/mixed-category-fitment-100k-thread4.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload mixed_category_fitment --product-docs 300000 --vehicle-docs 50000 --total-fitment-docs 200000 --category-docs 500 --batch-docs 5000 --import-workers 4 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --timeout 300 --server-batch-size 1000 --fanout-product-extra-bytes 8192 --server-arg=--thread-pool-size=4 --json-output /tmp/mixed-category-fitment-300k-thread4.json`
+
+**Scenario:** validate the rewritten async-reference helper on the exact failure shape DDEV exposed: large `products_se` documents with unresolved `primary_level_3_category_id`, then a `categories_se` import that fans out into synchronous helper updates, both in isolation and while concurrent `product_vehicle_fitments_se` imports keep the worker pool busy.
+
+### Findings
+
+- The fork now materially beats upstream on the synthetic single-import fanout lane. On the `100k` `category_fanout` replay, upstream needed `11490.2ms` for the `categories_se` import while the fork completed the same fanout in `4405.6ms`.
+- The new helper metrics explain where the time goes instead of leaving another mystery shell gap. On that `100k` fanout lane, the fork reported `matched_docs=100000`, `fetch_ms=368`, `reindex_ms=135`, `store_prep_ms=1080`, `write_ms=142`, and `total_ms=4152`, which is far smaller than the earlier DDEV-era `74s` category-import outlier.
+- The harsher mixed lane also stays operational. With `300k` preseeded `products_se` docs, `8KB` stored blobs per product, a `4`-thread worker pool, and concurrent fitment writes, the long `categories_se` import stretched to `24438.2ms`, but concurrent fitment batches still averaged `140.6ms`, `/health` stayed at `0.3ms`, `/metrics.json` at `1.6ms`, and search stayed usable at `53.5ms` average / `100.8ms` p95.
+- The replay harness now emits its own warning summary from `typesense-server` logs. On the mixed lanes above it reported one `Async reference helper slow path` warning as expected, but `slow_request_count=0` and `threadpool_exhaustion_count=0`.
+
+### Summary Table
+
+| Lane | Primary import avg | Secondary import avg | `/health` avg | `/metrics.json` avg | Search avg |
+|---|---:|---:|---:|---:|---:|
+| upstream `30.1`, `category_fanout 100k` | `11490.2 ms` | — | `0.4 ms` | `104.0 ms` | `18.6 ms` |
+| fork current, same `category_fanout 100k` | `4405.6 ms` | — | `7.3 ms` | `3.5 ms` | `22.7 ms` |
+| fork current, mixed `100k` fitment + `100k` category fanout, `thread_pool_size=4` | `104.7 ms` | `4197.4 ms` | `4.4 ms` | `1.2 ms` | `20.6 ms` |
+| fork current, mixed `200k` fitment + `300k` category fanout, `thread_pool_size=4` | `140.6 ms` | `24438.2 ms` | `0.3 ms` | `1.6 ms` | `53.5 ms` |
+
+### Decision
+
+- Keep `category_fanout` and `mixed_category_fitment` as the DDEV-parity heavy-import lanes for this issue class. The original fitment-only replay remains useful, but it no longer covers the categories-to-products fanout that triggered the Laravel timeouts.
+- Keep the async-reference helper rewrite. On current HEAD it is both faster than upstream on the isolated fanout lane and stable under concurrent fitment pressure.
+- Treat the next gate as a fresh DDEV validation on an image built from this newer runtime, because the earlier DDEV timeout evidence came from an older image before the helper rewrite and mixed-lane validation existed.
+
+---
+
 ## Run 37: Interleaved Logical Import Replay Makes Live Visibility Match The Fast Lane (2026-03-21)
 
 **Commit:** local working tree on top of `HEAD` at run time

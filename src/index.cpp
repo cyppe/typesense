@@ -752,6 +752,37 @@ size_t Index::batch_memory_index(Index *index,
     return num_indexed;
 }
 
+Option<bool> Index::reindex_field_in_memory(const std::string& collection_name,
+                                            const field& afield,
+                                            std::vector<index_record>& iter_batch) {
+    std::unique_lock lock(mutex);
+
+    for (auto& record : iter_batch) {
+        if (!record.indexed.ok()) {
+            continue;
+        }
+
+        try {
+            if (record.old_doc.contains(afield.name)) {
+                remove_field(record.seq_id, record.old_doc, afield.name, true);
+            }
+        } catch (const std::exception& e) {
+            return Option<bool>(500, "Error while removing field `" + afield.name +
+                                     "` from sequence ID `" + std::to_string(record.seq_id) +
+                                     "` during helper reindex: " + e.what());
+        }
+    }
+
+    try {
+        index_field_in_memory(collection_name, afield, iter_batch);
+    } catch (const std::exception& e) {
+        return Option<bool>(500, "Error while indexing field `" + afield.name +
+                                 "` during helper reindex: " + e.what());
+    }
+
+    return Option<bool>(true);
+}
+
 void Index::index_field_in_memory(const std::string& collection_name, const field& afield,
                                   std::vector<index_record>& iter_batch) {
     // indexes a given field of all documents in the batch

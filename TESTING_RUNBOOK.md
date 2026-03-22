@@ -234,6 +234,10 @@ It can either:
 - use the repo-owned fixture schemas that preserve the async-reference relationships, or
 - fetch the live fitment schema plus referenced field types from a running Typesense instance so the replay stays aligned with DDEV.
 
+Additional heavy-import workload modes:
+- `--workload category_fanout` preloads `products_se` with unresolved `primary_level_3_category_id` references and then measures the synchronous `categories_se` fanout/import path directly.
+- `--workload mixed_category_fitment` runs that `categories_se` fanout concurrently with live `product_vehicle_fitments_se` imports, which is the closest local approximation to the Laravel timeout pattern seen in DDEV.
+
 Typical single-binary smoke run:
 
 ```bash
@@ -272,7 +276,70 @@ Notes:
 - Use `--probe-profile dashboard` to exercise the same low-cost GET routes the Typesense dashboard hammers during import (`/collections`, `/aliases`, `/keys`, `/presets`, `/stemming/dictionaries`, `/stopwords`, `/debug`, plus `/health`, `/metrics.json`, `/stats.json`).
 - Use `--client-chunk-bytes` and `--client-chunk-delay-ms` if you want to simulate slower client-side upload pacing from a busy app container instead of sending each import body in one shot.
 - The lighter smoke lane is still useful for quick throughput checks, but the dashboard lane is the one to use for live control-plane/search responsiveness claims during import.
+- The harness now also summarizes important server warnings from `typesense-server` logs (`event=slow_request`, `Threadpool exhaustion detected`, and `Async reference helper slow path`) so regressions show up directly in the replay output instead of only in raw logs.
+- `/metrics.json` now exposes helper-level cumulative/max counters too, including the last helper field name plus retry/failure counters (`collection_import_last_async_reference_helper_field_name`, `collection_import_cumulative_async_reference_helper_*`, `collection_import_max_async_reference_helper_*`). Use those before diving into raw logs when a category/product fanout import looks suspicious.
+- If you want to validate the import slow-request log payload itself, pass `--server-arg=--log-slow-requests-time-ms=<threshold>` to the replay and inspect the emitted `slow_request_samples` in the final log summary.
 - For profiling, use host tools against the local replay PID rather than trying to hide `perf`/eBPF inside a container. The build/test flow remains Docker-first; the profiling flow is host-side because `perf`, `runqlat`, and related tools need direct kernel and PID-namespace visibility.
+
+Synthetic category fanout replay:
+
+```bash
+python3 scripts/replay_fitment_import_stress.py \
+  --binary ./bazel-bin/typesense-server \
+  --workload category_fanout \
+  --product-docs 100000 \
+  --category-docs 500 \
+  --preseed-batch-docs 5000 \
+  --batch-docs 500 \
+  --probe-profile dashboard \
+  --probe-workers 4 \
+  --search-workers 2 \
+  --probe-interval 0.2 \
+  --server-batch-size 1000 \
+  --fanout-product-extra-bytes 4096
+```
+
+Mixed DDEV-parity replay with a constrained worker pool:
+
+```bash
+python3 scripts/replay_fitment_import_stress.py \
+  --binary ./bazel-bin/typesense-server \
+  --workload mixed_category_fitment \
+  --product-docs 300000 \
+  --vehicle-docs 50000 \
+  --total-fitment-docs 200000 \
+  --category-docs 500 \
+  --batch-docs 5000 \
+  --import-workers 4 \
+  --probe-profile dashboard \
+  --probe-workers 4 \
+  --search-workers 2 \
+  --probe-interval 0.2 \
+  --timeout 300 \
+  --server-batch-size 1000 \
+  --fanout-product-extra-bytes 8192 \
+  --server-arg=--thread-pool-size=4
+```
+
+Focused category fanout replay that also validates the import slow-request log payload:
+
+```bash
+python3 scripts/replay_fitment_import_stress.py \
+  --binary ./bazel-bin/typesense-server \
+  --workload category_fanout \
+  --product-docs 50000 \
+  --category-docs 500 \
+  --preseed-batch-docs 5000 \
+  --batch-docs 500 \
+  --probe-profile dashboard \
+  --probe-workers 2 \
+  --search-workers 1 \
+  --probe-interval 0.2 \
+  --server-batch-size 1000 \
+  --fanout-product-extra-bytes 4096 \
+  --server-arg=--thread-pool-size=4 \
+  --server-arg=--log-slow-requests-time-ms=1000
+```
 
 Host-side profiling bundle against the replay lane:
 

@@ -2,6 +2,9 @@
 
 #include <atomic>
 #include <mutex>
+#include <sstream>
+
+#include "collection.h"
 
 namespace {
 
@@ -171,6 +174,102 @@ uint64_t duration_ms_between(const timeval& from, const timeval& until) {
     const uint64_t from_us = timeval_to_us(from);
     const uint64_t until_us = timeval_to_us(until);
     return until_us >= from_us ? (until_us - from_us) / 1000 : 0;
+}
+
+struct request_lifecycle_breakdown_t {
+    uint64_t auth_ms = 0;
+    uint64_t handler_wait_ms = 0;
+    uint64_t handler_ms = 0;
+    uint64_t unattributed_ms = 0;
+    uint64_t request_entry_ms = 0;
+    uint64_t conn_to_start_ms = 0;
+    uint64_t response_dispatch_ms = 0;
+    uint64_t response_pre_dispatch_wait_ms = 0;
+    uint64_t response_queue_ms = 0;
+    uint64_t response_progress_ms = 0;
+    uint64_t response_first_send_delay_ms = 0;
+    uint64_t response_send_window_ms = 0;
+    uint64_t response_send_calls = 0;
+    uint64_t response_proceed_count = 0;
+    uint64_t response_defer_count = 0;
+    uint64_t h2o_header_ms = 0;
+    uint64_t h2o_body_ms = 0;
+    uint64_t h2o_request_total_ms = 0;
+    uint64_t h2o_process_ms = 0;
+    uint64_t h2o_response_ms = 0;
+    uint64_t h2o_total_ms = 0;
+    bool response_final_sent = false;
+};
+
+request_lifecycle_breakdown_t compute_request_lifecycle_breakdown(const http_req& req, uint64_t total_ms) {
+    request_lifecycle_breakdown_t breakdown;
+    breakdown.auth_ms = req.auth_duration_us.load(std::memory_order_relaxed) / 1000;
+
+    const auto handler_dispatch_ts = req.handler_dispatch_ts_us.load(std::memory_order_relaxed);
+    const auto handler_start_ts = req.handler_start_ts_us.load(std::memory_order_relaxed);
+    const auto handler_end_ts = req.handler_end_ts_us.load(std::memory_order_relaxed);
+    const auto response_dispatch_ts = req.response_dispatch_ts_us.load(std::memory_order_relaxed);
+    const auto response_pre_dispatch_wait_us = req.response_pre_dispatch_wait_us.load(std::memory_order_relaxed);
+    const auto response_start_ts = req.response_start_ts_us.load(std::memory_order_relaxed);
+    const auto response_progress_ts = req.response_progress_ts_us.load(std::memory_order_relaxed);
+    const auto response_first_send_ts = req.response_first_send_ts_us.load(std::memory_order_relaxed);
+    const auto response_last_send_ts = req.response_last_send_ts_us.load(std::memory_order_relaxed);
+    breakdown.response_send_calls = req.response_send_count.load(std::memory_order_relaxed);
+    breakdown.response_proceed_count = req.response_proceed_count.load(std::memory_order_relaxed);
+    breakdown.response_defer_count = req.response_defer_count.load(std::memory_order_relaxed);
+    breakdown.response_final_sent = req.response_final_sent.load(std::memory_order_relaxed);
+
+    if (handler_dispatch_ts != 0 && handler_start_ts >= handler_dispatch_ts) {
+        breakdown.handler_wait_ms = (handler_start_ts - handler_dispatch_ts) / 1000;
+    }
+    if (handler_start_ts != 0 && handler_end_ts >= handler_start_ts) {
+        breakdown.handler_ms = (handler_end_ts - handler_start_ts) / 1000;
+    }
+    if (req.start_ts >= req.conn_ts) {
+        breakdown.conn_to_start_ms = (req.start_ts - req.conn_ts) / 1000;
+    }
+    if (handler_end_ts != 0 && response_dispatch_ts >= handler_end_ts) {
+        breakdown.response_dispatch_ms = (response_dispatch_ts - handler_end_ts) / 1000;
+    }
+    breakdown.response_pre_dispatch_wait_ms = response_pre_dispatch_wait_us / 1000;
+    if (response_dispatch_ts != 0 && response_start_ts >= response_dispatch_ts) {
+        breakdown.response_queue_ms = (response_start_ts - response_dispatch_ts) / 1000;
+    }
+    if (response_start_ts != 0 && response_progress_ts >= response_start_ts) {
+        breakdown.response_progress_ms = (response_progress_ts - response_start_ts) / 1000;
+    }
+    if (response_start_ts != 0 && response_first_send_ts >= response_start_ts) {
+        breakdown.response_first_send_delay_ms = (response_first_send_ts - response_start_ts) / 1000;
+    }
+    if (response_first_send_ts != 0 && response_last_send_ts >= response_first_send_ts) {
+        breakdown.response_send_window_ms = (response_last_send_ts - response_first_send_ts) / 1000;
+    }
+
+    if(req._req != nullptr) {
+        const auto& request_begin_at = req._req->timestamps.request_begin_at;
+        const auto& request_body_begin_at = req._req->timestamps.request_body_begin_at;
+        const auto& processed_at = req._req->processed_at.at;
+        const auto& response_start_at = req._req->timestamps.response_start_at;
+        const auto& response_end_at = req._req->timestamps.response_end_at;
+        if(timeval_is_nonzero(request_begin_at)) {
+            const auto request_begin_us = timeval_to_us(request_begin_at);
+            if(req.request_entry_ts_us >= request_begin_us) {
+                breakdown.request_entry_ms = (req.request_entry_ts_us - request_begin_us) / 1000;
+            }
+        }
+        const timeval header_until = timeval_is_nonzero(request_body_begin_at) ? request_body_begin_at : processed_at;
+        const timeval body_from = timeval_is_nonzero(request_body_begin_at) ? request_body_begin_at : processed_at;
+        breakdown.h2o_header_ms = duration_ms_between(request_begin_at, header_until);
+        breakdown.h2o_body_ms = duration_ms_between(body_from, processed_at);
+        breakdown.h2o_request_total_ms = duration_ms_between(request_begin_at, processed_at);
+        breakdown.h2o_process_ms = duration_ms_between(processed_at, response_start_at);
+        breakdown.h2o_response_ms = duration_ms_between(response_start_at, response_end_at);
+        breakdown.h2o_total_ms = duration_ms_between(request_begin_at, response_end_at);
+    }
+
+    const uint64_t attributed_ms = breakdown.auth_ms + breakdown.handler_wait_ms + breakdown.handler_ms;
+    breakdown.unattributed_ms = total_ms >= attributed_ms ? (total_ms - attributed_ms) : 0;
+    return breakdown;
 }
 
 http_route_lifecycle_metrics_snapshot_t snapshot_hot_http_route_metrics(
@@ -581,94 +680,54 @@ void record_response_send(bool final_send, uint64_t send_calls_for_request, uint
     g_response_flow_metrics.last_final_sent.store(final_send, std::memory_order_relaxed);
 }
 
+std::string http_req::get_slow_request_log_suffix(uint64_t total_ms) const {
+    const auto is_import_route = http_method == "POST" &&
+                                 path_without_query.find("/collections/") == 0 &&
+                                 path_without_query.find("/documents/import") != std::string::npos;
+    if (!is_import_route) {
+        return "";
+    }
+
+    const auto breakdown = compute_request_lifecycle_breakdown(*this, total_ms);
+    const auto import_metrics = Collection::get_import_metrics_snapshot();
+    std::ostringstream stream;
+    stream << ", import_body_bytes=" << body.size()
+           << ", import_conn_to_start_ms=" << breakdown.conn_to_start_ms
+           << ", import_request_entry_ms=" << breakdown.request_entry_ms
+           << ", import_auth_ms=" << breakdown.auth_ms
+           << ", import_handler_wait_ms=" << breakdown.handler_wait_ms
+           << ", import_handler_ms=" << breakdown.handler_ms
+           << ", import_unattributed_ms=" << breakdown.unattributed_ms
+           << ", import_response_dispatch_ms=" << breakdown.response_dispatch_ms
+           << ", import_response_pre_dispatch_wait_ms=" << breakdown.response_pre_dispatch_wait_ms
+           << ", import_response_queue_ms=" << breakdown.response_queue_ms
+           << ", import_response_progress_ms=" << breakdown.response_progress_ms
+           << ", import_response_send_calls=" << breakdown.response_send_calls
+           << ", import_response_proceed_count=" << breakdown.response_proceed_count
+           << ", import_response_defer_count=" << breakdown.response_defer_count
+           << ", import_response_first_send_delay_ms=" << breakdown.response_first_send_delay_ms
+           << ", import_response_send_window_ms=" << breakdown.response_send_window_ms
+           << ", import_h2o_header_ms=" << breakdown.h2o_header_ms
+           << ", import_h2o_body_ms=" << breakdown.h2o_body_ms
+           << ", import_h2o_request_total_ms=" << breakdown.h2o_request_total_ms
+           << ", import_h2o_process_ms=" << breakdown.h2o_process_ms
+           << ", import_h2o_response_ms=" << breakdown.h2o_response_ms
+           << ", import_h2o_total_ms=" << breakdown.h2o_total_ms
+           << ", import_response_final_sent=" << (breakdown.response_final_sent ? 1 : 0)
+           << ", helper_collection=" << import_metrics.last_collection_name
+           << ", helper_field=" << import_metrics.last_async_reference_helper_field_name
+           << ", helper_total_ms=" << import_metrics.last_async_reference_helper_total_ms
+           << ", helper_matched_docs=" << import_metrics.last_async_reference_helper_matched_docs
+           << ", helper_updated_docs=" << import_metrics.last_async_reference_helper_updated_docs
+           << ", helper_store_retry_writes=" << import_metrics.last_async_reference_helper_store_retry_writes
+           << ", helper_write_failures=" << import_metrics.last_async_reference_helper_write_failures
+           << ", helper_slow_paths=" << import_metrics.cumulative_async_reference_helper_slow_paths
+           << ", helper_max_total_ms=" << import_metrics.max_async_reference_helper_total_ms;
+    return stream.str();
+}
+
 void http_req::record_lifecycle_metrics(const http_req& req, const std::string& route, uint64_t total_ms) {
-    const auto auth_ms = req.auth_duration_us.load(std::memory_order_relaxed) / 1000;
-    const auto handler_dispatch_ts = req.handler_dispatch_ts_us.load(std::memory_order_relaxed);
-    const auto handler_start_ts = req.handler_start_ts_us.load(std::memory_order_relaxed);
-    const auto handler_end_ts = req.handler_end_ts_us.load(std::memory_order_relaxed);
-    const auto response_dispatch_ts = req.response_dispatch_ts_us.load(std::memory_order_relaxed);
-    const auto response_pre_dispatch_wait_us = req.response_pre_dispatch_wait_us.load(std::memory_order_relaxed);
-    const auto response_start_ts = req.response_start_ts_us.load(std::memory_order_relaxed);
-    const auto response_progress_ts = req.response_progress_ts_us.load(std::memory_order_relaxed);
-    const auto response_first_send_ts = req.response_first_send_ts_us.load(std::memory_order_relaxed);
-    const auto response_last_send_ts = req.response_last_send_ts_us.load(std::memory_order_relaxed);
-    const auto response_send_calls = req.response_send_count.load(std::memory_order_relaxed);
-    const auto response_proceed_count = req.response_proceed_count.load(std::memory_order_relaxed);
-    const auto response_defer_count = req.response_defer_count.load(std::memory_order_relaxed);
-    const auto response_final_sent = req.response_final_sent.load(std::memory_order_relaxed);
-
-    uint64_t handler_wait_ms = 0;
-    if (handler_dispatch_ts != 0 && handler_start_ts >= handler_dispatch_ts) {
-        handler_wait_ms = (handler_start_ts - handler_dispatch_ts) / 1000;
-    }
-
-    uint64_t handler_ms = 0;
-    if (handler_start_ts != 0 && handler_end_ts >= handler_start_ts) {
-        handler_ms = (handler_end_ts - handler_start_ts) / 1000;
-    }
-
-    uint64_t request_entry_ms = 0;
-    uint64_t conn_to_start_ms = 0;
-    if (req.start_ts >= req.conn_ts) {
-        conn_to_start_ms = (req.start_ts - req.conn_ts) / 1000;
-    }
-
-    uint64_t response_dispatch_ms = 0;
-    if (handler_end_ts != 0 && response_dispatch_ts >= handler_end_ts) {
-        response_dispatch_ms = (response_dispatch_ts - handler_end_ts) / 1000;
-    }
-    const uint64_t response_pre_dispatch_wait_ms = response_pre_dispatch_wait_us / 1000;
-
-    uint64_t response_queue_ms = 0;
-    if (response_dispatch_ts != 0 && response_start_ts >= response_dispatch_ts) {
-        response_queue_ms = (response_start_ts - response_dispatch_ts) / 1000;
-    }
-
-    uint64_t response_progress_ms = 0;
-    if (response_start_ts != 0 && response_progress_ts >= response_start_ts) {
-        response_progress_ms = (response_progress_ts - response_start_ts) / 1000;
-    }
-
-    uint64_t response_first_send_delay_ms = 0;
-    if (response_start_ts != 0 && response_first_send_ts >= response_start_ts) {
-        response_first_send_delay_ms = (response_first_send_ts - response_start_ts) / 1000;
-    }
-
-    uint64_t response_send_window_ms = 0;
-    if (response_first_send_ts != 0 && response_last_send_ts >= response_first_send_ts) {
-        response_send_window_ms = (response_last_send_ts - response_first_send_ts) / 1000;
-    }
-
-    uint64_t h2o_header_ms = 0;
-    uint64_t h2o_body_ms = 0;
-    uint64_t h2o_request_total_ms = 0;
-    uint64_t h2o_process_ms = 0;
-    uint64_t h2o_response_ms = 0;
-    uint64_t h2o_total_ms = 0;
-    if(req._req != nullptr) {
-        const auto& request_begin_at = req._req->timestamps.request_begin_at;
-        const auto& request_body_begin_at = req._req->timestamps.request_body_begin_at;
-        const auto& processed_at = req._req->processed_at.at;
-        const auto& response_start_at = req._req->timestamps.response_start_at;
-        const auto& response_end_at = req._req->timestamps.response_end_at;
-        if(timeval_is_nonzero(request_begin_at)) {
-            const auto request_begin_us = timeval_to_us(request_begin_at);
-            if(req.request_entry_ts_us >= request_begin_us) {
-                request_entry_ms = (req.request_entry_ts_us - request_begin_us) / 1000;
-            }
-        }
-        const timeval header_until = timeval_is_nonzero(request_body_begin_at) ? request_body_begin_at : processed_at;
-        const timeval body_from = timeval_is_nonzero(request_body_begin_at) ? request_body_begin_at : processed_at;
-        h2o_header_ms = duration_ms_between(request_begin_at, header_until);
-        h2o_body_ms = duration_ms_between(body_from, processed_at);
-        h2o_request_total_ms = duration_ms_between(request_begin_at, processed_at);
-        h2o_process_ms = duration_ms_between(processed_at, response_start_at);
-        h2o_response_ms = duration_ms_between(response_start_at, response_end_at);
-        h2o_total_ms = duration_ms_between(request_begin_at, response_end_at);
-    }
-
-    uint64_t attributed_ms = auth_ms + handler_wait_ms + handler_ms;
-    uint64_t unattributed_ms = total_ms >= attributed_ms ? (total_ms - attributed_ms) : 0;
+    const auto breakdown = compute_request_lifecycle_breakdown(req, total_ms);
 
     g_http_request_metrics.cumulative_requests.fetch_add(1, std::memory_order_relaxed);
     const auto slow_threshold_ms = Config::get_instance().get_log_slow_requests_time_ms();
@@ -676,28 +735,32 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
         g_http_request_metrics.cumulative_slow_requests.fetch_add(1, std::memory_order_relaxed);
     }
     g_http_request_metrics.last_total_ms.store(total_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_auth_ms.store(auth_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_handler_wait_ms.store(handler_wait_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_handler_ms.store(handler_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_unattributed_ms.store(unattributed_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_request_entry_ms.store(request_entry_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_conn_to_start_ms.store(conn_to_start_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_dispatch_ms.store(response_dispatch_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_pre_dispatch_wait_ms.store(response_pre_dispatch_wait_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_queue_ms.store(response_queue_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_progress_ms.store(response_progress_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_send_calls.store(response_send_calls, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_proceed_count.store(response_proceed_count, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_defer_count.store(response_defer_count, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_first_send_delay_ms.store(response_first_send_delay_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_send_window_ms.store(response_send_window_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_h2o_header_ms.store(h2o_header_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_h2o_body_ms.store(h2o_body_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_h2o_request_total_ms.store(h2o_request_total_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_h2o_process_ms.store(h2o_process_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_h2o_response_ms.store(h2o_response_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_h2o_total_ms.store(h2o_total_ms, std::memory_order_relaxed);
-    g_http_request_metrics.last_response_final_sent.store(response_final_sent, std::memory_order_relaxed);
+    g_http_request_metrics.last_auth_ms.store(breakdown.auth_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_handler_wait_ms.store(breakdown.handler_wait_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_handler_ms.store(breakdown.handler_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_unattributed_ms.store(breakdown.unattributed_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_request_entry_ms.store(breakdown.request_entry_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_conn_to_start_ms.store(breakdown.conn_to_start_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_dispatch_ms.store(breakdown.response_dispatch_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_pre_dispatch_wait_ms.store(breakdown.response_pre_dispatch_wait_ms,
+                                                                    std::memory_order_relaxed);
+    g_http_request_metrics.last_response_queue_ms.store(breakdown.response_queue_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_progress_ms.store(breakdown.response_progress_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_send_calls.store(breakdown.response_send_calls, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_proceed_count.store(breakdown.response_proceed_count,
+                                                             std::memory_order_relaxed);
+    g_http_request_metrics.last_response_defer_count.store(breakdown.response_defer_count, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_first_send_delay_ms.store(breakdown.response_first_send_delay_ms,
+                                                                   std::memory_order_relaxed);
+    g_http_request_metrics.last_response_send_window_ms.store(breakdown.response_send_window_ms,
+                                                              std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_header_ms.store(breakdown.h2o_header_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_body_ms.store(breakdown.h2o_body_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_request_total_ms.store(breakdown.h2o_request_total_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_process_ms.store(breakdown.h2o_process_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_response_ms.store(breakdown.h2o_response_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_h2o_total_ms.store(breakdown.h2o_total_ms, std::memory_order_relaxed);
+    g_http_request_metrics.last_response_final_sent.store(breakdown.response_final_sent, std::memory_order_relaxed);
     g_http_request_metrics.last_is_write.store(req.is_write.load(std::memory_order_relaxed), std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(g_http_request_metrics.last_route_mutex);
@@ -706,49 +769,61 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
 
     if (route.find("POST /collections/") == 0 && route.find("/documents/import") != std::string::npos) {
         g_http_request_metrics.import_last_total_ms.store(total_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_auth_ms.store(auth_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_handler_wait_ms.store(handler_wait_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_handler_ms.store(handler_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_unattributed_ms.store(unattributed_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_request_entry_ms.store(request_entry_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_conn_to_start_ms.store(conn_to_start_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_dispatch_ms.store(response_dispatch_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_pre_dispatch_wait_ms.store(response_pre_dispatch_wait_ms,
+        g_http_request_metrics.import_last_auth_ms.store(breakdown.auth_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_handler_wait_ms.store(breakdown.handler_wait_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_handler_ms.store(breakdown.handler_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_unattributed_ms.store(breakdown.unattributed_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_request_entry_ms.store(breakdown.request_entry_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_conn_to_start_ms.store(breakdown.conn_to_start_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_dispatch_ms.store(breakdown.response_dispatch_ms,
+                                                                      std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_pre_dispatch_wait_ms.store(breakdown.response_pre_dispatch_wait_ms,
                                                                                std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_queue_ms.store(response_queue_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_progress_ms.store(response_progress_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_send_calls.store(response_send_calls, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_proceed_count.store(response_proceed_count, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_defer_count.store(response_defer_count, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_first_send_delay_ms.store(response_first_send_delay_ms,
+        g_http_request_metrics.import_last_response_queue_ms.store(breakdown.response_queue_ms,
+                                                                   std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_progress_ms.store(breakdown.response_progress_ms,
+                                                                      std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_send_calls.store(breakdown.response_send_calls,
+                                                                     std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_proceed_count.store(breakdown.response_proceed_count,
+                                                                        std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_defer_count.store(breakdown.response_defer_count,
+                                                                      std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_first_send_delay_ms.store(breakdown.response_first_send_delay_ms,
                                                                               std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_send_window_ms.store(response_send_window_ms,
+        g_http_request_metrics.import_last_response_send_window_ms.store(breakdown.response_send_window_ms,
                                                                          std::memory_order_relaxed);
-        g_http_request_metrics.import_last_h2o_header_ms.store(h2o_header_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_h2o_body_ms.store(h2o_body_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_h2o_request_total_ms.store(h2o_request_total_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_h2o_process_ms.store(h2o_process_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_h2o_response_ms.store(h2o_response_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_h2o_total_ms.store(h2o_total_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_last_response_final_sent.store(response_final_sent, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_header_ms.store(breakdown.h2o_header_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_body_ms.store(breakdown.h2o_body_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_request_total_ms.store(breakdown.h2o_request_total_ms,
+                                                                      std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_process_ms.store(breakdown.h2o_process_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_response_ms.store(breakdown.h2o_response_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_h2o_total_ms.store(breakdown.h2o_total_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_last_response_final_sent.store(breakdown.response_final_sent,
+                                                                     std::memory_order_relaxed);
         g_http_request_metrics.import_cumulative_requests.fetch_add(1, std::memory_order_relaxed);
         g_http_request_metrics.import_cumulative_total_ms.fetch_add(total_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_auth_ms.fetch_add(auth_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_handler_wait_ms.fetch_add(handler_wait_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_handler_ms.fetch_add(handler_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_unattributed_ms.fetch_add(unattributed_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_request_entry_ms.fetch_add(request_entry_ms,
-                                                                            std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_response_pre_dispatch_wait_ms.fetch_add(response_pre_dispatch_wait_ms,
-                                                                                         std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_response_queue_ms.fetch_add(response_queue_ms, std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_h2o_request_total_ms.fetch_add(h2o_request_total_ms,
-                                                                                std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_h2o_process_ms.fetch_add(h2o_process_ms,
-                                                                          std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_h2o_response_ms.fetch_add(h2o_response_ms,
+        g_http_request_metrics.import_cumulative_auth_ms.fetch_add(breakdown.auth_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_handler_wait_ms.fetch_add(breakdown.handler_wait_ms,
                                                                            std::memory_order_relaxed);
-        g_http_request_metrics.import_cumulative_h2o_total_ms.fetch_add(h2o_total_ms,
+        g_http_request_metrics.import_cumulative_handler_ms.fetch_add(breakdown.handler_ms, std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_unattributed_ms.fetch_add(breakdown.unattributed_ms,
+                                                                           std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_request_entry_ms.fetch_add(breakdown.request_entry_ms,
+                                                                            std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_response_pre_dispatch_wait_ms.fetch_add(
+            breakdown.response_pre_dispatch_wait_ms,
+                                                                                         std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_response_queue_ms.fetch_add(breakdown.response_queue_ms,
+                                                                             std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_h2o_request_total_ms.fetch_add(breakdown.h2o_request_total_ms,
+                                                                                std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_h2o_process_ms.fetch_add(breakdown.h2o_process_ms,
+                                                                          std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_h2o_response_ms.fetch_add(breakdown.h2o_response_ms,
+                                                                           std::memory_order_relaxed);
+        g_http_request_metrics.import_cumulative_h2o_total_ms.fetch_add(breakdown.h2o_total_ms,
                                                                         std::memory_order_relaxed);
         const uint64_t prev_max = g_http_request_metrics.import_max_total_ms.load(std::memory_order_relaxed);
         if (total_ms > prev_max) {
@@ -758,9 +833,11 @@ void http_req::record_lifecycle_metrics(const http_req& req, const std::string& 
 
     auto* hot_route_metrics = get_hot_http_route_metrics_state(req);
     if(hot_route_metrics != nullptr) {
-        record_hot_http_route_metrics(*hot_route_metrics, total_ms, auth_ms, handler_wait_ms, handler_ms,
-                                      unattributed_ms, request_entry_ms, conn_to_start_ms, response_dispatch_ms,
-                                      response_pre_dispatch_wait_ms, response_queue_ms, response_progress_ms,
-                                      h2o_request_total_ms, h2o_total_ms);
+        record_hot_http_route_metrics(*hot_route_metrics, total_ms, breakdown.auth_ms, breakdown.handler_wait_ms,
+                                      breakdown.handler_ms, breakdown.unattributed_ms, breakdown.request_entry_ms,
+                                      breakdown.conn_to_start_ms, breakdown.response_dispatch_ms,
+                                      breakdown.response_pre_dispatch_wait_ms, breakdown.response_queue_ms,
+                                      breakdown.response_progress_ms, breakdown.h2o_request_total_ms,
+                                      breakdown.h2o_total_ms);
     }
 }

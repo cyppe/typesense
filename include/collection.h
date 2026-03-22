@@ -60,6 +60,35 @@ struct CollectionImportMetricsSnapshot {
     uint64_t last_reference_helper_ms = 0;
     uint64_t cumulative_reference_helper_ms = 0;
     uint64_t last_reference_fields_count = 0;
+    uint64_t last_async_reference_helper_matched_docs = 0;
+    uint64_t last_async_reference_helper_updated_docs = 0;
+    uint64_t last_async_reference_helper_filter_ms = 0;
+    uint64_t last_async_reference_helper_fetch_ms = 0;
+    uint64_t last_async_reference_helper_parse_ms = 0;
+    uint64_t last_async_reference_helper_transform_ms = 0;
+    uint64_t last_async_reference_helper_reindex_ms = 0;
+    uint64_t last_async_reference_helper_store_prep_ms = 0;
+    uint64_t last_async_reference_helper_write_ms = 0;
+    uint64_t last_async_reference_helper_fetched_doc_bytes = 0;
+    uint64_t last_async_reference_helper_written_doc_bytes = 0;
+    uint64_t last_async_reference_helper_max_doc_bytes = 0;
+    uint64_t last_async_reference_helper_store_retry_writes = 0;
+    uint64_t last_async_reference_helper_write_failures = 0;
+    uint64_t last_async_reference_helper_total_ms = 0;
+    uint64_t cumulative_async_reference_helper_invocations = 0;
+    uint64_t cumulative_async_reference_helper_slow_paths = 0;
+    uint64_t cumulative_async_reference_helper_matched_docs = 0;
+    uint64_t cumulative_async_reference_helper_updated_docs = 0;
+    uint64_t cumulative_async_reference_helper_total_ms = 0;
+    uint64_t cumulative_async_reference_helper_fetched_doc_bytes = 0;
+    uint64_t cumulative_async_reference_helper_written_doc_bytes = 0;
+    uint64_t cumulative_async_reference_helper_store_retry_writes = 0;
+    uint64_t cumulative_async_reference_helper_write_failures = 0;
+    uint64_t max_async_reference_helper_total_ms = 0;
+    uint64_t max_async_reference_helper_matched_docs = 0;
+    uint64_t max_async_reference_helper_updated_docs = 0;
+    uint64_t max_async_reference_helper_fetched_doc_bytes = 0;
+    uint64_t max_async_reference_helper_written_doc_bytes = 0;
     uint64_t last_batch_index_docs = 0;
     uint64_t last_batch_index_num_indexed = 0;
     uint64_t last_batch_index_found_fields = 0;
@@ -76,6 +105,7 @@ struct CollectionImportMetricsSnapshot {
     uint64_t last_write_memory_lock_wait_ms = 0;
     uint64_t last_write_memory_lock_hold_ms = 0;
     std::string last_collection_name;
+    std::string last_async_reference_helper_field_name;
 };
 
 struct highlight_query_token_t {

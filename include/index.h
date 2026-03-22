@@ -788,6 +788,10 @@ public:
                                      const tsl::htrie_map<char, field>& addition_fields = tsl::htrie_map<char, field>(),
                                      const std::string& collection_name = "");
 
+    Option<bool> reindex_field_in_memory(const std::string& collection_name,
+                                         const field& afield,
+                                         std::vector<index_record>& iter_batch);
+
     void index_field_in_memory(const std::string& collection_name, const field& afield,
                                std::vector<index_record>& iter_batch);
 

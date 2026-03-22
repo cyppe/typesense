@@ -123,6 +123,35 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> last_reference_helper_ms{0};
     std::atomic<uint64_t> cumulative_reference_helper_ms{0};
     std::atomic<uint64_t> last_reference_fields_count{0};
+    std::atomic<uint64_t> last_async_reference_helper_matched_docs{0};
+    std::atomic<uint64_t> last_async_reference_helper_updated_docs{0};
+    std::atomic<uint64_t> last_async_reference_helper_filter_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_fetch_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_parse_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_transform_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_reindex_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_store_prep_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_write_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_fetched_doc_bytes{0};
+    std::atomic<uint64_t> last_async_reference_helper_written_doc_bytes{0};
+    std::atomic<uint64_t> last_async_reference_helper_max_doc_bytes{0};
+    std::atomic<uint64_t> last_async_reference_helper_store_retry_writes{0};
+    std::atomic<uint64_t> last_async_reference_helper_write_failures{0};
+    std::atomic<uint64_t> last_async_reference_helper_total_ms{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_invocations{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_slow_paths{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_matched_docs{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_updated_docs{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_total_ms{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_fetched_doc_bytes{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_written_doc_bytes{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_store_retry_writes{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_write_failures{0};
+    std::atomic<uint64_t> max_async_reference_helper_total_ms{0};
+    std::atomic<uint64_t> max_async_reference_helper_matched_docs{0};
+    std::atomic<uint64_t> max_async_reference_helper_updated_docs{0};
+    std::atomic<uint64_t> max_async_reference_helper_fetched_doc_bytes{0};
+    std::atomic<uint64_t> max_async_reference_helper_written_doc_bytes{0};
     std::atomic<uint64_t> last_batch_index_docs{0};
     std::atomic<uint64_t> last_batch_index_num_indexed{0};
     std::atomic<uint64_t> last_batch_index_found_fields{0};
@@ -140,6 +169,7 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> last_write_memory_lock_hold_ms{0};
     std::mutex collection_name_mutex;
     std::string last_collection_name;
+    std::string last_async_reference_helper_field_name;
 };
 
 collection_import_metrics_state_t g_collection_import_metrics;
@@ -147,6 +177,13 @@ collection_import_metrics_state_t g_collection_import_metrics;
 uint64_t elapsed_ms_since(const std::chrono::steady_clock::time_point& start_time) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
+}
+
+void update_atomic_max(std::atomic<uint64_t>& target, uint64_t value) {
+    auto current = target.load(std::memory_order_relaxed);
+    while (value > current &&
+           !target.compare_exchange_weak(current, value, std::memory_order_relaxed)) {
+    }
 }
 
 void record_collection_batch_index_metrics(const std::string& collection_name,
@@ -423,15 +460,25 @@ Option<bool> Collection::update_async_references_with_lock(
         return Option<bool>(true);
     }
 
-    field field;
+    const auto total_start = std::chrono::steady_clock::now();
+    const auto reference_helper_field_name = field_name + fields::REFERENCE_HELPER_FIELD_SUFFIX;
+    field reference_field;
+    field helper_field;
     {
+        std::shared_lock alter_lock(alter_mutex);
         std::shared_lock lock(mutex);
 
         auto it = search_schema.find(field_name);
         if (it == search_schema.end()) {
             return Option<bool>(400, "Could not find field `" + field_name + "` in the schema.");
         }
-        field = it.value();
+        reference_field = it.value();
+
+        auto helper_it = search_schema.find(reference_helper_field_name);
+        if (helper_it == search_schema.end()) {
+            return Option<bool>(400, "Could not find field `" + reference_helper_field_name + "` in the schema.");
+        }
+        helper_field = helper_it.value();
     }
 
     std::string filter_value;
@@ -457,13 +504,15 @@ Option<bool> Collection::update_async_references_with_lock(
 
     // Update reference helper field of the docs matching the filter.
     filter_result_t filter_result;
-    get_filter_ids(filter, filter_result, false);
+    const auto filter_start = std::chrono::steady_clock::now();
+    auto filter_ids_op = get_filter_ids(filter, filter_result, false);
+    const uint64_t filter_ms = elapsed_ms_since(filter_start);
+    if (!filter_ids_op.ok()) {
+        return filter_ids_op;
+    }
     if (filter_result.count == 0) {
         return Option<bool>(true);
     }
-
-    std::vector<std::string> buffer;
-    buffer.reserve(filter_result.count);
 
     std::vector<std::string> seq_id_keys;
     seq_id_keys.reserve(filter_result.count);
@@ -473,7 +522,9 @@ Option<bool> Collection::update_async_references_with_lock(
 
     std::vector<StoreStatus> fetched_doc_statuses;
     std::vector<std::string> fetched_docs;
+    const auto fetch_start = std::chrono::steady_clock::now();
     store->multi_get(seq_id_keys, fetched_doc_statuses, fetched_docs, false);
+    const uint64_t fetch_ms = elapsed_ms_since(fetch_start);
 
     auto load_existing_document = [&](uint32_t index, uint32_t seq_id, nlohmann::json& existing_document) -> bool {
         if(index >= fetched_doc_statuses.size() || index >= fetched_docs.size()) {
@@ -504,18 +555,108 @@ Option<bool> Collection::update_async_references_with_lock(
         return true;
     };
 
+    struct helper_storage_update_t {
+        uint32_t seq_id;
+        nlohmann::json full_doc;
+    };
+
+    std::vector<index_record> helper_updates;
+    helper_updates.reserve(filter_result.count);
+    std::vector<helper_storage_update_t> storage_updates;
+    storage_updates.reserve(filter_result.count);
+    uint64_t parse_ms = 0;
+    uint64_t transform_ms = 0;
+    uint64_t reindex_ms = 0;
+    uint64_t store_prep_ms = 0;
+    uint64_t write_ms = 0;
+    uint64_t store_retry_writes = 0;
+    uint64_t write_failures = 0;
+    uint64_t fetched_doc_bytes = 0;
+    uint64_t written_doc_bytes = 0;
+    uint64_t max_doc_bytes = 0;
+
+    auto record_async_reference_helper_metrics = [&](uint64_t updated_docs, uint64_t total_ms) {
+        g_collection_import_metrics.cumulative_async_reference_helper_invocations.fetch_add(1, std::memory_order_relaxed);
+        g_collection_import_metrics.cumulative_async_reference_helper_matched_docs.fetch_add(filter_result.count,
+                                                                                             std::memory_order_relaxed);
+        g_collection_import_metrics.cumulative_async_reference_helper_updated_docs.fetch_add(updated_docs,
+                                                                                             std::memory_order_relaxed);
+        g_collection_import_metrics.cumulative_async_reference_helper_total_ms.fetch_add(total_ms,
+                                                                                         std::memory_order_relaxed);
+        g_collection_import_metrics.cumulative_async_reference_helper_fetched_doc_bytes.fetch_add(
+            fetched_doc_bytes, std::memory_order_relaxed);
+        g_collection_import_metrics.cumulative_async_reference_helper_written_doc_bytes.fetch_add(
+            written_doc_bytes, std::memory_order_relaxed);
+        g_collection_import_metrics.cumulative_async_reference_helper_store_retry_writes.fetch_add(
+            store_retry_writes, std::memory_order_relaxed);
+        g_collection_import_metrics.cumulative_async_reference_helper_write_failures.fetch_add(
+            write_failures, std::memory_order_relaxed);
+
+        update_atomic_max(g_collection_import_metrics.max_async_reference_helper_total_ms, total_ms);
+        update_atomic_max(g_collection_import_metrics.max_async_reference_helper_matched_docs, filter_result.count);
+        update_atomic_max(g_collection_import_metrics.max_async_reference_helper_updated_docs, updated_docs);
+        update_atomic_max(g_collection_import_metrics.max_async_reference_helper_fetched_doc_bytes, fetched_doc_bytes);
+        update_atomic_max(g_collection_import_metrics.max_async_reference_helper_written_doc_bytes, written_doc_bytes);
+
+        g_collection_import_metrics.last_async_reference_helper_matched_docs.store(filter_result.count, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_updated_docs.store(updated_docs, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_filter_ms.store(filter_ms, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_fetch_ms.store(fetch_ms, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_parse_ms.store(parse_ms, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_transform_ms.store(transform_ms, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_reindex_ms.store(reindex_ms, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_store_prep_ms.store(store_prep_ms, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_write_ms.store(write_ms, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_fetched_doc_bytes.store(fetched_doc_bytes, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_written_doc_bytes.store(written_doc_bytes, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_max_doc_bytes.store(max_doc_bytes, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_store_retry_writes.store(store_retry_writes,
+                                                                                         std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_write_failures.store(write_failures,
+                                                                                    std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_total_ms.store(total_ms, std::memory_order_relaxed);
+
+        if (total_ms >= 1000) {
+            g_collection_import_metrics.cumulative_async_reference_helper_slow_paths.fetch_add(1,
+                                                                                               std::memory_order_relaxed);
+        }
+
+        std::lock_guard<std::mutex> lock(g_collection_import_metrics.collection_name_mutex);
+        g_collection_import_metrics.last_collection_name = name;
+        g_collection_import_metrics.last_async_reference_helper_field_name = field_name;
+    };
+
     for (uint32_t i = 0; i < filter_result.count; i++) {
         auto const& seq_id = filter_result.docs[i];
 
         nlohmann::json existing_document;
+        const auto parse_start = std::chrono::steady_clock::now();
         if(!load_existing_document(i, seq_id, existing_document)) {
+            parse_ms += elapsed_ms_since(parse_start);
+            continue;
+        }
+        parse_ms += elapsed_ms_since(parse_start);
+        if (i < fetched_docs.size()) {
+            fetched_doc_bytes += fetched_docs[i].size();
+            max_doc_bytes = std::max<uint64_t>(max_doc_bytes, fetched_docs[i].size());
+        }
+
+        if (!existing_document.contains("id") || !existing_document["id"].is_string()) {
+            TS_LOG(ERROR) << "`" << name << "` collection: Expected sequence ID `" << seq_id
+                          << "` to have string `id` field while updating async references.";
             continue;
         }
 
-        auto const id = existing_document["id"].get<std::string>();
-        auto const reference_helper_field_name = field_name + fields::REFERENCE_HELPER_FIELD_SUFFIX;
+        const auto id = existing_document["id"].get<std::string>();
+        const auto transform_start = std::chrono::steady_clock::now();
+        const auto* existing_helper_node = get_field_node(existing_document, reference_helper_field_name);
+        nlohmann::json old_helper_document = nlohmann::json::object();
+        if (existing_helper_node != nullptr) {
+            old_helper_document[reference_helper_field_name] = *existing_helper_node;
+        }
+        nlohmann::json new_helper_document = nlohmann::json::object();
 
-        if (field.is_singular()) {
+        if (reference_field.is_singular()) {
             // Referenced value is guaranteed to be unique.
             // Set reference helper field of all the docs that matched filter to `ref_seq_id`.
             if (!has_field_value(existing_document, field_name)) {
@@ -528,12 +669,16 @@ Option<bool> Collection::update_async_references_with_lock(
                 continue;
             }
 
-            nlohmann::json update_document;
-            update_document["id"] = id;
-            update_document[field_name] = *get_field_node(existing_document, field_name);
-            update_document[reference_helper_field_name] = ref_seq_id_it->second;
+            const auto* helper_node = get_field_node(existing_document, reference_helper_field_name);
+            if (helper_node != nullptr &&
+                helper_node->is_number_unsigned() &&
+                helper_node->get<uint32_t>() == ref_seq_id_it->second) {
+                transform_ms += elapsed_ms_since(transform_start);
+                continue;
+            }
 
-            buffer.push_back(update_document.dump());
+            existing_document[reference_helper_field_name] = ref_seq_id_it->second;
+            new_helper_document[reference_helper_field_name] = ref_seq_id_it->second;
         } else {
             const auto* referenced_array = get_field_node(existing_document, field_name);
             const auto* helper_array = get_field_node(existing_document, reference_helper_field_name);
@@ -552,11 +697,6 @@ Option<bool> Collection::update_async_references_with_lock(
                                             get_field_value(existing_document, reference_helper_field_name) + "` field.");
             }
 
-            nlohmann::json update_document;
-            update_document["id"] = id;
-            update_document[field_name] = *referenced_array;
-            update_document[reference_helper_field_name] = *helper_array;
-
             auto should_update = false;
             for (uint32_t j = 0; j < referenced_array->size(); j++) {
                 auto const& ref_value = get_array_field_value(existing_document, field_name, j);
@@ -565,19 +705,124 @@ Option<bool> Collection::update_async_references_with_lock(
                     continue;
                 }
 
+                if ((*helper_array)[j].is_number_unsigned() &&
+                    (*helper_array)[j].get<uint32_t>() == ref_seq_id_it->second) {
+                    continue;
+                }
+
                 should_update = true;
                 // Set reference helper field to `ref_seq_id` at the index corresponding to where reference field has value.
-                update_document[reference_helper_field_name][j] = ref_seq_id_it->second;
+                existing_document[reference_helper_field_name][j] = ref_seq_id_it->second;
             }
 
-            if (should_update) {
-                buffer.push_back(update_document.dump());
+            if (!should_update) {
+                transform_ms += elapsed_ms_since(transform_start);
+                continue;
+            }
+
+            new_helper_document[reference_helper_field_name] = existing_document[reference_helper_field_name];
+        }
+
+        index_record update_record(0, seq_id, std::move(new_helper_document), index_operation_t::UPDATE, DIRTY_VALUES::REJECT);
+        update_record.old_doc = std::move(old_helper_document);
+        update_record.is_update = true;
+        update_record.index_success();
+        helper_updates.emplace_back(std::move(update_record));
+        storage_updates.push_back(helper_storage_update_t{seq_id, std::move(existing_document)});
+        transform_ms += elapsed_ms_since(transform_start);
+    }
+
+    if (helper_updates.empty()) {
+        record_async_reference_helper_metrics(0, elapsed_ms_since(total_start));
+        return Option<bool>(true);
+    }
+
+    const auto reindex_start = std::chrono::steady_clock::now();
+    auto reindex_op = index->reindex_field_in_memory(name, helper_field, helper_updates);
+    reindex_ms = elapsed_ms_since(reindex_start);
+    if (!reindex_op.ok()) {
+        record_async_reference_helper_metrics(helper_updates.size(), elapsed_ms_since(total_start));
+        return reindex_op;
+    }
+
+    std::vector<std::string> serialized_docs;
+    serialized_docs.reserve(storage_updates.size());
+    rocksdb::WriteBatch aggregated_batch;
+    const auto store_prep_start = std::chrono::steady_clock::now();
+    for (auto& storage_update : storage_updates) {
+        serialized_docs.emplace_back(storage_update.full_doc.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore));
+        written_doc_bytes += serialized_docs.back().size();
+        max_doc_bytes = std::max<uint64_t>(max_doc_bytes, serialized_docs.back().size());
+        aggregated_batch.Put(get_seq_id_key(storage_update.seq_id), serialized_docs.back());
+    }
+    store_prep_ms = elapsed_ms_since(store_prep_start);
+
+    {
+        const auto write_start = std::chrono::steady_clock::now();
+        const bool write_ok = store->batch_write(aggregated_batch);
+        write_ms += elapsed_ms_since(write_start);
+
+        if (!write_ok) {
+            std::vector<size_t> failed_record_indices;
+            failed_record_indices.reserve(helper_updates.size());
+
+            for (size_t i = 0; i < helper_updates.size(); i++) {
+                store_retry_writes++;
+                const auto single_write_start = std::chrono::steady_clock::now();
+                const bool doc_write_ok = store->insert(get_seq_id_key(helper_updates[i].seq_id), serialized_docs[i]);
+                write_ms += elapsed_ms_since(single_write_start);
+
+                if (!doc_write_ok) {
+                    write_failures++;
+                    failed_record_indices.push_back(i);
+                }
+            }
+
+            if (!failed_record_indices.empty()) {
+                std::vector<index_record> revert_updates;
+                revert_updates.reserve(failed_record_indices.size());
+                for (const auto failed_index : failed_record_indices) {
+                    auto& failed_record = helper_updates[failed_index];
+                    index_record revert_record(0, failed_record.seq_id, failed_record.old_doc,
+                                               index_operation_t::UPDATE, DIRTY_VALUES::REJECT);
+                    revert_record.old_doc = failed_record.doc;
+                    revert_record.is_update = true;
+                    revert_record.index_success();
+                    revert_updates.emplace_back(std::move(revert_record));
+                }
+
+                auto revert_op = index->reindex_field_in_memory(name, helper_field, revert_updates);
+                if (!revert_op.ok()) {
+                    TS_LOG(ERROR) << "Error while reverting async reference helper updates for collection `" << name
+                                  << "` field `" << field_name << "` after store write failure: "
+                                  << revert_op.error();
+                }
+
+                record_async_reference_helper_metrics(helper_updates.size(), elapsed_ms_since(total_start));
+                return Option<bool>(500, "Could not write async reference updates to on-disk storage.");
             }
         }
     }
 
-    nlohmann::json dummy;
-    add_many(buffer, dummy, index_operation_t::UPDATE);
+    const uint64_t total_ms = elapsed_ms_since(total_start);
+    record_async_reference_helper_metrics(helper_updates.size(), total_ms);
+    if (total_ms >= 1000) {
+        TS_LOG(WARNING) << "Async reference helper slow path: collection=" << name
+                        << " field=" << field_name
+                        << " matched_docs=" << filter_result.count
+                        << " updated_docs=" << helper_updates.size()
+                        << " filter_ms=" << filter_ms
+                        << " fetch_ms=" << fetch_ms
+                        << " parse_ms=" << parse_ms
+                        << " transform_ms=" << transform_ms
+                        << " reindex_ms=" << reindex_ms
+                        << " store_prep_ms=" << store_prep_ms
+                        << " write_ms=" << write_ms
+                        << " fetched_doc_bytes=" << fetched_doc_bytes
+                        << " written_doc_bytes=" << written_doc_bytes
+                        << " max_doc_bytes=" << max_doc_bytes
+                        << " total_ms=" << total_ms;
+    }
 
     return Option<bool>(true);
 }
@@ -600,6 +845,64 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
     snapshot.last_reference_helper_ms = g_collection_import_metrics.last_reference_helper_ms.load(std::memory_order_relaxed);
     snapshot.cumulative_reference_helper_ms = g_collection_import_metrics.cumulative_reference_helper_ms.load(std::memory_order_relaxed);
     snapshot.last_reference_fields_count = g_collection_import_metrics.last_reference_fields_count.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_matched_docs =
+        g_collection_import_metrics.last_async_reference_helper_matched_docs.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_updated_docs =
+        g_collection_import_metrics.last_async_reference_helper_updated_docs.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_filter_ms =
+        g_collection_import_metrics.last_async_reference_helper_filter_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_fetch_ms =
+        g_collection_import_metrics.last_async_reference_helper_fetch_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_parse_ms =
+        g_collection_import_metrics.last_async_reference_helper_parse_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_transform_ms =
+        g_collection_import_metrics.last_async_reference_helper_transform_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_reindex_ms =
+        g_collection_import_metrics.last_async_reference_helper_reindex_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_store_prep_ms =
+        g_collection_import_metrics.last_async_reference_helper_store_prep_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_write_ms =
+        g_collection_import_metrics.last_async_reference_helper_write_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_fetched_doc_bytes =
+        g_collection_import_metrics.last_async_reference_helper_fetched_doc_bytes.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_written_doc_bytes =
+        g_collection_import_metrics.last_async_reference_helper_written_doc_bytes.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_max_doc_bytes =
+        g_collection_import_metrics.last_async_reference_helper_max_doc_bytes.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_store_retry_writes =
+        g_collection_import_metrics.last_async_reference_helper_store_retry_writes.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_write_failures =
+        g_collection_import_metrics.last_async_reference_helper_write_failures.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_total_ms =
+        g_collection_import_metrics.last_async_reference_helper_total_ms.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_invocations =
+        g_collection_import_metrics.cumulative_async_reference_helper_invocations.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_slow_paths =
+        g_collection_import_metrics.cumulative_async_reference_helper_slow_paths.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_matched_docs =
+        g_collection_import_metrics.cumulative_async_reference_helper_matched_docs.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_updated_docs =
+        g_collection_import_metrics.cumulative_async_reference_helper_updated_docs.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_total_ms =
+        g_collection_import_metrics.cumulative_async_reference_helper_total_ms.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_fetched_doc_bytes =
+        g_collection_import_metrics.cumulative_async_reference_helper_fetched_doc_bytes.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_written_doc_bytes =
+        g_collection_import_metrics.cumulative_async_reference_helper_written_doc_bytes.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_store_retry_writes =
+        g_collection_import_metrics.cumulative_async_reference_helper_store_retry_writes.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_write_failures =
+        g_collection_import_metrics.cumulative_async_reference_helper_write_failures.load(std::memory_order_relaxed);
+    snapshot.max_async_reference_helper_total_ms =
+        g_collection_import_metrics.max_async_reference_helper_total_ms.load(std::memory_order_relaxed);
+    snapshot.max_async_reference_helper_matched_docs =
+        g_collection_import_metrics.max_async_reference_helper_matched_docs.load(std::memory_order_relaxed);
+    snapshot.max_async_reference_helper_updated_docs =
+        g_collection_import_metrics.max_async_reference_helper_updated_docs.load(std::memory_order_relaxed);
+    snapshot.max_async_reference_helper_fetched_doc_bytes =
+        g_collection_import_metrics.max_async_reference_helper_fetched_doc_bytes.load(std::memory_order_relaxed);
+    snapshot.max_async_reference_helper_written_doc_bytes =
+        g_collection_import_metrics.max_async_reference_helper_written_doc_bytes.load(std::memory_order_relaxed);
     snapshot.last_batch_index_docs = g_collection_import_metrics.last_batch_index_docs.load(std::memory_order_relaxed);
     snapshot.last_batch_index_num_indexed = g_collection_import_metrics.last_batch_index_num_indexed.load(std::memory_order_relaxed);
     snapshot.last_batch_index_found_fields = g_collection_import_metrics.last_batch_index_found_fields.load(std::memory_order_relaxed);
@@ -626,6 +929,7 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
     {
         std::lock_guard<std::mutex> lock(g_collection_import_metrics.collection_name_mutex);
         snapshot.last_collection_name = g_collection_import_metrics.last_collection_name;
+        snapshot.last_async_reference_helper_field_name = g_collection_import_metrics.last_async_reference_helper_field_name;
     }
     return snapshot;
 }

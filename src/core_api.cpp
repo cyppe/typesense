@@ -1144,6 +1144,66 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         collection_import_metrics.cumulative_reference_helper_ms;
     result["collection_import_last_reference_fields_count"] =
         collection_import_metrics.last_reference_fields_count;
+    result["collection_import_last_async_reference_helper_matched_docs"] =
+        collection_import_metrics.last_async_reference_helper_matched_docs;
+    result["collection_import_last_async_reference_helper_updated_docs"] =
+        collection_import_metrics.last_async_reference_helper_updated_docs;
+    result["collection_import_last_async_reference_helper_filter_ms"] =
+        collection_import_metrics.last_async_reference_helper_filter_ms;
+    result["collection_import_last_async_reference_helper_fetch_ms"] =
+        collection_import_metrics.last_async_reference_helper_fetch_ms;
+    result["collection_import_last_async_reference_helper_parse_ms"] =
+        collection_import_metrics.last_async_reference_helper_parse_ms;
+    result["collection_import_last_async_reference_helper_transform_ms"] =
+        collection_import_metrics.last_async_reference_helper_transform_ms;
+    result["collection_import_last_async_reference_helper_reindex_ms"] =
+        collection_import_metrics.last_async_reference_helper_reindex_ms;
+    result["collection_import_last_async_reference_helper_store_prep_ms"] =
+        collection_import_metrics.last_async_reference_helper_store_prep_ms;
+    result["collection_import_last_async_reference_helper_write_ms"] =
+        collection_import_metrics.last_async_reference_helper_write_ms;
+    result["collection_import_last_async_reference_helper_fetched_doc_bytes"] =
+        collection_import_metrics.last_async_reference_helper_fetched_doc_bytes;
+    result["collection_import_last_async_reference_helper_written_doc_bytes"] =
+        collection_import_metrics.last_async_reference_helper_written_doc_bytes;
+    result["collection_import_last_async_reference_helper_max_doc_bytes"] =
+        collection_import_metrics.last_async_reference_helper_max_doc_bytes;
+    result["collection_import_last_async_reference_helper_store_retry_writes"] =
+        collection_import_metrics.last_async_reference_helper_store_retry_writes;
+    result["collection_import_last_async_reference_helper_write_failures"] =
+        collection_import_metrics.last_async_reference_helper_write_failures;
+    result["collection_import_last_async_reference_helper_total_ms"] =
+        collection_import_metrics.last_async_reference_helper_total_ms;
+    result["collection_import_cumulative_async_reference_helper_invocations"] =
+        collection_import_metrics.cumulative_async_reference_helper_invocations;
+    result["collection_import_cumulative_async_reference_helper_slow_paths"] =
+        collection_import_metrics.cumulative_async_reference_helper_slow_paths;
+    result["collection_import_cumulative_async_reference_helper_matched_docs"] =
+        collection_import_metrics.cumulative_async_reference_helper_matched_docs;
+    result["collection_import_cumulative_async_reference_helper_updated_docs"] =
+        collection_import_metrics.cumulative_async_reference_helper_updated_docs;
+    result["collection_import_cumulative_async_reference_helper_total_ms"] =
+        collection_import_metrics.cumulative_async_reference_helper_total_ms;
+    result["collection_import_cumulative_async_reference_helper_fetched_doc_bytes"] =
+        collection_import_metrics.cumulative_async_reference_helper_fetched_doc_bytes;
+    result["collection_import_cumulative_async_reference_helper_written_doc_bytes"] =
+        collection_import_metrics.cumulative_async_reference_helper_written_doc_bytes;
+    result["collection_import_cumulative_async_reference_helper_store_retry_writes"] =
+        collection_import_metrics.cumulative_async_reference_helper_store_retry_writes;
+    result["collection_import_cumulative_async_reference_helper_write_failures"] =
+        collection_import_metrics.cumulative_async_reference_helper_write_failures;
+    result["collection_import_max_async_reference_helper_total_ms"] =
+        collection_import_metrics.max_async_reference_helper_total_ms;
+    result["collection_import_max_async_reference_helper_matched_docs"] =
+        collection_import_metrics.max_async_reference_helper_matched_docs;
+    result["collection_import_max_async_reference_helper_updated_docs"] =
+        collection_import_metrics.max_async_reference_helper_updated_docs;
+    result["collection_import_max_async_reference_helper_fetched_doc_bytes"] =
+        collection_import_metrics.max_async_reference_helper_fetched_doc_bytes;
+    result["collection_import_max_async_reference_helper_written_doc_bytes"] =
+        collection_import_metrics.max_async_reference_helper_written_doc_bytes;
+    result["collection_import_last_async_reference_helper_field_name"] =
+        collection_import_metrics.last_async_reference_helper_field_name;
     result["collection_import_last_batch_docs"] = collection_import_metrics.last_batch_index_docs;
     result["collection_import_last_batch_num_indexed"] = collection_import_metrics.last_batch_index_num_indexed;
     result["collection_import_last_batch_found_fields"] = collection_import_metrics.last_batch_index_found_fields;

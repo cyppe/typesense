@@ -26,9 +26,11 @@ from typing import Any
 
 DEFAULT_API_KEY = "xyz"
 DEFAULT_HOST = "127.0.0.1"
+DEFAULT_WORKLOAD = "fitment"
 DEFAULT_SOURCE_COLLECTION = "product_vehicle_fitments_se"
 DEFAULT_PRODUCT_COLLECTION = "products_se"
 DEFAULT_VEHICLE_COLLECTION = "vehicles_se"
+DEFAULT_CATEGORY_COLLECTION = "categories_se"
 DEFAULT_TOTAL_FITMENT_DOCS = 150_000
 DEFAULT_BATCH_DOCS = 5_000
 DEFAULT_IMPORT_WORKERS = 3
@@ -36,10 +38,16 @@ DEFAULT_PROBE_INTERVAL = 0.5
 DEFAULT_TIMEOUT = 120.0
 DEFAULT_PRODUCT_DOCS = 30_000
 DEFAULT_VEHICLE_DOCS = 30_000
+DEFAULT_CATEGORY_DOCS = 500
+DEFAULT_PRESEED_BATCH_DOCS = 5_000
+DEFAULT_FANOUT_PRODUCT_EXTRA_BYTES = 4_096
 DEFAULT_PROBE_WORKERS = 1
 DEFAULT_SEARCH_WORKERS = 1
 DEFAULT_PROBE_PROFILE = "standard"
-DEFAULT_SCHEMA_DIR = Path(__file__).resolve().parent.parent / "benchmark" / "data" / "fitment_replay_schemas"
+DEFAULT_FITMENT_SCHEMA_DIR = Path(__file__).resolve().parent.parent / "benchmark" / "data" / "fitment_replay_schemas"
+DEFAULT_CATEGORY_FANOUT_SCHEMA_DIR = (
+    Path(__file__).resolve().parent.parent / "benchmark" / "data" / "category_fanout_replay_schemas"
+)
 DEBUG_SERVER_TIMING_HEADER = "x-typesense-debug-server-timing"
 STANDARD_PROBE_ROUTES = [
     "/health",
@@ -246,12 +254,39 @@ def build_minimal_target_schema(collection_name: str, field_name: str, field_typ
     return schema
 
 
-def load_schema_fixtures(schema_dir: Path) -> dict[str, dict[str, Any]]:
-    expected = [
-        DEFAULT_PRODUCT_COLLECTION,
-        DEFAULT_VEHICLE_COLLECTION,
-        DEFAULT_SOURCE_COLLECTION,
-    ]
+def expected_schema_names(workload: str, source_collection: str) -> list[str]:
+    if workload == "fitment":
+        return [
+            DEFAULT_PRODUCT_COLLECTION,
+            DEFAULT_VEHICLE_COLLECTION,
+            source_collection,
+        ]
+    if workload == "category_fanout":
+        return [
+            DEFAULT_PRODUCT_COLLECTION,
+            DEFAULT_CATEGORY_COLLECTION,
+        ]
+    if workload == "mixed_category_fitment":
+        return [
+            DEFAULT_PRODUCT_COLLECTION,
+            DEFAULT_VEHICLE_COLLECTION,
+            DEFAULT_CATEGORY_COLLECTION,
+            DEFAULT_SOURCE_COLLECTION,
+        ]
+    raise RuntimeError(f"Unknown workload: {workload}")
+
+
+def default_schema_dir_for_workload(workload: str) -> Path | None:
+    if workload == "fitment":
+        return DEFAULT_FITMENT_SCHEMA_DIR
+    if workload == "category_fanout":
+        return DEFAULT_CATEGORY_FANOUT_SCHEMA_DIR
+    if workload == "mixed_category_fitment":
+        return None
+    raise RuntimeError(f"Unknown workload: {workload}")
+
+
+def load_schema_fixtures(schema_dir: Path, expected: list[str]) -> dict[str, dict[str, Any]]:
     schemas: dict[str, dict[str, Any]] = {}
     for name in expected:
         path = schema_dir / f"{name}.json"
@@ -262,6 +297,41 @@ def load_schema_fixtures(schema_dir: Path) -> dict[str, dict[str, Any]]:
             raise RuntimeError(f"Schema fixture {path} has name={schema.get('name')}, expected {name}")
         schemas[name] = schema
     return schemas
+
+
+def merge_schema_fields(*schemas: dict[str, Any]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for schema in schemas:
+        for field_def in schema.get("fields", []):
+            field_name = field_def.get("name")
+            if not isinstance(field_name, str):
+                continue
+            merged[field_name] = dict(field_def)
+    return list(merged.values())
+
+
+def build_mixed_category_fitment_schemas() -> dict[str, dict[str, Any]]:
+    fitment = load_schema_fixtures(
+        DEFAULT_FITMENT_SCHEMA_DIR,
+        [DEFAULT_PRODUCT_COLLECTION, DEFAULT_VEHICLE_COLLECTION, DEFAULT_SOURCE_COLLECTION],
+    )
+    category = load_schema_fixtures(
+        DEFAULT_CATEGORY_FANOUT_SCHEMA_DIR,
+        [DEFAULT_PRODUCT_COLLECTION, DEFAULT_CATEGORY_COLLECTION],
+    )
+
+    merged_product_schema = dict(category[DEFAULT_PRODUCT_COLLECTION])
+    merged_product_schema["fields"] = merge_schema_fields(
+        fitment[DEFAULT_PRODUCT_COLLECTION],
+        category[DEFAULT_PRODUCT_COLLECTION],
+    )
+
+    return {
+        DEFAULT_PRODUCT_COLLECTION: merged_product_schema,
+        DEFAULT_VEHICLE_COLLECTION: fitment[DEFAULT_VEHICLE_COLLECTION],
+        DEFAULT_CATEGORY_COLLECTION: category[DEFAULT_CATEGORY_COLLECTION],
+        DEFAULT_SOURCE_COLLECTION: fitment[DEFAULT_SOURCE_COLLECTION],
+    }
 
 
 def order_schemas_for_creation(schemas: dict[str, dict[str, Any]]) -> list[str]:
@@ -384,6 +454,7 @@ class ScenarioResult:
     label: str
     create_timings_ms: dict[str, float]
     import_stats: dict[str, Any]
+    secondary_import_stats: dict[str, Any] | None
     probe_stats: dict[str, dict[str, float | int]]
     probe_phase_stats: dict[str, dict[str, dict[str, float | int]]]
     probe_server_timing_stats: dict[str, dict[str, dict[str, float]]]
@@ -405,6 +476,7 @@ class ScenarioResult:
     perf_exit_code: int | None
     perf_stdout_log: str | None
     perf_stderr_log: str | None
+    log_summary: dict[str, Any]
     stdout_log: str
     stderr_log: str
 
@@ -716,6 +788,78 @@ def build_fitment_batch(start_index: int, count: int, product_docs: int, vehicle
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def build_category_fanout_product_batch(
+    start_index: int,
+    count: int,
+    category_docs: int,
+    extra_blob_bytes: int,
+) -> bytes:
+    blob = "x" * max(0, extra_blob_bytes)
+    secondary_blob = "y" * max(0, extra_blob_bytes // 2)
+    lines = []
+    for offset in range(count):
+        doc_id = start_index + offset
+        category_id = (doc_id % category_docs) + 1
+        lines.append(
+            json.dumps(
+                {
+                    "id": f"product-{doc_id}",
+                    "variant_pid": doc_id,
+                    "product_name": f"Product {doc_id} category {category_id}",
+                    "primary_level_3_category_id": category_id,
+                    "runId": 1,
+                    # Unindexed payload keeps stored docs closer to real product size and parse cost.
+                    "product_description_blob": blob,
+                    "seo_blob": secondary_blob,
+                    "breadcrumbs_blob": [
+                        {"id": category_id, "label": f"Category {category_id}", "url": f"/c/{category_id}"},
+                        {"id": doc_id % 97, "label": f"Brand {doc_id % 97}", "url": f"/b/{doc_id % 97}"},
+                    ],
+                    "image_urls_blob": [
+                        f"https://example.invalid/images/{doc_id}-100.jpg",
+                        f"https://example.invalid/images/{doc_id}-300.jpg",
+                        f"https://example.invalid/images/{doc_id}-720.jpg",
+                    ],
+                    "properties_blob": [
+                        {"name": "color", "value": "black"},
+                        {"name": "size", "value": "xl"},
+                        {"name": "material", "value": "textile"},
+                    ],
+                },
+                separators=(",", ":"),
+            )
+        )
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def build_category_batch(start_index: int, count: int) -> bytes:
+    lines = []
+    for offset in range(count):
+        category_id = start_index + offset
+        lines.append(
+            json.dumps(
+                {
+                    "id": str(category_id),
+                    "category_id": category_id,
+                    "name": f"Category {category_id}",
+                    "runId": 1,
+                },
+                separators=(",", ":"),
+            )
+        )
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def build_fitment_search_path(collection: str) -> str:
+    params = urllib.parse.urlencode({"q": "*", "filter_by": "variant_pid:>0", "per_page": 10})
+    return f"/collections/{collection}/documents/search?{params}"
+
+
+def build_category_fanout_search_path(collection: str) -> str:
+    params = urllib.parse.urlencode({"q": "product", "query_by": "product_name", "per_page": 10})
+    return f"/collections/{collection}/documents/search?{params}"
+
+
 def parse_import_response(raw: bytes) -> tuple[int, int]:
     success = 0
     failed = 0
@@ -729,6 +873,71 @@ def parse_import_response(raw: bytes) -> tuple[int, int]:
         else:
             failed += 1
     return success, failed
+
+
+def run_generated_imports(
+    base_url: str,
+    api_key: str,
+    collection: str,
+    total_docs: int,
+    batch_docs: int,
+    import_workers: int,
+    timeout: float,
+    server_batch_size: int | None,
+    client_chunk_bytes: int | None,
+    client_chunk_delay_ms: float,
+    build_batch: Any,
+) -> ImportStats:
+    stats = ImportStats()
+    lock = threading.Lock()
+    next_start = 1
+
+    def worker() -> None:
+        nonlocal next_start
+        while True:
+            with lock:
+                if next_start > total_docs:
+                    return
+                start_index = next_start
+                count = min(batch_docs, total_docs - next_start + 1)
+                next_start += count
+
+            body = build_batch(start_index, count)
+            try:
+                status, payload, elapsed = import_ndjson(
+                    base_url,
+                    api_key,
+                    collection,
+                    body,
+                    timeout,
+                    server_batch_size,
+                    client_chunk_bytes,
+                    client_chunk_delay_ms,
+                )
+                with lock:
+                    stats.batch_latencies_ms.append(elapsed)
+                if not (200 <= status < 300):
+                    with lock:
+                        stats.failed_batches += 1
+                        stats.failed_docs += count
+                    continue
+                success, failed = parse_import_response(payload)
+                with lock:
+                    stats.imported_docs += success
+                    stats.failed_docs += failed
+                    if failed > 0:
+                        stats.failed_batches += 1
+            except Exception:
+                with lock:
+                    stats.failed_batches += 1
+                    stats.failed_docs += count
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(import_workers)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return stats
 
 
 def run_probes(
@@ -805,7 +1014,7 @@ def run_probes(
 def run_search_probe(
     base_url: str,
     api_key: str,
-    collection: str,
+    search_path: str,
     timeout: float,
     interval_s: float,
     stop_event: threading.Event,
@@ -816,9 +1025,7 @@ def run_search_probe(
     enable_server_timing: bool,
     keepalive: bool,
 ) -> None:
-    params = urllib.parse.urlencode({"q": "*", "filter_by": "variant_pid:>0", "per_page": 10})
-    path = f"/collections/{collection}/documents/search?{params}"
-    url = f"{base_url}{path}"
+    url = f"{base_url}{search_path}"
     extra_headers = {DEBUG_SERVER_TIMING_HEADER: "1"} if enable_server_timing else None
     client = PersistentHttpClient(base_url, api_key, timeout) if keepalive else None
     while not stop_event.is_set():
@@ -826,7 +1033,7 @@ def run_search_probe(
         phase = phase_tracker.get()
         try:
             if client is not None:
-                response = client.request("GET", path, extra_headers=extra_headers)
+                response = client.request("GET", search_path, extra_headers=extra_headers)
             else:
                 response = http_request_ex("GET", url, api_key, timeout=timeout, extra_headers=extra_headers)
             elapsed = now_ms() - started
@@ -916,6 +1123,35 @@ def collect_metrics_sample(
                 "collection_import_last_batch_write_ms",
                 "collection_import_last_batch_response_ms",
                 "collection_import_last_batch_async_reference_ms",
+                "collection_import_last_async_reference_helper_matched_docs",
+                "collection_import_last_async_reference_helper_updated_docs",
+                "collection_import_last_async_reference_helper_filter_ms",
+                "collection_import_last_async_reference_helper_fetch_ms",
+                "collection_import_last_async_reference_helper_parse_ms",
+                "collection_import_last_async_reference_helper_transform_ms",
+                "collection_import_last_async_reference_helper_reindex_ms",
+                "collection_import_last_async_reference_helper_store_prep_ms",
+                "collection_import_last_async_reference_helper_write_ms",
+                "collection_import_last_async_reference_helper_fetched_doc_bytes",
+                "collection_import_last_async_reference_helper_written_doc_bytes",
+                "collection_import_last_async_reference_helper_max_doc_bytes",
+                "collection_import_last_async_reference_helper_store_retry_writes",
+                "collection_import_last_async_reference_helper_write_failures",
+                "collection_import_last_async_reference_helper_total_ms",
+                "collection_import_cumulative_async_reference_helper_invocations",
+                "collection_import_cumulative_async_reference_helper_slow_paths",
+                "collection_import_cumulative_async_reference_helper_matched_docs",
+                "collection_import_cumulative_async_reference_helper_updated_docs",
+                "collection_import_cumulative_async_reference_helper_total_ms",
+                "collection_import_cumulative_async_reference_helper_fetched_doc_bytes",
+                "collection_import_cumulative_async_reference_helper_written_doc_bytes",
+                "collection_import_cumulative_async_reference_helper_store_retry_writes",
+                "collection_import_cumulative_async_reference_helper_write_failures",
+                "collection_import_max_async_reference_helper_total_ms",
+                "collection_import_max_async_reference_helper_matched_docs",
+                "collection_import_max_async_reference_helper_updated_docs",
+                "collection_import_max_async_reference_helper_fetched_doc_bytes",
+                "collection_import_max_async_reference_helper_written_doc_bytes",
                 "collection_search_last_init_lock_wait_ms",
                 "collection_search_last_run_lock_wait_ms",
                 "collection_write_last_memory_lock_wait_ms",
@@ -1047,13 +1283,22 @@ def collect_metrics_sample(
                 "http_import_avg_h2o_total_ms",
                 "thread_pool_last_wait_ms",
                 "thread_pool_queued_tasks",
+                "thread_pool_active_workers",
+                "thread_pool_max_wait_ms",
+                "thread_pool_max_queued_tasks",
+                "thread_pool_worker_count",
                 "meta_thread_pool_last_wait_ms",
                 "meta_thread_pool_queued_tasks",
+                "meta_thread_pool_active_workers",
+                "meta_thread_pool_max_wait_ms",
+                "meta_thread_pool_max_queued_tasks",
+                "meta_thread_pool_worker_count",
                 "response_flow_active_deferred_requests",
                 "message_dispatch_stream_response_last_queue_ms",
                 "message_dispatch_stream_response_max_queue_ms",
                 "queued_writes",
                 "pending_write_batches",
+                "http_request_cumulative_slow_requests",
                 "system_cpu_active_percentage",
                 "system_memory_used_bytes",
                 "system_memory_used_swap_bytes",
@@ -1167,6 +1412,28 @@ def summarize_named_latency_series(series: dict[str, list[float]]) -> dict[str, 
     return {name: summarize_latencies(values) for name, values in sorted(series.items()) if values}
 
 
+def summarize_runtime_logs(stdout_log: Path, stderr_log: Path, sample_limit: int = 5) -> dict[str, Any]:
+    patterns = {
+        "slow_request": "event=slow_request",
+        "threadpool_exhaustion": "Threadpool exhaustion detected",
+        "async_reference_helper_slow_path": "Async reference helper slow path:",
+    }
+    summary: dict[str, Any] = {}
+    combined_lines: list[str] = []
+    for log_path in (stdout_log, stderr_log):
+        if not log_path.is_file():
+            continue
+        with log_path.open("r", encoding="utf-8", errors="replace") as handle:
+            combined_lines.extend(line.rstrip() for line in handle if line.rstrip())
+
+    for key, needle in patterns.items():
+        matches = [line for line in combined_lines if needle in line]
+        summary[f"{key}_count"] = len(matches)
+        if matches:
+            summary[f"{key}_samples"] = matches[-sample_limit:]
+    return summary
+
+
 def summarize_probe_server_timing(
     probe_stats: dict[str, ProbeStats],
 ) -> dict[str, dict[str, dict[str, float]]]:
@@ -1230,56 +1497,103 @@ def run_imports(
     client_chunk_bytes: int | None,
     client_chunk_delay_ms: float,
 ) -> ImportStats:
-    stats = ImportStats()
-    lock = threading.Lock()
-    next_start = 1
+    return run_generated_imports(
+        base_url,
+        api_key,
+        collection,
+        total_docs,
+        batch_docs,
+        import_workers,
+        timeout,
+        server_batch_size,
+        client_chunk_bytes,
+        client_chunk_delay_ms,
+        lambda start_index, count: build_fitment_batch(start_index, count, product_docs, vehicle_docs),
+    )
 
-    def worker() -> None:
-        nonlocal next_start
-        while True:
-            with lock:
-                if next_start > total_docs:
-                    return
-                start_index = next_start
-                count = min(batch_docs, total_docs - next_start + 1)
-                next_start += count
 
-            body = build_fitment_batch(start_index, count, product_docs, vehicle_docs)
-            try:
-                status, payload, elapsed = import_ndjson(
-                    base_url,
-                    api_key,
-                    collection,
-                    body,
-                    timeout,
-                    server_batch_size,
-                    client_chunk_bytes,
-                    client_chunk_delay_ms,
-                )
-                with lock:
-                    stats.batch_latencies_ms.append(elapsed)
-                if not (200 <= status < 300):
-                    with lock:
-                        stats.failed_batches += 1
-                        stats.failed_docs += count
-                    continue
-                success, failed = parse_import_response(payload)
-                with lock:
-                    stats.imported_docs += success
-                    stats.failed_docs += failed
-                    if failed > 0:
-                        stats.failed_batches += 1
-            except Exception:
-                with lock:
-                    stats.failed_batches += 1
-                    stats.failed_docs += count
+def summarize_import_stats(import_stats: ImportStats, elapsed_ms: float) -> dict[str, float | int]:
+    summary = summarize_latencies(import_stats.batch_latencies_ms)
+    summary.update(
+        {
+            "docs": import_stats.imported_docs,
+            "failed_docs": import_stats.failed_docs,
+            "failed_batches": import_stats.failed_batches,
+            "elapsed_ms": elapsed_ms,
+            "docs_per_sec": (import_stats.imported_docs / (elapsed_ms / 1000.0)) if elapsed_ms > 0 else 0.0,
+            "batches_per_sec": (len(import_stats.batch_latencies_ms) / (elapsed_ms / 1000.0)) if elapsed_ms > 0 else 0.0,
+        }
+    )
+    return summary
 
-    threads = [threading.Thread(target=worker, daemon=True) for _ in range(import_workers)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-    return stats
+
+def run_mixed_category_fitment_imports(
+    base_url: str,
+    api_key: str,
+    fitment_docs: int,
+    fitment_batch_docs: int,
+    fitment_product_docs: int,
+    fitment_vehicle_docs: int,
+    fitment_workers: int,
+    category_docs: int,
+    category_batch_docs: int,
+    timeout: float,
+    server_batch_size: int | None,
+    client_chunk_bytes: int | None,
+    client_chunk_delay_ms: float,
+) -> tuple[ImportStats, ImportStats, float]:
+    start_barrier = threading.Barrier(2)
+    category_result: dict[str, Any] = {}
+
+    def run_category_import() -> None:
+        try:
+            start_barrier.wait()
+            category_result["stats"] = run_generated_imports(
+                base_url,
+                api_key,
+                DEFAULT_CATEGORY_COLLECTION,
+                category_docs,
+                category_batch_docs,
+                1,
+                timeout,
+                server_batch_size,
+                client_chunk_bytes,
+                client_chunk_delay_ms,
+                build_category_batch,
+            )
+        except BaseException as exc:  # propagate after join
+            category_result["error"] = exc
+
+    category_thread = threading.Thread(target=run_category_import, daemon=True)
+    category_thread.start()
+
+    started = now_ms()
+    start_barrier.wait()
+    fitment_stats = run_imports(
+        base_url,
+        api_key,
+        DEFAULT_SOURCE_COLLECTION,
+        fitment_docs,
+        fitment_batch_docs,
+        fitment_product_docs,
+        fitment_vehicle_docs,
+        fitment_workers,
+        timeout,
+        server_batch_size,
+        client_chunk_bytes,
+        client_chunk_delay_ms,
+    )
+    category_thread.join()
+    elapsed_ms = now_ms() - started
+
+    if "error" in category_result:
+        raise RuntimeError("Mixed workload category import failed") from category_result["error"]
+
+    category_stats = category_result.get("stats")
+    if category_stats is None:
+        raise RuntimeError("Mixed workload category import did not return stats.")
+
+    return fitment_stats, category_stats, elapsed_ms
 
 
 def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[str, Any]:
@@ -1310,10 +1624,19 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "message_dispatch_stream_response_max_queue_ms",
         "message_dispatch_request_proceed_last_queue_ms",
         "message_dispatch_defer_processing_last_queue_ms",
+        "http_request_cumulative_slow_requests",
         "thread_pool_last_wait_ms",
         "thread_pool_queued_tasks",
+        "thread_pool_active_workers",
+        "thread_pool_max_wait_ms",
+        "thread_pool_max_queued_tasks",
+        "thread_pool_worker_count",
         "meta_thread_pool_last_wait_ms",
         "meta_thread_pool_queued_tasks",
+        "meta_thread_pool_active_workers",
+        "meta_thread_pool_max_wait_ms",
+        "meta_thread_pool_max_queued_tasks",
+        "meta_thread_pool_worker_count",
         "nuraft_last_import_total_ms",
         "nuraft_last_import_replay_ms",
         "nuraft_last_import_request_bytes",
@@ -1362,6 +1685,36 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "collection_import_last_batch_calls",
         "collection_import_last_effective_index_batch_size",
         "collection_import_last_reference_helper_ms",
+        "collection_import_last_async_reference_helper_matched_docs",
+        "collection_import_last_async_reference_helper_updated_docs",
+        "collection_import_last_async_reference_helper_filter_ms",
+        "collection_import_last_async_reference_helper_fetch_ms",
+        "collection_import_last_async_reference_helper_parse_ms",
+        "collection_import_last_async_reference_helper_transform_ms",
+        "collection_import_last_async_reference_helper_reindex_ms",
+        "collection_import_last_async_reference_helper_store_prep_ms",
+        "collection_import_last_async_reference_helper_write_ms",
+        "collection_import_last_async_reference_helper_fetched_doc_bytes",
+        "collection_import_last_async_reference_helper_written_doc_bytes",
+        "collection_import_last_async_reference_helper_max_doc_bytes",
+        "collection_import_last_async_reference_helper_store_retry_writes",
+        "collection_import_last_async_reference_helper_write_failures",
+        "collection_import_last_async_reference_helper_total_ms",
+        "collection_import_cumulative_async_reference_helper_invocations",
+        "collection_import_cumulative_async_reference_helper_slow_paths",
+        "collection_import_cumulative_async_reference_helper_matched_docs",
+        "collection_import_cumulative_async_reference_helper_updated_docs",
+        "collection_import_cumulative_async_reference_helper_total_ms",
+        "collection_import_cumulative_async_reference_helper_fetched_doc_bytes",
+        "collection_import_cumulative_async_reference_helper_written_doc_bytes",
+        "collection_import_cumulative_async_reference_helper_store_retry_writes",
+        "collection_import_cumulative_async_reference_helper_write_failures",
+        "collection_import_max_async_reference_helper_total_ms",
+        "collection_import_max_async_reference_helper_matched_docs",
+        "collection_import_max_async_reference_helper_updated_docs",
+        "collection_import_max_async_reference_helper_fetched_doc_bytes",
+        "collection_import_max_async_reference_helper_written_doc_bytes",
+        "collection_import_last_async_reference_helper_field_name",
         "collection_search_last_init_lock_wait_ms",
         "collection_search_last_run_lock_wait_ms",
         "collection_write_last_memory_lock_wait_ms",
@@ -1781,45 +2134,126 @@ def run_scenario(
         for name in order_schemas_for_creation(schemas):
             create_timings[name] = create_collection(process.base_url, args.api_key, schemas[name])
 
-        source_schema = schemas[args.source_collection]
-        references = [
-            field["reference"].split(".", 1)
-            for field in source_schema["fields"]
-            if isinstance(field.get("reference"), str) and "." in field["reference"]
-        ]
-        reference_map = {collection: field_name for collection, field_name in references}
+        import_phase = "source_import"
+        search_path = build_fitment_search_path(args.source_collection)
+        fitment_product_collection = DEFAULT_PRODUCT_COLLECTION
+        fitment_vehicle_collection = DEFAULT_VEHICLE_COLLECTION
+        secondary_import_summary: dict[str, Any] | None = None
 
-        product_collection = next((name for name, field_name in reference_map.items() if field_name == "variant_pid"), DEFAULT_PRODUCT_COLLECTION)
-        vehicle_collection = next((name for name, field_name in reference_map.items() if field_name == "vehicle_id"), DEFAULT_VEHICLE_COLLECTION)
+        if args.workload == "fitment":
+            source_schema = schemas[args.source_collection]
+            references = [
+                field["reference"].split(".", 1)
+                for field in source_schema["fields"]
+                if isinstance(field.get("reference"), str) and "." in field["reference"]
+            ]
+            reference_map = {collection: field_name for collection, field_name in references}
 
-        if args.seed_target_order == "before":
-            seed_target_collection(
+            fitment_product_collection = next(
+                (name for name, field_name in reference_map.items() if field_name == "variant_pid"),
+                DEFAULT_PRODUCT_COLLECTION,
+            )
+            fitment_vehicle_collection = next(
+                (name for name, field_name in reference_map.items() if field_name == "vehicle_id"),
+                DEFAULT_VEHICLE_COLLECTION,
+            )
+
+            if args.seed_target_order == "before":
+                seed_target_collection(
+                    process.base_url,
+                    args.api_key,
+                    fitment_product_collection,
+                    "variant_pid",
+                    args.product_docs,
+                    args.preseed_batch_docs,
+                    args.timeout,
+                    args.server_batch_size,
+                    args.client_chunk_bytes,
+                    args.client_chunk_delay_ms,
+                )
+                seed_target_collection(
+                    process.base_url,
+                    args.api_key,
+                    fitment_vehicle_collection,
+                    "vehicle_id",
+                    args.vehicle_docs,
+                    args.preseed_batch_docs,
+                    args.timeout,
+                    args.server_batch_size,
+                    args.client_chunk_bytes,
+                    args.client_chunk_delay_ms,
+                )
+        elif args.workload == "category_fanout":
+            import_phase = "category_resolution_import"
+            search_path = build_category_fanout_search_path(DEFAULT_PRODUCT_COLLECTION)
+            preseed_stats = run_generated_imports(
                 process.base_url,
                 args.api_key,
-                product_collection,
-                "variant_pid",
+                DEFAULT_PRODUCT_COLLECTION,
                 args.product_docs,
-                max(1, min(args.batch_docs, 5_000)),
+                args.preseed_batch_docs,
+                args.import_workers,
                 args.timeout,
                 args.server_batch_size,
                 args.client_chunk_bytes,
                 args.client_chunk_delay_ms,
+                lambda start_index, count: build_category_fanout_product_batch(
+                    start_index,
+                    count,
+                    args.category_docs,
+                    args.fanout_product_extra_bytes,
+                ),
             )
+            if preseed_stats.failed_docs > 0 or preseed_stats.failed_batches > 0:
+                raise RuntimeError(
+                    "Failed to preseed category fanout products: "
+                    f"failed_docs={preseed_stats.failed_docs} failed_batches={preseed_stats.failed_batches}"
+                )
+        elif args.workload == "mixed_category_fitment":
+            import_phase = "mixed_concurrent_imports"
+            search_path = build_category_fanout_search_path(DEFAULT_PRODUCT_COLLECTION)
+            preseed_product_stats = run_generated_imports(
+                process.base_url,
+                args.api_key,
+                DEFAULT_PRODUCT_COLLECTION,
+                args.product_docs,
+                args.preseed_batch_docs,
+                args.import_workers,
+                args.timeout,
+                args.server_batch_size,
+                args.client_chunk_bytes,
+                args.client_chunk_delay_ms,
+                lambda start_index, count: build_category_fanout_product_batch(
+                    start_index,
+                    count,
+                    args.category_docs,
+                    args.fanout_product_extra_bytes,
+                ),
+            )
+            if preseed_product_stats.failed_docs > 0 or preseed_product_stats.failed_batches > 0:
+                raise RuntimeError(
+                    "Failed to preseed mixed workload products: "
+                    f"failed_docs={preseed_product_stats.failed_docs} "
+                    f"failed_batches={preseed_product_stats.failed_batches}"
+                )
+
             seed_target_collection(
                 process.base_url,
                 args.api_key,
-                vehicle_collection,
+                DEFAULT_VEHICLE_COLLECTION,
                 "vehicle_id",
                 args.vehicle_docs,
-                max(1, min(args.batch_docs, 5_000)),
+                args.preseed_batch_docs,
                 args.timeout,
                 args.server_batch_size,
                 args.client_chunk_bytes,
                 args.client_chunk_delay_ms,
             )
+        else:
+            raise RuntimeError(f"Unknown workload: {args.workload}")
 
         stop_event = threading.Event()
-        phase_tracker = PhaseTracker("source_import")
+        phase_tracker = PhaseTracker(import_phase)
         probe_routes = build_probe_routes(args.probe_profile, args.probe_route)
         probe_stats = {route: ProbeStats(route) for route in probe_routes}
         probe_samples: list[ProbeSample] = []
@@ -1856,7 +2290,7 @@ def run_scenario(
                 args=(
                     process.base_url,
                     args.api_key,
-                    args.source_collection,
+                    search_path,
                     args.timeout,
                     args.probe_interval,
                     stop_event,
@@ -1945,31 +2379,64 @@ def run_scenario(
             )
 
         started = now_ms()
-        import_stats = run_imports(
-            process.base_url,
-            args.api_key,
-            args.source_collection,
-            args.total_fitment_docs,
-            args.batch_docs,
-            args.product_docs,
-            args.vehicle_docs,
-            args.import_workers,
-            args.timeout,
-            args.server_batch_size,
-            args.client_chunk_bytes,
-            args.client_chunk_delay_ms,
-        )
-        elapsed_ms = now_ms() - started
+        if args.workload == "fitment":
+            import_stats = run_imports(
+                process.base_url,
+                args.api_key,
+                args.source_collection,
+                args.total_fitment_docs,
+                args.batch_docs,
+                args.product_docs,
+                args.vehicle_docs,
+                args.import_workers,
+                args.timeout,
+                args.server_batch_size,
+                args.client_chunk_bytes,
+                args.client_chunk_delay_ms,
+            )
+            elapsed_ms = now_ms() - started
+        elif args.workload == "category_fanout":
+            import_stats = run_generated_imports(
+                process.base_url,
+                args.api_key,
+                DEFAULT_CATEGORY_COLLECTION,
+                args.category_docs,
+                args.batch_docs,
+                1,
+                args.timeout,
+                args.server_batch_size,
+                args.client_chunk_bytes,
+                args.client_chunk_delay_ms,
+                build_category_batch,
+            )
+            elapsed_ms = now_ms() - started
+        else:
+            import_stats, category_import_stats, elapsed_ms = run_mixed_category_fitment_imports(
+                process.base_url,
+                args.api_key,
+                args.total_fitment_docs,
+                args.batch_docs,
+                args.product_docs,
+                args.vehicle_docs,
+                args.import_workers,
+                args.category_docs,
+                args.category_batch_docs or args.category_docs,
+                args.timeout,
+                args.server_batch_size,
+                args.client_chunk_bytes,
+                args.client_chunk_delay_ms,
+            )
+            secondary_import_summary = summarize_import_stats(category_import_stats, elapsed_ms)
 
-        if args.seed_target_order == "after":
+        if args.workload == "fitment" and args.seed_target_order == "after":
             phase_tracker.set("reference_seed")
             seed_target_collection(
                 process.base_url,
                 args.api_key,
-                product_collection,
+                fitment_product_collection,
                 "variant_pid",
                 args.product_docs,
-                max(1, min(args.batch_docs, 5_000)),
+                args.preseed_batch_docs,
                 args.timeout,
                 args.server_batch_size,
                 args.client_chunk_bytes,
@@ -1978,16 +2445,16 @@ def run_scenario(
             seed_target_collection(
                 process.base_url,
                 args.api_key,
-                vehicle_collection,
+                fitment_vehicle_collection,
                 "vehicle_id",
                 args.vehicle_docs,
-                max(1, min(args.batch_docs, 5_000)),
+                args.preseed_batch_docs,
                 args.timeout,
                 args.server_batch_size,
                 args.client_chunk_bytes,
                 args.client_chunk_delay_ms,
             )
-        elif args.seed_target_order == "never":
+        elif args.workload == "fitment" and args.seed_target_order == "never":
             pass
 
         phase_tracker.set("cooldown")
@@ -2073,17 +2540,7 @@ def run_scenario(
                 profiling_outputs["runqlat_stderr_log"] = str(runqlat_stderr_log)
 
         final_metrics = collect_final_metrics(process.base_url, args.api_key, args.timeout)
-        import_summary = summarize_latencies(import_stats.batch_latencies_ms)
-        import_summary.update(
-            {
-                "docs": import_stats.imported_docs,
-                "failed_docs": import_stats.failed_docs,
-                "failed_batches": import_stats.failed_batches,
-                "elapsed_ms": elapsed_ms,
-                "docs_per_sec": (import_stats.imported_docs / (elapsed_ms / 1000.0)) if elapsed_ms > 0 else 0.0,
-                "batches_per_sec": (len(import_stats.batch_latencies_ms) / (elapsed_ms / 1000.0)) if elapsed_ms > 0 else 0.0,
-            }
-        )
+        import_summary = summarize_import_stats(import_stats, elapsed_ms)
         probe_summary = {
             route: {**summarize_latencies(data.latencies_ms), "failures": data.failures}
             for route, data in probe_stats.items()
@@ -2101,10 +2558,12 @@ def run_scenario(
         with search_lock:
             search_phase_summary = summarize_search_samples_by_phase(search_samples)
             search_server_timing_phase_summary = summarize_search_server_timing_by_phase(search_samples)
+        log_summary = summarize_runtime_logs(process.stdout_log, process.stderr_log)
         return ScenarioResult(
             label=label,
             create_timings_ms=create_timings,
             import_stats=import_summary,
+            secondary_import_stats=secondary_import_summary,
             probe_stats=probe_summary,
             probe_phase_stats=probe_phase_summary,
             probe_server_timing_stats=probe_server_timing_summary,
@@ -2126,6 +2585,7 @@ def run_scenario(
             perf_exit_code=perf_exit_code,
             perf_stdout_log=str(perf_stdout_log) if perf_stdout_log is not None else None,
             perf_stderr_log=str(perf_stderr_log) if perf_stderr_log is not None else None,
+            log_summary=log_summary,
             stdout_log=str(process.stdout_log),
             stderr_log=str(process.stderr_log),
         )
@@ -2162,6 +2622,14 @@ def print_result(result: ScenarioResult) -> None:
             **import_stats
         )
     )
+    if result.secondary_import_stats is not None:
+        print("Secondary import summary:")
+        print(
+            "  docs={docs} failed_docs={failed_docs} failed_batches={failed_batches} "
+            "avg={avg_ms:.1f}ms p95={p95_ms:.1f}ms max={max_ms:.1f}ms docs/s={docs_per_sec:.1f} batches/s={batches_per_sec:.2f}".format(
+                **result.secondary_import_stats
+            )
+        )
 
     print("Probe summary:")
     for route, summary in result.probe_stats.items():
@@ -2278,6 +2746,10 @@ def print_result(result: ScenarioResult) -> None:
             f"  stdout={result.perf_stdout_log}\n"
             f"  stderr={result.perf_stderr_log}"
         )
+    if result.log_summary:
+        print("Log summary:")
+        for key in sorted(result.log_summary.keys()):
+            print(f"  {key}: {result.log_summary[key]}")
     print(f"Logs: stdout={result.stdout_log} stderr={result.stderr_log}")
 
 
@@ -2291,13 +2763,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline-label", default="baseline")
     parser.add_argument("--candidate-label", default="candidate")
     parser.add_argument("--api-key", default=DEFAULT_API_KEY)
+    parser.add_argument(
+        "--workload",
+        choices=["fitment", "category_fanout", "mixed_category_fitment"],
+        default=DEFAULT_WORKLOAD,
+        help=(
+            "Replay the fitment async-reference workload, the products/categories fanout workload, "
+            "or a mixed lane that runs category resolution concurrently with fitment imports."
+        ),
+    )
     parser.add_argument("--source-url", help="Optional running Typesense URL to fetch live schemas from.")
     parser.add_argument("--source-api-key", help="API key for --source-url. Defaults to --api-key.")
     parser.add_argument("--source-collection", default=DEFAULT_SOURCE_COLLECTION)
     parser.add_argument(
         "--schema-dir",
         type=Path,
-        default=DEFAULT_SCHEMA_DIR,
+        default=None,
         help="Directory containing repo-owned schema fixtures used when --source-url is not set.",
     )
     parser.add_argument("--schema-output-dir", type=Path, help="Optional directory to dump fetched/minimal schemas.")
@@ -2306,6 +2787,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--import-workers", type=int, default=DEFAULT_IMPORT_WORKERS)
     parser.add_argument("--product-docs", type=int, default=DEFAULT_PRODUCT_DOCS)
     parser.add_argument("--vehicle-docs", type=int, default=DEFAULT_VEHICLE_DOCS)
+    parser.add_argument("--category-docs", type=int, default=DEFAULT_CATEGORY_DOCS)
+    parser.add_argument(
+        "--category-batch-docs",
+        type=int,
+        help="Optional batch size used for categories imports. Defaults to --batch-docs, except mixed runs use one categories batch by default.",
+    )
+    parser.add_argument("--preseed-batch-docs", type=int, default=DEFAULT_PRESEED_BATCH_DOCS)
+    parser.add_argument(
+        "--fanout-product-extra-bytes",
+        type=int,
+        default=DEFAULT_FANOUT_PRODUCT_EXTRA_BYTES,
+        help="Approximate extra unindexed JSON payload bytes stored on each preseeded product in category_fanout mode.",
+    )
     parser.add_argument("--probe-interval", type=float, default=DEFAULT_PROBE_INTERVAL)
     parser.add_argument("--probe-workers", type=int, default=DEFAULT_PROBE_WORKERS)
     parser.add_argument("--search-workers", type=int, default=DEFAULT_SEARCH_WORKERS)
@@ -2437,10 +2931,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--json-output", type=Path, help="Optional path to write the final summary JSON.")
     args = parser.parse_args()
 
+    if args.schema_dir is None:
+        args.schema_dir = default_schema_dir_for_workload(args.workload)
+
     if args.binary and (args.baseline_binary or args.candidate_binary):
         parser.error("--binary cannot be combined with --baseline-binary/--candidate-binary")
     if args.binary is None and not (args.baseline_binary and args.candidate_binary):
         parser.error("Provide either --binary or both --baseline-binary and --candidate-binary")
+    if args.source_url and args.workload != "fitment":
+        parser.error("--source-url is only supported for --workload fitment")
+    if args.preseed_batch_docs <= 0:
+        parser.error("--preseed-batch-docs must be > 0")
     return args
 
 
@@ -2454,8 +2955,14 @@ def main() -> int:
             args.source_collection,
             args.schema_output_dir,
         )
+    elif args.workload == "mixed_category_fitment":
+        schemas = build_mixed_category_fitment_schemas()
+        if args.schema_output_dir is not None:
+            args.schema_output_dir.mkdir(parents=True, exist_ok=True)
+            for name, schema in schemas.items():
+                (args.schema_output_dir / f"{name}.json").write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
     else:
-        schemas = load_schema_fixtures(args.schema_dir)
+        schemas = load_schema_fixtures(args.schema_dir, expected_schema_names(args.workload, args.source_collection))
         if args.schema_output_dir is not None:
             args.schema_output_dir.mkdir(parents=True, exist_ok=True)
             for name, schema in schemas.items():
@@ -2478,6 +2985,7 @@ def main() -> int:
                 "label": result.label,
                 "create_timings_ms": result.create_timings_ms,
                 "import_stats": result.import_stats,
+                "secondary_import_stats": result.secondary_import_stats,
                 "probe_stats": result.probe_stats,
                 "probe_phase_stats": result.probe_phase_stats,
                 "probe_server_timing_stats": result.probe_server_timing_stats,
@@ -2499,6 +3007,7 @@ def main() -> int:
                 "perf_exit_code": result.perf_exit_code,
                 "perf_stdout_log": result.perf_stdout_log,
                 "perf_stderr_log": result.perf_stderr_log,
+                "log_summary": result.log_summary,
                 "stdout_log": result.stdout_log,
                 "stderr_log": result.stderr_log,
             }
