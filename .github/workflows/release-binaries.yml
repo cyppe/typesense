@@ -73,11 +73,67 @@ jobs:
     name: select-targets
     runs-on: ubuntu-24.04
     outputs:
+      checkout_ref: ${{ steps.resolve_ref.outputs.checkout_ref }}
       core_matrix: ${{ steps.select.outputs.core_matrix }}
       core_enabled: ${{ steps.select.outputs.core_enabled }}
       gpu_matrix: ${{ steps.select.outputs.gpu_matrix }}
       gpu_enabled: ${{ steps.select.outputs.gpu_enabled }}
     steps:
+      - name: Resolve checkout ref
+        id: resolve_ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REF: ${{ inputs.ref }}
+          DEFAULT_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          input_ref = (os.environ.get("INPUT_REF") or "").strip()
+          default_sha = os.environ["DEFAULT_SHA"]
+          repository = os.environ["REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+
+          resolved = default_sha
+          if input_ref:
+              ref = input_ref
+              if ref.startswith("refs/heads/"):
+                  ref = ref[len("refs/heads/"):]
+              elif ref.startswith("refs/tags/"):
+                  ref = ref[len("refs/tags/"):]
+
+              url = (
+                  f"https://api.github.com/repos/{repository}/commits/"
+                  f"{urllib.parse.quote(ref, safe='')}"
+              )
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      payload = json.load(response)
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode("utf-8", errors="replace")
+                  raise SystemExit(
+                      f"Unable to resolve workflow_dispatch ref {input_ref!r}: "
+                      f"GitHub API returned {exc.code}: {body}"
+                  ) from exc
+              resolved = payload["sha"]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"checkout_ref={resolved}\n")
+          PY
+
       - name: Select target matrix
         id: select
         env:
@@ -213,7 +269,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+          ref: ${{ needs.select_targets.outputs.checkout_ref }}
 
       - name: Restore Bazel cache (Docker)
         if: matrix.uses_docker_bazel
@@ -539,7 +595,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+          ref: ${{ needs.select_targets.outputs.checkout_ref }}
 
       - name: Restore Bazel cache
         if: needs.core-binaries.result == 'skipped'
@@ -715,6 +771,7 @@ jobs:
       needs.core-binaries.result == 'success' &&
       (inputs.target_scope == 'all' || inputs.target_scope == 'linux')
     needs:
+      - select_targets
       - core-binaries
     name: docker-images
     runs-on: ubuntu-24.04
@@ -722,7 +779,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
         with:
-          ref: ${{ inputs.ref != '' && inputs.ref || github.ref }}
+          ref: ${{ needs.select_targets.outputs.checkout_ref }}
 
       - name: Download linux-amd64 artifact
         uses: actions/download-artifact@v8
