@@ -36,6 +36,7 @@ void clear_runtime_env() {
     unsetenv("TYPESENSE_API_USES_SSL");
     unsetenv("TYPESENSE_RAFT_HEART_BEAT_INTERVAL_MS");
     unsetenv("TYPESENSE_RAFT_AUTO_FORWARDING");
+    unsetenv("TYPESENSE_RAFT_SNAPSHOT_DISTANCE");
 }
 
 }  // namespace
@@ -160,4 +161,28 @@ TEST(NuRaftRuntimeOptionsTest, LoadsRuntimeOverridesFromEnvAndConfigFile) {
     ASSERT_EQ(std::string("127.0.0.1:7107:7108,127.0.0.2:7107:7108"), runtime_options.startup_options.nodes_config);
 
     clear_runtime_env();
+}
+
+TEST(NuRaftRuntimeOptionsTest, DefaultsSnapshotDistanceToProductionValue) {
+    clear_runtime_env();
+
+    std::vector<std::string> args = {
+        "./typesense-server",
+        "--data-dir=/tmp/runtime-data",
+        "--api-key=abcd",
+    };
+    std::vector<char*> argv = get_argv(args);
+
+    cmdline::parser options;
+    ConfigImpl config;
+    NuRaftHttpServerOptions runtime_options;
+    bool help_requested = false;
+    std::string usage;
+    std::string error;
+
+    ASSERT_TRUE(load_nuraft_runtime_options(
+        options, static_cast<int>(argv.size() - 1), argv.data(), config, runtime_options, help_requested, usage, error))
+        << error;
+    ASSERT_FALSE(help_requested);
+    ASSERT_EQ(uint32_t{100000}, runtime_options.raft_params.snapshot_distance);
 }

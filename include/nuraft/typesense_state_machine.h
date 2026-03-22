@@ -20,6 +20,17 @@
 using TypesenseCommitCallback = std::function<void(uint64_t log_index,
                                                    const NuRaftAppliedRequest& request)>;
 
+struct TypesenseSnapshotMetricsSnapshot {
+    bool snapshot_in_progress = false;
+    bool last_snapshot_success = false;
+    uint64_t last_snapshot_log_index = 0;
+    uint64_t last_snapshot_applied_index = 0;
+    uint64_t last_snapshot_total_ms = 0;
+    uint64_t max_snapshot_total_ms = 0;
+    uint64_t cumulative_snapshots = 0;
+    uint64_t cumulative_snapshot_failures = 0;
+};
+
 // NuRaft state machine for Typesense.
 //
 // Applies committed Raft log entries (NuRaftRequestEnvelope payloads) to
@@ -60,6 +71,7 @@ public:
     void free_user_snp_ctx(void*& user_snp_ctx) override;
 
     uint64_t get_last_commit_index() const;
+    TypesenseSnapshotMetricsSnapshot get_snapshot_metrics() const;
 
 private:
     NuRaftStateLayout layout_;
@@ -68,6 +80,14 @@ private:
     TypesenseCommitCallback commit_callback_;
 
     std::atomic<uint64_t> last_commit_index_;
+    std::atomic<bool> snapshot_in_progress_{false};
+    std::atomic<bool> last_snapshot_success_{false};
+    std::atomic<uint64_t> last_snapshot_log_index_{0};
+    std::atomic<uint64_t> last_snapshot_applied_index_{0};
+    std::atomic<uint64_t> last_snapshot_total_ms_{0};
+    std::atomic<uint64_t> max_snapshot_total_ms_{0};
+    std::atomic<uint64_t> cumulative_snapshots_{0};
+    std::atomic<uint64_t> cumulative_snapshot_failures_{0};
     mutable std::mutex snapshot_mutex_;
     nuraft::ptr<nuraft::snapshot> last_snapshot_ptr_;
 

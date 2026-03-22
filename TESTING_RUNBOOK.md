@@ -237,6 +237,7 @@ It can either:
 Additional heavy-import workload modes:
 - `--workload category_fanout` preloads `products_se` with unresolved `primary_level_3_category_id` references and then measures the synchronous `categories_se` fanout/import path directly.
 - `--workload mixed_category_fitment` runs that `categories_se` fanout concurrently with live `product_vehicle_fitments_se` imports, which is the closest local approximation to the Laravel timeout pattern seen in DDEV.
+- `--secondary-fitment-update-docs <N>` adds a second update-heavy `product_vehicle_fitments_se` phase after the initial seed/import pass. Use this when reproducing the sibling-fitment upsert shape from DDEV without pulling Laravel into the loop.
 
 Typical single-binary smoke run:
 
@@ -279,7 +280,50 @@ Notes:
 - The harness now also summarizes important server warnings from `typesense-server` logs (`event=slow_request`, `Threadpool exhaustion detected`, and `Async reference helper slow path`) so regressions show up directly in the replay output instead of only in raw logs.
 - `/metrics.json` now exposes helper-level cumulative/max counters too, including the last helper field name plus retry/failure counters (`collection_import_last_async_reference_helper_field_name`, `collection_import_cumulative_async_reference_helper_*`, `collection_import_max_async_reference_helper_*`). Use those before diving into raw logs when a category/product fanout import looks suspicious.
 - If you want to validate the import slow-request log payload itself, pass `--server-arg=--log-slow-requests-time-ms=<threshold>` to the replay and inspect the emitted `slow_request_samples` in the final log summary.
+- The replay also surfaces snapshot posture now (`nuraft_snapshot_distance`, `nuraft_snapshot_in_progress`, `nuraft_last_snapshot_*`, `nuraft_cumulative_snapshots`). If a DDEV-only timeout happens at a repeatable document count, validate this lane before changing import code again: a too-low snapshot distance can stall the commit thread inside `snapshot_and_compact()` and look like a generic write timeout from the client side.
 - For profiling, use host tools against the local replay PID rather than trying to hide `perf`/eBPF inside a container. The build/test flow remains Docker-first; the profiling flow is host-side because `perf`, `runqlat`, and related tools need direct kernel and PID-namespace visibility.
+
+Update-heavy fitment replay that mirrors the sibling-fitment phase without DDEV:
+
+```bash
+python3 scripts/replay_fitment_import_stress.py \
+  --binary ./bazel-bin/typesense-server \
+  --workload fitment \
+  --seed-target-order before \
+  --total-fitment-docs 20000 \
+  --secondary-fitment-update-docs 10000 \
+  --batch-docs 1000 \
+  --import-workers 3 \
+  --product-docs 5000 \
+  --vehicle-docs 5000 \
+  --probe-profile dashboard \
+  --probe-workers 2 \
+  --search-workers 1 \
+  --probe-interval 0.2 \
+  --server-batch-size 1000
+```
+
+Control experiment for the snapshot-stall class:
+
+```bash
+python3 scripts/replay_fitment_import_stress.py \
+  --binary ./bazel-bin/typesense-server \
+  --workload fitment \
+  --seed-target-order before \
+  --total-fitment-docs 20000 \
+  --secondary-fitment-update-docs 10000 \
+  --batch-docs 1000 \
+  --import-workers 3 \
+  --product-docs 5000 \
+  --vehicle-docs 5000 \
+  --probe-profile dashboard \
+  --probe-workers 2 \
+  --search-workers 1 \
+  --probe-interval 0.2 \
+  --server-batch-size 1000 \
+  --server-arg=--raft-snapshot-distance \
+  --server-arg=10
+```
 
 Synthetic category fanout replay:
 

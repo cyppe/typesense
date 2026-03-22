@@ -19,6 +19,37 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 40: Update-Heavy Fitment Replay Isolates The Remaining DDEV Timeout To Snapshot Frequency (2026-03-22)
+
+**Commit:** local working tree on top of `HEAD` at run time
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order before --total-fitment-docs 20000 --secondary-fitment-update-docs 10000 --batch-docs 1000 --import-workers 3 --product-docs 5000 --vehicle-docs 5000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 120 --server-batch-size 1000 --json-output /tmp/fitment-snapshot-default-100000.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order before --total-fitment-docs 20000 --secondary-fitment-update-docs 10000 --batch-docs 1000 --import-workers 3 --product-docs 5000 --vehicle-docs 5000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 120 --server-batch-size 1000 --server-arg=--raft-snapshot-distance --server-arg=10 --json-output /tmp/fitment-snapshot-force-10.json`
+
+**Scenario:** the remaining DDEV timeout no longer lined up with the initial fitment stream itself; it appeared after the job crossed the familiar `~9.8M`-doc mark and entered the sibling-fitment upsert phase. The replay harness now has a dedicated secondary fitment-update phase (`--secondary-fitment-update-docs`) so the same “insert first, then update existing fitment docs” shape can be reproduced locally while also sampling the new snapshot metrics.
+
+### Findings
+
+- The local branch default is now explicitly `snapshot_distance=100000`, and the no-override replay stayed completely healthy on the update-heavy lane. The replay reported `nuraft_snapshot_distance=100000`, `nuraft_cumulative_snapshots=0`, primary import `104631.1 docs/s`, secondary update import `127272.3 docs/s`, `/health 2.7ms`, `/metrics.json 3.4ms`, search `3.1ms`, and zero slow requests / zero threadpool exhaustion.
+- The same workload becomes pathological again as soon as snapshot frequency is forced down. With `--raft-snapshot-distance 10`, the replay timed out during ordinary collection seeding before it even reached the secondary fitment-update phase: `POST ... /collections/vehicles_se/documents/import ... timed out`.
+- This matches the live DDEV evidence from the older image. During the real DDEV stall, Typesense startup logs still reported `snapshot_distance=10000`, and a live gdb capture on the running node showed the commit thread inside `nuraft::raft_server::snapshot_and_compact()` / `TypesenseStateMachine::create_snapshot(...)`, not inside the async-reference helper or the MySQL sibling lookup.
+- The sibling SQL phase is still worth observing, but it is not the 120-second root cause. On the live instrumented Laravel run, sibling prep ranged from `2.3s` to `8.4s` and sibling import from `350ms` to `3.8s`; the later `120s` timeouts on the old image happened after that phase and align with the snapshot/compaction evidence instead.
+
+### Summary Table
+
+| Lane | Snapshot distance | Primary docs/sec | Secondary docs/sec | `/health` avg | `/metrics.json` avg | Search avg | Outcome |
+|---|---:|---:|---:|---:|---:|---:|---|
+| fork current, update-heavy fitment replay | `100000` | `104631.1` | `127272.3` | `2.7 ms` | `3.4 ms` | `3.1 ms` | Healthy, no snapshots triggered |
+| fork current, same replay but forced low snapshot distance | `10` | n/a | n/a | n/a | n/a | n/a | Timed out during preseed import |
+
+### Decision
+
+- Keep the raised NuRaft snapshot default (`raft-snapshot-distance=100000`) on this branch. The current DDEV timeout class is no longer “generic heavy-import slowness”; it is an overly aggressive snapshot/compaction posture on the older image.
+- Keep `--secondary-fitment-update-docs` in the replay harness as the canonical local reproduction lane for sibling-fitment pressure. It gives a stable offline reproduction path for this DDEV-only shape without needing Laravel or a full container stack.
+- Treat the next gate as a fresh DDEV run on an image built from this newer runtime. Do **not** keep tuning the old `snapshot_distance=10000` image and then infer anything about the current branch from those results.
+
+---
+
 ## Run 39: Helper Telemetry And Slow-Request Breakdown Validation On The DDEV-Parity Lane (2026-03-22)
 
 **Commit:** local working tree on top of `HEAD` at run time

@@ -181,6 +181,8 @@ cc_library(
     copts = COPTS,
     deps = [
         ":headers",
+        "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/log:absl_check",
         "@icu",
         "@nuraft",
         "@rocksdb",

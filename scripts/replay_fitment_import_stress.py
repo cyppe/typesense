@@ -34,6 +34,7 @@ DEFAULT_CATEGORY_COLLECTION = "categories_se"
 DEFAULT_TOTAL_FITMENT_DOCS = 150_000
 DEFAULT_BATCH_DOCS = 5_000
 DEFAULT_IMPORT_WORKERS = 3
+DEFAULT_SECONDARY_FITMENT_UPDATE_DOCS = 0
 DEFAULT_PROBE_INTERVAL = 0.5
 DEFAULT_TIMEOUT = 120.0
 DEFAULT_PRODUCT_DOCS = 30_000
@@ -768,7 +769,13 @@ def seed_target_collection(
         start = end + 1
 
 
-def build_fitment_batch(start_index: int, count: int, product_docs: int, vehicle_docs: int) -> bytes:
+def build_fitment_batch(
+    start_index: int,
+    count: int,
+    product_docs: int,
+    vehicle_docs: int,
+    run_id: int = 1,
+) -> bytes:
     lines = []
     for offset in range(count):
         doc_id = start_index + offset
@@ -780,7 +787,7 @@ def build_fitment_batch(start_index: int, count: int, product_docs: int, vehicle
                     "id": f"fitment-{doc_id}",
                     "variant_pid": variant_pid,
                     "vehicle_id": vehicle_id,
-                    "runId": 1,
+                    "runId": run_id,
                 },
                 separators=(",", ":"),
             )
@@ -1096,6 +1103,15 @@ def collect_metrics_sample(
                 "nuraft_commit_lag",
                 "nuraft_live_apply_lag",
                 "nuraft_state_machine_apply_lag",
+                "nuraft_snapshot_distance",
+                "nuraft_snapshot_in_progress",
+                "nuraft_last_snapshot_success",
+                "nuraft_last_snapshot_log_index",
+                "nuraft_last_snapshot_applied_index",
+                "nuraft_last_snapshot_total_ms",
+                "nuraft_max_snapshot_total_ms",
+                "nuraft_cumulative_snapshots",
+                "nuraft_cumulative_snapshot_failures",
                 "nuraft_read_caught_up",
                 "nuraft_write_caught_up",
                 "nuraft_sync_cumulative_calls",
@@ -1512,6 +1528,38 @@ def run_imports(
     )
 
 
+def run_fitment_update_imports(
+    base_url: str,
+    api_key: str,
+    collection: str,
+    total_docs: int,
+    batch_docs: int,
+    product_docs: int,
+    vehicle_docs: int,
+    import_workers: int,
+    timeout: float,
+    server_batch_size: int | None,
+    client_chunk_bytes: int | None,
+    client_chunk_delay_ms: float,
+    run_id: int = 2,
+) -> ImportStats:
+    if total_docs <= 0:
+        return ImportStats()
+    return run_generated_imports(
+        base_url,
+        api_key,
+        collection,
+        total_docs,
+        batch_docs,
+        import_workers,
+        timeout,
+        server_batch_size,
+        client_chunk_bytes,
+        client_chunk_delay_ms,
+        lambda start_index, count: build_fitment_batch(start_index, count, product_docs, vehicle_docs, run_id=run_id),
+    )
+
+
 def summarize_import_stats(import_stats: ImportStats, elapsed_ms: float) -> dict[str, float | int]:
     summary = summarize_latencies(import_stats.batch_latencies_ms)
     summary.update(
@@ -1665,6 +1713,15 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "nuraft_commit_lag",
         "nuraft_live_apply_lag",
         "nuraft_state_machine_apply_lag",
+        "nuraft_snapshot_distance",
+        "nuraft_snapshot_in_progress",
+        "nuraft_last_snapshot_success",
+        "nuraft_last_snapshot_log_index",
+        "nuraft_last_snapshot_applied_index",
+        "nuraft_last_snapshot_total_ms",
+        "nuraft_max_snapshot_total_ms",
+        "nuraft_cumulative_snapshots",
+        "nuraft_cumulative_snapshot_failures",
         "nuraft_read_caught_up",
         "nuraft_write_caught_up",
         "nuraft_sync_cumulative_calls",
@@ -2379,6 +2436,7 @@ def run_scenario(
             )
 
         started = now_ms()
+        primary_elapsed_ms: float | None = None
         if args.workload == "fitment":
             import_stats = run_imports(
                 process.base_url,
@@ -2394,6 +2452,27 @@ def run_scenario(
                 args.client_chunk_bytes,
                 args.client_chunk_delay_ms,
             )
+            primary_elapsed_ms = now_ms() - started
+            if args.secondary_fitment_update_docs > 0:
+                phase_tracker.set("secondary_fitment_upsert")
+                secondary_started = now_ms()
+                secondary_doc_count = min(args.secondary_fitment_update_docs, args.total_fitment_docs)
+                secondary_stats = run_fitment_update_imports(
+                    process.base_url,
+                    args.api_key,
+                    args.source_collection,
+                    secondary_doc_count,
+                    args.batch_docs,
+                    args.product_docs,
+                    args.vehicle_docs,
+                    args.import_workers,
+                    args.timeout,
+                    args.server_batch_size,
+                    args.client_chunk_bytes,
+                    args.client_chunk_delay_ms,
+                )
+                secondary_elapsed_ms = now_ms() - secondary_started
+                secondary_import_summary = summarize_import_stats(secondary_stats, secondary_elapsed_ms)
             elapsed_ms = now_ms() - started
         elif args.workload == "category_fanout":
             import_stats = run_generated_imports(
@@ -2540,7 +2619,7 @@ def run_scenario(
                 profiling_outputs["runqlat_stderr_log"] = str(runqlat_stderr_log)
 
         final_metrics = collect_final_metrics(process.base_url, args.api_key, args.timeout)
-        import_summary = summarize_import_stats(import_stats, elapsed_ms)
+        import_summary = summarize_import_stats(import_stats, primary_elapsed_ms or elapsed_ms)
         probe_summary = {
             route: {**summarize_latencies(data.latencies_ms), "failures": data.failures}
             for route, data in probe_stats.items()
@@ -2783,6 +2862,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--schema-output-dir", type=Path, help="Optional directory to dump fetched/minimal schemas.")
     parser.add_argument("--total-fitment-docs", type=int, default=DEFAULT_TOTAL_FITMENT_DOCS)
+    parser.add_argument(
+        "--secondary-fitment-update-docs",
+        type=int,
+        default=DEFAULT_SECONDARY_FITMENT_UPDATE_DOCS,
+        help=(
+            "Optional number of already-imported fitment documents to upsert again with a new runId. "
+            "Use this to simulate the update-heavy sibling-fitment phase seen in DDEV."
+        ),
+    )
     parser.add_argument("--batch-docs", type=int, default=DEFAULT_BATCH_DOCS)
     parser.add_argument("--import-workers", type=int, default=DEFAULT_IMPORT_WORKERS)
     parser.add_argument("--product-docs", type=int, default=DEFAULT_PRODUCT_DOCS)

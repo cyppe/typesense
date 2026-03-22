@@ -260,7 +260,7 @@ bool apply_runtime_config_file_overrides(const cmdline::parser& options,
     }
 
     if (reader.Exists("server", "raft-snapshot-distance")) {
-        if (!parse_uint32(reader.Get("server", "raft-snapshot-distance", "10000"), parsed_uint, error)) {
+        if (!parse_uint32(reader.Get("server", "raft-snapshot-distance", "100000"), parsed_uint, error)) {
             error = "invalid value for raft-snapshot-distance in config file: " + error;
             return false;
         }
@@ -380,7 +380,7 @@ void init_nuraft_runtime_cmdline_options(cmdline::parser& options, int argc, cha
     options.add<uint32_t>("raft-client-req-timeout-ms", '\0', "NuRaft blocking client request timeout in milliseconds.", false, 3000);
     options.add<bool>("raft-auto-forwarding", '\0', "Allow followers to forward writes to the leader automatically.", false, true);
     options.add<uint32_t>("raft-auto-forwarding-req-timeout-ms", '\0', "Timeout for follower auto-forwarding requests in milliseconds.", false, 5000);
-    options.add<uint32_t>("raft-snapshot-distance", '\0', "Number of commits between automatic NuRaft snapshots.", false, 10000);
+    options.add<uint32_t>("raft-snapshot-distance", '\0', "Number of commits between automatic NuRaft snapshots.", false, 100000);
     options.add<uint32_t>("raft-leadership-expiry-ms", '\0', "Step down without quorum acknowledgement after this many milliseconds (0 disables).", false, 5000);
     options.add<uint32_t>("raft-asio-thread-pool-size", '\0', "NuRaft ASIO transport thread count.", false, 4);
 

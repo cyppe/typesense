@@ -39,7 +39,7 @@ struct NuRaftRaftParams {
     uint32_t auto_forwarding_req_timeout_ms = 5000;
 
     // Snapshot distance: number of commits between automatic snapshots.
-    uint32_t snapshot_distance = 10000;
+    uint32_t snapshot_distance = 100000;
 
     // Leadership expiry: step down if no quorum acknowledgment within this time.
     // 0 = disabled (NuRaft default). Recommended: 5000ms for production multi-node.

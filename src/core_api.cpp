@@ -1026,9 +1026,37 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
             node_status["raft_term"].is_number_integer()) {
             result["nuraft_term"] = node_status["raft_term"];
         }
+        if (node_status.contains("snapshot_distance") &&
+            node_status["snapshot_distance"].is_number_unsigned()) {
+            result["nuraft_snapshot_distance"] = node_status["snapshot_distance"];
+        }
         if (node_status.contains("raft_leader_id") &&
             node_status["raft_leader_id"].is_number_integer()) {
             result["nuraft_leader_id"] = node_status["raft_leader_id"];
+        }
+        if (node_status.contains("snapshot_in_progress")) {
+            result["nuraft_snapshot_in_progress"] = node_status["snapshot_in_progress"];
+        }
+        if (node_status.contains("last_snapshot_success")) {
+            result["nuraft_last_snapshot_success"] = node_status["last_snapshot_success"];
+        }
+        if (node_status.contains("last_snapshot_log_index")) {
+            result["nuraft_last_snapshot_log_index"] = node_status["last_snapshot_log_index"];
+        }
+        if (node_status.contains("last_snapshot_applied_index")) {
+            result["nuraft_last_snapshot_applied_index"] = node_status["last_snapshot_applied_index"];
+        }
+        if (node_status.contains("last_snapshot_total_ms")) {
+            result["nuraft_last_snapshot_total_ms"] = node_status["last_snapshot_total_ms"];
+        }
+        if (node_status.contains("max_snapshot_total_ms")) {
+            result["nuraft_max_snapshot_total_ms"] = node_status["max_snapshot_total_ms"];
+        }
+        if (node_status.contains("cumulative_snapshots")) {
+            result["nuraft_cumulative_snapshots"] = node_status["cumulative_snapshots"];
+        }
+        if (node_status.contains("cumulative_snapshot_failures")) {
+            result["nuraft_cumulative_snapshot_failures"] = node_status["cumulative_snapshot_failures"];
         }
         if (node_status.contains("active_import_requests")) {
             result["nuraft_active_import_requests"] = node_status["active_import_requests"];

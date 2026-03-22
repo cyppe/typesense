@@ -1190,11 +1190,14 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     const uint64_t state_machine_applied_index = raft_state_machine_ != nullptr ?
         raft_state_machine_->get_last_commit_index() : 0;
+    const auto snapshot_metrics = raft_state_machine_ != nullptr ?
+        raft_state_machine_->get_snapshot_metrics() : TypesenseSnapshotMetricsSnapshot{};
     const uint64_t sync_calls = cumulative_sync_calls_.load(std::memory_order_relaxed);
     const uint64_t sync_replay_calls = cumulative_sync_replay_calls_.load(std::memory_order_relaxed);
     nlohmann::json status = {
         {"state", initialized_.load() ? "running" : "initializing"},
         {"server_id", identity_.server_id},
+        {"snapshot_distance", options_.raft_params.snapshot_distance},
         {"is_leader", is_leader()},
         {"leader_url", get_leader_url()},
         {"read_caught_up", is_read_caught_up()},
@@ -1225,6 +1228,14 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         {"sync_avg_replay_ms", sync_replay_calls == 0 ? 0 :
                                cumulative_sync_replay_ms_.load(std::memory_order_relaxed) / sync_replay_calls},
         {"sync_max_total_ms", max_sync_total_ms_.load(std::memory_order_relaxed)},
+        {"snapshot_in_progress", snapshot_metrics.snapshot_in_progress},
+        {"last_snapshot_success", snapshot_metrics.last_snapshot_success},
+        {"last_snapshot_log_index", snapshot_metrics.last_snapshot_log_index},
+        {"last_snapshot_applied_index", snapshot_metrics.last_snapshot_applied_index},
+        {"last_snapshot_total_ms", snapshot_metrics.last_snapshot_total_ms},
+        {"max_snapshot_total_ms", snapshot_metrics.max_snapshot_total_ms},
+        {"cumulative_snapshots", snapshot_metrics.cumulative_snapshots},
+        {"cumulative_snapshot_failures", snapshot_metrics.cumulative_snapshot_failures},
     };
 
     if (raft_server_) {
@@ -1932,10 +1943,31 @@ bool NuRaftHttpRuntimeService::append_via_raft(
         auto buf_copy = nuraft::buffer::alloc(serialized.size());
         std::memcpy(buf_copy->data(), serialized.data(), serialized.size());
 
+        const auto append_start = std::chrono::steady_clock::now();
         auto result = raft_server_->append_entries({buf_copy});
+        const uint64_t append_wait_ms = elapsed_ms_since(append_start);
         if (result->get_accepted()) {
             committed_index = raft_state_machine_->get_last_commit_index();
             forwarded_to_leader = !raft_server_->is_leader();
+            if (append_wait_ms >= 2000) {
+                TypesenseSnapshotMetricsSnapshot snapshot_metrics;
+                if (raft_state_machine_ != nullptr) {
+                    snapshot_metrics = raft_state_machine_->get_snapshot_metrics();
+                }
+                TS_LOG(INFO) << "NuRaft append_entries slow: route_hash=" << request.route_hash
+                             << ", payload_bytes=" << serialized.size()
+                             << ", append_wait_ms=" << append_wait_ms
+                             << ", committed_index=" << committed_index
+                             << ", raft_last_log_idx=" << raft_server_->get_last_log_idx()
+                             << ", raft_term=" << raft_server_->get_term()
+                             << ", snapshot_in_progress=" << snapshot_metrics.snapshot_in_progress
+                             << ", snapshot_last_log_index=" << snapshot_metrics.last_snapshot_log_index
+                             << ", snapshot_last_applied_index=" << snapshot_metrics.last_snapshot_applied_index
+                             << ", snapshot_last_total_ms=" << snapshot_metrics.last_snapshot_total_ms
+                             << ", snapshot_max_total_ms=" << snapshot_metrics.max_snapshot_total_ms
+                             << ", snapshot_cumulative=" << snapshot_metrics.cumulative_snapshots
+                             << ", snapshot_failures=" << snapshot_metrics.cumulative_snapshot_failures;
+            }
             error.clear();
             return true;
         }

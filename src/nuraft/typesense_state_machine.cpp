@@ -12,8 +12,19 @@
 #include "nuraft/nuraft_applied_request_store.h"
 #include "nuraft/nuraft_request_envelope.h"
 #include "nuraft/nuraft_route_classifier.h"
+#include "logger.h"
 
 namespace {
+
+void update_atomic_max(std::atomic<uint64_t>& target, uint64_t value) {
+    uint64_t current = target.load(std::memory_order_relaxed);
+    while (current < value &&
+           !target.compare_exchange_weak(current,
+                                         value,
+                                         std::memory_order_relaxed,
+                                         std::memory_order_relaxed)) {
+    }
+}
 
 // Build a flat list of all files in a directory tree (relative paths).
 void list_files_recursive(const std::string& base_dir,
@@ -116,6 +127,10 @@ void TypesenseStateMachine::rollback(
 void TypesenseStateMachine::create_snapshot(
     nuraft::snapshot& s,
     nuraft::async_result<bool>::handler_type& when_done) {
+    const auto start = std::chrono::steady_clock::now();
+    snapshot_in_progress_.store(true, std::memory_order_relaxed);
+    last_snapshot_log_index_.store(s.get_last_log_idx(), std::memory_order_relaxed);
+
     std::lock_guard<std::mutex> guard(snapshot_mutex_);
 
     NuRaftSnapshotDescriptor desc;
@@ -133,10 +148,27 @@ void TypesenseStateMachine::create_snapshot(
             s.get_last_log_idx(),
             s.get_last_log_term(),
             cfg);
-        std::cerr << "TypesenseStateMachine: created snapshot "
-                     << desc.snapshot_id << " at index " << s.get_last_log_idx() << "\n";
+        cumulative_snapshots_.fetch_add(1, std::memory_order_relaxed);
+        last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
+    }
+
+    const uint64_t total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count();
+    last_snapshot_total_ms_.store(total_ms, std::memory_order_relaxed);
+    last_snapshot_success_.store(success, std::memory_order_relaxed);
+    update_atomic_max(max_snapshot_total_ms_, total_ms);
+    snapshot_in_progress_.store(false, std::memory_order_relaxed);
+
+    if (success) {
+        TS_LOG(INFO) << "NuRaft snapshot created: snapshot_id=" << desc.snapshot_id
+                     << ", log_index=" << s.get_last_log_idx()
+                     << ", applied_index=" << desc.last_applied_index
+                     << ", total_ms=" << total_ms;
     } else {
-        std::cerr << "TypesenseStateMachine: snapshot creation failed: " << error << "\n";
+        cumulative_snapshot_failures_.fetch_add(1, std::memory_order_relaxed);
+        TS_LOG(WARNING) << "NuRaft snapshot creation failed: log_index=" << s.get_last_log_idx()
+                        << ", total_ms=" << total_ms
+                        << ", error=" << error;
     }
 
     nuraft::ptr<std::exception> except(nullptr);
@@ -179,6 +211,19 @@ nuraft::ulong TypesenseStateMachine::last_commit_index() {
 
 uint64_t TypesenseStateMachine::get_last_commit_index() const {
     return last_commit_index_.load();
+}
+
+TypesenseSnapshotMetricsSnapshot TypesenseStateMachine::get_snapshot_metrics() const {
+    TypesenseSnapshotMetricsSnapshot snapshot;
+    snapshot.snapshot_in_progress = snapshot_in_progress_.load(std::memory_order_relaxed);
+    snapshot.last_snapshot_success = last_snapshot_success_.load(std::memory_order_relaxed);
+    snapshot.last_snapshot_log_index = last_snapshot_log_index_.load(std::memory_order_relaxed);
+    snapshot.last_snapshot_applied_index = last_snapshot_applied_index_.load(std::memory_order_relaxed);
+    snapshot.last_snapshot_total_ms = last_snapshot_total_ms_.load(std::memory_order_relaxed);
+    snapshot.max_snapshot_total_ms = max_snapshot_total_ms_.load(std::memory_order_relaxed);
+    snapshot.cumulative_snapshots = cumulative_snapshots_.load(std::memory_order_relaxed);
+    snapshot.cumulative_snapshot_failures = cumulative_snapshot_failures_.load(std::memory_order_relaxed);
+    return snapshot;
 }
 
 // --- Logical snapshot transfer (object-based) ---
