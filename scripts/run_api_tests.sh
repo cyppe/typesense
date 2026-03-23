@@ -6,12 +6,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 API_TESTS_DIR="${REPO_ROOT}/api_tests"
 RUNTIME_BUNDLE_DIR="${TYPESENSE_RUNTIME_BUNDLE_DIR:-${REPO_ROOT}/typesense-runtime-bundle}"
+DEFAULT_RUNTIME_BUNDLE_DIR="${REPO_ROOT}/typesense-runtime-bundle"
 DATA_DIR="${REPO_ROOT}/tmp/test"
 BUN_IMAGE="${TYPESENSE_API_TEST_BUN_IMAGE:-typesense/api-tests-bun:local}"
 SERVER_BINARY_PATH="${TYPESENSE_SERVER_BINARY_PATH:-}"
 SERVER_BINARY_FLAVOR="${TYPESENSE_SERVER_FLAVOR:-nuraft-runtime}"
 USE_HOST_BUN=false
 SKIP_INSTALL=false
+RUNTIME_BUNDLE_DIR_EXPLICIT=false
 
 detect_server_flavor() {
 	echo "nuraft-runtime"
@@ -61,6 +63,7 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--runtime-bundle-dir)
 		RUNTIME_BUNDLE_DIR="$2"
+		RUNTIME_BUNDLE_DIR_EXPLICIT=true
 		shift 2
 		;;
 	--server-binary)
@@ -85,6 +88,8 @@ mkdir -p "${DATA_DIR}"
 if [[ -n "${SERVER_BINARY_PATH}" ]]; then
 	SERVER_BINARY_FLAVOR="$(detect_server_flavor "${SERVER_BINARY_PATH}")"
 	bash "${REPO_ROOT}/api_tests/scripts/prepare_runtime_bundle.sh" "${RUNTIME_BUNDLE_DIR}" "${SERVER_BINARY_PATH}"
+elif [[ "${RUNTIME_BUNDLE_DIR}" == "${DEFAULT_RUNTIME_BUNDLE_DIR}" && "${RUNTIME_BUNDLE_DIR_EXPLICIT}" != "true" && -z "${TYPESENSE_RUNTIME_BUNDLE_DIR:-}" ]]; then
+	bash "${REPO_ROOT}/api_tests/scripts/prepare_runtime_bundle.sh" "${RUNTIME_BUNDLE_DIR}"
 elif [[ ! -x "${RUNTIME_BUNDLE_DIR}/typesense-server" ]]; then
 	bash "${REPO_ROOT}/api_tests/scripts/prepare_runtime_bundle.sh" "${RUNTIME_BUNDLE_DIR}"
 fi

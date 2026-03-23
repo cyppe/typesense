@@ -37,8 +37,11 @@ else
 fi
 
 mkdir -p "${LIB_DIR}"
-chmod u+w "${OUTPUT_DIR}/typesense-server" 2>/dev/null || true
-cp "${SERVER_BINARY}" "${OUTPUT_DIR}/typesense-server"
+TEMP_SERVER_BINARY="${OUTPUT_DIR}/typesense-server.tmp.$$"
+rm -f "${TEMP_SERVER_BINARY}"
+cp "${SERVER_BINARY}" "${TEMP_SERVER_BINARY}"
+chmod u+w "${TEMP_SERVER_BINARY}" 2>/dev/null || true
+mv -f "${TEMP_SERVER_BINARY}" "${OUTPUT_DIR}/typesense-server"
 
 if ldd "${SERVER_BINARY}" 2>/dev/null | grep -q 'libonnxruntime\.so\.1'; then
 	ONNX_RUNTIME_LIB="$(find "${BAZEL_CACHE_ROOT}" -type f -path "*/onnxruntime/lib/libonnxruntime.so.1" | sort | tail -n 1)"

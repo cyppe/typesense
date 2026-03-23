@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <string>
 #include <vector>
 #include <string>
@@ -461,9 +462,11 @@ struct collection_search_args_t {
 
 class Collection: std::enable_shared_from_this<Collection> {
 private:
+    static constexpr size_t kDocumentWriteMutexStripeCount = 4096;
 
     mutable std::shared_mutex mutex;
     mutable std::shared_mutex alter_mutex;
+    std::array<std::mutex, kDocumentWriteMutexStripeCount> document_write_mutexes_;
 
     static const uint8_t CURATED_RECORD_IDENTIFIER = 100;
 

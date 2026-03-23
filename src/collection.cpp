@@ -119,6 +119,30 @@ bool yyjson_to_nlohmann(yyjson_val* value, nlohmann::json& out) {
     return false;
 }
 
+Option<bool> parse_json_document(std::string_view json_str, nlohmann::json& document) {
+    yyjson_doc* yy_doc = yyjson_read_opts(const_cast<char*>(json_str.data()), json_str.size(), 0, nullptr, nullptr);
+    if(yy_doc != nullptr) {
+        yyjson_val* root = yyjson_doc_get_root(yy_doc);
+        const bool converted = yyjson_to_nlohmann(root, document);
+        yyjson_doc_free(yy_doc);
+
+        if(converted) {
+            return Option<bool>(true);
+        }
+
+        TS_LOG(ERROR) << "yyjson conversion error for import payload.";
+        return Option<bool>(400, "Bad JSON: unsupported value encountered while converting parsed document.");
+    }
+
+    try {
+        document = nlohmann::json::parse(json_str.begin(), json_str.end());
+        return Option<bool>(true);
+    } catch(const std::exception& e) {
+        TS_LOG(ERROR) << "JSON error: " << e.what();
+        return Option<bool>(400, std::string("Bad JSON: ") + e.what());
+    }
+}
+
 struct collection_import_metrics_state_t {
     std::atomic<uint64_t> active_add_many_calls{0};
     std::atomic<uint64_t> cumulative_add_many_calls{0};
@@ -1262,25 +1286,9 @@ Option<doc_seq_id_t> Collection::to_doc(std::string_view json_str, nlohmann::jso
                                         const index_operation_t& operation,
                                         const DIRTY_VALUES dirty_values,
                                         const std::string& id) {
-    yyjson_doc* yy_doc = yyjson_read_opts(const_cast<char*>(json_str.data()), json_str.size(), 0, nullptr, nullptr);
-    if(yy_doc != nullptr) {
-        yyjson_val* root = yyjson_doc_get_root(yy_doc);
-        const bool converted = yyjson_to_nlohmann(root, document);
-        yyjson_doc_free(yy_doc);
-
-        if(converted) {
-            return prepare_document_for_indexing(document, operation, dirty_values, id);
-        }
-
-        TS_LOG(ERROR) << "yyjson conversion error for import payload.";
-        return Option<doc_seq_id_t>(400, "Bad JSON: unsupported value encountered while converting parsed document.");
-    }
-
-    try {
-        document = nlohmann::json::parse(json_str.begin(), json_str.end());
-    } catch(const std::exception& e) {
-        TS_LOG(ERROR) << "JSON error: " << e.what();
-        return Option<doc_seq_id_t>(400, std::string("Bad JSON: ") + e.what());
+    const auto parse_op = parse_json_document(json_str, document);
+    if(!parse_op.ok()) {
+        return Option<doc_seq_id_t>(parse_op.code(), parse_op.error());
     }
 
     return prepare_document_for_indexing(document, operation, dirty_values, id);
@@ -1602,6 +1610,7 @@ nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, s
     const auto add_many_start = std::chrono::steady_clock::now();
     g_collection_import_metrics.active_add_many_calls.fetch_add(1, std::memory_order_relaxed);
     std::vector<index_record> index_records;
+    index_records.reserve(std::min<size_t>(json_lines.size(), std::max<size_t>(1, index_batch_size)));
 
     const size_t effective_index_batch_size = std::max<size_t>(1, index_batch_size);
     size_t num_indexed = 0;
@@ -1640,98 +1649,126 @@ nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, s
     };
     refresh_detect_new_fields_snapshot();
 
+    struct pending_parsed_record_t {
+        size_t position = 0;
+        nlohmann::json parsed_document;
+        bool parsed_ok = false;
+        uint32_t parse_error_code = 0;
+        std::string parse_error;
+        bool has_candidate_doc_id = false;
+        std::string candidate_doc_id;
+    };
+
+    std::vector<pending_parsed_record_t> pending_records;
+    pending_records.reserve(std::min(effective_index_batch_size, json_lines.size()));
+
     // ensures that document IDs are not repeated within the same batch
     std::set<std::string> batch_doc_ids;
-    bool found_batch_new_field = false;
 
     if(json_out.size() < json_lines.size()) {
         json_out.resize(json_lines.size());
     }
 
-    for(size_t i=0; i < json_lines.size(); i++) {
-        const std::string_view json_line = json_lines[i];
-        nlohmann::json parsed_document;
-        const auto doc_parse_start = std::chrono::steady_clock::now();
-        Option<doc_seq_id_t> doc_seq_id_op = to_doc(json_line, parsed_document, operation, dirty_values, id);
-        doc_parse_ms += elapsed_ms_since(doc_parse_start);
+    auto process_pending_batch = [&]() {
+        if(pending_records.empty()) {
+            return;
+        }
 
-        const uint32_t seq_id = doc_seq_id_op.ok() ? doc_seq_id_op.get().seq_id : 0;
-        index_record record(i, seq_id, std::move(parsed_document), operation, dirty_values);
-
-        // NOTE: we overwrite the input json_lines with result to avoid memory pressure
-
-        record.is_update = false;
-        bool repeated_doc = false;
-
-        std::vector<field> new_fields;
-        if(!doc_seq_id_op.ok()) {
-            record.index_failure(doc_seq_id_op.code(), doc_seq_id_op.error());
-        } else {
-            const std::string& doc_id = record.doc["id"].get<std::string>();
-            repeated_doc = (batch_doc_ids.find(doc_id) != batch_doc_ids.end());
-
-            if(repeated_doc) {
-                // when a document repeats, we send the batch until this document so that we can deal with conflicts
-                i--;
-                goto do_batched_index;
-            }
-
-            record.is_update = !doc_seq_id_op.get().is_new;
-
-            if(record.is_update) {
-                get_document_from_store(get_seq_id_key(seq_id), record.old_doc);
-            }
-
-            batch_doc_ids.insert(doc_id);
-            // Snapshot expensive schema/reference state once per batch instead of once per document.
-            if(detect_new_fields_snapshot.needs_detection()) {
-                tsl::htrie_set<char> object_reference_helper_fields;
-                Option<bool> new_fields_op = detect_new_fields(record.doc, dirty_values,
-                                                               detect_new_fields_snapshot.search_schema,
-                                                               detect_new_fields_snapshot.dynamic_fields,
-                                                               detect_new_fields_snapshot.nested_fields,
-                                                               detect_new_fields_snapshot.fallback_field_type,
-                                                               record.is_update,
-                                                               new_fields,
-                                                               enable_nested_fields,
-                                                               detect_new_fields_snapshot.reference_fields,
-                                                               object_reference_helper_fields);
-                if(!new_fields_op.ok()) {
-                    record.index_failure(new_fields_op.code(), new_fields_op.error());
-                }
+        std::vector<size_t> stripe_indices;
+        stripe_indices.reserve(pending_records.size());
+        for(const auto& pending_record : pending_records) {
+            if(pending_record.has_candidate_doc_id) {
+                stripe_indices.push_back(std::hash<std::string>{}(pending_record.candidate_doc_id) %
+                                         document_write_mutexes_.size());
             }
         }
 
-        if(!new_fields.empty()) {
-            const auto schema_update_start = std::chrono::steady_clock::now();
-            std::unique_lock lock(mutex);
+        std::sort(stripe_indices.begin(), stripe_indices.end());
+        stripe_indices.erase(std::unique(stripe_indices.begin(), stripe_indices.end()), stripe_indices.end());
 
-            bool found_new_field = false;
-            for(auto& new_field: new_fields) {
-                if(search_schema.find(new_field.name) == search_schema.end()) {
-                    found_new_field = true;
-                    found_batch_new_field = true;
-                    search_schema.emplace(new_field.name, new_field);
-                    fields.emplace_back(new_field);
-                    if(new_field.nested) {
-                        check_and_add_nested_field(nested_fields, new_field);
+        std::vector<std::unique_lock<std::mutex>> document_write_locks;
+        document_write_locks.reserve(stripe_indices.size());
+        for(size_t stripe_index : stripe_indices) {
+            document_write_locks.emplace_back(document_write_mutexes_[stripe_index]);
+        }
+
+        bool found_batch_new_field = false;
+        index_records.clear();
+
+        for(auto& pending_record : pending_records) {
+            index_record record(pending_record.position, 0, std::move(pending_record.parsed_document), operation,
+                                dirty_values);
+            record.is_update = false;
+
+            if(!pending_record.parsed_ok) {
+                record.index_failure(pending_record.parse_error_code, pending_record.parse_error);
+                index_records.emplace_back(std::move(record));
+                continue;
+            }
+
+            const auto doc_prepare_start = std::chrono::steady_clock::now();
+            Option<doc_seq_id_t> doc_seq_id_op = prepare_document_for_indexing(record.doc, operation, dirty_values, id);
+            doc_parse_ms += elapsed_ms_since(doc_prepare_start);
+
+            std::vector<field> new_fields;
+            if(!doc_seq_id_op.ok()) {
+                record.index_failure(doc_seq_id_op.code(), doc_seq_id_op.error());
+            } else {
+                record.seq_id = doc_seq_id_op.get().seq_id;
+                record.is_update = !doc_seq_id_op.get().is_new;
+
+                if(record.is_update) {
+                    get_document_from_store(get_seq_id_key(record.seq_id), record.old_doc);
+                }
+
+                // Snapshot expensive schema/reference state once per batch instead of once per document.
+                if(detect_new_fields_snapshot.needs_detection()) {
+                    tsl::htrie_set<char> object_reference_helper_fields;
+                    Option<bool> new_fields_op = detect_new_fields(record.doc, dirty_values,
+                                                                   detect_new_fields_snapshot.search_schema,
+                                                                   detect_new_fields_snapshot.dynamic_fields,
+                                                                   detect_new_fields_snapshot.nested_fields,
+                                                                   detect_new_fields_snapshot.fallback_field_type,
+                                                                   record.is_update,
+                                                                   new_fields,
+                                                                   enable_nested_fields,
+                                                                   detect_new_fields_snapshot.reference_fields,
+                                                                   object_reference_helper_fields);
+                    if(!new_fields_op.ok()) {
+                        record.index_failure(new_fields_op.code(), new_fields_op.error());
                     }
                 }
             }
 
-            if(found_new_field) {
-                index->refresh_schemas(new_fields, {});
-                rebuild_read_state_snapshot_unlocked();
+            if(!new_fields.empty()) {
+                const auto schema_update_start = std::chrono::steady_clock::now();
+                std::unique_lock lock(mutex);
+
+                bool found_new_field = false;
+                for(auto& new_field: new_fields) {
+                    if(search_schema.find(new_field.name) == search_schema.end()) {
+                        found_new_field = true;
+                        found_batch_new_field = true;
+                        search_schema.emplace(new_field.name, new_field);
+                        fields.emplace_back(new_field);
+                        if(new_field.nested) {
+                            check_and_add_nested_field(nested_fields, new_field);
+                        }
+                    }
+                }
+
+                if(found_new_field) {
+                    index->refresh_schemas(new_fields, {});
+                    rebuild_read_state_snapshot_unlocked();
+                }
+                schema_update_ms += elapsed_ms_since(schema_update_start);
+                refresh_detect_new_fields_snapshot_unlocked();
             }
-            schema_update_ms += elapsed_ms_since(schema_update_start);
-            refresh_detect_new_fields_snapshot_unlocked();
+
+            index_records.emplace_back(std::move(record));
         }
 
-        index_records.emplace_back(std::move(record));
-
-        do_batched_index:
-
-        if((i+1) % effective_index_batch_size == 0 || i == json_lines.size()-1 || repeated_doc) {
+        {
             const auto batch_index_start = std::chrono::steady_clock::now();
             batch_index(index_records, json_out, num_indexed, return_doc, return_id, remote_embedding_batch_size,
                         remote_embedding_timeout_ms, remote_embedding_num_tries, &json_lines);
@@ -1749,10 +1786,53 @@ nlohmann::json Collection::add_many(std::vector<std::string_view>& json_lines, s
                 remove_flat_fields(document);
                 remove_reference_helper_fields(document);
             }
+        }
 
-            index_records.clear();
-            batch_doc_ids.clear();
-            refresh_detect_new_fields_snapshot();
+        pending_records.clear();
+        batch_doc_ids.clear();
+        refresh_detect_new_fields_snapshot();
+    };
+
+    for(size_t i=0; i < json_lines.size(); i++) {
+        pending_parsed_record_t pending_record;
+        pending_record.position = i;
+
+        const auto doc_parse_start = std::chrono::steady_clock::now();
+        const auto parse_op = parse_json_document(json_lines[i], pending_record.parsed_document);
+        doc_parse_ms += elapsed_ms_since(doc_parse_start);
+
+        pending_record.parsed_ok = parse_op.ok();
+        if(!parse_op.ok()) {
+            pending_record.parse_error_code = parse_op.code();
+            pending_record.parse_error = parse_op.error();
+        } else if(pending_record.parsed_document.is_object()) {
+            auto id_it = pending_record.parsed_document.find("id");
+            if(id_it != pending_record.parsed_document.end() && id_it->is_string()) {
+                pending_record.has_candidate_doc_id = true;
+                pending_record.candidate_doc_id = id_it->get<std::string>();
+            } else if(id_it == pending_record.parsed_document.end() && !id.empty()) {
+                pending_record.has_candidate_doc_id = true;
+                pending_record.candidate_doc_id = id;
+            }
+        }
+
+        const bool repeated_doc = pending_record.has_candidate_doc_id &&
+                                  batch_doc_ids.find(pending_record.candidate_doc_id) != batch_doc_ids.end();
+        if(repeated_doc) {
+            // when a document repeats, send the accumulated batch first and then
+            // process the repeated document in the next batch.
+            i--;
+            process_pending_batch();
+            continue;
+        }
+
+        if(pending_record.has_candidate_doc_id && !pending_record.candidate_doc_id.empty()) {
+            batch_doc_ids.insert(pending_record.candidate_doc_id);
+        }
+        pending_records.emplace_back(std::move(pending_record));
+
+        if((i+1) % effective_index_batch_size == 0 || i == json_lines.size()-1) {
+            process_pending_batch();
         }
     }
 

@@ -34,6 +34,13 @@ constexpr const char* kBooksCollectionSchema = R"({
   ]
 })";
 
+constexpr const char* kCounterCollectionSchema = R"({
+  "name":"counters",
+  "fields":[
+    {"name":"popularity","type":"int32"}
+  ]
+})";
+
 uint32_t pick_free_port() {
     const int fd = socket(AF_INET, SOCK_STREAM, 0);
     EXPECT_NE(fd, -1);
@@ -306,6 +313,88 @@ TEST_F(NuRaftHttpRuntimeTest, PersistsHttpWritesAcrossRestartAndSnapshot) {
                                        true));
     EXPECT_EQ("1", parse_json(response)["id"].get<std::string>()) << "runtime log: " << node1_.log_path();
     EXPECT_EQ("Dune", parse_json(response)["title"].get<std::string>()) << "runtime log: " << node1_.log_path();
+}
+
+TEST_F(NuRaftHttpRuntimeTest, SerializesConcurrentUpdateImportsOnSameDocument) {
+    const uint32_t api_port = pick_free_port();
+    const uint32_t peer_port = pick_free_port();
+    const std::string data_dir = node_dir("single-node-increment-race");
+
+    NuRaftHttpServerOptions options;
+    options.startup_options.data_dir = data_dir;
+    options.startup_options.local_host = "127.0.0.1";
+    options.startup_options.peer_port = peer_port;
+    options.startup_options.api_port = api_port;
+    options.listen_address = "127.0.0.1";
+    options.listen_port = api_port;
+    options.api_key = "xyz";
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options, error)) << error;
+
+    auto post_json = [&](const std::string& path, const std::string& body, long expected_status) -> std::string {
+        std::string response;
+        std::map<std::string, std::string> headers;
+        const long status = HttpClient::post_response(node1_.base_url() + path,
+                                                      body,
+                                                      response,
+                                                      headers,
+                                                      {},
+                                                      5000,
+                                                      true);
+        EXPECT_EQ(expected_status, status) << "runtime log: " << node1_.log_path();
+        return response;
+    };
+
+    post_json("/collections", kCounterCollectionSchema, 201);
+    post_json("/collections/counters/documents", R"({"id":"1","popularity":0})", 201);
+
+    for (size_t iteration = 0; iteration < 5; ++iteration) {
+        const auto reset_response = post_json("/collections/counters/documents/import?action=upsert",
+                                              R"({"id":"1","popularity":0})",
+                                              200);
+        EXPECT_TRUE(parse_json(reset_response)["success"].get<bool>()) << "runtime log: " << node1_.log_path();
+
+        struct RequestResult {
+            long status_code = 0;
+            std::string response;
+        };
+
+        RequestResult increment_one;
+        RequestResult increment_two;
+        auto run_import = [&](const std::string& body, RequestResult& result) {
+            std::map<std::string, std::string> headers;
+            result.status_code = HttpClient::post_response(node1_.base_url() + "/collections/counters/documents/import?action=update",
+                                                           body,
+                                                           result.response,
+                                                           headers,
+                                                           {},
+                                                           5000,
+                                                           true);
+        };
+
+        std::thread t1(run_import, R"({"id":"1","$operations":{"increment":{"popularity":1}}})", std::ref(increment_one));
+        std::thread t2(run_import, R"({"id":"1","$operations":{"increment":{"popularity":2}}})", std::ref(increment_two));
+        t1.join();
+        t2.join();
+
+        ASSERT_EQ(200, increment_one.status_code) << "runtime log: " << node1_.log_path();
+        ASSERT_EQ(200, increment_two.status_code) << "runtime log: " << node1_.log_path();
+        EXPECT_TRUE(parse_json(increment_one.response)["success"].get<bool>()) << "runtime log: " << node1_.log_path();
+        EXPECT_TRUE(parse_json(increment_two.response)["success"].get<bool>()) << "runtime log: " << node1_.log_path();
+
+        std::string response;
+        std::map<std::string, std::string> headers;
+        ASSERT_EQ(200,
+                  HttpClient::get_response(node1_.base_url() + "/collections/counters/documents/1",
+                                           response,
+                                           headers,
+                                           {},
+                                           5000,
+                                           true))
+            << "runtime log: " << node1_.log_path();
+        EXPECT_EQ(3, parse_json(response)["popularity"].get<int>()) << "runtime log: " << node1_.log_path();
+    }
 }
 
 TEST_F(NuRaftHttpRuntimeTest, InstallsSnapshotIntoFreshHttpRuntimeNode) {
