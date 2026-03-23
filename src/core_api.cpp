@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include "typesense_server_utils.h"
 #include "core_api.h"
+#include "build_info.h"
 #include "string_utils.h"
 #include "collection.h"
 #include "collection_manager.h"
@@ -850,6 +851,15 @@ bool get_debug(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_
 
     nlohmann::json result;
     result["version"] = server->get_version();
+    const auto& build_info = get_typesense_build_info();
+    result["build"] = {
+        {"version", std::string(build_info.version)},
+        {"git_sha", std::string(build_info.git_sha)},
+        {"git_short_sha", std::string(build_info.git_short_sha)},
+        {"git_ref", std::string(build_info.git_ref)},
+        {"git_exact_tag", std::string(build_info.git_exact_tag)},
+        {"git_tree_status", std::string(build_info.git_tree_status)},
+    };
 
     uint64_t state = server->node_state();
     result["state"] = state;
@@ -984,6 +994,14 @@ bool post_health(const std::shared_ptr<http_req>& req, const std::shared_ptr<htt
 
 bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
     nlohmann::json result;
+    const auto& build_info = get_typesense_build_info();
+
+    result["build_version"] = std::string(build_info.version);
+    result["build_git_sha"] = std::string(build_info.git_sha);
+    result["build_git_short_sha"] = std::string(build_info.git_short_sha);
+    result["build_git_ref"] = std::string(build_info.git_ref);
+    result["build_git_exact_tag"] = std::string(build_info.git_exact_tag);
+    result["build_git_tree_status"] = std::string(build_info.git_tree_status);
 
     CollectionManager & collectionManager = CollectionManager::get_instance();
     const std::string & data_dir_path = collectionManager.get_store()->get_state_dir_path();
@@ -1210,6 +1228,8 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         collection_import_metrics.last_async_reference_helper_planned_chunk_docs;
     result["collection_import_last_async_reference_helper_chunk_plan_sample_docs"] =
         collection_import_metrics.last_async_reference_helper_chunk_plan_sample_docs;
+    result["collection_import_last_async_reference_helper_chunk_target_bytes"] =
+        collection_import_metrics.last_async_reference_helper_chunk_target_bytes;
     result["collection_import_last_async_reference_helper_chunk_plan_estimated_total_doc_bytes"] =
         collection_import_metrics.last_async_reference_helper_chunk_plan_estimated_total_doc_bytes;
     result["collection_import_cumulative_async_reference_helper_invocations"] =

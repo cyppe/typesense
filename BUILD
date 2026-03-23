@@ -1,6 +1,16 @@
 load("@com_grail_bazel_compdb//:defs.bzl", "compilation_database")
 load("@com_grail_bazel_output_base_util//:defs.bzl", "OUTPUT_BASE")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("//bazel:build_info_header.bzl", "typesense_build_info_header")
+
+typesense_build_info_header(
+    name = "typesense-build-info-header",
+)
+
+cc_library(
+    name = "build_info_gen",
+    hdrs = [":typesense-build-info-header"],
+)
 
 # Target to generate a compile_commands.json compilation database file
 compilation_database(
@@ -48,6 +58,7 @@ cc_library(
     }),
     deps = [
         ":headers",
+        ":build_info_gen",
         "@typesense_ort//:onnxruntime_static_one_protobuf_lib",
         "@sentencepiece",
         "@sentencepiece//:sentencepiece_headers",
@@ -110,7 +121,7 @@ cc_binary(
         ":src_files",
     ],
     local_defines = [
-        "TYPESENSE_VERSION=\\\"$(TYPESENSE_VERSION)\\\""
+        "TYPESENSE_VERSION=\\\"$(TYPESENSE_VERSION)\\\"",
     ],
     linkopts = select({
         "@platforms//os:linux": ["-static-libstdc++", "-static-libgcc", "-fuse-ld=lld"],

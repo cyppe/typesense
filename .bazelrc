@@ -2,6 +2,7 @@
 # WORKSPACE is intentionally not used for external dependency resolution.
 
 build --incompatible_strict_action_env
+build --workspace_status_command=./bazel/workspace_status.sh
 build --action_env=BAZEL_CXXOPTS="-std=gnu++20"
 build --define=TYPESENSE_VERSION=\"nightly\"
 build --cxxopt="-std=gnu++20"

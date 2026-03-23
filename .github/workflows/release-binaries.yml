@@ -804,12 +804,39 @@ jobs:
         id: prep
         env:
           VERSION_LABEL: ${{ inputs.version_label }}
+          INPUT_REF: ${{ inputs.ref }}
         run: |
           set -euo pipefail
+          FULL_SHA="$(git rev-parse HEAD)"
           SHORT_SHA="$(git rev-parse --short=8 HEAD)"
           BRANCH_TAG="${GITHUB_REF_NAME//\//-}"
+          SOURCE_REF="${INPUT_REF}"
+          if [ -z "${SOURCE_REF}" ]; then
+            SOURCE_REF="${GITHUB_REF_NAME:-}"
+          fi
+          if [ -z "${SOURCE_REF}" ]; then
+            SOURCE_REF="$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+          fi
+          if [ -z "${SOURCE_REF}" ]; then
+            SOURCE_REF="(detached)"
+          fi
+          EXACT_TAG="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+          if [ -z "${EXACT_TAG}" ]; then
+            EXACT_TAG="(none)"
+          fi
+          git update-index -q --refresh >/dev/null 2>&1 || true
+          TREE_STATUS="clean"
+          if ! git diff-index --quiet HEAD -- >/dev/null 2>&1; then
+            TREE_STATUS="dirty"
+          fi
+          IMAGE_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "FULL_SHA=${FULL_SHA}" >>"$GITHUB_ENV"
           echo "SHORT_SHA=${SHORT_SHA}" >>"$GITHUB_ENV"
           echo "BRANCH_TAG=${BRANCH_TAG}" >>"$GITHUB_ENV"
+          echo "SOURCE_REF=${SOURCE_REF}" >>"$GITHUB_ENV"
+          echo "EXACT_TAG=${EXACT_TAG}" >>"$GITHUB_ENV"
+          echo "TREE_STATUS=${TREE_STATUS}" >>"$GITHUB_ENV"
+          echo "IMAGE_CREATED=${IMAGE_CREATED}" >>"$GITHUB_ENV"
 
           mkdir -p \
             "${{ github.workspace }}/docker-context/linux-amd64" \
@@ -849,6 +876,16 @@ jobs:
           platforms: linux/amd64
           push: true
           provenance: false
+          labels: |
+            org.opencontainers.image.created=${{ env.IMAGE_CREATED }}
+            org.opencontainers.image.revision=${{ env.FULL_SHA }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ inputs.version_label }}
+            io.typesense.build.git_sha=${{ env.FULL_SHA }}
+            io.typesense.build.git_short_sha=${{ env.SHORT_SHA }}
+            io.typesense.build.git_ref=${{ env.SOURCE_REF }}
+            io.typesense.build.git_exact_tag=${{ env.EXACT_TAG }}
+            io.typesense.build.git_tree_status=${{ env.TREE_STATUS }}
           tags: ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-${{ env.SHORT_SHA }}-linux-amd64
 
       - name: Build and push linux-arm64 image
@@ -859,6 +896,16 @@ jobs:
           platforms: linux/arm64
           push: true
           provenance: false
+          labels: |
+            org.opencontainers.image.created=${{ env.IMAGE_CREATED }}
+            org.opencontainers.image.revision=${{ env.FULL_SHA }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ inputs.version_label }}
+            io.typesense.build.git_sha=${{ env.FULL_SHA }}
+            io.typesense.build.git_short_sha=${{ env.SHORT_SHA }}
+            io.typesense.build.git_ref=${{ env.SOURCE_REF }}
+            io.typesense.build.git_exact_tag=${{ env.EXACT_TAG }}
+            io.typesense.build.git_tree_status=${{ env.TREE_STATUS }}
           tags: ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-${{ env.SHORT_SHA }}-linux-arm64
 
       - name: Publish multi-arch runtime tags
@@ -878,6 +925,16 @@ jobs:
           platforms: linux/arm64
           push: true
           provenance: false
+          labels: |
+            org.opencontainers.image.created=${{ env.IMAGE_CREATED }}
+            org.opencontainers.image.revision=${{ env.FULL_SHA }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ inputs.version_label }}
+            io.typesense.build.git_sha=${{ env.FULL_SHA }}
+            io.typesense.build.git_short_sha=${{ env.SHORT_SHA }}
+            io.typesense.build.git_ref=${{ env.SOURCE_REF }}
+            io.typesense.build.git_exact_tag=${{ env.EXACT_TAG }}
+            io.typesense.build.git_tree_status=${{ env.TREE_STATUS }}
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-${{ env.SHORT_SHA }}-arm64-lg-page16
             ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-arm64-lg-page16

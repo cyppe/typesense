@@ -224,6 +224,7 @@ StoreStatus Store::get(const std::string& key, std::string& value, bool fill_cac
     std::shared_lock lock(mutex);
     rocksdb::ReadOptions read_options;
     read_options.fill_cache = fill_cache;
+    read_options.async_io = async_io_enabled;
     rocksdb::Status status = db->Get(read_options, key, &value);
 
     if(status.ok()) {
@@ -247,6 +248,27 @@ void Store::multi_get(const std::vector<std::string>& keys, std::vector<StoreSta
         return;
     }
 
+    values.resize(keys.size());
+    std::vector<rocksdb::PinnableSlice> pinned_values;
+    multi_get_pinned(keys, statuses, pinned_values, fill_cache, false);
+
+    for(size_t i = 0; i < pinned_values.size() && i < values.size() && i < statuses.size(); i++) {
+        if(statuses[i] == StoreStatus::FOUND) {
+            values[i].assign(pinned_values[i].data(), pinned_values[i].size());
+        }
+    }
+}
+
+void Store::multi_get_pinned(const std::vector<std::string>& keys, std::vector<StoreStatus>& statuses,
+                             std::vector<rocksdb::PinnableSlice>& values, bool fill_cache,
+                             bool sorted_input) const {
+    statuses.clear();
+    values.clear();
+
+    if(keys.empty()) {
+        return;
+    }
+
     std::vector<rocksdb::Slice> slices;
     slices.reserve(keys.size());
     for(const auto& key: keys) {
@@ -254,12 +276,15 @@ void Store::multi_get(const std::vector<std::string>& keys, std::vector<StoreSta
     }
 
     values.resize(keys.size());
+    std::vector<rocksdb::Status> rocks_statuses(keys.size());
 
     rocksdb::ReadOptions read_options;
     read_options.fill_cache = fill_cache;
+    read_options.async_io = async_io_enabled;
 
     std::shared_lock lock(mutex);
-    const std::vector<rocksdb::Status> rocks_statuses = db->MultiGet(read_options, slices, &values);
+    db->MultiGet(read_options, db->DefaultColumnFamily(), keys.size(), slices.data(), values.data(),
+                 rocks_statuses.data(), sorted_input);
 
     statuses.reserve(rocks_statuses.size());
     for(const auto& status: rocks_statuses) {

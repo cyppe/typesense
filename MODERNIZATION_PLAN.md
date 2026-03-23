@@ -131,6 +131,10 @@ Done. Audit complete — stabilized grouping, curation ordering, embedding polli
    Current state: the replay harness now emits both metrics timelines and a log summary (`slow_request`, `Threadpool exhaustion detected`, `Async reference helper slow path`), and the March 22 local validation also confirmed that slow import log lines now include a full request/helper breakdown (`import_body_bytes`, handler/response timing, `helper_collection`, `helper_field`, helper retry/failure counts). Use the same evidence class in DDEV before reopening root-cause work so any remaining gap can be compared directly against the local `mixed_category_fitment` lane.
 3. [ ] Trim the remaining search/control-plane tail only if it stays material after the fresh DDEV check.
    Current state: the current branch no longer reproduces node-wide starvation locally, but the harsher mixed replay still showed search moving to `53.5ms` avg / `100.8ms` p95 under a `24.4s` category fanout import. That is acceptable for the local gate, but it remains worth polishing if DDEV shows it is still user-visible.
+4. [x] Expose build provenance from the checked-out source in both the runtime and published Docker images.
+   Current state: the server binary is now stamped from the active checkout via `bazel/workspace_status.sh`, `/debug` returns `build.{version,git_sha,git_short_sha,git_ref,git_exact_tag,git_tree_status}`, `/metrics.json` mirrors the same keys for quick scraping, and `release-binaries.yml` now labels published Docker images with the matching OCI/custom git metadata so `docker inspect` and `curl /debug` can be compared directly.
+5. [x] Make the warning-guard workflows fall back cleanly when no prebuilt ORT bundle artifact is available.
+   Current state: `tests.yml` and `clang-warning-guard.yml` now mirror the build/test steps and only export `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR` when `${{ github.workspace }}/ort-bundle/amd64/bundle/lib` exists. The earlier push failure came from `check_gcc_warning_guardrail.sh` receiving a non-empty ORT bundle path even on source-build lanes, which made `typesense_ort_repo.bzl` fail during repository fetch before the guardrail build could start.
 
 ## Priority 1 - Build And Dependency Modernization
 
@@ -1676,6 +1680,8 @@ Important patterns and gotchas that save future AI agents significant time. Keep
 16. **Sanitizer flags leak into `rules_foreign_cc` configure scripts.** Bazel's `--copt -fsanitize=X` applies globally, breaking autoconf detection in deps like kakasi and iconv. Fix by adding `env = select({"@@//:asan_mode": {"CFLAGS": "-fno-sanitize=address", ...}})` to each foreign_cc target. Note: `@@//` (not `@//`) is required in Bazel 9 Bzlmod to reference main-repo config_settings from external BUILD files.
 
 17. **UBSAN breaks abseil with GCC 14.** `-fsanitize=undefined` causes constexpr evaluation failures in `absl/container/internal/hash_policy_traits.h:158`. Keep ASAN and TSAN separate; do not combine UBSAN with either until abseil ships a fix.
+
+18. **Build provenance needs both an in-process and out-of-process check.** A Docker tag alone is not enough for runtime verification. Keep `/debug` / `/metrics.json` build metadata stamped from the checked-out source, and keep Docker image labels (`org.opencontainers.image.revision`, `io.typesense.build.git_sha`, etc.) sourced from the same checkout so operators can prove the binary inside the container matches the image they pulled.
 
 18. **Bazel 9 host repository caches cannot live under `GITHUB_WORKSPACE`.** On GitHub Actions macOS lanes, a host `--repository_cache` inside the checkout now fails because Bazel derives `--repo_contents_cache` to `{--repository_cache}/contents` and rejects that path when it is inside the main repo. Use `${{ runner.temp }}` or another absolute path outside the checkout, and let `actions/cache` restore/save that absolute path directly.
 

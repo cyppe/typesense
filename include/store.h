@@ -117,6 +117,10 @@ public:
     void multi_get(const std::vector<std::string>& keys, std::vector<StoreStatus>& statuses,
                    std::vector<std::string>& values, bool fill_cache = true) const;
 
+    void multi_get_pinned(const std::vector<std::string>& keys, std::vector<StoreStatus>& statuses,
+                          std::vector<rocksdb::PinnableSlice>& values, bool fill_cache = true,
+                          bool sorted_input = false) const;
+
     bool remove(const std::string& key);
 
     rocksdb::Iterator* scan(const std::string & prefix, const rocksdb::Slice* iterate_upper_bound);

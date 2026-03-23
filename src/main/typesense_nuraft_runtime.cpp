@@ -8,6 +8,7 @@
 #include <curl/curl.h>
 
 #include "analytics_manager.h"
+#include "build_info.h"
 #include "collection_manager.h"
 #include "conversation_model_manager.h"
 #include "core_api.h"
@@ -62,6 +63,13 @@ int main(int argc, char** argv) {
     if (logger_init != 0) {
         return logger_init;
     }
+    const auto& build_info = get_typesense_build_info();
+    TS_LOG(INFO) << "Build provenance: version=" << build_info.version
+                 << " git_sha=" << build_info.git_sha
+                 << " git_short_sha=" << build_info.git_short_sha
+                 << " git_ref=" << build_info.git_ref
+                 << " git_exact_tag=" << build_info.git_exact_tag
+                 << " git_tree_status=" << build_info.git_tree_status;
 
     curl_global_init(CURL_GLOBAL_SSL);
     HttpClient::get_instance().init(options.api_key);

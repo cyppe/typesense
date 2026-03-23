@@ -79,6 +79,7 @@ struct CollectionImportMetricsSnapshot {
     uint64_t last_async_reference_helper_max_chunk_docs = 0;
     uint64_t last_async_reference_helper_planned_chunk_docs = 0;
     uint64_t last_async_reference_helper_chunk_plan_sample_docs = 0;
+    uint64_t last_async_reference_helper_chunk_target_bytes = 0;
     uint64_t last_async_reference_helper_chunk_plan_estimated_total_doc_bytes = 0;
     uint64_t cumulative_async_reference_helper_invocations = 0;
     uint64_t cumulative_async_reference_helper_slow_paths = 0;

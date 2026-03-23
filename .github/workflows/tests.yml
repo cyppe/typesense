@@ -108,12 +108,13 @@ jobs:
 
       - name: Guard GCC warning budget
         run: |
+          if [ -d "${{ github.workspace }}/ort-bundle/amd64/bundle/lib" ]; then
+            export TYPESENSE_ORT_PREBUILT_BUNDLE_DIR=/work/ort-bundle/amd64/bundle
+          fi
           TYPESENSE_GCC_WARNING_LOG=${{ github.workspace }}/tmp/gcc-warning-guardrail.log \
           TYPESENSE_GCC_WARNING_MAX=0 \
           TYPESENSE_GCC_TRACKED_WARNING_MAX=0 \
           scripts/check_gcc_warning_guardrail.sh
-        env:
-          TYPESENSE_ORT_PREBUILT_BUNDLE_DIR: /work/ort-bundle/amd64/bundle
 
       - name: Save GCC warning log on failure
         uses: actions/upload-artifact@v7

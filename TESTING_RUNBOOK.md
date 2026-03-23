@@ -67,6 +67,16 @@ scripts/bazel_in_docker.sh clean --expunge
 scripts/bazel_in_docker.sh test --verbose_failures //:typesense-test
 ```
 
+Build provenance checks for a running node:
+
+```bash
+curl -s -H "X-TYPESENSE-API-KEY: ${TYPESENSE_API_KEY}" http://localhost:8108/debug | jq '.build'
+curl -s -H "X-TYPESENSE-API-KEY: ${TYPESENSE_API_KEY}" http://localhost:8108/metrics.json | jq '{build_git_sha, build_git_exact_tag, build_git_tree_status}'
+docker inspect <typesense-container> --format '{{json .Config.Labels}}' | jq
+```
+
+For official Docker Hub images published by `release-binaries.yml`, `build.git_sha` from `/debug` should match both `build_git_sha` in `/metrics.json` and `org.opencontainers.image.revision` / `io.typesense.build.git_sha` from `docker inspect`.
+
 ## 7) Workflow-to-local mapping
 
 Use these before pushing or before manually dispatching the heavier GitHub workflows:

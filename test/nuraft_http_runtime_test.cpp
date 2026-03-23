@@ -498,4 +498,63 @@ TEST_F(NuRaftHttpRuntimeTest, ExposesImportDiagnosticsInMetricsJson) {
     EXPECT_EQ("books", metrics["collection_create_last_collection_name"].get<std::string>()) << "runtime log: " << node1_.log_path();
 }
 
+TEST_F(NuRaftHttpRuntimeTest, ExposesBuildProvenanceInDebugAndMetrics) {
+    const uint32_t api_port = pick_free_port();
+    const uint32_t peer_port = pick_free_port();
+    const std::string data_dir = node_dir("build-provenance-node");
+
+    NuRaftHttpServerOptions options;
+    options.startup_options.data_dir = data_dir;
+    options.startup_options.local_host = "127.0.0.1";
+    options.startup_options.peer_port = peer_port;
+    options.startup_options.api_port = api_port;
+    options.listen_address = "127.0.0.1";
+    options.listen_port = api_port;
+    options.api_key = "xyz";
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options, error)) << error;
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(200,
+              HttpClient::get_response(node1_.base_url() + "/debug",
+                                       response,
+                                       headers,
+                                       {},
+                                       5000,
+                                       true));
+    const auto debug = parse_json(response);
+    ASSERT_TRUE(debug.contains("build")) << "runtime log: " << node1_.log_path();
+    ASSERT_TRUE(debug["build"].is_object()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ("nightly", debug["build"]["version"].get<std::string>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ(40u, debug["build"]["git_sha"].get<std::string>().size()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ(12u, debug["build"]["git_short_sha"].get<std::string>().size()) << "runtime log: " << node1_.log_path();
+    EXPECT_FALSE(debug["build"]["git_ref"].get<std::string>().empty()) << "runtime log: " << node1_.log_path();
+    EXPECT_FALSE(debug["build"]["git_tree_status"].get<std::string>().empty()) << "runtime log: " << node1_.log_path();
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(200,
+              HttpClient::get_response(node1_.base_url() + "/metrics.json",
+                                       response,
+                                       headers,
+                                       {},
+                                       5000,
+                                       true));
+    const auto metrics = parse_json(response);
+    EXPECT_EQ(debug["build"]["version"].get<std::string>(),
+              metrics["build_version"].get<std::string>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ(debug["build"]["git_sha"].get<std::string>(),
+              metrics["build_git_sha"].get<std::string>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ(debug["build"]["git_short_sha"].get<std::string>(),
+              metrics["build_git_short_sha"].get<std::string>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ(debug["build"]["git_ref"].get<std::string>(),
+              metrics["build_git_ref"].get<std::string>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ(debug["build"]["git_exact_tag"].get<std::string>(),
+              metrics["build_git_exact_tag"].get<std::string>()) << "runtime log: " << node1_.log_path();
+    EXPECT_EQ(debug["build"]["git_tree_status"].get<std::string>(),
+              metrics["build_git_tree_status"].get<std::string>()) << "runtime log: " << node1_.log_path();
+}
+
 }  // namespace

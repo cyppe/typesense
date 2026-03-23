@@ -41,6 +41,8 @@ DEFAULT_PRODUCT_DOCS = 30_000
 DEFAULT_VEHICLE_DOCS = 30_000
 DEFAULT_CATEGORY_DOCS = 500
 DEFAULT_PRESEED_BATCH_DOCS = 5_000
+DEFAULT_VEHICLE_SEED_CONCURRENT_PRODUCT_DOCS = 0
+DEFAULT_VEHICLE_SEED_CONCURRENT_PRODUCT_WORKERS = 1
 DEFAULT_FANOUT_PRODUCT_EXTRA_BYTES = 4_096
 DEFAULT_PROBE_WORKERS = 1
 DEFAULT_SEARCH_WORKERS = 1
@@ -772,6 +774,20 @@ def seed_target_collection(
         stats.imported_docs += end - start + 1
         start = end + 1
     return stats
+
+
+def build_target_seed_batch(
+    start_index: int,
+    count: int,
+    collection: str,
+    id_field: str,
+    run_id: int = 1,
+) -> bytes:
+    lines = []
+    for offset in range(count):
+        value = start_index + offset
+        lines.append(json.dumps({"id": f"{collection}-{value}", id_field: value, "runId": run_id}, separators=(",", ":")))
+    return ("\n".join(lines) + "\n").encode("utf-8")
 
 
 def build_fitment_batch(
@@ -1763,6 +1779,10 @@ def collect_final_metrics(base_url: str, api_key: str, timeout: float) -> dict[s
         "collection_import_last_async_reference_helper_max_doc_bytes",
         "collection_import_last_async_reference_helper_chunks",
         "collection_import_last_async_reference_helper_max_chunk_docs",
+        "collection_import_last_async_reference_helper_planned_chunk_docs",
+        "collection_import_last_async_reference_helper_chunk_plan_sample_docs",
+        "collection_import_last_async_reference_helper_chunk_target_bytes",
+        "collection_import_last_async_reference_helper_chunk_plan_estimated_total_doc_bytes",
         "collection_import_last_async_reference_helper_store_retry_writes",
         "collection_import_last_async_reference_helper_write_failures",
         "collection_import_last_async_reference_helper_total_ms",
@@ -2541,6 +2561,42 @@ def run_scenario(
 
             phase_tracker.set("vehicle_reference_seed")
             vehicle_seed_started = now_ms()
+            concurrent_product_seed_result: dict[str, Any] = {}
+            concurrent_product_seed_thread: threading.Thread | None = None
+            if args.vehicle_seed_concurrent_product_docs > 0:
+                concurrent_product_seed_start_barrier = threading.Barrier(2)
+
+                def run_concurrent_product_seed() -> None:
+                    try:
+                        concurrent_product_seed_start_barrier.wait()
+                        concurrent_product_seed_started = now_ms()
+                        concurrent_product_seed_result["stats"] = run_generated_imports(
+                            process.base_url,
+                            args.api_key,
+                            fitment_product_collection,
+                            args.vehicle_seed_concurrent_product_docs,
+                            args.vehicle_seed_concurrent_product_batch_docs or args.preseed_batch_docs,
+                            args.vehicle_seed_concurrent_product_workers,
+                            args.timeout,
+                            args.server_batch_size,
+                            args.client_chunk_bytes,
+                            args.client_chunk_delay_ms,
+                            lambda start_index, count: build_target_seed_batch(
+                                start_index,
+                                count,
+                                fitment_product_collection,
+                                "variant_pid",
+                                run_id=2,
+                            ),
+                        )
+                        concurrent_product_seed_result["elapsed_ms"] = now_ms() - concurrent_product_seed_started
+                    except BaseException as exc:  # propagate after join
+                        concurrent_product_seed_result["error"] = exc
+
+                concurrent_product_seed_thread = threading.Thread(target=run_concurrent_product_seed, daemon=True)
+                concurrent_product_seed_thread.start()
+                concurrent_product_seed_start_barrier.wait()
+
             vehicle_seed_stats = seed_target_collection(
                 process.base_url,
                 args.api_key,
@@ -2553,6 +2609,17 @@ def run_scenario(
                 args.client_chunk_bytes,
                 args.client_chunk_delay_ms,
             )
+            if concurrent_product_seed_thread is not None:
+                concurrent_product_seed_thread.join()
+                if "error" in concurrent_product_seed_result:
+                    raise RuntimeError("Concurrent products seed during vehicle reference seed failed") from concurrent_product_seed_result["error"]
+                concurrent_product_seed_stats = concurrent_product_seed_result.get("stats")
+                if concurrent_product_seed_stats is None:
+                    raise RuntimeError("Concurrent products seed during vehicle reference seed produced no stats.")
+                reference_seed_summary["vehicle_seed_concurrent_products"] = summarize_import_stats(
+                    concurrent_product_seed_stats,
+                    concurrent_product_seed_result.get("elapsed_ms", 0.0),
+                )
             reference_seed_summary["vehicles"] = summarize_import_stats(
                 vehicle_seed_stats,
                 now_ms() - vehicle_seed_started,
@@ -2918,6 +2985,26 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--preseed-batch-docs", type=int, default=DEFAULT_PRESEED_BATCH_DOCS)
     parser.add_argument(
+        "--vehicle-seed-concurrent-product-docs",
+        type=int,
+        default=DEFAULT_VEHICLE_SEED_CONCURRENT_PRODUCT_DOCS,
+        help=(
+            "Optional number of products_se upserts to run concurrently while the late vehicle reference seed is replayed. "
+            "Useful for reproducing the DDEV pattern where smaller product imports overlap a large vehicle_id async-reference helper."
+        ),
+    )
+    parser.add_argument(
+        "--vehicle-seed-concurrent-product-batch-docs",
+        type=int,
+        help="Optional batch size for --vehicle-seed-concurrent-product-docs. Defaults to --preseed-batch-docs.",
+    )
+    parser.add_argument(
+        "--vehicle-seed-concurrent-product-workers",
+        type=int,
+        default=DEFAULT_VEHICLE_SEED_CONCURRENT_PRODUCT_WORKERS,
+        help="Worker count for --vehicle-seed-concurrent-product-docs.",
+    )
+    parser.add_argument(
         "--fanout-product-extra-bytes",
         type=int,
         default=DEFAULT_FANOUT_PRODUCT_EXTRA_BYTES,
@@ -3065,6 +3152,12 @@ def parse_args() -> argparse.Namespace:
         parser.error("--source-url is only supported for --workload fitment")
     if args.preseed_batch_docs <= 0:
         parser.error("--preseed-batch-docs must be > 0")
+    if args.vehicle_seed_concurrent_product_docs < 0:
+        parser.error("--vehicle-seed-concurrent-product-docs must be >= 0")
+    if args.vehicle_seed_concurrent_product_batch_docs is not None and args.vehicle_seed_concurrent_product_batch_docs <= 0:
+        parser.error("--vehicle-seed-concurrent-product-batch-docs must be > 0")
+    if args.vehicle_seed_concurrent_product_workers <= 0:
+        parser.error("--vehicle-seed-concurrent-product-workers must be > 0")
     return args
 
 
