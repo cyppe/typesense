@@ -394,19 +394,6 @@ jobs:
           fi
           scripts/bazel_in_docker.sh "${args[@]}"
 
-      - name: Upload Linux GPU provider build inputs
-        if: inputs.build_gpu_deps && matrix.target_os == 'linux' && (matrix.release_suffix == '' || (inputs.target_scope == 'linux-arm64-lg-page16' && matrix.artifact_name == 'linux-arm64-lg-page16'))
-        uses: actions/upload-artifact@v7
-        with:
-          name: gpu-provider-build-inputs-linux-${{ matrix.target_arch }}
-          path: |
-            ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}/bundle/lib/libonnxruntime_providers_shared.so
-            ${{ github.workspace }}/ort-bundle/${{ matrix.target_arch }}/bundle/lib/libonnxruntime_providers_cuda.so
-            ${{ github.workspace }}/bazel-bin/external/+new_git_repository+onnx_runtime/onnxruntime_static_one_protobuf/lib/libonnxruntime_providers_shared.so
-            ${{ github.workspace }}/bazel-bin/external/+new_git_repository+onnx_runtime/onnxruntime_static_one_protobuf/lib/libonnxruntime_providers_cuda.so
-          if-no-files-found: error
-          retention-days: 1
-
       - name: Build Typesense server on macOS
         if: ${{ !matrix.uses_docker_bazel }}
         run: |
@@ -683,17 +670,10 @@ jobs:
           export TYPESENSE_DOCKER_PLATFORM="${{ matrix.docker_platform }}"
           scripts/bazel_in_docker.sh --build-image-only
 
-      - name: Download prebuilt GPU provider inputs
-        if: needs.core-binaries.result == 'success'
-        uses: actions/download-artifact@v8
-        with:
-          name: gpu-provider-build-inputs-linux-${{ matrix.target_arch }}
-          path: ${{ github.workspace }}/bazel-bin/external/+new_git_repository+onnx_runtime/onnxruntime_static_one_protobuf/lib
-
       - name: Build GPU deps artifacts
         run: |
           args=(--version-label "${{ inputs.version_label }}" --target-arch "${{ matrix.target_arch }}")
-          if [ "${{ needs.core-binaries.result }}" = "skipped" ]; then
+          if [ "${{ needs.core-binaries.result }}" = "skipped" ] || [ "${{ steps.ort-bundle-run.outputs.run_id }}" = "" ]; then
             export TYPESENSE_ORT_BUILD_JOBS="$(nproc)"
             args=(--build "${args[@]}")
           fi
