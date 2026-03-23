@@ -221,29 +221,23 @@ jobs:
 
           echo "Fetching workflow runs from $REPO_TO_CHECK..."
           if [ "$IS_FORK" = "true" ]; then
-            RUNS_INFO=$(gh api -H "Accept: application/vnd.github+json" \
+            PREVIOUS_RUN_ID=$(gh api -H "Accept: application/vnd.github+json" \
               /repos/$REPO_TO_CHECK/actions/workflows/tests.yml/runs \
-              -q '.workflow_runs[] | select(.conclusion == "success") | {id: .id, sha: .head_sha, branch: .head_branch, conclusion: .conclusion}' \
-              --paginate | head -n 1)
+              -q '.workflow_runs[] | select(.conclusion == "success") | .id' \
+              --paginate 2>/dev/null | head -n 1 || true)
           else
-            RUNS_INFO=$(gh api -H "Accept: application/vnd.github+json" \
+            PREVIOUS_RUN_ID=$(gh api -H "Accept: application/vnd.github+json" \
               /repos/$REPO_TO_CHECK/actions/workflows/tests.yml/runs \
-              -q ".workflow_runs[] | select(.conclusion == \"success\" and .head_branch == \"$DEFAULT_BRANCH\") | {id: .id, sha: .head_sha, branch: .head_branch, conclusion: .conclusion}" \
-              --paginate | head -n 1)
+              -q ".workflow_runs[] | select(.conclusion == \"success\" and .head_branch == \"$DEFAULT_BRANCH\") | .id" \
+              --paginate 2>/dev/null | head -n 1 || true)
           fi
 
-          echo "Found runs info:"
-          echo "$RUNS_INFO"
-
-          if [ -z "$RUNS_INFO" ]; then
-            echo "No successful runs found"
+          if [ -z "$PREVIOUS_RUN_ID" ]; then
+            echo "No successful runs found or GitHub API lookup failed; skipping TEI cache reuse."
             echo "previous_run_id=" >> $GITHUB_OUTPUT
           else
-            # Extract the latest run info
-            LATEST_RUN=$(echo "$RUNS_INFO" | head -n 1)
-            LATEST_ID=$(echo "$LATEST_RUN" | jq -r '.id')
-            echo "Latest successful run ID: $LATEST_ID"
-            echo "previous_run_id=$LATEST_ID" >> $GITHUB_OUTPUT
+            echo "Latest successful run ID: $PREVIOUS_RUN_ID"
+            echo "previous_run_id=$PREVIOUS_RUN_ID" >> $GITHUB_OUTPUT
           fi
         env:
           GH_TOKEN: ${{ github.token }}
@@ -254,7 +248,7 @@ jobs:
         run: |
           ARTIFACT_ID=$(gh api -H "Accept: application/vnd.github+json" \
             /repos/${{ github.repository }}/actions/runs/${{ steps.get-previous-run.outputs.previous_run_id }}/artifacts \
-            -q '.artifacts[] | select(.name == "tei-model-cache") | .id' | head -n 1)
+            -q '.artifacts[] | select(.name == "tei-model-cache") | .id' 2>/dev/null | head -n 1 || true)
           if [ -n "$ARTIFACT_ID" ]; then
             echo "has_cache=true" >> "$GITHUB_OUTPUT"
           else
