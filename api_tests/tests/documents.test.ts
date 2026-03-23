@@ -163,6 +163,52 @@ describe(Phases.SINGLE_FRESH, () => {
     expect(d.data?.num_employees).toBe(12000);
   });
 
+  it("upsert a document via single-document POST action", async () => {
+    let res = await fetchSingleNode("/collections", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "companies_docs_single_upsert",
+        fields: [
+          { name: "id", type: "string" },
+          { name: "company_name", type: "string" },
+          { name: "num_employees", type: "int32" },
+          { name: "country", type: "string", facet: true },
+        ],
+      }),
+    });
+    expect(res.ok).toBe(true);
+
+    res = await fetchSingleNode("/collections/companies_docs_single_upsert/documents?action=upsert", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "1",
+        company_name: "Stark Industries",
+        num_employees: 1000,
+        country: "US",
+      }),
+    });
+    expect(res.ok).toBe(true);
+    let doc = DocumentSchema.safeParse(await res.json());
+    expect(doc.success).toBe(true);
+    expect(doc.data?.num_employees).toBe(1000);
+
+    res = await fetchSingleNode("/collections/companies_docs_single_upsert/documents?action=upsert", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "1",
+        company_name: "Stark Industries Updated",
+        num_employees: 2000,
+        country: "SE",
+      }),
+    });
+    expect(res.ok).toBe(true);
+    doc = DocumentSchema.safeParse(await res.json());
+    expect(doc.success).toBe(true);
+    expect(doc.data?.company_name).toBe("Stark Industries Updated");
+    expect(doc.data?.num_employees).toBe(2000);
+    expect(doc.data?.country).toBe("SE");
+  });
+
   it("delete a document by id", async () => {
     const res = await fetchSingleNode("/collections/companies_docs_single/documents/2", {
       method: "DELETE",
@@ -212,6 +258,68 @@ describe(Phases.SINGLE_FRESH, () => {
     const doc3 = DocumentSchema.safeParse(await getRes.json());
     expect(doc3.success).toBe(true);
     expect(doc3.data?.company_name).toBe("Umbrella Corp");
+  });
+
+  it("import documents with emplace", async () => {
+    let res = await fetchSingleNode("/collections", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "companies_docs_single_emplace",
+        fields: [
+          { name: "id", type: "string" },
+          { name: "company_name", type: "string" },
+          { name: "num_employees", type: "int32" },
+          { name: "country", type: "string", facet: true },
+        ],
+      }),
+    });
+    expect(res.ok).toBe(true);
+
+    res = await fetchSingleNode("/collections/companies_docs_single_emplace/documents", {
+      method: "POST",
+      body: JSON.stringify({
+        id: "1",
+        company_name: "Stark Industries",
+        num_employees: 10000,
+        country: "US",
+      }),
+    });
+    expect(res.ok).toBe(true);
+
+    const jsonl = [
+      JSON.stringify({ id: "1", num_employees: 14000 }),
+      JSON.stringify({ id: "2", company_name: "Oscorp", num_employees: 800, country: "US" }),
+    ].join("\n");
+
+    res = await fetchSingleNode(
+      "/collections/companies_docs_single_emplace/documents/import?action=emplace",
+      {
+        method: "POST",
+        body: jsonl,
+      }
+    );
+    expect(res.ok).toBe(true);
+    const lines = (await res.text()).trim().split("\n");
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      const parsed = JSON.parse(line) as { success?: boolean };
+      expect(parsed.success).toBe(true);
+    }
+
+    let getRes = await fetchSingleNode("/collections/companies_docs_single_emplace/documents/1", { method: "GET" });
+    expect(getRes.ok).toBe(true);
+    let doc1 = DocumentSchema.safeParse(await getRes.json());
+    expect(doc1.success).toBe(true);
+    expect(doc1.data?.company_name).toBe("Stark Industries");
+    expect(doc1.data?.num_employees).toBe(14000);
+    expect(doc1.data?.country).toBe("US");
+
+    getRes = await fetchSingleNode("/collections/companies_docs_single_emplace/documents/2", { method: "GET" });
+    expect(getRes.ok).toBe(true);
+    const doc2 = DocumentSchema.safeParse(await getRes.json());
+    expect(doc2.success).toBe(true);
+    expect(doc2.data?.company_name).toBe("Oscorp");
+    expect(doc2.data?.num_employees).toBe(800);
   });
 });
 

@@ -329,3 +329,54 @@ TEST_F(CollectionOperationsTest, ConcurrentCreatesOnSameDocumentIdDoNotBothSucce
         ASSERT_TRUE(stored_title == "Title A" || stored_title == "Title B") << "iteration=" << iteration;
     }
 }
+
+TEST_F(CollectionOperationsTest, ConcurrentExplicitIdUpdatesOnSameDocumentAreSerialized) {
+    nlohmann::json schema = R"({
+        "name": "coll1",
+        "fields": [
+            {"name": "title", "type": "string"},
+            {"name": "points", "type": "int32"}
+        ]
+    })"_json;
+
+    Collection* coll = collectionManager.create_collection(schema).get();
+
+    nlohmann::json doc = {
+        {"id", "counter"},
+        {"title", "Concurrent counter"},
+        {"points", 0}
+    };
+    ASSERT_TRUE(coll->add(doc.dump()).ok());
+
+    for(size_t iteration = 0; iteration < 10; ++iteration) {
+        doc["points"] = 0;
+        ASSERT_TRUE(coll->add(doc.dump(), UPSERT).ok());
+
+        bool increment_one_ok = false;
+        bool increment_two_ok = false;
+
+        std::thread t1([&]() {
+            nlohmann::json increment_one = {
+                {"$operations", {{"increment", {{"points", 1}}}}}
+            };
+            increment_one_ok = coll->add(increment_one.dump(), UPDATE, "counter").ok();
+        });
+
+        std::thread t2([&]() {
+            nlohmann::json increment_two = {
+                {"$operations", {{"increment", {{"points", 2}}}}}
+            };
+            increment_two_ok = coll->add(increment_two.dump(), UPDATE, "counter").ok();
+        });
+
+        t1.join();
+        t2.join();
+
+        ASSERT_TRUE(increment_one_ok);
+        ASSERT_TRUE(increment_two_ok);
+
+        auto stored_doc_op = coll->get("counter");
+        ASSERT_TRUE(stored_doc_op.ok());
+        ASSERT_EQ(3, stored_doc_op.get()["points"].get<int32_t>()) << "iteration=" << iteration;
+    }
+}

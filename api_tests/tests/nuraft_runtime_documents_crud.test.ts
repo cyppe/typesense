@@ -312,6 +312,70 @@ describe(Phases.SINGLE_FRESH, () => {
     }
   });
 
+  it("merges concurrent direct PATCH updates on the same document", async () => {
+    const collectionName = "companies_docs_single_direct_patch_updates";
+    let res = await fetchSingleNode("/collections", {
+      method: "POST",
+      body: JSON.stringify({
+        name: collectionName,
+        fields: [
+          { name: "id", type: "string" },
+          { name: "company_name", type: "string" },
+          { name: "category", type: "string", optional: true },
+          { name: "popularity", type: "int32" },
+        ],
+      }),
+    });
+    expect(res.ok).toBe(true);
+
+    for (let iteration = 0; iteration < 5; iteration += 1) {
+      res = await fetchSingleNode(`/collections/${collectionName}/documents?action=upsert`, {
+        method: "POST",
+        body: JSON.stringify({
+          id: "1",
+          company_name: "Original",
+          category: "base",
+          popularity: 0,
+        }),
+      });
+      expect(res.ok).toBe(true);
+
+      const [updateName, updatePopularity] = await Promise.all([
+        fetchSingleNode(`/collections/${collectionName}/documents/1`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            company_name: "Updated",
+          }),
+        }),
+        fetchSingleNode(`/collections/${collectionName}/documents/1`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            category: "merged",
+            $operations: {
+              increment: {
+                popularity: 3,
+              },
+            },
+          }),
+        }),
+      ]);
+
+      expect(updateName.ok).toBe(true);
+      expect(updatePopularity.ok).toBe(true);
+
+      res = await fetchSingleNode(`/collections/${collectionName}/documents/1`);
+      expect(res.ok).toBe(true);
+      const document = (await res.json()) as {
+        company_name?: string;
+        category?: string;
+        popularity?: number;
+      };
+      expect(document.company_name).toBe("Updated");
+      expect(document.category).toBe("merged");
+      expect(document.popularity).toBe(3);
+    }
+  });
+
   it("allows only one concurrent create import to win for the same document id", async () => {
     const collectionName = "companies_docs_single_duplicate_creates";
     let res = await fetchSingleNode("/collections", {
@@ -618,6 +682,70 @@ describe(Phases.MULTI_FRESH, () => {
       expect(updatePopularity.ok).toBe(true);
       expect(JSON.parse((await updateName.text()).trim()).success).toBe(true);
       expect(JSON.parse((await updatePopularity.text()).trim()).success).toBe(true);
+
+      res = await fetchMultiNode(1, `/collections/${collectionName}/documents/1`);
+      expect(res.ok).toBe(true);
+      const document = (await res.json()) as {
+        company_name?: string;
+        category?: string;
+        popularity?: number;
+      };
+      expect(document.company_name).toBe("Updated");
+      expect(document.category).toBe("merged");
+      expect(document.popularity).toBe(3);
+    }
+  });
+
+  it("merges follower-originated concurrent direct PATCH updates on the same document", async () => {
+    const collectionName = "companies_docs_multi_direct_patch_updates";
+    let res = await fetchMultiNode(1, "/collections", {
+      method: "POST",
+      body: JSON.stringify({
+        name: collectionName,
+        fields: [
+          { name: "id", type: "string" },
+          { name: "company_name", type: "string" },
+          { name: "category", type: "string", optional: true },
+          { name: "popularity", type: "int32" },
+        ],
+      }),
+    });
+    expect(res.ok).toBe(true);
+
+    for (let iteration = 0; iteration < 5; iteration += 1) {
+      res = await fetchMultiNode(1, `/collections/${collectionName}/documents?action=upsert`, {
+        method: "POST",
+        body: JSON.stringify({
+          id: "1",
+          company_name: "Original",
+          category: "base",
+          popularity: 0,
+        }),
+      });
+      expect(res.ok).toBe(true);
+
+      const [updateName, updatePopularity] = await Promise.all([
+        fetchMultiNodeRequest(2, `/collections/${collectionName}/documents/1`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            company_name: "Updated",
+          }),
+        }),
+        fetchMultiNodeRequest(3, `/collections/${collectionName}/documents/1`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            category: "merged",
+            $operations: {
+              increment: {
+                popularity: 3,
+              },
+            },
+          }),
+        }),
+      ]);
+
+      expect(updateName.ok).toBe(true);
+      expect(updatePopularity.ok).toBe(true);
 
       res = await fetchMultiNode(1, `/collections/${collectionName}/documents/1`);
       expect(res.ok).toBe(true);
