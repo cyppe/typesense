@@ -19,6 +19,44 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 43: `yyjson` Helper Rewrites Cut Full-Document Async-Reference Cost Without Breaking The Mixed DDEV-Parity Lane (2026-03-23)
+
+**Baseline reference:** previously accepted local outputs from Run 42 (`1M`, `3M`, `category_fanout 180k`) plus Run 39 (`mixed_category_fitment 300k`)
+**Candidate:** local working tree on top of WIP commit `e25566f2`
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 1000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 240 --server-batch-size 1000 --json-output /tmp/fitment-late-reference-fanout-yyjson-1m.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 3000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 360 --server-batch-size 1000 --json-output /tmp/fitment-late-reference-fanout-yyjson-3m.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload category_fanout --product-docs 180000 --category-docs 711 --batch-docs 711 --preseed-batch-docs 5000 --import-workers 3 --fanout-product-extra-bytes 12000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 360 --server-batch-size 1000 --json-output /tmp/category-fanout-yyjson-180k.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload mixed_category_fitment --product-docs 300000 --vehicle-docs 50000 --total-fitment-docs 200000 --category-docs 500 --batch-docs 5000 --import-workers 4 --probe-profile dashboard --probe-workers 4 --search-workers 2 --probe-interval 0.2 --timeout 300 --server-batch-size 1000 --fanout-product-extra-bytes 8192 --server-arg=--thread-pool-size=4 --server-arg=--log-slow-requests-time-ms=1000 --keep-temp --json-output /tmp/mixed-category-fitment-yyjson-keep.json`
+
+**Scenario:** the byte-aware planner already fixed when the async-reference helper should chunk, but the helper still spent a large fraction of its time parsing stored JSON into `nlohmann::json`, mutating one helper field, dumping the entire document back to a string, and then writing it back. Current HEAD keeps the existing indexing contract but swaps only that fetch/mutate/store loop to `yyjson`, while also fixing helper phase accounting so `parse_ms` and `transform_ms` stop rounding down to zero.
+
+### Findings
+
+- The moderate late-reference fitment lane improved again without changing the chunk policy. On `1M` late fitments, the critical late `vehicles_se` seed improved from the previous `5121.1ms` accepted byte-aware result to `4100.4ms` while the helper stayed monolithic (`chunks=1`, `planned_chunk_docs=1,000,000`). The helper now reports its real phase costs: `parse_ms=374`, `transform_ms=523`, `store_prep_ms=321`, `write_ms=283`.
+- The very large small-doc lane improved materially too. On `3M` late fitments, the late `vehicles_se` seed improved from `18500.2ms` to `14540.3ms` while preserving the bounded large-fanout posture (`chunks=3`, `planned_chunk_docs=1,050,994`, helper fetched bytes about `588 MiB`).
+- The large-doc DDEV-parity category lane improved dramatically. On `category_fanout 180k / 711 / 12KB`, the `categories_se` import dropped from `18858.5ms` to `10137.3ms` with the same `4` helper chunks. Most of the remaining cost is now visible and unsurprising: `parse_ms=3580`, `transform_ms=979`, `store_prep_ms=2552`, `write_ms=555`, fetched bytes about `3.36 GiB`.
+- The mixed DDEV-parity lane stayed healthy on the preserved-log rerun. With `300k` products, `200k` fitments, `8KB` stored blobs, and `thread_pool_size=4`, fitment imports averaged `141.1ms`, the long category fanout import completed in `11914.4ms`, search stayed at `56.9ms` average / `117.1ms` p95, `/health` averaged `0.3ms`, `/metrics.json` `1.5ms`, and `http_route_search_avg_response_queue_ms` stayed `0`. The slow-request log now shows the helper’s true internal split (`parse_ms=4199`, `transform_ms=1036`, `store_prep_ms=3251`, `write_ms=678`) on the long category import itself.
+
+### Summary Table
+
+| Lane | Prior accepted result | Current result | Helper chunks | Outcome |
+|---|---:|---:|---:|---|
+| `1M` late fitment, late `vehicles_se` seed | `5121.1 ms` | `4100.4 ms` | `1` | Better moderate fanout |
+| `3M` late fitment, late `vehicles_se` seed | `18500.2 ms` | `14540.3 ms` | `3` | Better large small-doc fanout |
+| `category_fanout 180k`, `categories_se` import | `18858.5 ms` | `10137.3 ms` | `4` | Large-doc fanout much faster |
+| `mixed_category_fitment 300k`, fitment import avg | `135.3 ms` | `141.1 ms` | n/a | Essentially flat |
+| `mixed_category_fitment 300k`, category import avg | `24121.6 ms` | `11914.4 ms` | `6` | About 2x faster |
+| `mixed_category_fitment 300k`, search avg | `50.7 ms` | `56.9 ms` | n/a | Slightly higher, still healthy |
+
+### Decision
+
+- Keep the `yyjson`-based helper fetch/mutate/store rewrite. It materially reduces the actual full-document rewrite cost on both the isolated helper lanes and the preserved-log mixed lane, while keeping the byte-aware planner unchanged.
+- Keep the nanosecond-based helper phase accounting. It makes `parse_ms` and `transform_ms` meaningful enough to guide the next optimization pass if another DDEV-only gap appears.
+- Treat the next gate as a fresh DDEV image from this head. Local evidence is strong enough now that more local tuning should wait for that external validation.
+
+---
+
 ## Run 42: Byte-Aware Async-Reference Chunk Planning Fixes Medium-Count Large-Doc Fanout Without Regressing Huge Small-Doc Fanout (2026-03-22)
 
 **Baseline commit:** `8f4ebfd5`

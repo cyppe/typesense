@@ -642,10 +642,6 @@ Option<bool> Collection::update_async_references_with_lock(
         yyjson_mut_doc_ptr full_doc;
     };
 
-    std::vector<index_record> helper_updates;
-    helper_updates.reserve(filter_result.count);
-    std::vector<helper_storage_update_t> storage_updates;
-    storage_updates.reserve(filter_result.count);
     uint64_t parse_ns = 0;
     uint64_t transform_ns = 0;
     uint64_t parse_ms = 0;
@@ -668,6 +664,9 @@ Option<bool> Collection::update_async_references_with_lock(
     uint64_t total_updated_docs = 0;
 
     auto record_async_reference_helper_metrics = [&](uint64_t updated_docs, uint64_t total_ms) {
+        parse_ms = ns_to_ms(parse_ns);
+        transform_ms = ns_to_ms(transform_ns);
+
         g_collection_import_metrics.cumulative_async_reference_helper_invocations.fetch_add(1, std::memory_order_relaxed);
         g_collection_import_metrics.cumulative_async_reference_helper_matched_docs.fetch_add(filter_result.count,
                                                                                              std::memory_order_relaxed);
@@ -970,7 +969,14 @@ Option<bool> Collection::update_async_references_with_lock(
         rocksdb::WriteBatch aggregated_batch;
         const auto store_prep_start = std::chrono::steady_clock::now();
         for (auto& storage_update : storage_updates) {
-            serialized_docs.emplace_back(storage_update.full_doc.dump(-1, ' ', false, nlohmann::detail::error_handler_t::ignore));
+            size_t serialized_doc_len = 0;
+            char* serialized_doc = yyjson_mut_write(storage_update.full_doc.get(), 0, &serialized_doc_len);
+            if (serialized_doc == nullptr) {
+                return Option<bool>(500, "Could not serialize async reference helper update.");
+            }
+
+            serialized_docs.emplace_back(serialized_doc, serialized_doc_len);
+            std::free(serialized_doc);
             written_doc_bytes += serialized_docs.back().size();
             max_doc_bytes = std::max<uint64_t>(max_doc_bytes, serialized_docs.back().size());
             aggregated_batch.Put(get_seq_id_key(storage_update.seq_id), serialized_docs.back());
@@ -1102,6 +1108,8 @@ Option<bool> Collection::update_async_references_with_lock(
     }
 
     const uint64_t total_ms = elapsed_ms_since(total_start);
+    parse_ms = ns_to_ms(parse_ns);
+    transform_ms = ns_to_ms(transform_ns);
     record_async_reference_helper_metrics(total_updated_docs, total_ms);
     if (total_ms >= 1000) {
         TS_LOG(WARNING) << "Async reference helper slow path: collection=" << name
