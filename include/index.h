@@ -792,6 +792,15 @@ public:
                                          const field& afield,
                                          std::vector<index_record>& iter_batch);
 
+    // Micro-batched reindex for singular INT64 helper fields.
+    // Processes sub_batch_size docs per exclusive lock hold to reduce search stalls.
+    // Returns (sub_batch_count, max_sub_batch_ms) via out params.
+    Option<bool> reindex_helper_field_in_memory(const field& afield,
+                                                std::vector<index_record>& iter_batch,
+                                                size_t sub_batch_size,
+                                                uint64_t& out_sub_batches,
+                                                uint64_t& out_max_sub_batch_ms);
+
     void index_field_in_memory(const std::string& collection_name, const field& afield,
                                std::vector<index_record>& iter_batch);
 

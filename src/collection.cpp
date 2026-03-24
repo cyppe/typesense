@@ -57,6 +57,10 @@ constexpr uint32_t kAsyncReferenceHelperChunkPlanSampleDocs = 2'048;
 constexpr uint64_t kAsyncReferenceHelperChunkDefaultTargetBytes = 512ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kAsyncReferenceHelperChunkHighFanoutTargetBytes = 192ULL * 1024ULL * 1024ULL;
 
+// Sub-batch size for micro-batched reindex: controls max exclusive lock hold time.
+// 10k docs at ~1.2us/doc ≈ 12ms max lock hold per sub-batch.
+constexpr size_t kAsyncReferenceHelperReindexSubBatchSize = 10'000;
+
 bool yyjson_to_nlohmann(yyjson_val* value, nlohmann::json& out) {
     if(value == nullptr || yyjson_is_null(value)) {
         out = nullptr;
@@ -195,6 +199,11 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> max_async_reference_helper_updated_docs{0};
     std::atomic<uint64_t> max_async_reference_helper_fetched_doc_bytes{0};
     std::atomic<uint64_t> max_async_reference_helper_written_doc_bytes{0};
+    std::atomic<uint64_t> last_async_reference_helper_reindex_sub_batches{0};
+    std::atomic<uint64_t> last_async_reference_helper_reindex_max_sub_batch_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_skipped_docs{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_skipped_docs{0};
+    std::atomic<uint64_t> max_async_reference_helper_reindex_max_sub_batch_ms{0};
     std::atomic<uint64_t> last_batch_index_docs{0};
     std::atomic<uint64_t> last_batch_index_num_indexed{0};
     std::atomic<uint64_t> last_batch_index_found_fields{0};
@@ -686,6 +695,9 @@ Option<bool> Collection::update_async_references_with_lock(
     uint64_t helper_chunk_plan_sample_docs = 0;
     uint64_t helper_chunk_target_bytes = kAsyncReferenceHelperChunkDefaultTargetBytes;
     uint64_t helper_chunk_plan_estimated_total_doc_bytes = 0;
+    uint64_t reindex_sub_batches = 0;
+    uint64_t reindex_max_sub_batch_ms = 0;
+    uint64_t skipped_docs = 0;
     uint64_t total_updated_docs = 0;
 
     auto record_async_reference_helper_metrics = [&](uint64_t updated_docs, uint64_t total_ms) {
@@ -742,6 +754,17 @@ Option<bool> Collection::update_async_references_with_lock(
             helper_chunk_target_bytes, std::memory_order_relaxed);
         g_collection_import_metrics.last_async_reference_helper_chunk_plan_estimated_total_doc_bytes.store(
             helper_chunk_plan_estimated_total_doc_bytes, std::memory_order_relaxed);
+
+        g_collection_import_metrics.last_async_reference_helper_reindex_sub_batches.store(
+            reindex_sub_batches, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_reindex_max_sub_batch_ms.store(
+            reindex_max_sub_batch_ms, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_skipped_docs.store(
+            skipped_docs, std::memory_order_relaxed);
+        g_collection_import_metrics.cumulative_async_reference_helper_skipped_docs.fetch_add(
+            skipped_docs, std::memory_order_relaxed);
+        update_atomic_max(g_collection_import_metrics.max_async_reference_helper_reindex_max_sub_batch_ms,
+                          reindex_max_sub_batch_ms);
 
         if (total_ms >= 1000) {
             g_collection_import_metrics.cumulative_async_reference_helper_slow_paths.fetch_add(1,
@@ -845,16 +868,6 @@ Option<bool> Collection::update_async_references_with_lock(
             const auto* existing_helper_node = get_yyjson_field_node(existing_root, reference_helper_field_name,
                                                                      helper_field_path_parts);
             nlohmann::json old_helper_document = nlohmann::json::object();
-            if (existing_helper_node != nullptr) {
-                nlohmann::json old_helper_value;
-                if (!yyjson_to_nlohmann(const_cast<yyjson_val*>(existing_helper_node), old_helper_value)) {
-                    transform_ns += elapsed_ns_since(transform_start);
-                    TS_LOG(ERROR) << "`" << name << "` collection: Could not convert helper field `"
-                                  << reference_helper_field_name << "` for sequence ID `" << seq_id << "`.";
-                    continue;
-                }
-                old_helper_document[reference_helper_field_name] = std::move(old_helper_value);
-            }
             nlohmann::json new_helper_document = nlohmann::json::object();
             yyjson_mut_doc_ptr updated_doc(nullptr, yyjson_mut_doc_free);
 
@@ -868,6 +881,7 @@ Option<bool> Collection::update_async_references_with_lock(
                 const auto ref_seq_id_it = value_to_ref_seq_id.find(referenced_value);
                 if (ref_seq_id_it == value_to_ref_seq_id.end()) {
                     transform_ns += elapsed_ns_since(transform_start);
+                    skipped_docs++;
                     continue;
                 }
 
@@ -875,7 +889,14 @@ Option<bool> Collection::update_async_references_with_lock(
                     yyjson_is_uint(const_cast<yyjson_val*>(existing_helper_node)) &&
                     yyjson_get_uint(const_cast<yyjson_val*>(existing_helper_node)) == ref_seq_id_it->second) {
                     transform_ns += elapsed_ns_since(transform_start);
+                    skipped_docs++;
                     continue;
+                }
+
+                // Build old/new helper docs directly from int64 values — no yyjson_to_nlohmann needed.
+                if (existing_helper_node != nullptr && yyjson_is_uint(const_cast<yyjson_val*>(existing_helper_node))) {
+                    old_helper_document[reference_helper_field_name] =
+                        static_cast<int64_t>(yyjson_get_uint(const_cast<yyjson_val*>(existing_helper_node)));
                 }
 
                 updated_doc.reset(yyjson_doc_mut_copy(existing_doc.get(), nullptr));
@@ -893,8 +914,20 @@ Option<bool> Collection::update_async_references_with_lock(
                     return Option<bool>(500, "Could not write async reference helper field.");
                 }
 
-                new_helper_document[reference_helper_field_name] = ref_seq_id_it->second;
+                new_helper_document[reference_helper_field_name] = static_cast<int64_t>(ref_seq_id_it->second);
             } else {
+                // Array path: build old_helper_document via yyjson_to_nlohmann (needed for generic reindex).
+                if (existing_helper_node != nullptr) {
+                    nlohmann::json old_helper_value;
+                    if (!yyjson_to_nlohmann(const_cast<yyjson_val*>(existing_helper_node), old_helper_value)) {
+                        transform_ns += elapsed_ns_since(transform_start);
+                        TS_LOG(ERROR) << "`" << name << "` collection: Could not convert helper field `"
+                                      << reference_helper_field_name << "` for sequence ID `" << seq_id << "`.";
+                        continue;
+                    }
+                    old_helper_document[reference_helper_field_name] = std::move(old_helper_value);
+                }
+
                 const auto* referenced_array = get_yyjson_field_node(existing_root, field_name, field_path_parts);
                 const auto* helper_array = existing_helper_node;
 
@@ -983,8 +1016,16 @@ Option<bool> Collection::update_async_references_with_lock(
         }
 
         const auto reindex_start = std::chrono::steady_clock::now();
-        auto reindex_op = index->reindex_field_in_memory(name, helper_field, helper_updates);
+        uint64_t chunk_sub_batches = 0;
+        uint64_t chunk_max_sub_batch_ms = 0;
+        auto reindex_op = index->reindex_helper_field_in_memory(
+            helper_field, helper_updates, kAsyncReferenceHelperReindexSubBatchSize,
+            chunk_sub_batches, chunk_max_sub_batch_ms);
         reindex_ms += elapsed_ms_since(reindex_start);
+        reindex_sub_batches += chunk_sub_batches;
+        if (chunk_max_sub_batch_ms > reindex_max_sub_batch_ms) {
+            reindex_max_sub_batch_ms = chunk_max_sub_batch_ms;
+        }
         if (!reindex_op.ok()) {
             return reindex_op;
         }
@@ -1042,7 +1083,10 @@ Option<bool> Collection::update_async_references_with_lock(
                         revert_updates.emplace_back(std::move(revert_record));
                     }
 
-                    auto revert_op = index->reindex_field_in_memory(name, helper_field, revert_updates);
+                    uint64_t revert_sub_batches = 0, revert_max_sub_batch_ms = 0;
+                    auto revert_op = index->reindex_helper_field_in_memory(
+                        helper_field, revert_updates, kAsyncReferenceHelperReindexSubBatchSize,
+                        revert_sub_batches, revert_max_sub_batch_ms);
                     if (!revert_op.ok()) {
                         TS_LOG(ERROR) << "Error while reverting async reference helper updates for collection `" << name
                                       << "` field `" << field_name << "` after store write failure: "
@@ -1158,6 +1202,9 @@ Option<bool> Collection::update_async_references_with_lock(
                         << " fetched_doc_bytes=" << fetched_doc_bytes
                         << " written_doc_bytes=" << written_doc_bytes
                         << " max_doc_bytes=" << max_doc_bytes
+                        << " reindex_sub_batches=" << reindex_sub_batches
+                        << " reindex_max_sub_batch_ms=" << reindex_max_sub_batch_ms
+                        << " skipped_docs=" << skipped_docs
                         << " total_ms=" << total_ms;
     }
 
@@ -1253,6 +1300,16 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
         g_collection_import_metrics.max_async_reference_helper_fetched_doc_bytes.load(std::memory_order_relaxed);
     snapshot.max_async_reference_helper_written_doc_bytes =
         g_collection_import_metrics.max_async_reference_helper_written_doc_bytes.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_reindex_sub_batches =
+        g_collection_import_metrics.last_async_reference_helper_reindex_sub_batches.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_reindex_max_sub_batch_ms =
+        g_collection_import_metrics.last_async_reference_helper_reindex_max_sub_batch_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_skipped_docs =
+        g_collection_import_metrics.last_async_reference_helper_skipped_docs.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_skipped_docs =
+        g_collection_import_metrics.cumulative_async_reference_helper_skipped_docs.load(std::memory_order_relaxed);
+    snapshot.max_async_reference_helper_reindex_max_sub_batch_ms =
+        g_collection_import_metrics.max_async_reference_helper_reindex_max_sub_batch_ms.load(std::memory_order_relaxed);
     snapshot.last_batch_index_docs = g_collection_import_metrics.last_batch_index_docs.load(std::memory_order_relaxed);
     snapshot.last_batch_index_num_indexed = g_collection_import_metrics.last_batch_index_num_indexed.load(std::memory_order_relaxed);
     snapshot.last_batch_index_found_fields = g_collection_import_metrics.last_batch_index_found_fields.load(std::memory_order_relaxed);

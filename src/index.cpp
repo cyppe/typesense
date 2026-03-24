@@ -783,6 +783,120 @@ Option<bool> Index::reindex_field_in_memory(const std::string& collection_name,
     return Option<bool>(true);
 }
 
+Option<bool> Index::reindex_helper_field_in_memory(
+    const field& afield,
+    std::vector<index_record>& iter_batch,
+    size_t sub_batch_size,
+    uint64_t& out_sub_batches,
+    uint64_t& out_max_sub_batch_ms) {
+
+    out_sub_batches = 0;
+    out_max_sub_batch_ms = 0;
+
+    if (iter_batch.empty()) {
+        return Option<bool>(true);
+    }
+
+    // For non-singular INT64 fields, fall back to the generic path.
+    if (!afield.is_single_integer() || afield.type != field_types::INT64) {
+        std::unique_lock lock(mutex);
+        for (auto& record : iter_batch) {
+            if (!record.indexed.ok()) continue;
+            try {
+                if (record.old_doc.contains(afield.name)) {
+                    remove_field(record.seq_id, record.old_doc, afield.name, true);
+                }
+            } catch (const std::exception& e) {
+                return Option<bool>(500, "Error removing field `" + afield.name +
+                                         "` seq_id " + std::to_string(record.seq_id) + ": " + e.what());
+            }
+        }
+        try {
+            // Need collection_name for index_field_in_memory but we don't have it here.
+            // Use empty string — it's only used for logging in edge cases.
+            index_field_in_memory("", afield, iter_batch);
+        } catch (const std::exception& e) {
+            return Option<bool>(500, "Error indexing field `" + afield.name +
+                                     "` during helper reindex: " + e.what());
+        }
+        out_sub_batches = 1;
+        return Option<bool>(true);
+    }
+
+    // Resolve data structure pointers once outside the lock.
+    // These map entries are stable for the lifetime of the index (fields are not added/removed concurrently).
+    num_tree_t* num_tree = nullptr;
+    NumericTrie* trie = nullptr;
+    if (afield.range_index) {
+        auto trie_it = range_index.find(afield.name);
+        if (trie_it != range_index.end()) trie = trie_it->second;
+    } else {
+        auto num_it = numerical_index.find(afield.name);
+        if (num_it != numerical_index.end()) num_tree = num_it->second;
+    }
+
+    spp::sparse_hash_map<uint32_t, int64_t, Hasher32>* doc_to_score = nullptr;
+    if (afield.is_num_sortable()) {
+        auto sort_it = sort_index.find(afield.name);
+        if (sort_it != sort_index.end()) doc_to_score = sort_it->second;
+    }
+
+    if (sub_batch_size == 0) {
+        sub_batch_size = iter_batch.size();
+    }
+
+    for (size_t batch_start = 0; batch_start < iter_batch.size(); batch_start += sub_batch_size) {
+        const size_t batch_end = std::min(batch_start + sub_batch_size, iter_batch.size());
+        const auto sub_batch_start = std::chrono::steady_clock::now();
+
+        {
+            std::unique_lock lock(mutex);
+
+            for (size_t i = batch_start; i < batch_end; i++) {
+                auto& record = iter_batch[i];
+                if (!record.indexed.ok()) continue;
+
+                const auto seq_id = record.seq_id;
+
+                // Remove old value.
+                if (record.old_doc.contains(afield.name)) {
+                    const int64_t old_val = record.old_doc[afield.name].get<int64_t>();
+                    if (trie) {
+                        trie->remove(old_val, seq_id);
+                    } else if (num_tree) {
+                        num_tree->remove(old_val, seq_id);
+                    }
+                    if (doc_to_score) {
+                        doc_to_score->erase(seq_id);
+                    }
+                }
+
+                // Insert new value.
+                if (record.doc.contains(afield.name)) {
+                    const int64_t new_val = record.doc[afield.name].get<int64_t>();
+                    if (trie) {
+                        trie->insert(new_val, seq_id);
+                    } else if (num_tree) {
+                        num_tree->insert(new_val, seq_id);
+                    }
+                    if (doc_to_score) {
+                        (*doc_to_score)[seq_id] = new_val;
+                    }
+                }
+            }
+        } // lock released — search queries can proceed between sub-batches
+
+        out_sub_batches++;
+        const uint64_t sub_batch_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - sub_batch_start).count();
+        if (sub_batch_ms > out_max_sub_batch_ms) {
+            out_max_sub_batch_ms = sub_batch_ms;
+        }
+    }
+
+    return Option<bool>(true);
+}
+
 void Index::index_field_in_memory(const std::string& collection_name, const field& afield,
                                   std::vector<index_record>& iter_batch) {
     // indexes a given field of all documents in the batch

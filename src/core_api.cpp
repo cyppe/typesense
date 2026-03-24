@@ -1260,6 +1260,16 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         collection_import_metrics.max_async_reference_helper_fetched_doc_bytes;
     result["collection_import_max_async_reference_helper_written_doc_bytes"] =
         collection_import_metrics.max_async_reference_helper_written_doc_bytes;
+    result["collection_import_last_async_reference_helper_reindex_sub_batches"] =
+        collection_import_metrics.last_async_reference_helper_reindex_sub_batches;
+    result["collection_import_last_async_reference_helper_reindex_max_sub_batch_ms"] =
+        collection_import_metrics.last_async_reference_helper_reindex_max_sub_batch_ms;
+    result["collection_import_last_async_reference_helper_skipped_docs"] =
+        collection_import_metrics.last_async_reference_helper_skipped_docs;
+    result["collection_import_cumulative_async_reference_helper_skipped_docs"] =
+        collection_import_metrics.cumulative_async_reference_helper_skipped_docs;
+    result["collection_import_max_async_reference_helper_reindex_max_sub_batch_ms"] =
+        collection_import_metrics.max_async_reference_helper_reindex_max_sub_batch_ms;
     result["collection_import_last_async_reference_helper_field_name"] =
         collection_import_metrics.last_async_reference_helper_field_name;
     result["collection_import_last_batch_docs"] = collection_import_metrics.last_batch_index_docs;

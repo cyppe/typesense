@@ -96,6 +96,11 @@ struct CollectionImportMetricsSnapshot {
     uint64_t max_async_reference_helper_updated_docs = 0;
     uint64_t max_async_reference_helper_fetched_doc_bytes = 0;
     uint64_t max_async_reference_helper_written_doc_bytes = 0;
+    uint64_t last_async_reference_helper_reindex_sub_batches = 0;
+    uint64_t last_async_reference_helper_reindex_max_sub_batch_ms = 0;
+    uint64_t last_async_reference_helper_skipped_docs = 0;
+    uint64_t cumulative_async_reference_helper_skipped_docs = 0;
+    uint64_t max_async_reference_helper_reindex_max_sub_batch_ms = 0;
     uint64_t last_batch_index_docs = 0;
     uint64_t last_batch_index_num_indexed = 0;
     uint64_t last_batch_index_found_fields = 0;
