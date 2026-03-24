@@ -1,5 +1,6 @@
 #include "collection.h"
 
+#include <charconv>
 #include <numeric>
 #include <chrono>
 #include <cstdlib>
@@ -61,100 +62,91 @@ constexpr uint64_t kAsyncReferenceHelperChunkHighFanoutTargetBytes = 192ULL * 10
 // 10k docs at ~1.2us/doc ≈ 12ms max lock hold per sub-batch.
 constexpr size_t kAsyncReferenceHelperReindexSubBatchSize = 10'000;
 
-// Splice a new unsigned integer value into a raw JSON byte string for a known field name.
-// Returns the spliced string, or empty string on failure (caller should fall back to yyjson).
-// Preconditions: field_name must be a top-level key (not nested), value must be an unsigned integer.
-std::string splice_json_uint_field(const char* json_data, size_t json_len,
-                                   const std::string& field_name, uint64_t new_value) {
-    // Build the search needle: "field_name":
-    // We search for the quoted field name followed by a colon.
+// Build a JSON field search needle: "field_name":
+// Pre-compute this outside loops to avoid per-doc string allocation.
+std::string build_json_field_needle(const std::string& field_name) {
     std::string needle;
     needle.reserve(field_name.size() + 3);
     needle += '"';
     needle += field_name;
     needle += '"';
     needle += ':';
+    return needle;
+}
 
+// Find a JSON field needle in raw bytes. Returns pointer to the match or nullptr.
+const char* find_json_field(const char* json_data, size_t json_len, const std::string& needle) {
     const auto it = std::search(json_data, json_data + json_len,
                                 needle.data(), needle.data() + needle.size());
-    const char* found = (it == json_data + json_len) ? nullptr : it;
-    if (found == nullptr) {
-        return {};
-    }
+    if (it == json_data + json_len) return nullptr;
 
-    // Verify this is not a substring of a longer field name by checking the char before the quote.
+    // Verify this is not a substring of a longer field name.
     // The char before our match must be '{', ',' or whitespace.
-    if (found > json_data) {
-        const char before = *(found - 1);
+    if (it > json_data) {
+        const char before = *(it - 1);
         if (before != '{' && before != ',' && before != ' ' && before != '\t' &&
             before != '\n' && before != '\r') {
-            return {};
+            return nullptr;
         }
     }
+    return it;
+}
+
+// Splice a new unsigned integer value into raw JSON bytes using a pre-built needle.
+// Returns the spliced string, or empty string on failure (caller should fall back to yyjson).
+std::string splice_json_uint_field(const char* json_data, size_t json_len,
+                                   const std::string& needle, uint64_t new_value) {
+    const char* found = find_json_field(json_data, json_len, needle);
+    if (found == nullptr) return {};
 
     // Position after the colon.
     const char* value_start = found + needle.size();
-    // Skip optional whitespace after colon.
     while (value_start < json_data + json_len && (*value_start == ' ' || *value_start == '\t')) {
         value_start++;
     }
+    if (value_start >= json_data + json_len) return {};
 
-    if (value_start >= json_data + json_len) {
-        return {};
-    }
-
-    // The old value must be a non-negative integer (digits only, possibly with leading minus for edge cases).
+    // The old value must be an integer (digits, possibly with leading minus).
     const char* value_end = value_start;
-    if (*value_end == '-') {
-        value_end++;  // handle negative (shouldn't happen for seq_ids, but be safe)
-    }
-    if (value_end >= json_data + json_len || *value_end < '0' || *value_end > '9') {
-        return {};  // not a number — fall back
-    }
+    if (*value_end == '-') value_end++;
+    if (value_end >= json_data + json_len || *value_end < '0' || *value_end > '9') return {};
     while (value_end < json_data + json_len && *value_end >= '0' && *value_end <= '9') {
         value_end++;
     }
 
-    // Build the new value string.
-    const std::string new_value_str = std::to_string(new_value);
+    // Convert new value to digits using std::to_chars (no locale, no heap allocation).
+    char new_value_buf[20];
+    auto [ptr, ec] = std::to_chars(new_value_buf, new_value_buf + sizeof(new_value_buf), new_value);
+    if (ec != std::errc()) return {};
+    const size_t new_value_len = static_cast<size_t>(ptr - new_value_buf);
 
     // Splice: prefix + new_value + suffix
     const size_t prefix_len = static_cast<size_t>(value_start - json_data);
     const size_t suffix_len = json_len - static_cast<size_t>(value_end - json_data);
 
     std::string result;
-    result.resize(prefix_len + new_value_str.size() + suffix_len);
+    result.resize(prefix_len + new_value_len + suffix_len);
     memcpy(result.data(), json_data, prefix_len);
-    memcpy(result.data() + prefix_len, new_value_str.data(), new_value_str.size());
-    memcpy(result.data() + prefix_len + new_value_str.size(), value_end, suffix_len);
+    memcpy(result.data() + prefix_len, new_value_buf, new_value_len);
+    memcpy(result.data() + prefix_len + new_value_len, value_end, suffix_len);
 
     return result;
 }
 
-// Extract a string field value from raw JSON bytes. Returns empty string on failure.
+// Extract a string field value from raw JSON bytes using a pre-built needle.
 // Handles: "field":"value" (returns value without quotes).
 // Does NOT handle escaped quotes inside the value.
 std::string extract_json_string_field(const char* json_data, size_t json_len,
-                                      const std::string& field_name) {
-    std::string needle;
-    needle.reserve(field_name.size() + 4);
-    needle += '"';
-    needle += field_name;
-    needle += '"';
-    needle += ':';
+                                      const std::string& needle) {
+    const char* found = find_json_field(json_data, json_len, needle);
+    if (found == nullptr) return {};
 
-    const auto it = std::search(json_data, json_data + json_len,
-                                needle.data(), needle.data() + needle.size());
-    if (it == json_data + json_len) return {};
-
-    const char* after_colon = it + needle.size();
-    // Skip whitespace
+    const char* after_colon = found + needle.size();
     while (after_colon < json_data + json_len && (*after_colon == ' ' || *after_colon == '\t')) {
         after_colon++;
     }
     if (after_colon >= json_data + json_len || *after_colon != '"') return {};
 
-    // Find closing quote (no escape handling — safe for IDs/titles without backslashes)
     const char* val_start = after_colon + 1;
     const char* val_end = static_cast<const char*>(memchr(val_start, '"', json_data + json_len - val_start));
     if (val_end == nullptr) return {};
@@ -162,21 +154,14 @@ std::string extract_json_string_field(const char* json_data, size_t json_len,
     return std::string(val_start, val_end - val_start);
 }
 
-// Extract an unsigned integer field value from raw JSON bytes. Returns {false, 0} on failure.
+// Extract an unsigned integer field value from raw JSON bytes using a pre-built needle.
+// Returns {false, 0} on failure.
 std::pair<bool, uint64_t> extract_json_uint_field(const char* json_data, size_t json_len,
-                                                   const std::string& field_name) {
-    std::string needle;
-    needle.reserve(field_name.size() + 3);
-    needle += '"';
-    needle += field_name;
-    needle += '"';
-    needle += ':';
+                                                   const std::string& needle) {
+    const char* found = find_json_field(json_data, json_len, needle);
+    if (found == nullptr) return {false, 0};
 
-    const auto it = std::search(json_data, json_data + json_len,
-                                needle.data(), needle.data() + needle.size());
-    if (it == json_data + json_len) return {false, 0};
-
-    const char* after_colon = it + needle.size();
+    const char* after_colon = found + needle.size();
     while (after_colon < json_data + json_len && (*after_colon == ' ' || *after_colon == '\t')) {
         after_colon++;
     }
@@ -748,6 +733,11 @@ Option<bool> Collection::update_async_references_with_lock(
     std::vector<std::string> helper_field_path_parts;
     StringUtils::split(field_name, field_path_parts, ".");
     StringUtils::split(reference_helper_field_name, helper_field_path_parts, ".");
+
+    // Pre-build search needles for raw-byte operations (avoid per-doc string allocation).
+    const auto ref_field_needle = build_json_field_needle(field_name);
+    const auto helper_field_needle = build_json_field_needle(reference_helper_field_name);
+
     field reference_field;
     field helper_field;
     {
@@ -981,7 +971,7 @@ Option<bool> Collection::update_async_references_with_lock(
                 const auto* raw = fetched_docs[fetched_index].data();
                 const auto raw_len = fetched_docs[fetched_index].size();
 
-                const auto ref_str = extract_json_string_field(raw, raw_len, field_name);
+                const auto ref_str = extract_json_string_field(raw, raw_len, ref_field_needle);
                 if (!ref_str.empty()) {
                     const auto ref_it = value_to_ref_seq_id.find(ref_str);
                     if (ref_it == value_to_ref_seq_id.end()) {
@@ -993,7 +983,7 @@ Option<bool> Collection::update_async_references_with_lock(
                     }
 
                     const auto [helper_ok, helper_val] = extract_json_uint_field(raw, raw_len,
-                                                                                  reference_helper_field_name);
+                                                                                  helper_field_needle);
                     if (helper_ok && helper_val == ref_it->second) {
                         // Helper already has the correct value — skip.
                         parse_ns += elapsed_ns_since(parse_start);
@@ -1075,7 +1065,7 @@ Option<bool> Collection::update_async_references_with_lock(
                     // The field already exists — splice the new value in place.
                     spliced = splice_json_uint_field(
                         fetched_docs[fetched_index].data(), fetched_docs[fetched_index].size(),
-                        reference_helper_field_name, ref_seq_id_it->second);
+                        helper_field_needle, ref_seq_id_it->second);
                 }
 
                 if (!spliced.empty()) {
