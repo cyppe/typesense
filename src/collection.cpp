@@ -131,6 +131,66 @@ std::string splice_json_uint_field(const char* json_data, size_t json_len,
     return result;
 }
 
+// Extract a string field value from raw JSON bytes. Returns empty string on failure.
+// Handles: "field":"value" (returns value without quotes).
+// Does NOT handle escaped quotes inside the value.
+std::string extract_json_string_field(const char* json_data, size_t json_len,
+                                      const std::string& field_name) {
+    std::string needle;
+    needle.reserve(field_name.size() + 4);
+    needle += '"';
+    needle += field_name;
+    needle += '"';
+    needle += ':';
+
+    const auto it = std::search(json_data, json_data + json_len,
+                                needle.data(), needle.data() + needle.size());
+    if (it == json_data + json_len) return {};
+
+    const char* after_colon = it + needle.size();
+    // Skip whitespace
+    while (after_colon < json_data + json_len && (*after_colon == ' ' || *after_colon == '\t')) {
+        after_colon++;
+    }
+    if (after_colon >= json_data + json_len || *after_colon != '"') return {};
+
+    // Find closing quote (no escape handling — safe for IDs/titles without backslashes)
+    const char* val_start = after_colon + 1;
+    const char* val_end = static_cast<const char*>(memchr(val_start, '"', json_data + json_len - val_start));
+    if (val_end == nullptr) return {};
+
+    return std::string(val_start, val_end - val_start);
+}
+
+// Extract an unsigned integer field value from raw JSON bytes. Returns {false, 0} on failure.
+std::pair<bool, uint64_t> extract_json_uint_field(const char* json_data, size_t json_len,
+                                                   const std::string& field_name) {
+    std::string needle;
+    needle.reserve(field_name.size() + 3);
+    needle += '"';
+    needle += field_name;
+    needle += '"';
+    needle += ':';
+
+    const auto it = std::search(json_data, json_data + json_len,
+                                needle.data(), needle.data() + needle.size());
+    if (it == json_data + json_len) return {false, 0};
+
+    const char* after_colon = it + needle.size();
+    while (after_colon < json_data + json_len && (*after_colon == ' ' || *after_colon == '\t')) {
+        after_colon++;
+    }
+    if (after_colon >= json_data + json_len || *after_colon < '0' || *after_colon > '9') return {false, 0};
+
+    uint64_t val = 0;
+    const char* p = after_colon;
+    while (p < json_data + json_len && *p >= '0' && *p <= '9') {
+        val = val * 10 + static_cast<uint64_t>(*p - '0');
+        p++;
+    }
+    return {true, val};
+}
+
 bool yyjson_to_nlohmann(yyjson_val* value, nlohmann::json& out) {
     if(value == nullptr || yyjson_is_null(value)) {
         out = nullptr;
@@ -912,6 +972,37 @@ Option<bool> Collection::update_async_references_with_lock(
                 parse_ns += elapsed_ns_since(parse_start);
                 TS_LOG(ERROR) << "`" << name << "` collection: Missing fetched result for sequence ID `" << seq_id << "`.";
                 continue;
+            }
+
+            // Phase 3: Fast-path skip via raw-byte pre-check for singular non-nested refs.
+            // If the helper value already matches or the ref value isn't in the map, skip entirely
+            // without paying the cost of a full yyjson parse.
+            if (reference_field.is_singular() && field_path_parts.size() == 1) {
+                const auto* raw = fetched_docs[fetched_index].data();
+                const auto raw_len = fetched_docs[fetched_index].size();
+
+                const auto ref_str = extract_json_string_field(raw, raw_len, field_name);
+                if (!ref_str.empty()) {
+                    const auto ref_it = value_to_ref_seq_id.find(ref_str);
+                    if (ref_it == value_to_ref_seq_id.end()) {
+                        // This doc's reference value isn't in the update set — skip.
+                        parse_ns += elapsed_ns_since(parse_start);
+                        fetched_doc_bytes += raw_len;
+                        skipped_docs++;
+                        continue;
+                    }
+
+                    const auto [helper_ok, helper_val] = extract_json_uint_field(raw, raw_len,
+                                                                                  reference_helper_field_name);
+                    if (helper_ok && helper_val == ref_it->second) {
+                        // Helper already has the correct value — skip.
+                        parse_ns += elapsed_ns_since(parse_start);
+                        fetched_doc_bytes += raw_len;
+                        skipped_docs++;
+                        continue;
+                    }
+                }
+                // Fall through to full yyjson parse if raw extraction couldn't determine skip.
             }
 
             yyjson_doc_ptr existing_doc(
