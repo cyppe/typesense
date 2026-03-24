@@ -19,6 +19,43 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 44: Hybrid Byte + Doc Caps Trim Async-Helper Tail Latency On The 3M Late-Fanout Lane Without Hurting The 1M Guardrail (2026-03-24)
+
+**Baseline reference:** current branch head before this patch, reproduced locally on the same machine
+**Candidate:** local working tree on top of current `HEAD`
+**Commands:**
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 3000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 360 --server-batch-size 1000 --server-arg=--log-slow-requests-time-ms=1000 --keep-temp --json-output /tmp/fitment-late-reference-fanout-baseline-3m.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 3000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 360 --server-batch-size 1000 --server-arg=--log-slow-requests-time-ms=1000 --keep-temp --json-output /tmp/fitment-late-reference-fanout-candidate-3m.json`
+- `python3 scripts/replay_fitment_import_stress.py --binary ./bazel-bin/typesense-server --workload fitment --seed-target-order after --total-fitment-docs 1000000 --batch-docs 5000 --import-workers 3 --product-docs 5000 --vehicle-docs 1000 --preseed-batch-docs 1000 --probe-profile dashboard --probe-workers 2 --search-workers 1 --probe-interval 0.2 --timeout 240 --server-batch-size 1000 --server-arg=--log-slow-requests-time-ms=1000 --json-output /tmp/fitment-late-reference-fanout-candidate-1m.json`
+
+**Scenario:** the byte-aware helper planner fixed large-doc fanout, but the latest DDEV and local `3M` late-reference fitment lane still showed a remaining small-doc blind spot: `vehicle_id` helper batches could stay larger than `1M` docs because the fetched JSON footprint was only about `574 MiB`, even though fetch/reindex cost and live read tail latency were already high. Current HEAD now keeps the same byte-aware planner but adds a generic `500k` max-doc cap after sampling, so helper chunks are bounded by both bytes and document count.
+
+### Findings
+
+- The `3M` late-reference lane reproduced the current branch-head hot spot cleanly before the change. The single late `vehicles_se` seed took `15365.9ms`, with `helper_total_ms=15352`, `helper_chunks=3`, `planned_chunk_docs=1,053,137`, `fetch_ms=4543`, `reindex_ms=4245`, `transform_ms=1502`, and `store_prep_ms=1024`.
+- The new doc cap modestly improved the helper itself while materially improving live control-plane p95. On the same `3M` lane, the late `vehicles_se` seed dropped to `15204.9ms` (`-1.0%`) and the helper dropped to `15194ms` (`-1.0%`) with `helper_chunks=6` and `planned_chunk_docs=500,000`. The more important user-visible change was during the hot source-import phase: `/health` p95 improved from `436.1ms` to `50.1ms`, `/metrics.json` p95 from `362.4ms` to `64.0ms`, and `/stats.json` p95 from `389.5ms` to `25.5ms`.
+- The change does not regress the moderate late-reference guardrail. On the `1M` lane, the late `vehicles_se` seed still completed in `4085.1ms`, which is effectively in line with the previously accepted post-`yyjson` result (`4100.4ms`), and the helper stayed monolithic (`chunks=1`, `planned_chunk_docs=1,000,000`).
+- The improvement is specifically about helper latency shaping, not raw throughput. `3M` source fitment import throughput stayed essentially flat (`25413 docs/s` baseline vs `25185 docs/s` candidate), and the helper still dominates the late `vehicles_se` request. The value is that tiny-doc fanout no longer hides behind a byte-only budget and monopolizes the node for one enormous chunk.
+
+### Summary Table
+
+| Lane | Baseline | Candidate | Outcome |
+|---|---:|---:|---|
+| `3M` late fitment, late `vehicles_se` seed | `15365.9 ms` | `15204.9 ms` | Slightly faster |
+| `3M` late fitment, helper total | `15352 ms` | `15194 ms` | Slightly faster |
+| `3M` late fitment, helper chunks | `3` | `6` | Better bounded |
+| `3M` late fitment, `/health` p95 | `436.1 ms` | `50.1 ms` | Materially better |
+| `3M` late fitment, `/metrics.json` p95 | `362.4 ms` | `64.0 ms` | Materially better |
+| `3M` late fitment, `/stats.json` p95 | `389.5 ms` | `25.5 ms` | Materially better |
+| `1M` late fitment, late `vehicles_se` seed | accepted `4100.4 ms` | `4085.1 ms` | Guardrail preserved |
+
+### Decision
+
+- Keep the generic helper max-doc cap (`500k`) together with the existing byte-aware planner. The replay evidence shows that byte-aware chunking alone still lets tiny-doc helper fanout stay overly monolithic, while the hybrid cap trims live control-plane tail latency without hurting the accepted `1M` late-reference lane.
+- Treat this as a latency-shaping improvement, not a throughput optimization. The main benefit is better read/control-plane behavior during the helper hot phase, with a small secondary win on the late `vehicles_se` seed itself.
+
+---
+
 ## Run 43: `yyjson` Helper Rewrites Cut Full-Document Async-Reference Cost Without Breaking The Mixed DDEV-Parity Lane (2026-03-23)
 
 **Baseline reference:** previously accepted local outputs from Run 42 (`1M`, `3M`, `category_fanout 180k`) plus Run 39 (`mixed_category_fitment 300k`)

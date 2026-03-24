@@ -47,9 +47,10 @@ namespace {
 
 // Keep helper fanout updates bounded so late reference seeding does not build one
 // giant fetch/reindex/write batch. The chunk plan should react to document size,
-// not just raw match count, so medium fanout over very large stored docs gets
-// chunked while huge fanout over tiny docs can still stay mostly monolithic.
+// but also cap chunk doc counts so tiny-doc fanout cannot grow into million-doc
+// helper batches that monopolize fetch + reindex work.
 constexpr uint32_t kAsyncReferenceHelperChunkMinDocs = 50'000;
+constexpr uint32_t kAsyncReferenceHelperChunkMaxDocs = 500'000;
 constexpr uint32_t kAsyncReferenceHelperChunkThresholdDocs = 100'000;
 constexpr uint32_t kAsyncReferenceHelperHighFanoutThresholdDocs = 1'000'000;
 constexpr uint32_t kAsyncReferenceHelperChunkPlanSampleDocs = 2'048;
@@ -1116,6 +1117,7 @@ Option<bool> Collection::update_async_references_with_lock(
         uint64_t planned_docs = static_cast<uint64_t>(
             static_cast<double>(helper_chunk_target_bytes) / avg_doc_bytes);
         planned_docs = std::max<uint64_t>(kAsyncReferenceHelperChunkMinDocs, planned_docs);
+        planned_docs = std::min<uint64_t>(kAsyncReferenceHelperChunkMaxDocs, planned_docs);
         planned_docs = std::min<uint64_t>(filter_result.count, planned_docs);
         return static_cast<uint32_t>(planned_docs);
     };
