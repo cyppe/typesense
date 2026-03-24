@@ -61,6 +61,76 @@ constexpr uint64_t kAsyncReferenceHelperChunkHighFanoutTargetBytes = 192ULL * 10
 // 10k docs at ~1.2us/doc ≈ 12ms max lock hold per sub-batch.
 constexpr size_t kAsyncReferenceHelperReindexSubBatchSize = 10'000;
 
+// Splice a new unsigned integer value into a raw JSON byte string for a known field name.
+// Returns the spliced string, or empty string on failure (caller should fall back to yyjson).
+// Preconditions: field_name must be a top-level key (not nested), value must be an unsigned integer.
+std::string splice_json_uint_field(const char* json_data, size_t json_len,
+                                   const std::string& field_name, uint64_t new_value) {
+    // Build the search needle: "field_name":
+    // We search for the quoted field name followed by a colon.
+    std::string needle;
+    needle.reserve(field_name.size() + 3);
+    needle += '"';
+    needle += field_name;
+    needle += '"';
+    needle += ':';
+
+    const auto it = std::search(json_data, json_data + json_len,
+                                needle.data(), needle.data() + needle.size());
+    const char* found = (it == json_data + json_len) ? nullptr : it;
+    if (found == nullptr) {
+        return {};
+    }
+
+    // Verify this is not a substring of a longer field name by checking the char before the quote.
+    // The char before our match must be '{', ',' or whitespace.
+    if (found > json_data) {
+        const char before = *(found - 1);
+        if (before != '{' && before != ',' && before != ' ' && before != '\t' &&
+            before != '\n' && before != '\r') {
+            return {};
+        }
+    }
+
+    // Position after the colon.
+    const char* value_start = found + needle.size();
+    // Skip optional whitespace after colon.
+    while (value_start < json_data + json_len && (*value_start == ' ' || *value_start == '\t')) {
+        value_start++;
+    }
+
+    if (value_start >= json_data + json_len) {
+        return {};
+    }
+
+    // The old value must be a non-negative integer (digits only, possibly with leading minus for edge cases).
+    const char* value_end = value_start;
+    if (*value_end == '-') {
+        value_end++;  // handle negative (shouldn't happen for seq_ids, but be safe)
+    }
+    if (value_end >= json_data + json_len || *value_end < '0' || *value_end > '9') {
+        return {};  // not a number — fall back
+    }
+    while (value_end < json_data + json_len && *value_end >= '0' && *value_end <= '9') {
+        value_end++;
+    }
+
+    // Build the new value string.
+    const std::string new_value_str = std::to_string(new_value);
+
+    // Splice: prefix + new_value + suffix
+    const size_t prefix_len = static_cast<size_t>(value_start - json_data);
+    const size_t suffix_len = json_len - static_cast<size_t>(value_end - json_data);
+
+    std::string result;
+    result.resize(prefix_len + new_value_str.size() + suffix_len);
+    memcpy(result.data(), json_data, prefix_len);
+    memcpy(result.data() + prefix_len, new_value_str.data(), new_value_str.size());
+    memcpy(result.data() + prefix_len + new_value_str.size(), value_end, suffix_len);
+
+    return result;
+}
+
 bool yyjson_to_nlohmann(yyjson_val* value, nlohmann::json& out) {
     if(value == nullptr || yyjson_is_null(value)) {
         out = nullptr;
@@ -204,6 +274,8 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> last_async_reference_helper_skipped_docs{0};
     std::atomic<uint64_t> cumulative_async_reference_helper_skipped_docs{0};
     std::atomic<uint64_t> max_async_reference_helper_reindex_max_sub_batch_ms{0};
+    std::atomic<uint64_t> last_async_reference_helper_splice_docs{0};
+    std::atomic<uint64_t> last_async_reference_helper_splice_fallback_docs{0};
     std::atomic<uint64_t> last_batch_index_docs{0};
     std::atomic<uint64_t> last_batch_index_num_indexed{0};
     std::atomic<uint64_t> last_batch_index_found_fields{0};
@@ -674,6 +746,7 @@ Option<bool> Collection::update_async_references_with_lock(
     struct helper_storage_update_t {
         uint32_t seq_id;
         yyjson_mut_doc_ptr full_doc;
+        std::string spliced_doc;  // Phase 2: if non-empty, skip yyjson_mut_write serialization
     };
 
     uint64_t parse_ns = 0;
@@ -698,6 +771,8 @@ Option<bool> Collection::update_async_references_with_lock(
     uint64_t reindex_sub_batches = 0;
     uint64_t reindex_max_sub_batch_ms = 0;
     uint64_t skipped_docs = 0;
+    uint64_t splice_docs = 0;
+    uint64_t splice_fallback_docs = 0;
     uint64_t total_updated_docs = 0;
 
     auto record_async_reference_helper_metrics = [&](uint64_t updated_docs, uint64_t total_ms) {
@@ -765,6 +840,10 @@ Option<bool> Collection::update_async_references_with_lock(
             skipped_docs, std::memory_order_relaxed);
         update_atomic_max(g_collection_import_metrics.max_async_reference_helper_reindex_max_sub_batch_ms,
                           reindex_max_sub_batch_ms);
+        g_collection_import_metrics.last_async_reference_helper_splice_docs.store(
+            splice_docs, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_splice_fallback_docs.store(
+            splice_fallback_docs, std::memory_order_relaxed);
 
         if (total_ms >= 1000) {
             g_collection_import_metrics.cumulative_async_reference_helper_slow_paths.fetch_add(1,
@@ -870,6 +949,7 @@ Option<bool> Collection::update_async_references_with_lock(
             nlohmann::json old_helper_document = nlohmann::json::object();
             nlohmann::json new_helper_document = nlohmann::json::object();
             yyjson_mut_doc_ptr updated_doc(nullptr, yyjson_mut_doc_free);
+            std::string spliced;  // Phase 2: non-empty if raw-byte splice succeeded
 
             if (reference_field.is_singular()) {
                 const auto* referenced_node = get_yyjson_field_node(existing_root, field_name, field_path_parts);
@@ -899,19 +979,33 @@ Option<bool> Collection::update_async_references_with_lock(
                         static_cast<int64_t>(yyjson_get_uint(const_cast<yyjson_val*>(existing_helper_node)));
                 }
 
-                updated_doc.reset(yyjson_doc_mut_copy(existing_doc.get(), nullptr));
-                if (updated_doc == nullptr) {
-                    return Option<bool>(500, "Could not prepare async reference helper update.");
+                // Phase 2: Try raw-byte splice to avoid yyjson_doc_mut_copy + full re-serialization.
+                if (existing_helper_node != nullptr) {
+                    // The field already exists — splice the new value in place.
+                    spliced = splice_json_uint_field(
+                        fetched_docs[fetched_index].data(), fetched_docs[fetched_index].size(),
+                        reference_helper_field_name, ref_seq_id_it->second);
                 }
 
-                auto* updated_root = yyjson_mut_doc_get_root(updated_doc.get());
-                auto* updated_helper_node = yyjson_mut_obj_getn(updated_root, reference_helper_field_name.data(),
-                                                                reference_helper_field_name.size());
-                if (updated_helper_node != nullptr) {
-                    yyjson_mut_set_uint(updated_helper_node, ref_seq_id_it->second);
-                } else if (!yyjson_mut_obj_add_uint(updated_doc.get(), updated_root,
-                                                    reference_helper_field_name.c_str(), ref_seq_id_it->second)) {
-                    return Option<bool>(500, "Could not write async reference helper field.");
+                if (!spliced.empty()) {
+                    splice_docs++;
+                } else {
+                    // Splice failed or field doesn't exist yet — fall back to yyjson tree copy.
+                    splice_fallback_docs++;
+                    updated_doc.reset(yyjson_doc_mut_copy(existing_doc.get(), nullptr));
+                    if (updated_doc == nullptr) {
+                        return Option<bool>(500, "Could not prepare async reference helper update.");
+                    }
+
+                    auto* updated_root = yyjson_mut_doc_get_root(updated_doc.get());
+                    auto* updated_helper_node = yyjson_mut_obj_getn(updated_root, reference_helper_field_name.data(),
+                                                                    reference_helper_field_name.size());
+                    if (updated_helper_node != nullptr) {
+                        yyjson_mut_set_uint(updated_helper_node, ref_seq_id_it->second);
+                    } else if (!yyjson_mut_obj_add_uint(updated_doc.get(), updated_root,
+                                                        reference_helper_field_name.c_str(), ref_seq_id_it->second)) {
+                        return Option<bool>(500, "Could not write async reference helper field.");
+                    }
                 }
 
                 new_helper_document[reference_helper_field_name] = static_cast<int64_t>(ref_seq_id_it->second);
@@ -1007,7 +1101,7 @@ Option<bool> Collection::update_async_references_with_lock(
             update_record.is_update = true;
             update_record.index_success();
             helper_updates.emplace_back(std::move(update_record));
-            storage_updates.push_back(helper_storage_update_t{seq_id, std::move(updated_doc)});
+            storage_updates.push_back(helper_storage_update_t{seq_id, std::move(updated_doc), std::move(spliced)});
             transform_ns += elapsed_ns_since(transform_start);
         }
 
@@ -1035,14 +1129,18 @@ Option<bool> Collection::update_async_references_with_lock(
         rocksdb::WriteBatch aggregated_batch;
         const auto store_prep_start = std::chrono::steady_clock::now();
         for (auto& storage_update : storage_updates) {
-            size_t serialized_doc_len = 0;
-            char* serialized_doc = yyjson_mut_write(storage_update.full_doc.get(), 0, &serialized_doc_len);
-            if (serialized_doc == nullptr) {
-                return Option<bool>(500, "Could not serialize async reference helper update.");
+            if (!storage_update.spliced_doc.empty()) {
+                // Phase 2: use pre-spliced bytes directly — no yyjson serialization needed.
+                serialized_docs.emplace_back(std::move(storage_update.spliced_doc));
+            } else {
+                size_t serialized_doc_len = 0;
+                char* serialized_doc = yyjson_mut_write(storage_update.full_doc.get(), 0, &serialized_doc_len);
+                if (serialized_doc == nullptr) {
+                    return Option<bool>(500, "Could not serialize async reference helper update.");
+                }
+                serialized_docs.emplace_back(serialized_doc, serialized_doc_len);
+                std::free(serialized_doc);
             }
-
-            serialized_docs.emplace_back(serialized_doc, serialized_doc_len);
-            std::free(serialized_doc);
             written_doc_bytes += serialized_docs.back().size();
             max_doc_bytes = std::max<uint64_t>(max_doc_bytes, serialized_docs.back().size());
             aggregated_batch.Put(get_seq_id_key(storage_update.seq_id), serialized_docs.back());
@@ -1205,6 +1303,8 @@ Option<bool> Collection::update_async_references_with_lock(
                         << " reindex_sub_batches=" << reindex_sub_batches
                         << " reindex_max_sub_batch_ms=" << reindex_max_sub_batch_ms
                         << " skipped_docs=" << skipped_docs
+                        << " splice_docs=" << splice_docs
+                        << " splice_fallback_docs=" << splice_fallback_docs
                         << " total_ms=" << total_ms;
     }
 
@@ -1310,6 +1410,10 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
         g_collection_import_metrics.cumulative_async_reference_helper_skipped_docs.load(std::memory_order_relaxed);
     snapshot.max_async_reference_helper_reindex_max_sub_batch_ms =
         g_collection_import_metrics.max_async_reference_helper_reindex_max_sub_batch_ms.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_splice_docs =
+        g_collection_import_metrics.last_async_reference_helper_splice_docs.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_splice_fallback_docs =
+        g_collection_import_metrics.last_async_reference_helper_splice_fallback_docs.load(std::memory_order_relaxed);
     snapshot.last_batch_index_docs = g_collection_import_metrics.last_batch_index_docs.load(std::memory_order_relaxed);
     snapshot.last_batch_index_num_indexed = g_collection_import_metrics.last_batch_index_num_indexed.load(std::memory_order_relaxed);
     snapshot.last_batch_index_found_fields = g_collection_import_metrics.last_batch_index_found_fields.load(std::memory_order_relaxed);
