@@ -1120,6 +1120,15 @@ public:
     Option<uint32_t> get_sort_index_value_with_lock(const std::string& field_name,
                                                     const uint32_t& seq_id) const;
 
+    // Bulk read (seq_id → int64_t value) from sort_index under a single shared lock.
+    // Only appends entries for seq_ids that exist in the map.
+    void bulk_read_sort_index(const std::string& field_name,
+                              const uint32_t* seq_ids, size_t count,
+                              std::vector<std::pair<uint32_t, int64_t>>& results) const;
+
+    // Returns true if the named field has an entry in sort_index.
+    bool has_sort_index_field(const std::string& field_name) const;
+
     friend class filter_result_iterator_t;
 
     void repair_vector_indexes();

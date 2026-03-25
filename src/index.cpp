@@ -8659,6 +8659,28 @@ Option<uint32_t> Index::get_sort_index_value(const std::string& field_name,
     return Option<uint32_t>(sort_index.at(reference_helper_field_name)->at(seq_id));
 }
 
+void Index::bulk_read_sort_index(const std::string& field_name,
+                                 const uint32_t* seq_ids, size_t count,
+                                 std::vector<std::pair<uint32_t, int64_t>>& results) const {
+    std::shared_lock lock(mutex);
+    auto it = sort_index.find(field_name);
+    if (it == sort_index.end() || it->second == nullptr) return;
+    auto& doc_to_score = *it->second;
+    results.reserve(count);
+    for (size_t i = 0; i < count; i++) {
+        auto val_it = doc_to_score.find(seq_ids[i]);
+        if (val_it != doc_to_score.end()) {
+            results.emplace_back(seq_ids[i], val_it->second);
+        }
+    }
+}
+
+bool Index::has_sort_index_field(const std::string& field_name) const {
+    std::shared_lock lock(mutex);
+    auto it = sort_index.find(field_name);
+    return it != sort_index.end() && it->second != nullptr;
+}
+
 Option<int64_t> Index::get_geo_distance_with_lock(const std::string& geo_field_name, const bool& is_asc,
                                                   const std::vector<uint32_t>& seq_ids_vec,
                                                   const S2LatLng& reference_lat_lng, const bool& round_distance) const {

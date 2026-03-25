@@ -103,6 +103,8 @@ struct CollectionImportMetricsSnapshot {
     uint64_t max_async_reference_helper_reindex_max_sub_batch_ms = 0;
     uint64_t last_async_reference_helper_splice_docs = 0;
     uint64_t last_async_reference_helper_splice_fallback_docs = 0;
+    uint64_t last_async_reference_helper_fast_path_docs = 0;
+    uint64_t cumulative_async_reference_helper_fast_path_docs = 0;
     uint64_t last_batch_index_docs = 0;
     uint64_t last_batch_index_num_indexed = 0;
     uint64_t last_batch_index_found_fields = 0;
@@ -618,6 +620,10 @@ private:
 
     std::string get_seq_id_key(uint32_t seq_id) const;
 
+    std::string get_ref_helper_key(const std::string& helper_field_name, uint32_t seq_id) const;
+    std::string get_ref_helper_prefix(const std::string& helper_field_name) const;
+    std::string get_ref_helper_collection_prefix() const;
+
     static bool handle_highlight_text(std::string& text, const bool& normalise, const field& search_field,
                                       const bool& is_arr_obj_ele,
                                       const std::vector<char>& symbols_to_index, const std::vector<char>& token_separators,
@@ -894,6 +900,8 @@ private:
 
 public:
 
+    Option<bool> apply_ref_helper_overrides_from_store();
+
     enum {MAX_ARRAY_MATCHES = 5};
 
     // Using a $ prefix so that these meta keys stay above record entries in a lexicographically ordered KV store
@@ -901,6 +909,7 @@ public:
     static constexpr const char* COLLECTION_NEXT_SEQ_PREFIX = "$CS";
     static constexpr const char* SEQ_ID_PREFIX = "$SI";
     static constexpr const char* DOC_ID_PREFIX = "$DI";
+    static constexpr const char* REF_HELPER_PREFIX = "$RH";
 
     static constexpr const char* COLLECTION_NAME_KEY = "name";
     static constexpr const char* COLLECTION_ID_KEY = "id";

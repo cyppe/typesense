@@ -321,6 +321,8 @@ struct collection_import_metrics_state_t {
     std::atomic<uint64_t> max_async_reference_helper_reindex_max_sub_batch_ms{0};
     std::atomic<uint64_t> last_async_reference_helper_splice_docs{0};
     std::atomic<uint64_t> last_async_reference_helper_splice_fallback_docs{0};
+    std::atomic<uint64_t> last_async_reference_helper_fast_path_docs{0};
+    std::atomic<uint64_t> cumulative_async_reference_helper_fast_path_docs{0};
     std::atomic<uint64_t> last_batch_index_docs{0};
     std::atomic<uint64_t> last_batch_index_num_indexed{0};
     std::atomic<uint64_t> last_batch_index_found_fields{0};
@@ -823,6 +825,7 @@ Option<bool> Collection::update_async_references_with_lock(
     uint64_t skipped_docs = 0;
     uint64_t splice_docs = 0;
     uint64_t splice_fallback_docs = 0;
+    uint64_t fast_path_docs = 0;
     uint64_t total_updated_docs = 0;
 
     auto record_async_reference_helper_metrics = [&](uint64_t updated_docs, uint64_t total_ms) {
@@ -894,6 +897,10 @@ Option<bool> Collection::update_async_references_with_lock(
             splice_docs, std::memory_order_relaxed);
         g_collection_import_metrics.last_async_reference_helper_splice_fallback_docs.store(
             splice_fallback_docs, std::memory_order_relaxed);
+        g_collection_import_metrics.last_async_reference_helper_fast_path_docs.store(
+            fast_path_docs, std::memory_order_relaxed);
+        g_collection_import_metrics.cumulative_async_reference_helper_fast_path_docs.fetch_add(
+            fast_path_docs, std::memory_order_relaxed);
 
         if (total_ms >= 1000) {
             g_collection_import_metrics.cumulative_async_reference_helper_slow_paths.fetch_add(1,
@@ -904,6 +911,150 @@ Option<bool> Collection::update_async_references_with_lock(
         g_collection_import_metrics.last_collection_name = name;
         g_collection_import_metrics.last_async_reference_helper_field_name = field_name;
     };
+
+    // Phase 4: Fast-path — skip RocksDB entirely for singular integer reference fields.
+    const bool use_fast_path = [&]() {
+        if (!reference_field.is_singular()) return false;
+        if (field_path_parts.size() != 1) return false;
+        if (!reference_field.is_single_integer()) return false;
+        if (helper_field.type != field_types::INT64) return false;
+        if (!index->has_sort_index_field(field_name)) return false;
+        if (!index->has_sort_index_field(reference_helper_field_name)) return false;
+        return true;
+    }();
+
+    if (use_fast_path) {
+        constexpr uint32_t kFastPathChunkSize = 1'000'000;
+        for (uint32_t fp_begin = 0; fp_begin < filter_result.count; fp_begin += kFastPathChunkSize) {
+            const uint32_t fp_end = std::min<uint32_t>(filter_result.count, fp_begin + kFastPathChunkSize);
+            const uint32_t fp_docs = fp_end - fp_begin;
+            helper_chunks++;
+            helper_max_chunk_docs = std::max<uint64_t>(helper_max_chunk_docs, fp_docs);
+
+            std::vector<uint32_t> chunk_seq_ids;
+            chunk_seq_ids.reserve(fp_docs);
+            for (uint32_t i = fp_begin; i < fp_end; i++) {
+                chunk_seq_ids.push_back(filter_result.docs[i]);
+            }
+
+            const auto transform_start = std::chrono::steady_clock::now();
+
+            // Bulk read reference + helper values from sort_index (in-memory).
+            std::vector<std::pair<uint32_t, int64_t>> ref_values;
+            index->bulk_read_sort_index(field_name, chunk_seq_ids.data(), chunk_seq_ids.size(), ref_values);
+
+            std::vector<std::pair<uint32_t, int64_t>> helper_values;
+            index->bulk_read_sort_index(reference_helper_field_name, chunk_seq_ids.data(),
+                                        chunk_seq_ids.size(), helper_values);
+
+            spp::sparse_hash_map<uint32_t, int64_t, Hasher32> seq_to_helper;
+            seq_to_helper.reserve(helper_values.size());
+            for (auto& [sid, val] : helper_values) {
+                seq_to_helper[sid] = val;
+            }
+
+            // Compute which docs need updating.
+            std::vector<index_record> helper_updates;
+            struct rh_write_t { uint32_t seq_id; uint64_t new_val; };
+            std::vector<rh_write_t> rh_writes;
+
+            for (auto& [sid, ref_val] : ref_values) {
+                const auto ref_str = std::to_string(ref_val);
+                const auto map_it = value_to_ref_seq_id.find(ref_str);
+                if (map_it == value_to_ref_seq_id.end()) {
+                    skipped_docs++;
+                    continue;
+                }
+
+                const int64_t target_helper = static_cast<int64_t>(map_it->second);
+                auto helper_it = seq_to_helper.find(sid);
+                if (helper_it != seq_to_helper.end() && helper_it->second == target_helper) {
+                    skipped_docs++;
+                    continue;
+                }
+
+                nlohmann::json new_doc = nlohmann::json::object();
+                new_doc[reference_helper_field_name] = target_helper;
+                nlohmann::json old_doc = nlohmann::json::object();
+                if (helper_it != seq_to_helper.end()) {
+                    old_doc[reference_helper_field_name] = helper_it->second;
+                }
+
+                index_record rec(0, sid, std::move(new_doc), index_operation_t::UPDATE, DIRTY_VALUES::REJECT);
+                rec.old_doc = std::move(old_doc);
+                rec.is_update = true;
+                rec.index_success();
+                helper_updates.emplace_back(std::move(rec));
+                rh_writes.push_back({sid, static_cast<uint64_t>(map_it->second)});
+            }
+            transform_ns += elapsed_ns_since(transform_start);
+
+            if (!helper_updates.empty()) {
+                const auto reindex_start = std::chrono::steady_clock::now();
+                uint64_t chunk_sub_batches = 0, chunk_max_sub_batch_ms = 0;
+                auto reindex_op = index->reindex_helper_field_in_memory(
+                    helper_field, helper_updates, kAsyncReferenceHelperReindexSubBatchSize,
+                    chunk_sub_batches, chunk_max_sub_batch_ms);
+                reindex_ms += elapsed_ms_since(reindex_start);
+                reindex_sub_batches += chunk_sub_batches;
+                if (chunk_max_sub_batch_ms > reindex_max_sub_batch_ms) {
+                    reindex_max_sub_batch_ms = chunk_max_sub_batch_ms;
+                }
+                if (!reindex_op.ok()) {
+                    record_async_reference_helper_metrics(total_updated_docs, elapsed_ms_since(total_start));
+                    return reindex_op;
+                }
+
+                rocksdb::WriteBatch rh_batch;
+                for (auto& w : rh_writes) {
+                    const auto key = get_ref_helper_key(reference_helper_field_name, w.seq_id);
+                    rh_batch.Put(key, rocksdb::Slice(reinterpret_cast<const char*>(&w.new_val), sizeof(w.new_val)));
+                }
+
+                const auto write_start = std::chrono::steady_clock::now();
+                const bool write_ok = store->batch_write(rh_batch);
+                write_ms += elapsed_ms_since(write_start);
+                written_doc_bytes += rh_writes.size() * sizeof(uint64_t);
+
+                if (!write_ok) {
+                    TS_LOG(ERROR) << "Failed to write $RH keys for `" << name << "` field `" << field_name << "`.";
+                    for (auto& rec : helper_updates) std::swap(rec.doc, rec.old_doc);
+                    uint64_t rv_sub = 0, rv_max = 0;
+                    index->reindex_helper_field_in_memory(
+                        helper_field, helper_updates, kAsyncReferenceHelperReindexSubBatchSize, rv_sub, rv_max);
+                    write_failures += rh_writes.size();
+                }
+
+                total_updated_docs += helper_updates.size();
+                fast_path_docs += helper_updates.size();
+            }
+        }
+
+        helper_planned_chunk_docs = std::min<uint32_t>(filter_result.count, kFastPathChunkSize);
+        const uint64_t total_ms = elapsed_ms_since(total_start);
+        parse_ms = ns_to_ms(parse_ns);
+        transform_ms = ns_to_ms(transform_ns);
+        record_async_reference_helper_metrics(total_updated_docs, total_ms);
+        if (total_ms >= 1000) {
+            TS_LOG(WARNING) << "Async reference helper fast path: collection=" << name
+                            << " field=" << field_name
+                            << " matched_docs=" << filter_result.count
+                            << " updated_docs=" << total_updated_docs
+                            << " skipped_docs=" << skipped_docs
+                            << " fast_path_docs=" << fast_path_docs
+                            << " chunks=" << helper_chunks
+                            << " filter_ms=" << filter_ms
+                            << " transform_ms=" << transform_ms
+                            << " reindex_ms=" << reindex_ms
+                            << " write_ms=" << write_ms
+                            << " reindex_sub_batches=" << reindex_sub_batches
+                            << " reindex_max_sub_batch_ms=" << reindex_max_sub_batch_ms
+                            << " total_ms=" << total_ms;
+        }
+        return Option<bool>(true);
+    }
+
+    // --- Slow path (STRING/array/nested refs) ---
 
     auto process_chunk = [&](uint32_t chunk_begin, uint32_t chunk_end) -> Option<bool> {
         helper_chunks++;
@@ -1495,6 +1646,10 @@ CollectionImportMetricsSnapshot Collection::get_import_metrics_snapshot() {
         g_collection_import_metrics.last_async_reference_helper_splice_docs.load(std::memory_order_relaxed);
     snapshot.last_async_reference_helper_splice_fallback_docs =
         g_collection_import_metrics.last_async_reference_helper_splice_fallback_docs.load(std::memory_order_relaxed);
+    snapshot.last_async_reference_helper_fast_path_docs =
+        g_collection_import_metrics.last_async_reference_helper_fast_path_docs.load(std::memory_order_relaxed);
+    snapshot.cumulative_async_reference_helper_fast_path_docs =
+        g_collection_import_metrics.cumulative_async_reference_helper_fast_path_docs.load(std::memory_order_relaxed);
     snapshot.last_batch_index_docs = g_collection_import_metrics.last_batch_index_docs.load(std::memory_order_relaxed);
     snapshot.last_batch_index_num_indexed = g_collection_import_metrics.last_batch_index_num_indexed.load(std::memory_order_relaxed);
     snapshot.last_batch_index_found_fields = g_collection_import_metrics.last_batch_index_found_fields.load(std::memory_order_relaxed);
@@ -7312,6 +7467,14 @@ void Collection::remove_document(nlohmann::json & document, const uint32_t seq_i
 
         store->remove(get_doc_id_key(id));
         store->remove(get_seq_id_key(seq_id));
+
+        // Clean up any $RH keys for this document's reference helper fields.
+        std::shared_lock lock(mutex);
+        for (auto it = search_schema.begin(); it != search_schema.end(); it++) {
+            if (it.value().is_reference_helper) {
+                store->remove(get_ref_helper_key(it.key(), seq_id));
+            }
+        }
     }
 }
 
@@ -7795,6 +7958,118 @@ std::string Collection::get_meta_key(const std::string & collection_name) {
 
 std::string Collection::get_seq_id_collection_prefix() const {
     return std::to_string(collection_id) + "_" + std::string(SEQ_ID_PREFIX);
+}
+
+std::string Collection::get_ref_helper_collection_prefix() const {
+    return std::to_string(collection_id) + "_" + std::string(REF_HELPER_PREFIX);
+}
+
+std::string Collection::get_ref_helper_prefix(const std::string& helper_field_name) const {
+    return get_ref_helper_collection_prefix() + "_" + helper_field_name + "_";
+}
+
+std::string Collection::get_ref_helper_key(const std::string& helper_field_name, uint32_t seq_id) const {
+    return get_ref_helper_prefix(helper_field_name) + StringUtils::serialize_uint32_t(seq_id);
+}
+
+Option<bool> Collection::apply_ref_helper_overrides_from_store() {
+    const std::string rh_prefix = get_ref_helper_collection_prefix() + "_";
+    const std::string upper_bound_str = get_ref_helper_collection_prefix() + "`";
+    rocksdb::Slice upper_bound(upper_bound_str);
+
+    std::unique_ptr<rocksdb::Iterator> iter(store->scan(rh_prefix, &upper_bound));
+    if (!iter || !iter->Valid()) {
+        return Option<bool>(true);
+    }
+
+    // Group overrides by helper field name.
+    std::map<std::string, std::vector<std::pair<uint32_t, int64_t>>> overrides_by_field;
+    size_t rh_count = 0;
+
+    while (iter->Valid() && iter->key().starts_with(rh_prefix)) {
+        auto key = iter->key().ToString();
+        // Key format: {coll_id}_$RH_{helper_field_name}_{4-byte seq_id}
+        // The last 4 bytes (after last '_') are the serialized seq_id.
+        if (key.size() < rh_prefix.size() + 6) {
+            iter->Next();
+            continue;
+        }
+
+        const uint32_t seq_id = StringUtils::deserialize_uint32_t(key.substr(key.size() - 4));
+        // helper_field_name is between rh_prefix and the final "_" + 4 bytes.
+        const std::string helper_field_name = key.substr(rh_prefix.size(), key.size() - rh_prefix.size() - 5);
+
+        if (iter->value().size() == sizeof(uint64_t)) {
+            uint64_t stored_val;
+            memcpy(&stored_val, iter->value().data(), sizeof(stored_val));
+            overrides_by_field[helper_field_name].emplace_back(seq_id, static_cast<int64_t>(stored_val));
+            rh_count++;
+        }
+
+        iter->Next();
+    }
+
+    if (rh_count == 0) {
+        return Option<bool>(true);
+    }
+
+    TS_LOG(INFO) << "Applying " << rh_count << " ref helper overrides for collection `" << name << "`.";
+
+    for (auto& [field_name, overrides] : overrides_by_field) {
+        field helper_field;
+        {
+            std::shared_lock lock(mutex);
+            auto schema_it = search_schema.find(field_name);
+            if (schema_it == search_schema.end()) continue;
+            helper_field = schema_it.value();
+        }
+
+        // Read current sort_index values.
+        std::vector<uint32_t> seq_ids;
+        seq_ids.reserve(overrides.size());
+        for (auto& [sid, _] : overrides) seq_ids.push_back(sid);
+
+        std::vector<std::pair<uint32_t, int64_t>> current_values;
+        index->bulk_read_sort_index(field_name, seq_ids.data(), seq_ids.size(), current_values);
+
+        spp::sparse_hash_map<uint32_t, int64_t, Hasher32> current_map;
+        for (auto& [sid, val] : current_values) current_map[sid] = val;
+
+        // Build patch records for values that differ.
+        std::vector<index_record> patch_records;
+        for (auto& [sid, rh_val] : overrides) {
+            auto it = current_map.find(sid);
+            if (it != current_map.end() && it->second == rh_val) continue;
+
+            nlohmann::json new_doc = nlohmann::json::object();
+            new_doc[field_name] = rh_val;
+            nlohmann::json old_doc = nlohmann::json::object();
+            if (it != current_map.end()) {
+                old_doc[field_name] = it->second;
+            }
+
+            index_record rec(0, sid, std::move(new_doc), index_operation_t::UPDATE, DIRTY_VALUES::REJECT);
+            rec.old_doc = std::move(old_doc);
+            rec.is_update = true;
+            rec.index_success();
+            patch_records.emplace_back(std::move(rec));
+        }
+
+        if (!patch_records.empty()) {
+            uint64_t sub_batches = 0, max_sub_batch_ms = 0;
+            auto op = index->reindex_helper_field_in_memory(
+                helper_field, patch_records, 10'000, sub_batches, max_sub_batch_ms);
+            if (!op.ok()) {
+                TS_LOG(ERROR) << "Failed to apply ref helper overrides for field `" << field_name
+                              << "` in collection `" << name << "`: " << op.error();
+            } else {
+                TS_LOG(INFO) << "Patched " << patch_records.size() << " stale helper values for `"
+                             << field_name << "` in `" << name << "`.";
+            }
+        }
+    }
+
+    return Option<bool>(true);
 }
 
 std::string Collection::get_default_sorting_field() {

@@ -2180,6 +2180,14 @@ Option<bool> CollectionManager::load_collection(const nlohmann::json &collection
 
     cm.add_to_collections(collection);
 
+    // Apply any $RH ref helper overrides written by the fast path but not reflected
+    // in the stored $SI documents (which may have stale helper values).
+    auto rh_op = collection->apply_ref_helper_overrides_from_store();
+    if (!rh_op.ok()) {
+        TS_LOG(WARNING) << "Non-fatal: could not apply ref helper overrides for `"
+                        << this_collection_name << "`: " << rh_op.error();
+    }
+
     TS_LOG(INFO) << "Indexed " << num_indexed_docs << "/" << num_found_docs
               << " documents into collection " << collection->get_name();
 
