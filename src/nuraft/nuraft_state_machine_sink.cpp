@@ -700,6 +700,38 @@ bool NuRaftKvStateMachineSink::read_all(std::vector<NuRaftAppliedRequest>& reque
     return true;
 }
 
+bool NuRaftKvStateMachineSink::read_all_after(uint64_t after_index,
+                                               std::vector<NuRaftAppliedRequest>& requests,
+                                               std::string& error) const {
+    requests.clear();
+    if (!initialize_db(error)) {
+        return false;
+    }
+
+    // Seek directly past after_index so already-applied entries are never read from disk.
+    const std::string start_key = applied_key(after_index + 1);
+    rocksdb::ReadOptions read_options;
+    std::unique_ptr<rocksdb::Iterator> iterator(db_->NewIterator(read_options));
+    for (iterator->Seek(start_key);
+         iterator->Valid() && iterator->key().starts_with(kAppliedPrefix);
+         iterator->Next()) {
+        NuRaftAppliedRequest request;
+        if (!NuRaftAppliedRequest::decode(iterator->value().ToString(), request, error)) {
+            return false;
+        }
+        requests.push_back(std::move(request));
+    }
+
+    if (!iterator->status().ok()) {
+        error = std::string("Failed to scan NuRaft materialized state after index ") +
+                std::to_string(after_index) + ": " + iterator->status().ToString();
+        return false;
+    }
+
+    error.clear();
+    return true;
+}
+
 bool NuRaftKvStateMachineSink::create_checkpoint(const std::string& checkpoint_path,
                                                  std::string& error) const {
     if (!initialize_db(error)) {

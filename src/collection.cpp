@@ -8941,7 +8941,7 @@ Option<bool> Collection::validate_alter_payload(nlohmann::json& schema_changes,
 
                     reference_fields.emplace(field.name,
                                              reference_info_t(ref_coll_name, ref_field_name, field.is_async_reference,
-                                                              field.is_array()));
+                                                              field.is_array(), ref_field_name));
                     if (field.nested) {
                         object_reference_fields.insert(field.name);
                     }
@@ -9424,7 +9424,7 @@ Option<Index*> Collection::init_index(const bool& is_live_request, const std::st
             }
 
             reference_fields.emplace(field.name, reference_info_t(ref_coll_name, ref_field_name, field.is_async_reference,
-                                                                  field.is_array()));
+                                                                  field.is_array(), ref_field_name));
             if (field.nested) {
                 object_reference_fields.insert(field.name);
             }

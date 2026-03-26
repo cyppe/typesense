@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <thread>
@@ -164,6 +165,8 @@ int main(int argc, char** argv) {
     static_cast<void>(PersonalizationModelManager::init(&store));
     static_cast<void>(NaturalLanguageSearchModelManager::init(&store));
 
+    TS_LOG(INFO) << "Loading collections from disk...";
+    const auto load_start = std::chrono::steady_clock::now();
     const auto load_op = collection_manager.load(num_collections_parallel_load,
                                                  config.get_num_documents_parallel_load());
     if (!load_op.ok()) {
@@ -173,7 +176,13 @@ int main(int argc, char** argv) {
         curl_global_cleanup();
         return 1;
     }
+    TS_LOG(INFO) << "Collection manager loaded in "
+                 << std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - load_start).count()
+                 << " ms.";
 
+    TS_LOG(INFO) << "Initializing NuRaft consensus runtime...";
+    const auto init_start = std::chrono::steady_clock::now();
     NuRaftHttpRuntimeService runtime_service(&http_server, options);
     if (!runtime_service.initialize(error)) {
         AnalyticsManager::get_instance().dispose();
@@ -189,6 +198,11 @@ int main(int argc, char** argv) {
         curl_global_cleanup();
         return 1;
     }
+
+    TS_LOG(INFO) << "NuRaft runtime initialized in "
+                 << std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - init_start).count()
+                 << " ms.";
 
     std::thread analytics_thread([&runtime_service]() {
         AnalyticsManager::get_instance().run(&runtime_service);

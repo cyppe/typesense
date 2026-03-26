@@ -531,9 +531,79 @@ bool mirror_single_node_typesense_state(const std::shared_ptr<http_req>& request
     }
 }
 
+// Replay only kUnknown routes (aliases, presets, stopwords, synonyms,
+// curations, analytics, etc.) from the full materialized state history.
+// These are NOT loaded by collection_manager.load() and need explicit replay.
+// Classified routes (collection/document operations) are already in RocksDB.
+bool replay_unknown_routes_from_history(HttpServer* server,
+                                        const NuRaftKvStateMachineSink& sink,
+                                        std::string& error) {
+    if (server == nullptr) {
+        error = "NuRaft runtime server is not attached.";
+        return false;
+    }
+
+    std::vector<NuRaftAppliedRequest> applied_requests;
+    if (!sink.read_all(applied_requests, error) || applied_requests.empty()) {
+        return error.empty();
+    }
+
+    size_t replayed_count = 0;
+    size_t skipped_count = 0;
+    auto last_progress_log = std::chrono::steady_clock::now();
+
+    for (const auto& applied_request : applied_requests) {
+        if (applied_request.route_kind != NuRaftRouteKind::kUnknown) {
+            ++skipped_count;
+            continue;
+        }
+
+        route_path* route = nullptr;
+        if (!find_registered_route(server, applied_request.route_hash, route, error)) {
+            TS_LOG(WARNING) << "NuRaft unknown-route replay: could not find route for hash="
+                            << applied_request.route_hash;
+            return false;
+        }
+
+        auto request = build_replay_request(applied_request, *route);
+        auto response = std::make_shared<http_res>(nullptr);
+
+        if (!invoke_registered_handler(server, request, response, error)) {
+            if (response->status_code == 0) {
+                return false;
+            }
+            TS_LOG(WARNING) << "NuRaft unknown-route replay handler returned "
+                            << response->status_code << " for route '"
+                            << request->http_method << " " << request->path_without_query
+                            << "': " << response->body;
+            error.clear();
+        }
+
+        ++replayed_count;
+        const auto now = std::chrono::steady_clock::now();
+        if (replayed_count % 1000 == 0 ||
+            std::chrono::duration_cast<std::chrono::seconds>(now - last_progress_log).count() >= 10) {
+            TS_LOG(INFO) << "NuRaft unknown-route replay progress: replayed=" << replayed_count
+                         << " skipped=" << skipped_count
+                         << " total=" << applied_requests.size();
+            last_progress_log = now;
+        }
+    }
+
+    TS_LOG(INFO) << "NuRaft unknown-route replay complete: replayed=" << replayed_count
+                 << " skipped=" << skipped_count
+                 << " total=" << applied_requests.size();
+    error.clear();
+    return true;
+}
+
+// Overload for startup: reads ALL entries, skips classified routes below
+// skip_classified_through_index (already in RocksDB), replays kUnknown
+// routes from the full history (not loaded by collection_manager.load()).
 bool replay_live_product_state(HttpServer* server,
                                const NuRaftKvStateMachineSink& sink,
                                uint64_t& replayed_through_index,
+                               uint64_t skip_classified_through_index,
                                std::string& error) {
     if (server == nullptr) {
         error = "NuRaft runtime server is not attached.";
@@ -545,11 +615,28 @@ bool replay_live_product_state(HttpServer* server,
         return error.empty();
     }
 
+    TS_LOG(INFO) << "NuRaft startup replay: " << applied_requests.size()
+                 << " applied request(s) to evaluate"
+                 << " (skip_classified_through_index=" << skip_classified_through_index << ")";
+
+    size_t replayed_count = 0;
+    size_t skipped_count = 0;
+    auto last_progress_log = std::chrono::steady_clock::now();
+
     uint64_t latest_index = replayed_through_index;
     for (const auto& applied_request : applied_requests) {
         latest_index = std::max(latest_index, applied_request.index);
-        if (applied_request.index <= replayed_through_index ||
-            !should_replay_live_product_state(applied_request)) {
+        if (!should_replay_live_product_state(applied_request)) {
+            ++skipped_count;
+            continue;
+        }
+        // Skip bulk document imports that are already loaded from RocksDB by
+        // collection_manager.load(). Imports are the dominant cost during startup
+        // replay (millions of documents, async reference helper fan-out).
+        // All other route kinds are replayed to restore metadata linkages.
+        if (applied_request.route_kind == NuRaftRouteKind::kDocumentImport &&
+            applied_request.index <= skip_classified_through_index) {
+            ++skipped_count;
             continue;
         }
 
@@ -577,6 +664,79 @@ bool replay_live_product_state(HttpServer* server,
                 }
 
                 TS_LOG(WARNING) << "NuRaft startup replay handler returned "
+                                << response->status_code << " for route '"
+                                << request->http_method << " " << request->path_without_query
+                                << "': " << response->body;
+                error.clear();
+            }
+        }
+
+        ++replayed_count;
+        const auto now = std::chrono::steady_clock::now();
+        if (replayed_count % 1000 == 0 ||
+            std::chrono::duration_cast<std::chrono::seconds>(now - last_progress_log).count() >= 10) {
+            TS_LOG(INFO) << "NuRaft startup replay progress: replayed=" << replayed_count
+                         << " skipped=" << skipped_count
+                         << " total=" << applied_requests.size();
+            last_progress_log = now;
+        }
+    }
+
+    TS_LOG(INFO) << "NuRaft startup replay complete: replayed=" << replayed_count
+                 << " skipped=" << skipped_count
+                 << " total=" << applied_requests.size();
+
+    replayed_through_index = latest_index;
+    error.clear();
+    return true;
+}
+
+// Overload for sync path: reads only entries after replayed_through_index.
+// All route kinds (classified and kUnknown) in the delta are replayed.
+bool replay_live_product_state(HttpServer* server,
+                               const NuRaftKvStateMachineSink& sink,
+                               uint64_t& replayed_through_index,
+                               std::string& error) {
+    if (server == nullptr) {
+        error = "NuRaft runtime server is not attached.";
+        return false;
+    }
+
+    std::vector<NuRaftAppliedRequest> applied_requests;
+    if (!sink.read_all_after(replayed_through_index, applied_requests, error) || applied_requests.empty()) {
+        return error.empty();
+    }
+
+    uint64_t latest_index = replayed_through_index;
+    for (const auto& applied_request : applied_requests) {
+        latest_index = std::max(latest_index, applied_request.index);
+        if (!should_replay_live_product_state(applied_request)) {
+            continue;
+        }
+
+        route_path* route = nullptr;
+        if (!find_registered_route(server, applied_request.route_hash, route, error)) {
+            TS_LOG(WARNING) << "NuRaft replay: could not find route for hash="
+                            << applied_request.route_hash << " kind=" << static_cast<int>(applied_request.route_kind);
+            return false;
+        }
+
+        auto request = build_replay_request(applied_request, *route);
+        auto response = std::make_shared<http_res>(nullptr);
+
+        if (applied_request.route_kind != NuRaftRouteKind::kUnknown) {
+            if (!mirror_single_node_typesense_state(request, applied_request.route_kind, error)) {
+                TS_LOG(WARNING) << "NuRaft sync replay mirror failed for route '"
+                                << request->http_method << " " << request->path_without_query
+                                << "': " << error;
+                error.clear();
+            }
+        } else {
+            if (!invoke_registered_handler(server, request, response, error)) {
+                if (response->status_code == 0) {
+                    return false;
+                }
+                TS_LOG(WARNING) << "NuRaft sync replay handler returned "
                                 << response->status_code << " for route '"
                                 << request->http_method << " " << request->path_without_query
                                 << "': " << response->body;
@@ -715,8 +875,9 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         materialized_state_sink_.reset();
         return false;
     }
+    TS_LOG(INFO) << "NuRaft init: materialized state last_applied_index=" << last_applied_index;
 
-    uint64_t replayed_through_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+    uint64_t replayed_through_index = 0;
     if (!replay_live_product_state(server_,
                                    *materialized_state_sink_,
                                    replayed_through_index,
@@ -742,15 +903,21 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
 
     // Request leadership and wait for the election to settle. In single-node
     // mode the node must become leader before it can accept writes.
+    TS_LOG(INFO) << "NuRaft init: requesting leadership...";
     raft_server_->request_leadership();
     for (int attempt = 0; attempt < 50; ++attempt) {
         if (raft_server_->is_leader()) {
+            TS_LOG(INFO) << "NuRaft init: leadership acquired in " << (attempt * 100) << " ms.";
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
+    if (!raft_server_->is_leader()) {
+        TS_LOG(WARNING) << "NuRaft init: failed to acquire leadership after 5 seconds.";
+    }
 
     initialized_.store(true);
+    TS_LOG(INFO) << "NuRaft runtime initialization complete.";
     error.clear();
     return true;
 }
