@@ -142,6 +142,57 @@ export class TypesenseProcessManager {
     return this.multiNodeConfigs?.[0]?.port ?? this.configuredMultiApiPorts?.[0] ?? null;
   }
 
+  getMultiNodeApiPort(index: 1 | 2 | 3): number | null {
+    return this.multiNodeConfigs?.[index - 1]?.port ?? this.configuredMultiApiPorts?.[index - 1] ?? null;
+  }
+
+  getMultiNodeName(index: 1 | 2 | 3): string {
+    return `multi-node${index}`;
+  }
+
+  async stopMultiNodeServer(index: 1 | 2 | 3) {
+    await this.stopServer(this.getMultiNodeName(index));
+  }
+
+  async restartMultiNodeServer(index: 1 | 2 | 3) {
+    if (!this.multiNodeConfigs) {
+      throw new Error("Cannot restart individual multi-node server before startMultiNode has run");
+    }
+    const config = this.multiNodeConfigs[index - 1];
+    await this.stopServer(config.name);
+
+    const clusterNodes = this.multiNodeConfigs
+      .map((node) => `${this.ipAddress}:${node.peerPort}:${node.port}`)
+      .join(",");
+
+    const args = this.serverFlavor === "nuraft-runtime"
+      ? [
+        `--nodes=${clusterNodes}`,
+        `--data-dir=${join(this.baseDir, config.dataDir)}`,
+        `--api-key=${this.apiKey}`,
+        `--api-port=${config.port}`,
+        "--listen-address=0.0.0.0",
+        `--node-host=${this.ipAddress}`,
+        `--peering-port=${config.peerPort}`,
+        ...TypesenseProcessManager.additionalConfigs,
+      ]
+      : [
+        `--nodes=${this.nodesFile}`,
+        `--peering-address=${this.ipAddress}`,
+        `--data-dir=${join(this.baseDir, config.dataDir)}`,
+        `--api-key=${this.apiKey}`,
+        `--api-port=${config.port}`,
+        "--api-address=0.0.0.0",
+        `--peering-port=${config.peerPort}`,
+        `--log-dir=${join(this.baseDir, "logs", config.logDir)}`,
+        `--analytics-dir=${join(this.baseDir, config.analyticsDir)}`,
+        ...TypesenseProcessManager.additionalConfigs,
+      ];
+
+    this.spawnServer(config.name, args, config.port);
+    await this.waitForHealth(config.port);
+  }
+
   getRuntimeEnv(): Record<string, string> {
     const runtimeEnv: Record<string, string> = {
       TYPESENSE_TEST_RUN_ID: this.runId,
