@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     Store store(options.startup_options.data_dir + "/db",
                 24 * 60 * 60,
                 1024,
-                true,
+                false,  // enable WAL — NuRaft runtime persists product state to main store
                 0,
                 config.get_db_write_buffer_size(),
                 config.get_db_max_write_buffer_number(),
@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
     auto analytics_store = std::make_unique<Store>(config.get_analytics_dir() + "/db",
                                                    24 * 60 * 60,
                                                    1024,
-                                                   true,
+                                                   false,  // enable WAL for analytics store durability
                                                    config.get_analytics_db_ttl());
     HttpServer http_server(
         TS_STRINGIFY(TYPESENSE_VERSION),

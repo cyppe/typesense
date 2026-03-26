@@ -877,15 +877,15 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     }
     TS_LOG(INFO) << "NuRaft init: materialized state last_applied_index=" << last_applied_index;
 
-    uint64_t replayed_through_index = 0;
-    if (!replay_live_product_state(server_,
-                                   *materialized_state_sink_,
-                                   replayed_through_index,
-                                   error)) {
-        materialized_state_sink_.reset();
-        return false;
-    }
-    advance_live_product_state_applied_index(replayed_through_index);
+    // Product state (collections, documents, aliases, presets, stopwords,
+    // synonyms, curations, analytics) is already loaded from the main RocksDB
+    // store by collection_manager.load(). The main store has WAL enabled so
+    // all writes from the leader's product handlers are durable. Just advance
+    // the applied-index to match the materialized state so the sync path
+    // starts delta replay from the correct point.
+    advance_live_product_state_applied_index(last_applied_index);
+    TS_LOG(INFO) << "NuRaft init: skipped startup replay (state loaded from main store), "
+                 << "advanced applied index to " << last_applied_index;
 
     {
         std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
