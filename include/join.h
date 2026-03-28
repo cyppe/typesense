@@ -1,11 +1,15 @@
 #pragma once
 
+#include <memory>
+#include <shared_mutex>
 #include "option.h"
 #include "json.hpp"
 #include "tsl/htrie_map.h"
 #include "field.h"
 #include "tsl/htrie_set.h"
 #include "filter_result_iterator.h"
+
+class Collection;
 
 struct base_reference_info_t {
     std::string collection{};
@@ -79,6 +83,13 @@ struct negate_left_join_t {
     bool is_negate_join = false;
     size_t excluded_ids_size = 0;
     std::unique_ptr<uint32_t []> excluded_ids = nullptr;
+};
+
+struct cascade_remove_node_t {
+    std::shared_ptr<Collection> coll_ptr;
+    std::unique_lock<std::shared_mutex> lock;
+    std::vector<reference_info_t> ref_infos{};
+    std::vector<cascade_remove_node_t*> nested_references{};
 };
 
 class Join {

@@ -1034,8 +1034,8 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
             // Get the doc ids of reference collection matching the filter then apply filter on the current collection's
             // reference helper field.
             filter_result_t result;
-            auto reference_filter_op = ref_collection->get_filter_ids(a_filter.field_name, result, true,
-                                                                      validate_field_names);
+            auto reference_filter_op = ref_collection->get_filter_ids_with_lock(a_filter.field_name, result, true,
+                                                                                validate_field_names);
             if (!reference_filter_op.ok()) {
                 status = Option<bool>(400, "Failed to join on `" + a_filter.referenced_collection_name
                                            + "` collection: " + reference_filter_op.error());
@@ -1803,7 +1803,7 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
 
                 filter_result_iterator_t dummy_it(nullptr, 0);
                 std::vector<sort_by> sort_fields;
-                std::vector<std::vector<art_leaf*>> searched_filters;
+                std::vector<std::vector<std::string>> searched_filter_tokens;
                 tsl::htrie_map<char, token_leaf> qtoken_set;
                 Topster<KV>* topster = nullptr;
                 spp::sparse_hash_map<uint64_t, uint32_t> groups_processed;
@@ -1823,7 +1823,7 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
 
                 auto fuzzy_search_fields_op = index->fuzzy_search_fields(fq_fields, value_tokens, {}, text_match_type_t::max_score,
                                                                          nullptr, 0, &dummy_it, {}, sort_fields,
-                                                                         {0}, searched_filters, qtoken_set, topster,
+                                                                         {0}, searched_filter_tokens, qtoken_set, topster,
                                                                          groups_processed, all_result_ids, all_result_ids_len,
                                                                          0, group_by_fields, false, false, false, false,
                                                                          query_hashes, MAX_SCORE, {true}, typo_tokens_threshold,
@@ -1839,13 +1839,18 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
                 }
 
                 // Searching for `Chris P.*` will return `Chris Parnell` and `Chris Pine`.
-                for (const auto& searched_filter_value: searched_filters) {
+                art_tree* t = index->search_index.at(f.name);
+                for (const auto& searched_filter_value: searched_filter_tokens) {
                     raw_posting_lists.clear();
                     approx_filter_value_match = UINT32_MAX;
+                    bool found_all_tokens = true;
 
-                    for (const auto& leaf: searched_filter_value) {
+                    for (const auto& tok: searched_filter_value) {
+                        art_leaf* leaf = static_cast<art_leaf*>(
+                            art_search(t, (const unsigned char*) tok.c_str(), tok.size() + 1));
                         if (leaf == nullptr) {
-                            continue;
+                            found_all_tokens = false;
+                            break;
                         }
 
                         // Tokens of a filter value get AND.
@@ -1853,7 +1858,7 @@ void filter_result_iterator_t::init(const bool& enable_lazy_evaluation, const bo
                         raw_posting_lists.push_back(leaf->values);
                     }
 
-                    if (raw_posting_lists.size() != str_tokens.size()) {
+                    if (!found_all_tokens || raw_posting_lists.size() != str_tokens.size()) {
                         continue;
                     }
 

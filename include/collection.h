@@ -670,7 +670,8 @@ private:
                          nlohmann::json& wrapper_doc,
                          const std::vector<std::vector<std::string>>& q_phrases = {}) const;
 
-    void remove_document(nlohmann::json & document, const uint32_t seq_id, bool remove_from_store);
+    void remove_document(nlohmann::json & document, const uint32_t seq_id, bool remove_from_store,
+                         const bool& cascade_remove = true);
 
     void process_remove_field_for_embedding_fields(const field& del_field, std::vector<field>& garbage_embed_fields);
 
@@ -902,6 +903,23 @@ private:
 
     static Option<bool> merge_facet_results(nlohmann::json& result);
 
+    void reset_referencing_documents(const std::string& field_name, const std::vector<index_record>& docs);
+
+    // Called to reset the reference helper fields to sentinel value when a referenced document fails to index.
+    static void reset_referencing_documents(const spp::sparse_hash_map<std::string, std::set<reference_pair_t>>& found_async_referenced_ins,
+                                            const std::vector<index_record>& docs);
+
+    static void cascade_remove_helper(const std::vector<index_record>& records, cascade_remove_node_t* cascade_node,
+                                      const bool remove_from_store = true);
+
+    // Called to recursively deleted all the documents that directly or indirectly reference the documents.
+    static void cascade_remove(const std::string& coll_name, const std::vector<index_record>& records,
+                               const bool remove_from_store = true);
+
+    void cascade_remove(const std::vector<index_record>& records, const reference_info_t& ref_info,
+                        const std::string& ref_coll_name, std::vector<index_record>& removed_records,
+                        const bool remove_from_store = true);
+
 public:
 
     Option<bool> apply_ref_helper_overrides_from_store();
@@ -1079,7 +1097,8 @@ public:
 
     size_t batch_index_in_memory(std::vector<index_record>& index_records, const size_t remote_embedding_batch_size,
                                  const size_t remote_embedding_timeout_ms, const size_t remote_embedding_num_tries,
-                                 const bool generate_embeddings, CollectionBatchIndexMetrics* metrics = nullptr);
+                                 const bool generate_embeddings, std::unordered_set<std::string>& found_fields,
+                                 CollectionBatchIndexMetrics* metrics = nullptr);
 
     Option<nlohmann::json> add(const std::string & json_str,
                                const index_operation_t& operation=CREATE, const std::string& id="",
@@ -1221,6 +1240,9 @@ public:
     Option<bool> get_filter_ids(const std::string & filter_query, filter_result_t& filter_result,
                                 const bool& should_timeout = true, const bool& validate_field_names = true) const;
 
+    Option<bool> get_filter_ids_with_lock(const std::string & filter_query, filter_result_t& filter_result,
+                                          const bool& should_timeout = true, const bool& validate_field_names = true) const;
+
     Option<bool> get_reference_filter_ids(const std::string& filter_query,
                                           filter_result_t& filter_result,
                                           const std::string& reference_field_name,
@@ -1228,9 +1250,6 @@ public:
                                           const bool& validate_field_names = true) const;
 
     Option<nlohmann::json> get(const std::string & id) const;
-
-    void cascade_remove_docs(const std::string& field_name, const uint32_t& ref_seq_id,
-                             const nlohmann::json& ref_doc, bool remove_from_store = true);
 
     Option<std::string> remove(const std::string & id, bool remove_from_store = true);
 
@@ -1386,6 +1405,11 @@ public:
         const std::unordered_map<std::string, uint32_t>& value_to_ref_seq_id,
         const std::string& field_name);
 
+    Option<bool> update_async_references_with_lock(const std::string& referenced_collection_name,
+                                                   const std::string& filter,
+                                                   const std::set<std::string>& filter_values,
+                                                   const uint32_t ref_seq_id, const std::string& field_name);
+
     Option<uint32_t> get_sort_index_value_with_lock(const std::string& field_name, const uint32_t& seq_id) const;
 
     static void hide_credential(nlohmann::json& json, const std::string& credential_name);
@@ -1430,6 +1454,10 @@ public:
                                       const tsl::htrie_set<char>& ref_exclude_fields_full,
                                       const nlohmann::json& original_doc,
                                       const ref_include_exclude_fields& ref_include_exclude) const;
+
+    std::shared_mutex& get_mutex() const {
+        return mutex;
+    }
 };
 
 template<class T>
