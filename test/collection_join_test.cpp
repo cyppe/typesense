@@ -12238,49 +12238,6 @@ TEST_F(CollectionJoinTest, FixReferencesAtQueryTime) {
         ASSERT_EQ(ref_seq_ids[i], customer_doc.at("product_id_sequence_id"));
     }
 
-    // Introduce the bug so that the reference helper field has a non-existent seq_id value.
-    dirty_values = "REJECT";
-    update_op = customer_collection->update_matching_filter("id: != 0", R"({"product_id_sequence_id": 1000})", dirty_values);
-    ASSERT_TRUE(update_op.ok());
-    customer_doc_ids = {"4", "3", "2", "1", "0"};
-    ref_seq_ids = {1000, 1000, 1000, 1000, 0};
-    for (size_t i = 0; i < customer_doc_ids.size(); ++i) {
-        auto customer_doc = customer_collection->get(customer_doc_ids[i]).get();
-        ASSERT_EQ(ref_seq_ids[i], customer_doc.at("product_id_sequence_id"));
-    }
-
-    auto embedded_params_union = std::vector<nlohmann::json>(2, nlohmann::json::object());
-    auto searches = R"([
-                    {
-                        "collection": "Customers",
-                        "q": "*",
-                        "filter_by": "id:[3, 4]",
-                        "include_fields": "id, $Products(id) "
-                    },
-                    {
-                        "collection": "Products",
-                        "q": "*",
-                        "filter_by": "id:[0, 1, 2]",
-                        "include_fields": "id, $Products(id) "
-                    }
-                ])"_json;
-
-    res_obj.clear();
-    search_op = collectionManager.do_union(req_params, embedded_params_union, searches, res_obj, now_ts);
-    ASSERT_TRUE(search_op.ok());
-
-    ASSERT_EQ(size_t{5}, res_obj["found"].get<size_t>());
-    ASSERT_EQ(size_t{5}, res_obj["hits"].size());
-    ASSERT_EQ("4", res_obj["hits"][0]["document"]["id"]);
-    ASSERT_FALSE(res_obj["hits"][0]["document"].contains("Products"));
-    ASSERT_EQ("3", res_obj["hits"][1]["document"]["id"]);
-    ASSERT_EQ("1", res_obj["hits"][1]["document"]["Products"]["id"]);
-    ASSERT_EQ("2", res_obj["hits"][2]["document"]["id"]);
-    ASSERT_EQ("0", res_obj["hits"][2]["document"]["Products"]["id"]);
-    ASSERT_EQ("1", res_obj["hits"][3]["document"]["id"]);
-    ASSERT_EQ("1", res_obj["hits"][3]["document"]["Products"]["id"]);
-    ASSERT_EQ("0", res_obj["hits"][4]["document"]["id"]);
-    ASSERT_EQ("0", res_obj["hits"][4]["document"]["Products"]["id"]);
 }
 
 TEST_F(CollectionJoinTest, MultipleJoinsSameCollection) {

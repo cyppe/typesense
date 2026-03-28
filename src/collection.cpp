@@ -1547,6 +1547,20 @@ Option<bool> Collection::update_async_references_with_lock(const std::string& re
                                                            const std::string& filter,
                                                            const std::set<std::string>& filter_values,
                                                            const uint32_t ref_seq_id, const std::string& field_name) {
+    // Try the fork's fast path: build value→seq_id map and delegate to the optimized 2-arg overload
+    // which uses direct sort_index manipulation instead of per-doc RocksDB reads.
+    if (filter_values.size() == 1) {
+        std::unordered_map<std::string, uint32_t> value_to_ref_seq_id;
+        for (const auto& val : filter_values) {
+            value_to_ref_seq_id[val] = ref_seq_id;
+        }
+        auto fast_op = update_async_references_with_lock(value_to_ref_seq_id, field_name);
+        if (fast_op.ok()) {
+            return fast_op;
+        }
+        // Fast path failed or not applicable — fall through to slow path.
+    }
+
     field field;
     {
         std::shared_lock lock(mutex);
@@ -5867,7 +5881,8 @@ Option<bool> Collection::do_union(const std::vector<uint32_t>& collection_ids,
 
     merge_facet_results(result);
 
-    filter_dynamic_facets_by_occurrence(result["facet_counts"], total, searches[0].facet_min_occurrence_ratio);
+    filter_dynamic_facets_by_occurrence(result["facet_counts"], total,
+                                        searches.empty() ? 0.0f : searches[0].facet_min_occurrence_ratio);
 
     for (auto& request: request_json_list) {
         result["union_request_params"] += std::move(request);
@@ -11838,30 +11853,37 @@ Option<bool> Collection::filter_dynamic_facets_by_occurrence(nlohmann::json& fac
     nlohmann::json filtered_facet_counts = nlohmann::json::array();
 
     for(auto& facet_count : facet_counts) {
-        bool is_dynamic = facet_count.value("is_dynamic", false);
+        const bool is_dynamic = facet_count.value("is_dynamic", false);
         if(!is_dynamic) {
+            facet_count.erase("is_dynamic");
             filtered_facet_counts.push_back(facet_count);
             continue;
         }
 
-        // For dynamic facets, filter out facet values that don't meet the occurrence ratio
-        size_t total_values = 0;
-        if(facet_count.contains("stats") && facet_count["stats"].contains("total_values")) {
-            total_values = facet_count["stats"]["total_values"].get<size_t>();
-        }
-
-        // Check if the facet field itself has enough occurrence ratio
-        // total_values represents the number of unique facet values
-        // If the ratio of total_values to found_docs is below the threshold, skip this facet field
-        float occurrence_ratio = static_cast<float>(total_values) / static_cast<float>(found_docs);
-        if(occurrence_ratio < facet_min_occurrence_ratio) {
+        if(facet_min_occurrence_ratio <= 0.0f || found_docs == 0) {
+            facet_count.erase("is_dynamic");
+            filtered_facet_counts.push_back(facet_count);
             continue;
         }
 
-        filtered_facet_counts.push_back(facet_count);
+        nlohmann::json filtered_counts = nlohmann::json::array();
+        for(const auto& count : facet_count["counts"]) {
+            const auto occurrence_ratio =
+                static_cast<float>(count["count"].get<size_t>()) / static_cast<float>(found_docs);
+            if(occurrence_ratio >= facet_min_occurrence_ratio) {
+                filtered_counts.push_back(count);
+            }
+        }
+
+        if(!filtered_counts.empty()) {
+            facet_count["counts"] = std::move(filtered_counts);
+            facet_count["stats"]["total_values"] = facet_count["counts"].size();
+            facet_count.erase("is_dynamic");
+            filtered_facet_counts.push_back(facet_count);
+        }
     }
 
-    facet_counts = filtered_facet_counts;
+    facet_counts = std::move(filtered_facet_counts);
     return Option<bool>(true);
 }
 
