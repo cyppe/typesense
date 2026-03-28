@@ -1382,15 +1382,10 @@ These touch core search/indexing paths extensively. Apply with extra care.
 - [x] **`c0c7078c`** — Avoid persisting ART leaves in search state. Applied: `searched_queries` → `searched_query_tokens` (`vector<vector<string>>`) across `index.h`, `index.cpp`, `collection.cpp`, `filter_result_iterator.cpp`; `compute_aggregated_score` takes `query_index` param; `get_field_token_its` no longer takes `query_suggestion`. Build+API green (151 pass, 0 fail).
 - [x] **`35a75c5a`** (#2815) — Fix race conditions in concurrent related collection requests. Applied: `cascade_remove_node_t` struct; `cascade_remove()` static/instance methods; `get_filter_ids_with_lock()`; batched indexer rewritten with explicit `waiting_on_requests` dependency tracking; `lock_nested_referencing_collections`; `update_async_references` new signature. Skipped `raft_server.cpp` (NuRaft). Build+API green (151 pass, 0 fail). **Note:** TSAN verification deferred to separate run.
 
-**Phase 4 — Deferred features (review when ready)**
+**Phase 4 — New features (adopted)**
 
-These are new product-surface features from upstream, intentionally deferred from item 41:
-
-- [ ] **`fb5bf14b`** (#2820) — `PATCH /keys/:id` endpoint for partial API key updates.
-  - New admin route. Needs API contract review and end-to-end auth coverage before adoption.
-
-- [ ] **`eb81162a`** (#2822) — Dynamic faceting based on occurrence ratio (`facet_min_occurrence_ratio`).
-  - New search parameter. Needs dedicated relevance validation and API review.
+- [x] **`fb5bf14b`** (#2820) — `PATCH /keys/:id` endpoint for partial API key updates. Applied: `update_key()` in auth_manager, `patch_key` handler + route. Build+API green.
+- [x] **`eb81162a`** (#2822) — Dynamic faceting based on occurrence ratio (`facet_min_occurrence_ratio`). Applied: new search param (0.0-1.0, default 0.5), `is_dynamic` flag on facets, `filter_dynamic_facets_by_occurrence()`. Build+API green.
 
 **Verification gate for each phase**
 
@@ -1402,8 +1397,8 @@ After each phase lands:
 
 **Exit criteria**
 
-- [x] All 11 missing commits are either backported with tests or explicitly re-deferred with a concrete reason. (9 backported in Phases 1-3; 2 deferred in Phase 4 — new features requiring API review.)
-- [x] No regression in API tests or C++ test suite. (151 pass, 0 fail, 12 expected TEI skips.)
+- [x] All 11 missing commits backported with tests. (9 in Phases 1-3, 2 in Phase 4. Plus #2857 fix: always recompute `referenced_ins` from schemas.)
+- [x] No regression in API tests or C++ test suite. (162 pass, 0 fail, 12 expected TEI skips.)
 - [ ] Phase 3 backports verified under TSAN. (Deferred to dedicated TSAN run.)
 
 ---

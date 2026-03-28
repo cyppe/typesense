@@ -258,6 +258,7 @@ struct collection_search_args_t {
     static constexpr auto FACET_SAMPLE_PERCENT = "facet_sample_percent";
     static constexpr auto FACET_SAMPLE_THRESHOLD = "facet_sample_threshold";
     static constexpr auto FACET_SAMPLE_SLOPE = "facet_sample_slope";
+    static constexpr auto FACET_MIN_OCCURRENCE_RATIO = "facet_min_occurrence_ratio";
 
     static constexpr auto CONVERSATION = "conversation";
     static constexpr auto CONVERSATION_ID = "conversation_id";
@@ -350,6 +351,7 @@ struct collection_search_args_t {
     size_t facet_sample_percent;
     size_t facet_sample_threshold;
     size_t facet_sample_slope;
+    float facet_min_occurrence_ratio;
     size_t offset;
     std::string facet_strategy;
     size_t remote_embedding_timeout_ms;
@@ -408,7 +410,7 @@ struct collection_search_args_t {
                              size_t max_extra_prefix, size_t max_extra_suffix, size_t facet_query_num_typos,
                              bool filter_curated_hits_option, bool prioritize_token_position, std::string vector_query,
                              bool enable_highlight_v1, uint64_t start_ts, text_match_type_t match_type,
-                             size_t facet_sample_percent, size_t facet_sample_threshold, size_t facet_sample_slope, size_t offset,
+                             size_t facet_sample_percent, size_t facet_sample_threshold, size_t facet_sample_slope, float facet_min_occurrence_ratio, size_t offset,
                              std::string facet_strategy, size_t remote_embedding_timeout_ms, size_t remote_embedding_num_tries,
                              std::string stopwords_set, std::vector<std::string> facet_return_parent,
                              std::vector<ref_include_exclude_fields> ref_include_exclude_fields_vec,
@@ -441,7 +443,7 @@ struct collection_search_args_t {
             max_extra_prefix(max_extra_prefix), max_extra_suffix(max_extra_suffix), facet_query_num_typos(facet_query_num_typos),
             filter_curated_hits_option(filter_curated_hits_option), prioritize_token_position(prioritize_token_position), vector_query(std::move(vector_query)),
             enable_highlight_v1(enable_highlight_v1), start_ts(start_ts), match_type(match_type),
-            facet_sample_percent(facet_sample_percent), facet_sample_threshold(facet_sample_threshold), facet_sample_slope(facet_sample_slope), offset(offset),
+            facet_sample_percent(facet_sample_percent), facet_sample_threshold(facet_sample_threshold), facet_sample_slope(facet_sample_slope), facet_min_occurrence_ratio(facet_min_occurrence_ratio), offset(offset),
             facet_strategy(std::move(facet_strategy)), remote_embedding_timeout_ms(remote_embedding_timeout_ms), remote_embedding_num_tries(remote_embedding_num_tries),
             stopwords_set(std::move(stopwords_set)), facet_return_parent(std::move(facet_return_parent)),
             ref_include_exclude_fields_vec(std::move(ref_include_exclude_fields_vec)),
@@ -903,6 +905,8 @@ private:
 
     static Option<bool> merge_facet_results(nlohmann::json& result);
 
+    static Option<bool> filter_dynamic_facets_by_occurrence(nlohmann::json& facet_counts, size_t found_docs, float facet_min_occurrence_ratio);
+
     void reset_referencing_documents(const std::string& field_name, const std::vector<index_record>& docs);
 
     // Called to reset the reference helper fields to sentinel value when a referenced document fails to index.
@@ -1220,7 +1224,8 @@ public:
                                   const std::vector<std::string>& search_synonym_sets = {},
                                   float diversity_lamda = diversity_t::DEFAULT_LAMDA_VALUE,
                                   size_t group_max_candidates = Index::DEFAULT_TOPSTER_SIZE,
-                                  size_t diversity_limit = Index::DEFAULT_TOPSTER_SIZE);
+                                  size_t diversity_limit = Index::DEFAULT_TOPSTER_SIZE,
+                                  const float facet_min_occurrence_ratio = 0.5f);
 
     Option<bool> parse_and_validate_personalization_query(const std::string& personalization_user_id,
                                                           const std::string& personalization_model_id,

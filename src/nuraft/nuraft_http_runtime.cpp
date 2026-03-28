@@ -1920,6 +1920,7 @@ void register_nuraft_http_runtime_routes(HttpServer* server) {
     server->get("/keys/:id", get_key);
     server->post("/keys", post_create_key);
     server->del("/keys/:id", del_key);
+    server->patch("/keys/:id", patch_key);
 
     server->get("/presets", get_presets);
     server->get("/presets/:name", get_preset);
