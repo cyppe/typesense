@@ -131,10 +131,9 @@ Done. Audit complete — stabilized grouping, curation ordering, embedding polli
    Current state: the replay harness now emits both metrics timelines and a log summary (`slow_request`, `Threadpool exhaustion detected`, `Async reference helper slow path`), and the March 22 local validation also confirmed that slow import log lines now include a full request/helper breakdown (`import_body_bytes`, handler/response timing, `helper_collection`, `helper_field`, helper retry/failure counts). Use the same evidence class in DDEV before reopening root-cause work so any remaining gap can be compared directly against the local `mixed_category_fitment` lane.
 3. [ ] Trim the remaining search/control-plane tail only if it stays material after the fresh DDEV check.
    Current state: the current branch no longer reproduces node-wide starvation locally. After the `yyjson` helper rewrite, the preserved-log `mixed_category_fitment 300k` replay now keeps search at `56.9ms` avg / `117.1ms` p95 while the long category fanout import itself drops to `11914.4ms`. That remains acceptable for the local gate, but it is still worth polishing only if DDEV shows it is materially user-visible.
-4. [x] Expose build provenance from the checked-out source in both the runtime and published Docker images.
-   Current state: the server binary is now stamped from the active checkout via `bazel/workspace_status.sh`, `/debug` returns `build.{version,git_sha,git_short_sha,git_ref,git_exact_tag,git_tree_status}`, `/metrics.json` mirrors the same keys for quick scraping, and `release-binaries.yml` now labels published Docker images with the matching OCI/custom git metadata so `docker inspect` and `curl /debug` can be compared directly.
-5. [x] Make the warning-guard workflows fall back cleanly when no prebuilt ORT bundle artifact is available.
-   Current state: `tests.yml` and `clang-warning-guard.yml` now mirror the build/test steps and only export `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR` when `${{ github.workspace }}/ort-bundle/amd64/bundle/lib` exists. The earlier push failure came from `check_gcc_warning_guardrail.sh` receiving a non-empty ORT bundle path even on source-build lanes, which made `typesense_ort_repo.bzl` fail during repository fetch before the guardrail build could start.
+4. [ ] **Upstream `v31` parity Phase 2** (item 45): backport 11 confirmed-missing upstream commits in 3 phases. See item 45 below for the full phased plan with per-commit details.
+5. [x] Expose build provenance from the checked-out source in both the runtime and published Docker images.
+6. [x] Make the warning-guard workflows fall back cleanly when no prebuilt ORT bundle artifact is available.
 
 ## Priority 1 - Build And Dependency Modernization
 
@@ -570,6 +569,7 @@ This is the **living priority list**. AI agents should pick the top non-blocked 
 |---|------|---------|--------|-------|
 | 25a | Build and publish a fresh DDEV test image from the post-byte-aware-helper branch head | P1 Runtime/Perf | **active** | March 22, 2026 DDEV on the published image `2c06d882` still hit a `33.99s` `categories_se` import because `177,813` large `products_se` docs were rewritten in one helper pass (`helper_chunks=1`, `fetched_doc_bytes≈2.14GiB`). Current local HEAD now uses a generic byte-aware helper planner and the new `180k` large-doc `category_fanout` lane is green (`18858.5ms`, `helper_chunks=4`, search `32.8ms`). Next gate: publish that newer branch head and rerun DDEV on the fresh image. |
 | 25b | Re-check DDEV on the new image with the March 22 helper + snapshot telemetry enabled | P1 Runtime/Perf | **pending** | Use the fresh image from item 25a and keep the current Laravel/Typesense telemetry in place. If DDEV still stalls, capture the new `nuraft_snapshot_*` metrics plus the helper planning fields (`planned_chunk_docs`, `chunk_plan_sample_docs`, `chunk_plan_estimated_total_doc_bytes`) before changing code again. |
+| 45 | Upstream `v31` parity Phase 2 — remaining 11 missing commits | P1 Parity | **pending** | 11 upstream commits from `v31` are confirmed missing after the Mar 28 deep audit. Includes 2 critical race-condition/safety fixes, 5 high-priority search/security correctness fixes, and 4 medium-priority robustness fixes. Phased backport plan below. |
 | 1 | ~~Coordinated h2o/picotls/quicly bump~~ | P1.7b | **done** | All 3 deps bumped, patch regenerated, build verified. |
 | 2 | ~~ICU fork→upstream tarball~~ | P1.7 | **done** | Switched from `typesense/icu` fork to official ICU 71.1 release tarball. Patch unchanged. |
 | 3 | ~~CI action version bumps~~ | P2.11 | **done** | `actions/checkout` v4→v6, `actions/upload-artifact` v4→v7 across all 5 workflows. |
@@ -1288,7 +1288,7 @@ Completed Mar 18, 2026.
 - Backport 5 is now landed locally on `v31-fork`: upstream PR `#2836` / commit `9c9e3905` (`fix: handle Gemini streamed responses across curl buffer boundaries`). Gemini streaming callbacks now carry partial JSON across curl buffer splits, ignore standalone array delimiters until a full object arrives, and only mark the async conversation ready under its mutex in the done callback. `ConversationTest.TestGeminiStreamManipulation`, `ConversationTest.TestGeminiStreamSplitObjectAcrossCallbacks`, and `ConversationTest.TestGeminiStreamSplitArrayDelimitersAcrossCallbacks` lock in both the old contiguous path and the new split-buffer cases.
 - Deferred candidate 1: upstream PR `#2820` / commit `fb5bf14b` (`feat: update support for patching keys`) is intentionally **deferred**, not backported. It adds a new admin API route (`PATCH /keys/:id`) plus merge/update semantics for stored keys, which is additive product surface rather than a parity bugfix; it needs a separate API-contract review and end-to-end auth/admin coverage pass instead of riding along with the bugfix intake.
 - Deferred candidate 2: upstream PR `#2822` / commit `eb81162a` (`dynamic faceting based on occurrence ratio`) is intentionally **deferred**, not backported. It introduces a new search parameter (`facet_min_occurrence_ratio`), new dynamic-facet metadata, and new filtering behavior for wildcard/dynamic facets in both regular and union searches; that is a search-product decision that needs dedicated relevance/API validation instead of silent adoption.
-- Item 41 is now complete: every tracked post-fork `upstream/v31` candidate now has an explicit outcome on this fork (`3f2e15f7`, `c1bd3c77`, `121a5161`, `92ab674a`, and `9c9e3905` accepted/backported; `fb5bf14b` and `eb81162a` deferred).
+- Item 41 is now complete: every tracked post-fork `upstream/v31` candidate now has an explicit outcome on this fork (`3f2e15f7`, `c1bd3c77`, `121a5161`, `92ab674a`, and `9c9e3905` accepted/backported; `fb5bf14b` and `eb81162a` deferred). **Note:** a deeper Mar 28, 2026 audit (item 45) found 11 additional missing upstream commits that were not in the item 41 candidate list — see item 45 for the full Phase 2 backport plan.
 
 **Story A - Investigation**
 
@@ -1334,26 +1334,215 @@ Completed Mar 18, 2026.
   - The second-pass cache effect on already-proven Linux core lanes was material: `linux-amd64` `Build Typesense server in Docker` dropped from about `35m34s` in `23310421507` to about `22s` in `23312338973`, and `linux-arm64` dropped from about `23m53s` in `23302834117` to about `26s` in `23312338973`.
 - Item 42 is complete: the repo now has a CI-parity, repo-owned prebuilt ORT bundle path that avoids cold hosted ORT rebuilds when operators intentionally dispatch `ort-bundles.yml` first, without weakening the default source-build path.
 
+### 45) Upstream `v31` parity Phase 2 — remaining 11 missing commits
+
+**Why this sprint exists now**
+
+- Item 41 (`Upstream v31 selective intake audit`, completed Mar 20, 2026) only covered the commits that existed at audit time.
+- A deep audit on Mar 28, 2026 (`git log ddfa9970..upstream/v31`, 43 total upstream commits) found 11 confirmed-missing upstream changes that the fork does not carry — including 2 critical race-condition fixes, a search cache security fix, and several search-correctness bugs.
+- 5 commits previously believed backported in item 41 were also verified as actually missing in the fork's source code. These are now included here.
+
+**Audit methodology (Mar 28, 2026)**
+
+Upstream v31 was fetched and all 43 post-fork commits were diffed one-by-one against the fork's current source. Each was classified as PRESENT, MISSING, or PARTIAL by reading the actual fork file contents (not just commit messages). Cross-referenced against items 40 and 41 in this plan.
+
+**Sprint goal**
+
+- Backport all 11 missing upstream commits in priority order, with tests. Mark each sub-task as it lands.
+- Do NOT apply blindly — each backport must be verified against NuRaft architecture, the fork's per-document-ID striped write locks (item 44), and the `read_state_t` snapshot pattern already present.
+
+**Conflict risks**
+
+- `35a75c5a` (#2815, related-collection race conditions) touches `collection.cpp`, `batched_indexer.cpp`, `index.cpp` extensively and will likely conflict with item 44's per-document-ID striped write locks.
+- `c0c7078c` (ART leaf pointer elimination) changes `searched_queries` type signatures across the search pipeline — may interact with NuRaft search delegation.
+- `d73315ed` + `f478aca7` (cache keying + scoped API key) are tightly coupled and must be applied together.
+
+---
+
+**Phase 1 — Quick wins (trivial, no conflict risk)**
+
+These are small, isolated fixes. Apply and test individually.
+
+- [ ] **`e5df2ae8`** (#2800) — Update apikey in schema field during alter.
+  - 1-line fix: when altering an embedding model's API key, `search_schema.at(field_name).embed` must also be updated alongside `embedding_fields` and `model_config`.
+  - File: `src/collection.cpp` (~line 8124)
+  - Test: verify that a `PATCH /collections/:name` changing an embedding API key makes subsequent searches use the new key.
+
+- [ ] **`4ed78311`** — Return better error for unresolved group_by field.
+  - Small guard: add `search_schema.count(field_name) == 0` check before `search_schema.at(field_name)` to prevent crash with a clear 400 error.
+  - File: `src/collection.cpp` (~line 4087)
+  - Test: `CollectionGroupingTest` — group_by with a non-existent field should return 400, not crash.
+
+- [ ] **`a843afa5`** — Fix conversation search reusing first collection on error.
+  - 2-line fix: use `result["request_params"]["collection_name"]` for collection lookup and add `else { break; }` when `result_docs_arr` is empty to prevent infinite loop.
+  - File: `src/core_api.cpp` (~line 2251)
+  - Test: `CoreAPIUtilsTest` — conversation multi-search with an errored earlier search should not hang.
+
+- [ ] **`366f0879`** (#2840) — Align remote embedder query timeout default.
+  - Simple constant change: default `remote_embedder_timeout_ms` from 30000ms to 5000ms for query-time calls.
+  - Files: `include/text_embedder.h` (line 26), `include/text_embedder_remote.h` (5 declarations)
+  - Test: verify the constant change; no behavioral test needed.
+
+- [ ] **`9af851e9`** (#2740) — Fix token offsets when prioritized.
+  - Rename `get_last_offset()` to `get_first_offset()`, change logic to find minimum (first) token position instead of maximum, fix 1-based to 0-based offset normalization.
+  - Files: `include/posting_list.h`, `src/index.cpp`, `src/posting_list.cpp`
+  - Test: `CollectionSpecificMoreTest` — verify `prioritize_token_position` ranks docs with earlier token positions higher.
+
+**Phase 2 — Medium complexity (interrelated or moderate refactoring)**
+
+- [ ] **`d73315ed` + `f478aca7`** (together) — Fix search cache keying + scoped API key collection resolution.
+  - `d73315ed`: rewrite `hash_request()` to include parameter names in hash (not just values), preventing cache collisions. Also hash embedded params (excluding `expires_at` and `AUTH_RESOLVED_COLLECTION_PARAM`).
+  - `f478aca7`: add `__typesense_authorized_collection` param so scoped API keys with embedded collection names supply the collection for multi_search requests that omit it.
+  - Files: `include/auth_manager.h`, `src/auth_manager.cpp`, `src/collection_manager.cpp`, `src/core_api.cpp`, `src/core_api_utils.cpp`
+  - These are security-relevant — cache poisoning between scoped API key users and collection-switching via request params.
+  - Test: `CoreAPIUtilsTest` + `AuthManagerTest` — verify distinct cache entries for different param orderings and scoped key auth.
+
+- [ ] **`2d536b67`** (#2838) — Fix stemming curations when search field has stemming enabled.
+  - Adds `curation_rule_token_sets` with locale/stemmer-aware tokenization so curation rules match against stemmed search queries.
+  - Files: `include/collection.h`, `include/index.h`, `src/collection.cpp`, `src/index.cpp`
+  - Test: `CollectionCurationTest` — curation rule should match when search field has stemming enabled.
+
+- [ ] **`80ab84fe`** (#2837) — Replace regex SSE parsing with proper parser.
+  - Replaces 5 `std::sregex_iterator` sites with `consume_sse_payloads()` / `find_next_sse_delimiter()` / `append_message_event()`. Fixes SSE events split across curl buffer boundaries. Also fixes async write callback race with `lock_guard`.
+  - Files: `include/conversation_model.h`, `src/conversation_model.cpp`
+  - Test: `ConversationTest` — SSE parsing with split buffers.
+
+**Phase 3 — Heavy lifts (careful integration with NuRaft/fork architecture)**
+
+These touch core search/indexing paths extensively. Apply with extra care.
+
+- [ ] **`c0c7078c`** — Avoid persisting ART leaves in search state.
+  - Replaces `std::vector<std::vector<art_leaf*>> searched_queries` with `std::vector<std::vector<std::string>> searched_query_tokens` throughout the search pipeline. Eliminates dangling ART leaf pointer bugs.
+  - Files: `include/index.h`, `src/collection.cpp`, `src/filter_result_iterator.cpp`, `src/index.cpp`
+  - Impact: pervasive type change, may interact with NuRaft search delegation layer.
+  - Test: existing search/highlight tests should continue passing; add a focused concurrent search+write stress test if not already covered.
+
+- [ ] **`35a75c5a`** (#2815) — Fix race conditions in concurrent related collection requests.
+  - Massive change (~19 files, ~1900 lines). Adds `_with_lock` method variants, `init_index_search_args_with_lock()`, `get_referenced_geo_distance_with_lock()`, `get_facet_str_val_with_lock()`, per-field locking for reference operations, thread-safe schema access.
+  - Files: `src/batched_indexer.cpp`, `src/collection.cpp`, `src/collection_manager.cpp`, `src/index.cpp`, and 15+ more
+  - **Conflict risk with item 44:** this touches write paths that the fork's per-document-ID striped write locks also cover. Requires manual merge/reconciliation.
+  - Test: upstream includes `reference_cascade_delete_concurrent.test.ts`. Port it and verify under TSAN.
+
+**Phase 4 — Deferred features (review when ready)**
+
+These are new product-surface features from upstream, intentionally deferred from item 41:
+
+- [ ] **`fb5bf14b`** (#2820) — `PATCH /keys/:id` endpoint for partial API key updates.
+  - New admin route. Needs API contract review and end-to-end auth coverage before adoption.
+
+- [ ] **`eb81162a`** (#2822) — Dynamic faceting based on occurrence ratio (`facet_min_occurrence_ratio`).
+  - New search parameter. Needs dedicated relevance validation and API review.
+
+**Verification gate for each phase**
+
+After each phase lands:
+1. `scripts/bazel_in_docker.sh build //:typesense-server`
+2. `scripts/run_api_tests.sh -- --no-secrets`
+3. `test/scripts/replay_typesense_test.sh` for targeted C++ test suites affected by the backport
+4. For Phase 3: run under `--config=tsan` to verify no new race conditions
+
+**Exit criteria**
+
+- [ ] All 11 missing commits are either backported with tests or explicitly re-deferred with a concrete reason.
+- [ ] No regression in API tests or C++ test suite.
+- [ ] Phase 3 backports verified under TSAN.
+
+---
+
+### Ongoing Upstream Maintenance
+
+**Purpose:** This section defines the process for keeping this fork aligned with upstream `typesense/typesense`. It ensures that future upstream bug fixes, features, and test improvements are systematically evaluated and adopted rather than silently drifting.
+
+**Upstream tracking contract**
+
+- **Upstream remote:** `upstream` → `https://github.com/typesense/typesense.git`
+- **Upstream branch:** `v31` (development) — check for new commits regularly
+- **Fork divergence point:** `ddfa997022b18d6c96957e13c330714a0cc194bc`
+- **Upstream commits URL:** https://github.com/typesense/typesense/commits/v31/
+
+**When to run an upstream audit**
+
+Run a parity check against upstream before:
+1. Any fork release or version tag
+2. Monthly, as part of routine maintenance
+3. After upstream announces a new release or security fix
+4. When a user reports a bug that might already be fixed upstream
+
+**How to run an upstream audit**
+
+```bash
+# 1. Fetch latest upstream
+git fetch upstream v31
+
+# 2. Find new upstream commits since last audit
+git log --oneline <last-audited-upstream-sha>..upstream/v31
+
+# 3. For each new commit, check if it's already in the fork
+git show <upstream-hash> --stat   # see files changed
+# Then read the fork's current version of those files to verify
+
+# 4. Categorize each as: PRESENT, MISSING, or PARTIAL
+# 5. For MISSING: assess priority and add to this plan
+```
+
+**Last completed audit**
+
+- **Date:** 2026-03-28
+- **Upstream HEAD at audit time:** `35a75c5a` (tip of `upstream/v31`)
+- **Total upstream commits since fork divergence:** 43
+- **Result:** 11 missing commits identified → item 45 (this sprint)
+- **Previous audits:** item 40 (v30 parity, Mar 18), item 41 (v31 selective intake, Mar 20)
+
+**Audit record template**
+
+When completing a future audit, record it here:
+```
+- **Date:** YYYY-MM-DD
+- **Upstream HEAD:** <sha>
+- **New commits since last audit:** <count>
+- **Missing commits found:** <count> → item <N>
+- **Already present:** <count>
+```
+
+**Key areas to watch in upstream**
+
+These upstream code areas have the highest impact on this fork and should be prioritized during audits:
+
+| Area | Why it matters | Fork-specific considerations |
+|------|---------------|------------------------------|
+| `src/collection.cpp` | Core search/write path | Fork has per-document-ID striped write locks (item 44) and `read_state_t` snapshot |
+| `src/index.cpp` | Search indexing, highlighting | Fork uses USearch instead of hnswlib |
+| `src/batched_indexer.cpp` | Write batching, references | Fork routes through NuRaft consensus |
+| `src/core_api.cpp` | API routing, auth | Fork uses `nuraft_http_runtime.cpp` route table |
+| `src/filter_result_iterator.cpp` | Query filtering | Shared code, usually clean backports |
+| `src/conversation_model.cpp` | LLM conversation | Shared code, usually clean backports |
+| `include/auth_manager.h` | API key handling | Fork has NuRaft-aware auth path |
+| `src/http_server.cpp` | HTTP routing, thread pools | Fork has NuRaft route registration |
+
+**What NOT to auto-backport**
+
+- Changes to `src/raft_server.cpp` or `src/typesense_server_utils.cpp` — these are the old `braft` paths that this fork replaced with NuRaft
+- Changes to build system files (`Makefile`, `cmake/`, `docker/`) — this fork uses Bazel exclusively
+- Changes to `hnswlib` integration — this fork uses USearch
+
+---
+
 ### Backlog map (active / later / archival)
 
 Use this to decide what to pick next without scanning multiple files.
 
-- **Recently finished:** item **41** (`Upstream v31 selective intake audit`) — the low-risk post-fork upstream bugfix subset is landed locally, and the remaining `v31` deltas are now explicit intentional deferrals instead of silent drift.
-- **Recently finished:** item **42** (`Repo-owned prebuilt CUDA ORT bundle intake`) — `@typesense_ort` now lets Linux release lanes consume a repo-owned extracted ORT install-tree bundle when `TYPESENSE_ORT_PREBUILT_BUNDLE_DIR` is set, `scripts/release_ort_bundle.sh` is the canonical packager, `ort-bundles.yml` is the hosted producer, and `release-binaries.yml` now auto-discovers the latest matching same-branch bundle by default while still allowing a specific `ort_bundle_run_id` override.
-- **Recently finished:** item **43** (`Startup config / CLI parity recovery`) — NuRaft remains the runtime entrypoint, but startup now reuses the shared Typesense config surface again so shipped Docker/runtime behavior matches upstream-style CLI/env/INI expectations.
-- **Recently finished:** item **39** (`Search work-budget configurability audit`) — no-go for a new config surface. The old TODO was specific to the pre-Index 2017 search path; current HEAD already exposes the real search-budget controls via `typo_tokens_threshold`, `drop_tokens_threshold`, `max_candidates`, and `search_cutoff_ms`, and the targeted `CollectionTest.TypoTokensThreshold` replay now proves typo expansion depth is not coupled to `per_page`.
-- **Recently finished:** item **38** (`Indexing hot-path string-copy audit`) — commit `7ab4cd8b` landed the real hot-path fix by moving parsed local JSON documents directly into `index_record` in `Collection::add_many(...)`, collection load, and alter-data replay. After fixing the benchmark harness's stale Influx bind-mount cleanup bug, the canonical upstream-comparable `standard/core` replay on `1c34ddf7` vs upstream `30.1` closed green with import `50.270s -> 31.790s` and every meaningful non-zero search scenario faster than upstream, including `filter_simple`, `facet`, and `group`.
-- **Recently finished:** item **37** (`Release workflow promotion / draft-posture cleanup`) — current pushed tip `7eb65c27` is hosted-green on `release-binaries` run `23242998148` and matching `tests` run `23242982005`, and a fresh source audit confirmed the supported-manual-release posture already lived in the workflow/runbook/README/scripts. The only remaining work was removing stale plan-only draft/promotion wording.
-- **Recently finished:** NuRaft follower-read visibility hardening (Mar 2026) — a real multi-node restart regression showed that `committed_index` convergence was not enough for safe follower reads. `NuRaftHttpRuntimeService` now waits for NuRaft local state-machine apply before replaying into live readable state, `/status` reports the real readable applied index, and the API harness now gates on `read_caught_up` across nodes.
-- **Recently finished:** item **36** (`USearch vector backend prototype / refactor boundary`) — the supported production vector path is now fully USearch-based behind `vector_index_t`. Story C removed the remaining in-tree `hnswlib` backend/Bazel dependency from the supported path, benchmarked mixed update/search behavior on the real production backend, and chose USearch's builtin normalized-IP metric over the temporary scalar parity shim while rejecting raw builtin cosine as slower with no checksum/quality gain.
-- **Recently finished:** item **35** (`Script / doc entrypoint architecture cleanup`) — Story A found the public wrapper boundary was already mostly right, but the docs overstated narrow support helpers and one publish helper still lived at repo root. Story B moved the publish helper into `scripts/publish_release.sh`, documented `api_tests/scripts/prepare_runtime_bundle.sh` and `test/scripts/prewarm_public_test_models.sh` as internal support helpers instead of first-choice task entrypoints, kept `debian-pkg/` as the internal packaging asset boundary, and fixed `test/scripts/replay_typesense_test.sh` to call the repo-owned prewarmed public-model helper directly.
-- **Recently finished:** item **34** (`Replace patch-only forks with released upstream versions where possible`) — the stale `typesense/hnswlib` fork is gone, `clip_tokenizer_cpp` now points at the identical upstream `ozanarmagan/clip_tokenizer_cpp` commit instead of a Typesense mirror, and `kakasi` now points at upstream `loretoparisi/kakasi` with a small repo-owned patch plus the in-repo `japanese_data` payload. Item **36** later removed the supported `hnswlib` runtime path entirely, so no fork-backed Bazel deps remain.
-- **Recently finished:** item **33** (`GPU deps artifact automation boundary`) — Story A first found the real blocker in the one-Protobuf CUDA server path, then unblocked it with a repo-owned protobuf compatibility patch under the new `docker/ci-bazel-cuda.Dockerfile` toolchain. Story B added the canonical `scripts/release_linux_gpu_deps.sh` producer, fixed `debian-pkg/gpu_generate_deb_rpm.sh`, folded the Linux-only GPU-deps job into `release-binaries.yml` so one manual workflow dispatch can build the full release set, updated Linux `release-binaries` to build the regular server artifact with `--define=use_cuda=on`, and kept docs honest that the GPU scope on this branch is ONNX Runtime embeddings/personalization only (`typesense-gpu-deps` contains `libonnxruntime_providers_shared.so` + `libonnxruntime_providers_cuda.so`; Whisper remains CPU-only). Item **32** (`Upstream arm64 lg-page16 release parity`) — Story A landed on go and kept the variant inside `release-binaries` instead of a sibling workflow. The canonical Linux release wrapper now has a `--jemalloc-lg-page16` lane, `scripts/bazel_in_docker.sh` can target the matching Docker platform for cross-arch local replay, `release-binaries.yml` now includes `linux-arm64-lg-page16`, and the local split proof covered both the build-side jemalloc `--with-lg-page=16` configuration and the expected `arm64-lg-page16` DEB/RPM naming. Item **31** (`Container-first tooling coverage audit`) — Story A ranked the remaining host-dependent flows and landed on go only for the benchmark lane. The benchmark wrapper now defaults to the repo's Dockerized CLI, `benchmark-testing.yml` no longer installs Bun on the runner, and the remaining host-only paths are now explicit as intentional escape hatches (`--host-bun`, `check_local_toolchain.sh`) or native constraints (Darwin release lanes). Item **30** (`NuRaft post-cutover benchmark baseline refresh`) — Story A landed on no-go for a fresh replay. Keep Run 27 plus the current `standard/core` policy as the canonical post-cutover baseline, and treat hosted `benchmark-testing` as a same-branch guardrail only. The latest hosted proof remains run `23085170081` on March 14, 2026 (`27bb2bff` vs `985acb45`), and the stale `//:nuraft-prototype-benchmark` guidance has been removed from the current docs. Item **29** (`Explicit compiler-config topology audit`) — Story A landed on no-go for a topology rewrite. Keep the wrapper-driven default GCC contract for now: the Docker image already makes GCC the routine compiler, `build:gcc` only scopes GCC-only suppressions, and the repo only has one explicit clang lane today (`check_clang_warning_guardrail.sh`). Rewriting the topology around explicit compiler entrypoints would mostly duplicate flags across workflows and wrappers without adding new verified coverage. Item **28** (`Cross-platform debug-symbol policy parity`) — Story A landed on no-go for Darwin `dSYM` sidecars. Keep Linux split debug info because it materially shrinks the shipped runtime artifact, but make Darwin explicit as the current unstripped tarball with embedded DWARF and no sidecar until there is a concrete size/symbolication need plus a macOS-native validation lane. Local `18adf2a0` proof measured `401M` unstripped vs `129M` stripped runtime + `292M` debug file (`44M` + `104M` tarballs), while a comparable single unstripped tarball from the same binary measured `145M`. Item **27** (`Env-dependent suite enablement and hosted-proof audit`) — the supported env-dependent matrix is now explicit, secret-gated API coverage stays all-or-nothing on the three existing repo secrets, TEI keeps its dedicated lane, and the stale migration-download story is retired as unsupported in the current Bun harness. Story B also closed the hidden NuRaft `post_multi_search` auth regression and the Dockerized Bun env-forwarding gap. Item **26** (`ORT external Abseil injection and upgrade unblock`) — Story A landed on go with a BUILD-level `FETCHCONTENT_SOURCE_DIR_ABSEIL_CPP` override on ORT's one-protobuf static lane, `abseil-cpp` is now `20260107.1`, and the canonical build + API health replay + targeted ORT-backed C++ replay all passed without growing `bazel/onnxruntime.patch`. Item **24** (`Release artifact debug-info policy`) — Linux release artifacts now use split debug info: stripped runtime tarball/package path plus a separate `.debug.tar.gz` sidecar, implemented directly in `release-binaries.yml` and measured locally at `427M -> 151M + 297M`. Item **23** (`Compile warning audit / cleanup`) — normal, ASAN, and TSAN local warning audits are now clean apart from the known Bazel/OpenJDK banner after scoping sanitizer-only suppressions to GCC 14/libstdc++ regex false positives and TSAN Abseil `-Wtsan` noise. Item **22** (`Release workflow promotion / current-tip full-matrix replay`) — run `23088513187` succeeded on `linux-amd64`, `linux-arm64`, `darwin-arm64`, and `darwin-amd64`; the matching publish dry-run on version label `0.0.0-a2832b63` logged all `12` expected uploads after the RPM-glob fix. Item **20** (`Sanitizer lane stabilization + ORT extensions boundary audit`) — default ASAN is green again after removing `new_delete_type_mismatch=0` from `.bazelrc`, and the remaining ORT issue was resolved by rewriting fetched `OrtOpLoader` statics to process lifetime inside `bazel/onnxruntime.patch`. Item **21** (`NuRaft import/runtime parity + benchmark refactor sprint`) — hosted `benchmark-testing` is green on `27bb2bff` after the final replay-model fix. Item **18** (`Dependency refresh audit`) — all actionable deps at latest, patch debt at minimum. Item **19** (`NuRaft cutover`) — 120/120 API tests. Item **9** (`Protobuf 34`) — 34.0.bcr.1.
-- **Recently finished:** whisper.cpp v1.8.3 upgrade — patch reduced from 7 hunks to 1, BUILD rewrite to cmake rule. NuRaft async/streaming parity verified against upstream (both synchronous, full match).
-- **Later:** re-audit `bazel/kakasi.patch` if upstream `kakasi` lands those fixes or publishes a new usable release/source, and monitor future sanitizer warning growth when GCC/libstdc++ or Abseil changes again, but keep any suppression file-scoped and dependency-scoped rather than broad. Re-mine `TODO.md` only after items **40** and **41** have been triaged, since upstream parity/intake is now the clearer near-term queue.
-- **Archival/reference (not immediate execution lanes):**
+- **Active:** item **45** (`Upstream v31 parity Phase 2`) — 11 confirmed-missing upstream commits need backporting in 3 phases. Phase 1 (5 trivial fixes) is ready to start immediately.
+- **Active:** items **25a/25b** (`DDEV re-check`) — fresh image build and heavy-import responsiveness validation.
+- **Recently finished:** item **44** (`Same-document concurrent write correctness hardening`) — per-document-ID striped write locks in `Collection::add_many()`.
+- **Recently finished:** item **43** (`Startup config / CLI parity recovery`) — shared Typesense config surface restored for NuRaft runtime.
+- **Recently finished:** item **42** (`Repo-owned prebuilt CUDA ORT bundle intake`) — Linux release lanes reuse ORT bundles, source-build as fallback.
+- **Recently finished:** item **41** (`Upstream v31 selective intake audit`, Mar 20) — 5 backports landed, 2 deferred. Superseded by item 45 for remaining gaps.
+- **Recently finished:** item **40** (`Upstream v30 release-parity catch-up audit`, Mar 18) — 11 backports landed. Stable-line parity is intentional.
+- **Completed items 1-39:** all done. See individual sections above for details. Key highlights: NuRaft cutover (item 19), USearch vector backend (item 36), Bazel 9 (item 6), RocksDB tuning (item 13), release workflow (items 25/37), indexing perf (item 38).
+- **Later:** re-audit `bazel/kakasi.patch` if upstream publishes fixes. Monitor sanitizer warning growth. Re-mine `TODO.md` only when aligned with current goals.
+- **Archival/reference:**
   - `benchmark/BENCHMARK_RESULTS.md` P2/P3 backlog items (experimental/future ideas).
-  - `TODO.md` upstream product backlog (not the modernization source of truth; mine opportunistically only when an item aligns with current modernization goals).
+  - `TODO.md` upstream product backlog (mine opportunistically).
 
 ### 21a) NuRaft import/runtime parity + benchmark refactor sprint
 
