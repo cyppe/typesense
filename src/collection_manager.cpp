@@ -477,30 +477,13 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
     const size_t num_collections = collection_meta_jsons.size();
     TS_LOG(INFO) << "Found " << num_collections << " collection(s) on disk.";
 
-    if (!store->contains(REFERENCED_INS)) {
-        _populate_referenced_ins(collection_meta_jsons, referenced_ins);
-    } else {
-        std::string referenced_ins_str;
-        store->get(REFERENCED_INS, referenced_ins_str);
-        if (!referenced_ins_str.empty()) {
-            const auto& referenced_ins_json = nlohmann::json::parse(referenced_ins_str);
-            for (const auto& referenced_coll: referenced_ins_json) {
-                auto referenced_coll_it = referenced_coll.find("referenced_coll_name");
-                if (referenced_coll_it == referenced_coll.end()) {
-                    continue;
-                }
-
-                auto referenced_infos_it = referenced_coll.find("referenced_infos");
-                if (referenced_infos_it == referenced_coll.end()) {
-                    continue;
-                }
-
-                for (const auto& ref_info: referenced_infos_it.value()) {
-                    referenced_ins[referenced_coll_it.value()].insert({ref_info["collection"], reference_info_t(ref_info)});
-                }
-            }
-        }
-    }
+    // Always recompute referenced_ins from collection schemas rather than trusting
+    // the persisted $REFERENCED_INS key. That key is only written during dispose()
+    // (clean shutdown) and is never updated at runtime when collections with reference
+    // fields are created or dropped. After a Raft snapshot restore the key will be
+    // stale, causing JOINs to fail with "No reference field found".
+    // See: https://github.com/typesense/typesense/issues/2857
+    _populate_referenced_ins(collection_meta_jsons, referenced_ins);
 
     // load stemming dictionaries
     std::string stemming_dictionary_prefix_key = std::string(StemmerManager::STEMMING_DICTIONARY_PREFIX) + "_";
@@ -667,20 +650,9 @@ Option<bool> CollectionManager::load(const size_t collection_batch_size, const s
 void CollectionManager::dispose() {
     std::unique_lock lock(mutex);
 
-    auto referenced_ins_json = nlohmann::json::array();
-    for (const auto& pair: referenced_ins) {
-        nlohmann::json temp_json;
-        temp_json["referenced_coll_name"] = pair.first;
-        for (const auto& item: pair.second) {
-            const auto& ref_info = item.second;
-            temp_json["referenced_infos"] += reference_info_t::to_json(ref_info);
-        }
-
-        referenced_ins_json += temp_json;
-    }
-    if (!store->insert(REFERENCED_INS, referenced_ins_json.dump())) {
-         TS_LOG(ERROR) << "Could not persist referenced_ins to store.";
-    }
+    // $REFERENCED_INS is no longer persisted — always recomputed from schemas on load.
+    // Remove stale key if present so old snapshots don't carry dead weight.
+    store->remove(REFERENCED_INS);
 
     collections.clear();
     collection_symlinks.clear();
