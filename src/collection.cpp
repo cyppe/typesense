@@ -2807,13 +2807,12 @@ Option<bool> Collection::curate_results(std::string& actual_query, const std::st
         };
 
         if(!curation_set_curations.empty()) {
-          std::string query;
+          auto compute_base_query = [&]() -> std::string {
+              return actual_query == "*" ? "*" : tokenize_query();
+          };
 
-          if(actual_query == "*") {
-              query = "*";
-          } else {
-              query = tokenize_query();
-          }
+          std::string base_query = compute_base_query();
+          std::string query;
 
           if(!tags.empty()) {
               bool all_tags_found = false;
@@ -2821,6 +2820,8 @@ Option<bool> Collection::curate_results(std::string& actual_query, const std::st
                   // exact AND match only when multiple tags are sent
                   for(const auto* ov : curation_set_curations) {
                       if(ov->rule.tags == tags) {
+                          query = base_query;
+
                           if(ov->rule.stem) {
                             query = tokenize_query(true, ov->rule.locale, ov->rule.stemming_dictionary);
                           }
@@ -2833,6 +2834,7 @@ Option<bool> Collection::curate_results(std::string& actual_query, const std::st
                                                                 curated_sort_by, curation_metadata, ov->rule.synonyms,
                                                                 synonym_prefix, synonym_num_typos);
                           if(match_found) {
+                              base_query = compute_base_query();
                               all_tags_found = true;
                               if(ov->stop_processing) { break; }
                           }
@@ -2848,6 +2850,7 @@ Option<bool> Collection::curate_results(std::string& actual_query, const std::st
                                             tags.begin(), tags.end(),
                                             std::inserter(matching_tags, matching_tags.begin()));
                       if(matching_tags.empty()) { continue; }
+                      query = base_query;
 
                       if(ov->rule.stem) {
                           query = tokenize_query(true, ov->rule.locale, ov->rule.stemming_dictionary);
@@ -2861,6 +2864,7 @@ Option<bool> Collection::curate_results(std::string& actual_query, const std::st
                                                             curated_sort_by, curation_metadata, ov->rule.synonyms,
                                                             synonym_prefix, synonym_num_typos);
                       if(match_found) {
+                        base_query = compute_base_query();
                         if (!ov->diversity.similarity_equation.empty()) {
                             diversity = std::move(ov->diversity);
                             for (auto& item: diversity.similarity_equation) {
@@ -2885,6 +2889,8 @@ Option<bool> Collection::curate_results(std::string& actual_query, const std::st
           } else {
               // no curation tags given
               for(const auto* ov : curation_set_curations) {
+                  query = base_query;
+
                   bool wildcard_tag = ov->rule.tags.size() == 1 && *ov->rule.tags.begin() == "*";
                   if(ov->rule.stem) {
                       query = tokenize_query(true, ov->rule.locale, ov->rule.stemming_dictionary);
@@ -2896,7 +2902,10 @@ Option<bool> Collection::curate_results(std::string& actual_query, const std::st
                                                         excluded_ids, filter_sort_curations, filter_curated_hits,
                                                         curated_sort_by, curation_metadata, ov->rule.synonyms, synonym_prefix,
                                                         synonym_num_typos);
-                  if(match_found && ov->stop_processing) { break; }
+                  if(match_found) {
+                      base_query = compute_base_query();
+                      if(ov->stop_processing) { break; }
+                  }
               }
           }
         }
@@ -4084,6 +4093,15 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
             return Option<bool>(400, error);
         }
 
+        if(search_schema.count(field_name) == 0) {
+            if(!validate_field_names) {
+                skipped_invalid_group_field = true;
+                continue;
+            }
+
+            return Option<bool>(404, "Could not find a field named `" + field_name + "` in the schema.");
+        }
+
         field search_field = search_schema.at(field_name);
 
         // must be a facet field
@@ -4374,7 +4392,9 @@ Option<bool> Collection::init_index_search_args(collection_search_args_t& coll_a
         // included_ids, excluded_ids
         process_filter_sort_curations(filter_sort_curations, q_include_tokens, token_order, filter_tree_root_guard,
                                  included_ids, excluded_ids, curation_metadata, curated_sort_by, enable_typos_for_numerical_tokens,
-                                 enable_typos_for_alpha_numerical_tokens, validate_field_names);
+                                 enable_typos_for_alpha_numerical_tokens, validate_field_names, field_locale,
+                                 most_weighted_field.get_stemmer(), most_weighted_field.symbols_to_index,
+                                 most_weighted_field.token_separators);
 
         for(size_t i = 0; i < q_include_tokens.size(); i++) {
             auto& q_include_token = q_include_tokens[i];
@@ -6093,18 +6113,26 @@ void Collection::process_filter_sort_curations(std::vector<const curation_t*>& f
                                           std::string& sort_by_clause,
                                           bool enable_typos_for_numerical_tokens,
                                           bool enable_typos_for_alpha_numerical_tokens,
-                                          const bool& validate_field_names) const {
+                                          const bool& validate_field_names,
+                                          const std::string& query_locale,
+                                          std::shared_ptr<Stemmer> stemmer,
+                                          const std::vector<char>& query_symbols_to_index,
+                                          const std::vector<char>& query_token_separators) const {
 
     std::vector<const curation_t*> matched_dynamic_curations;
-    auto compute_normalized_query = [this](const std::string& query) {
-      auto symbols = symbols_to_index;
+    auto compute_normalized_query = [&](const curation_t& curation) {
+      auto symbols = query_symbols_to_index.empty() ? symbols_to_index : query_symbols_to_index;
       symbols.push_back('{');
       symbols.push_back('}');
       symbols.push_back('*');
       symbols.push_back('.');
 
+      const auto& separators = query_token_separators.empty() ? token_separators : query_token_separators;
+      const bool use_search_field_stemmer = !curation.rule.dynamic_query && !curation.rule.dynamic_filter;
+
       std::vector<std::string> tokens;
-      Tokenizer tokenizer(query, true, false, "", symbols, token_separators, nullptr, true);
+      Tokenizer tokenizer(curation.rule.query, true, false, query_locale, symbols, separators,
+                          use_search_field_stemmer ? stemmer : nullptr, true);
       tokenizer.tokenize(tokens);
       auto query_normalized = StringUtils::join(tokens, " ");
       size_t i = 0;
@@ -6125,13 +6153,19 @@ void Collection::process_filter_sort_curations(std::vector<const curation_t*>& f
       return query_normalized;
     };
     std::vector<std::string> curation_normalized_queries;
+    std::vector<std::set<std::string>> curation_rule_token_sets;
     for(const auto* ov : filter_sort_curations) {
-      curation_normalized_queries.push_back(compute_normalized_query(ov->rule.query));
+      auto query_normalized = compute_normalized_query(*ov);
+      curation_normalized_queries.push_back(query_normalized);
+
+      std::vector<std::string> rule_tokens;
+      StringUtils::split(query_normalized, rule_tokens, " ");
+      curation_rule_token_sets.emplace_back(rule_tokens.begin(), rule_tokens.end());
     }
-    index->process_filter_sort_curations(filter_sort_curations, curation_normalized_queries, q_include_tokens, token_order,
-                                    filter_tree_root, matched_dynamic_curations, curation_metadata,
-                                    sort_by_clause, enable_typos_for_numerical_tokens,
-                                    enable_typos_for_alpha_numerical_tokens);
+    index->process_filter_sort_curations(filter_sort_curations, curation_normalized_queries, curation_rule_token_sets,
+                                    q_include_tokens, token_order, filter_tree_root, matched_dynamic_curations,
+                                    curation_metadata, sort_by_clause, enable_typos_for_numerical_tokens,
+                                    enable_typos_for_alpha_numerical_tokens, validate_field_names);
 
     // we will check the dynamic curations to see if they also have include/exclude
     std::set<uint32_t> excluded_set;
@@ -8122,6 +8156,7 @@ Option<bool> Collection::update_apikey(const nlohmann::json& model_config, const
 
             coll_model_config[fields::api_key] = api_key;
             embedding_fields[field_name].embed[fields::model_config][fields::api_key] = api_key;
+            search_schema.at(field_name).embed[fields::model_config][fields::api_key] = api_key;
 
             auto persist_op = persist_collection_meta();
             if (!persist_op.ok()) {

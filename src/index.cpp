@@ -3215,6 +3215,7 @@ bool Index::resolve_curation(const std::vector<std::string>& rule_tokens, const 
 
 void Index::process_filter_sort_curations(const std::vector<const curation_t*>& filter_sort_curations,
                                      std::vector<std::string>& curation_normalized_queries,
+                                     const std::vector<std::set<std::string>>& curation_rule_token_sets,
                                      std::vector<std::string>& query_tokens,
                                      token_ordering token_order,
                                      std::unique_ptr<filter_node_t>& filter_tree_root,
@@ -3239,10 +3240,7 @@ void Index::process_filter_sort_curations(const std::vector<const curation_t*>& 
                     curation_metadata = curation->metadata;
                 }
                 if (curation->remove_matched_tokens) {
-                    std::vector<std::string> rule_tokens;
-                    Tokenizer(curation->rule.query, true).tokenize(rule_tokens);
-                    std::set<std::string> rule_token_set(rule_tokens.begin(), rule_tokens.end());
-                    remove_matched_tokens(query_tokens, rule_token_set);
+                    remove_matched_tokens(query_tokens, curation_rule_token_sets[i]);
                 }
 
                 if (curation->stop_processing) {
@@ -7127,8 +7125,12 @@ int64_t Index::score_results2(const std::vector<sort_by> & sort_fields, const ui
         );
         size_t words_present = (num_query_tokens == 1 && is_synonym_query) ? syn_orig_num_tokens : 1;
         size_t distance = (num_query_tokens == 1 && is_synonym_query) ? syn_orig_num_tokens-1 : 0;
-        size_t max_offset = prioritize_token_position ? posting_list_t::get_last_offset(posting_lists[0],
-                                                                                        field_is_array) : 255;
+        size_t max_offset = 255;
+        if(prioritize_token_position) {
+            size_t first_offset = posting_list_t::get_first_offset(posting_lists[0], field_is_array);
+            // Posting-list offsets are 1-based for actual token positions; normalize to Match's 0-based scale.
+            max_offset = (first_offset == 0) ? 0 : std::min<size_t>(255, first_offset - 1);
+        }
         uint8_t synonym_score = (is_synonym_query && demote_synonym_match) ? 0 : 1;
         Match single_token_match = Match(words_present, distance, max_offset, is_verbatim_match);
         match_score = single_token_match.get_match_score(total_cost, words_present, synonym_score);

@@ -444,7 +444,20 @@ bool handle_authentication(std::map<std::string, std::string>& req_params,
         return false;
     }
 
-    return collectionManager.auth_key_matches(req_auth_key, rpath.action, collections, req_params, embedded_params_vec);
+    const bool authenticated = collectionManager.auth_key_matches(req_auth_key, rpath.action, collections, req_params,
+                                                                  embedded_params_vec);
+    if(!authenticated) {
+        return false;
+    }
+
+    // Carry the auth-resolved collection forward so later request merging cannot change the search target.
+    for(size_t i = 0; i < collections.size(); i++) {
+        if(embedded_params_vec[i].count(AuthManager::AUTH_RESOLVED_COLLECTION_PARAM) == 0) {
+            embedded_params_vec[i][AuthManager::AUTH_RESOLVED_COLLECTION_PARAM] = collections[i].collection;
+        }
+    }
+
+    return true;
 }
 
 bool auth_needs_full_body(const route_path& rpath) {
@@ -1553,17 +1566,38 @@ bool get_status(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
 }
 
 uint64_t hash_request(const std::shared_ptr<http_req>& req) {
-    std::stringstream ss;
-    ss << req->route_hash << req->body;
+    auto append_component = [](std::string& req_str, const std::string& value) {
+        req_str.append(std::to_string(value.size()));
+        req_str.push_back(':');
+        req_str.append(value);
+    };
 
-    for(auto& kv: req->params) {
+    std::string req_str;
+    req_str.reserve(req->body.size() + (req->params.size() * 32) + (req->embedded_params_vec.size() * 72) + 64);
+
+    append_component(req_str, std::to_string(req->route_hash));
+    append_component(req_str, req->body);
+
+    for(const auto& kv : req->params) {
         const auto& param_name = kv.first;
         if(param_name != "use_cache" && param_name != http_req::USER_HEADER) {
-            ss << kv.second;
+            append_component(req_str, param_name);
+            append_component(req_str, kv.second);
         }
     }
 
-    const std::string& req_str = ss.str();
+    for(const auto& embedded_params_item : req->embedded_params_vec) {
+        req_str.push_back(';');
+        for(const auto& item : embedded_params_item.items()) {
+            if(item.key() == "expires_at" || item.key() == AuthManager::AUTH_RESOLVED_COLLECTION_PARAM) {
+                continue;
+            }
+
+            append_component(req_str, item.key());
+            append_component(req_str, item.value().dump());
+        }
+    }
+
     return StringUtils::hash_wy(req_str.c_str(), req_str.size());
 }
 
@@ -2250,6 +2284,8 @@ bool post_multi_search(const std::shared_ptr<http_req>& req, const std::shared_p
             // pop the last element from first array
             if(result_docs_arr.size() > 0 && result_docs_arr[0].size() > 0) {
                 result_docs_arr[0].erase(result_docs_arr[0].size() - 1);
+            } else {
+                break;
             }
         }
 
