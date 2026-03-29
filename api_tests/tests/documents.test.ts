@@ -89,7 +89,7 @@ describe(Phases.SINGLE_FRESH, () => {
     let res = await fetchSingleNode("/collections", {
       method: "POST",
       body: JSON.stringify({
-        name: "companies_docs_single",
+        name: "companies_docs_basic",
         fields: [
           { name: "id", type: "string" },
           { name: "company_name", type: "string" },
@@ -100,7 +100,7 @@ describe(Phases.SINGLE_FRESH, () => {
     });
 
     expect(res.ok).toBe(true);
-    res = await fetchSingleNode("/collections/companies_docs_single/documents", {
+    res = await fetchSingleNode("/collections/companies_docs_basic/documents", {
       method: "POST",
       body: JSON.stringify({
         id: "1",
@@ -114,7 +114,7 @@ describe(Phases.SINGLE_FRESH, () => {
     expect(d1.success).toBe(true);
     expect(d1.data?.id).toBe("1");
 
-    res = await fetchSingleNode("/collections/companies_docs_single/documents", {
+    res = await fetchSingleNode("/collections/companies_docs_basic/documents", {
       method: "POST",
       body: JSON.stringify({
         id: "2",
@@ -130,7 +130,7 @@ describe(Phases.SINGLE_FRESH, () => {
   });
 
   it("get a document by id", async () => {
-    const res = await fetchSingleNode("/collections/companies_docs_single/documents/1", {
+    const res = await fetchSingleNode("/collections/companies_docs_basic/documents/1", {
       method: "GET",
     });
     expect(res.ok).toBe(true);
@@ -141,7 +141,7 @@ describe(Phases.SINGLE_FRESH, () => {
 
   it("search documents", async () => {
     const res = await fetchSingleNode(
-      "/collections/companies_docs_single/documents/search?q=stark&query_by=company_name",
+      "/collections/companies_docs_basic/documents/search?q=stark&query_by=company_name",
       { method: "GET" }
     );
     expect(res.ok).toBe(true);
@@ -153,7 +153,7 @@ describe(Phases.SINGLE_FRESH, () => {
   });
 
   it("update a document via PATCH", async () => {
-    const res = await fetchSingleNode("/collections/companies_docs_single/documents/1", {
+    const res = await fetchSingleNode("/collections/companies_docs_basic/documents/1", {
       method: "PATCH",
       body: JSON.stringify({ num_employees: 12000 }),
     });
@@ -167,7 +167,7 @@ describe(Phases.SINGLE_FRESH, () => {
     let res = await fetchSingleNode("/collections", {
       method: "POST",
       body: JSON.stringify({
-        name: "companies_docs_single_upsert",
+        name: "companies_docs_basic_upsert",
         fields: [
           { name: "id", type: "string" },
           { name: "company_name", type: "string" },
@@ -178,7 +178,7 @@ describe(Phases.SINGLE_FRESH, () => {
     });
     expect(res.ok).toBe(true);
 
-    res = await fetchSingleNode("/collections/companies_docs_single_upsert/documents?action=upsert", {
+    res = await fetchSingleNode("/collections/companies_docs_basic_upsert/documents?action=upsert", {
       method: "POST",
       body: JSON.stringify({
         id: "1",
@@ -192,7 +192,7 @@ describe(Phases.SINGLE_FRESH, () => {
     expect(doc.success).toBe(true);
     expect(doc.data?.num_employees).toBe(1000);
 
-    res = await fetchSingleNode("/collections/companies_docs_single_upsert/documents?action=upsert", {
+    res = await fetchSingleNode("/collections/companies_docs_basic_upsert/documents?action=upsert", {
       method: "POST",
       body: JSON.stringify({
         id: "1",
@@ -210,7 +210,7 @@ describe(Phases.SINGLE_FRESH, () => {
   });
 
   it("delete a document by id", async () => {
-    const res = await fetchSingleNode("/collections/companies_docs_single/documents/2", {
+    const res = await fetchSingleNode("/collections/companies_docs_basic/documents/2", {
       method: "DELETE",
     });
     expect(res.ok).toBe(true);
@@ -226,7 +226,7 @@ describe(Phases.SINGLE_FRESH, () => {
     ].join("\n");
 
     const res = await fetchSingleNode(
-      "/collections/companies_docs_single/documents/import?action=upsert",
+      "/collections/companies_docs_basic/documents/import?action=upsert",
       {
         method: "POST",
         body: jsonl,
@@ -242,7 +242,7 @@ describe(Phases.SINGLE_FRESH, () => {
     }
 
     let getRes = await fetchSingleNode(
-      "/collections/companies_docs_single/documents/1",
+      "/collections/companies_docs_basic/documents/1",
       { method: "GET" }
     );
     expect(getRes.ok).toBe(true);
@@ -251,7 +251,7 @@ describe(Phases.SINGLE_FRESH, () => {
     expect(doc1.data?.num_employees).toBe(13000);
 
     getRes = await fetchSingleNode(
-      "/collections/companies_docs_single/documents/3",
+      "/collections/companies_docs_basic/documents/3",
       { method: "GET" }
     );
     expect(getRes.ok).toBe(true);
@@ -264,7 +264,7 @@ describe(Phases.SINGLE_FRESH, () => {
     let res = await fetchSingleNode("/collections", {
       method: "POST",
       body: JSON.stringify({
-        name: "companies_docs_single_emplace",
+        name: "companies_docs_basic_emplace",
         fields: [
           { name: "id", type: "string" },
           { name: "company_name", type: "string" },
@@ -275,7 +275,7 @@ describe(Phases.SINGLE_FRESH, () => {
     });
     expect(res.ok).toBe(true);
 
-    res = await fetchSingleNode("/collections/companies_docs_single_emplace/documents", {
+    res = await fetchSingleNode("/collections/companies_docs_basic_emplace/documents", {
       method: "POST",
       body: JSON.stringify({
         id: "1",
@@ -292,7 +292,7 @@ describe(Phases.SINGLE_FRESH, () => {
     ].join("\n");
 
     res = await fetchSingleNode(
-      "/collections/companies_docs_single_emplace/documents/import?action=emplace",
+      "/collections/companies_docs_basic_emplace/documents/import?action=emplace",
       {
         method: "POST",
         body: jsonl,
@@ -306,7 +306,7 @@ describe(Phases.SINGLE_FRESH, () => {
       expect(parsed.success).toBe(true);
     }
 
-    let getRes = await fetchSingleNode("/collections/companies_docs_single_emplace/documents/1", { method: "GET" });
+    let getRes = await fetchSingleNode("/collections/companies_docs_basic_emplace/documents/1", { method: "GET" });
     expect(getRes.ok).toBe(true);
     let doc1 = DocumentSchema.safeParse(await getRes.json());
     expect(doc1.success).toBe(true);
@@ -314,7 +314,7 @@ describe(Phases.SINGLE_FRESH, () => {
     expect(doc1.data?.num_employees).toBe(14000);
     expect(doc1.data?.country).toBe("US");
 
-    getRes = await fetchSingleNode("/collections/companies_docs_single_emplace/documents/2", { method: "GET" });
+    getRes = await fetchSingleNode("/collections/companies_docs_basic_emplace/documents/2", { method: "GET" });
     expect(getRes.ok).toBe(true);
     const doc2 = DocumentSchema.safeParse(await getRes.json());
     expect(doc2.success).toBe(true);
@@ -325,7 +325,7 @@ describe(Phases.SINGLE_FRESH, () => {
 
 describe(Phases.SINGLE_RESTARTED, () => {
   it("get a created document after restart", async () => {
-    const res = await fetchSingleNode("/collections/companies_docs_single/documents/1", {
+    const res = await fetchSingleNode("/collections/companies_docs_basic/documents/1", {
       method: "GET",
     });
     expect(res.ok).toBe(true);
@@ -337,7 +337,7 @@ describe(Phases.SINGLE_RESTARTED, () => {
 
 describe(Phases.SINGLE_SNAPSHOT, () => {
   it("get a created document after snapshot", async () => {
-    const res = await fetchSingleNode("/collections/companies_docs_single/documents/1", {
+    const res = await fetchSingleNode("/collections/companies_docs_basic/documents/1", {
       method: "GET",
     });
     expect(res.ok).toBe(true);
