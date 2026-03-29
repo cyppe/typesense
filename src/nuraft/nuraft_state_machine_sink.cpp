@@ -115,9 +115,13 @@ bool parse_json_object_and_extract_id(std::string_view body,
     if (document_id != nullptr) {
         yyjson_val* id_value = yyjson_obj_get(root, "id");
         if (id_value == nullptr) {
+            // Defensive fallback: auto-ID injection should have added an ID before
+            // Raft serialization. If it's still missing, skip this document's KV
+            // write rather than failing the entire batch.
             yyjson_doc_free(document);
-            error = "NuRaft materialized sink needs a document id for this route";
-            return false;
+            document_id->clear();
+            error.clear();
+            return true;
         }
 
         if (yyjson_is_str(id_value)) {
@@ -179,8 +183,11 @@ bool resolve_document_id(const NuRaftAppliedRequest& request,
         return false;
     }
     if (!parsed.is_object() || !parsed.contains("id")) {
-        error = "NuRaft materialized sink needs a document id for this route";
-        return false;
+        // Defensive fallback: skip KV write for documents without an ID rather
+        // than failing. Auto-ID injection should have added one pre-Raft.
+        document_id.clear();
+        error.clear();
+        return true;
     }
 
     if (parsed["id"].is_string()) {
@@ -383,6 +390,7 @@ bool apply_import_mutation(rocksdb::DB* db,
     }
 
     for (size_t i = 0; i < documents.size(); ++i) {
+        if (document_ids[i].empty()) continue;  // Skip docs without ID.
         batch.Put(document_key(collection, document_ids[i]), documents[i]);
     }
 
@@ -452,6 +460,9 @@ bool apply_materialized_mutation(rocksdb::DB* db,
             if (!resolve_collection_name(request, collection, error) ||
                 !resolve_document_id(request, document_id, error)) {
                 return false;
+            }
+            if (document_id.empty()) {
+                break;  // Skip KV write for docs without ID (defensive fallback).
             }
             if (request.metadata == "PATCH") {
                 std::string existing_document;

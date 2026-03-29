@@ -1,8 +1,10 @@
 #include "nuraft/nuraft_http_runtime.h"
 
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <exception>
+#include <random>
 #include <set>
 #include <thread>
 #include <utility>
@@ -26,6 +28,60 @@ namespace {
 constexpr const char* kCollectionPrefix = "state/collections/";
 constexpr const char* kDocumentPrefix = "state/documents/";
 constexpr size_t kDocumentImportRaftChunkMaxBytes = 4 * 1024 * 1024;
+
+// Generate a unique document ID for auto-ID documents before Raft serialization.
+// Uses hex timestamp + random to avoid collisions with Typesense's seq_id-based decimal IDs.
+std::string generate_auto_document_id() {
+    static thread_local std::mt19937_64 rng(
+        std::chrono::steady_clock::now().time_since_epoch().count() ^
+        reinterpret_cast<uint64_t>(&rng));  // NOLINT
+    const uint64_t ts = static_cast<uint64_t>(
+        std::chrono::system_clock::now().time_since_epoch().count());
+    const uint64_t rand_val = rng();
+    char buf[33];
+    std::snprintf(buf, sizeof(buf), "%016llx%016llx",
+                  static_cast<unsigned long long>(ts),
+                  static_cast<unsigned long long>(rand_val));
+    return std::string(buf, 32);
+}
+
+// Inject auto-generated IDs into JSONL import body lines that lack an "id" field.
+bool inject_auto_ids_into_import_body(std::string& body) {
+    if (body.empty()) return true;
+
+    std::string result;
+    result.reserve(body.size() + 256);
+    size_t pos = 0;
+    bool modified = false;
+
+    while (pos < body.size()) {
+        size_t nl = body.find('\n', pos);
+        if (nl == std::string::npos) nl = body.size();
+        std::string line = body.substr(pos, nl - pos);
+        pos = nl + 1;
+
+        if (!line.empty()) {
+            try {
+                nlohmann::json doc = nlohmann::json::parse(line);
+                if (doc.is_object() && !doc.contains("id")) {
+                    doc["id"] = generate_auto_document_id();
+                    line = doc.dump();
+                    modified = true;
+                }
+            } catch (const std::exception&) {
+                // Leave unparseable lines as-is; they will fail downstream.
+            }
+        }
+
+        if (!result.empty()) result.push_back('\n');
+        result += line;
+    }
+
+    if (modified) {
+        body = std::move(result);
+    }
+    return true;
+}
 uint64_t elapsed_ms_since(const std::chrono::steady_clock::time_point& start_time) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - start_time).count();
@@ -144,8 +200,9 @@ NuRaftHttpRuntimeService* current_runtime_service() {
 bool apply_typesense_write_handler(const std::shared_ptr<http_req>& request,
                                    bool (*handler)(const std::shared_ptr<http_req>&,
                                                    const std::shared_ptr<http_res>&),
-                                   std::string& error) {
-    auto response = std::make_shared<http_res>(nullptr);
+                                   std::string& error,
+                                   std::shared_ptr<http_res> captured_response = nullptr) {
+    auto response = captured_response ? captured_response : std::make_shared<http_res>(nullptr);
     if (handler(request, response)) {
         error.clear();
         return true;
@@ -504,27 +561,28 @@ bool NuRaftHttpRuntimeService::cache_enabled() const {
 
 bool mirror_single_node_typesense_state(const std::shared_ptr<http_req>& request,
                                         NuRaftRouteKind route_kind,
-                                        std::string& error) {
+                                        std::string& error,
+                                        std::shared_ptr<http_res> captured_response = nullptr) {
     switch (route_kind) {
         case NuRaftRouteKind::kCollectionCreate:
-            return apply_typesense_write_handler(request, post_create_collection, error);
+            return apply_typesense_write_handler(request, post_create_collection, error, captured_response);
         case NuRaftRouteKind::kCollectionDrop:
-            return apply_typesense_write_handler(request, del_drop_collection, error);
+            return apply_typesense_write_handler(request, del_drop_collection, error, captured_response);
         case NuRaftRouteKind::kDocumentWrite:
             if (request->http_method == "PATCH") {
                 if (request->params.count("id") == 0 || request->params.at("id").empty()) {
-                    return apply_typesense_write_handler(request, patch_update_documents, error);
+                    return apply_typesense_write_handler(request, patch_update_documents, error, captured_response);
                 }
-                return apply_typesense_write_handler(request, patch_update_document, error);
+                return apply_typesense_write_handler(request, patch_update_document, error, captured_response);
             }
-            return apply_typesense_write_handler(request, post_add_document, error);
+            return apply_typesense_write_handler(request, post_add_document, error, captured_response);
         case NuRaftRouteKind::kDocumentDelete:
             if (request->params.count("id") == 0 || request->params.at("id").empty()) {
-                return apply_typesense_write_handler(request, del_remove_documents, error);
+                return apply_typesense_write_handler(request, del_remove_documents, error, captured_response);
             }
-            return apply_typesense_write_handler(request, del_remove_document, error);
+            return apply_typesense_write_handler(request, del_remove_document, error, captured_response);
         case NuRaftRouteKind::kDocumentImport:
-            return apply_typesense_write_handler(request, post_import_documents, error);
+            return apply_typesense_write_handler(request, post_import_documents, error, captured_response);
         default:
             error.clear();
             return true;
@@ -726,9 +784,15 @@ bool replay_live_product_state(HttpServer* server,
 
         if (applied_request.route_kind != NuRaftRouteKind::kUnknown) {
             if (!mirror_single_node_typesense_state(request, applied_request.route_kind, error)) {
-                TS_LOG(WARNING) << "NuRaft sync replay mirror failed for route '"
-                                << request->http_method << " " << request->path_without_query
-                                << "': " << error;
+                // "already exists" is expected when a follower that received the original
+                // write (and applied it locally) later replays the same entry from Raft.
+                const bool is_expected_duplicate =
+                    error.find("already exists") != std::string::npos;
+                if (!is_expected_duplicate) {
+                    TS_LOG(WARNING) << "NuRaft sync replay mirror failed for route '"
+                                    << request->http_method << " " << request->path_without_query
+                                    << "': " << error;
+                }
                 error.clear();
             }
         } else {
@@ -1035,6 +1099,23 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
 
     request->metadata = request->http_method;
 
+    // Pre-generate document IDs for auto-ID documents before Raft serialization.
+    // The KV materialized sink requires an "id" field to store documents, but
+    // Typesense's Collection::add_doc() normally generates IDs after Raft commit.
+    if (route_kind == NuRaftRouteKind::kDocumentWrite &&
+        request->http_method != "PATCH" && request->http_method != "DELETE") {
+        auto id_it = request->params.find("id");
+        const bool has_url_id = id_it != request->params.end() && !id_it->second.empty();
+        if (!has_url_id) {
+            nlohmann::json parsed_body;
+            if (parse_json_if_present(request->body, parsed_body) &&
+                parsed_body.is_object() && !parsed_body.contains("id")) {
+                parsed_body["id"] = generate_auto_document_id();
+                request->body = parsed_body.dump();
+            }
+        }
+    }
+
     uint64_t committed_index = 0;
     bool forwarded_to_leader = false;
     if (delegates_to_registered_import_handler) {
@@ -1084,7 +1165,11 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         return;
     }
 
-    if (!mirror_single_node_typesense_state(request, route_kind, error)) {
+    // Run the real Typesense handler and capture its response. This gives us
+    // standard API responses (correct created_at, document IDs, etc.) instead
+    // of the manually constructed Raft metadata that breaks client compatibility.
+    auto handler_response = std::make_shared<http_res>(nullptr);
+    if (!mirror_single_node_typesense_state(request, route_kind, error, handler_response)) {
         if (is_expected_missing_collection_mirror_skip(route_kind, error)) {
             TS_LOG(INFO) << "NuRaft runtime skipped live Typesense state mirror for missing collection drop: "
                          << error;
@@ -1100,97 +1185,13 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
 
     update_single_node_document_cache(*request, route_kind);
 
-    nlohmann::json response_body = {
-        {"success", true},
-        {"appended_index", committed_index},
-        {"forwarded_to_leader", forwarded_to_leader},
-        {"target_server_id", raft_server_ ? raft_server_->get_leader() : identity_.server_id},
-    };
-
-    nlohmann::json top_level_result;
-    bool has_top_level_result = false;
-    if (route_kind == NuRaftRouteKind::kCollectionCreate) {
-        if (!normalize_collection_payload("",
-                                          request->body,
-                                          0,
-                                          top_level_result,
-                                          error)) {
-            response->set_500(error);
-            send_response(request, response);
-            return;
-        }
-        has_top_level_result = true;
-    } else if (route_kind == NuRaftRouteKind::kCollectionDrop && !previous_collection_body.empty()) {
-        const auto collection_it = request->params.find("collection");
-        const std::string collection_name = collection_it == request->params.end() ? "" : collection_it->second;
-        if (!normalize_collection_payload(collection_name,
-                                          previous_collection_body,
-                                          0,
-                                          top_level_result,
-                                          error)) {
-            response->set_500(error);
-            send_response(request, response);
-            return;
-        }
-        has_top_level_result = true;
-    } else if (route_kind == NuRaftRouteKind::kDocumentWrite) {
-        nlohmann::json parsed_body;
-        const bool parsed_request_body = parse_json_if_present(request->body, parsed_body) && parsed_body.is_object();
-        if (request->http_method != "PATCH" && parsed_request_body) {
-            top_level_result = parsed_body;
-            has_top_level_result = true;
-        } else {
-            auto collection_it = request->params.find("collection");
-            if (collection_it != request->params.end()) {
-                std::string document_id;
-                auto id_it = request->params.find("id");
-                if (id_it != request->params.end()) {
-                    document_id = id_it->second;
-                } else if (parsed_request_body) {
-                    extract_document_id_from_json(parsed_body, document_id);
-                }
-
-                if (!document_id.empty()) {
-                    std::string stored_document;
-                    if (read_document(collection_it->second, document_id, stored_document, error)) {
-                        has_top_level_result = parse_json_if_present(stored_document, top_level_result) &&
-                                               top_level_result.is_object();
-                    } else {
-                        response->set_500(error);
-                        send_response(request, response);
-                        return;
-                    }
-                }
-            }
-        }
-    } else if (route_kind == NuRaftRouteKind::kDocumentImport &&
-               parse_json_if_present(request->body, top_level_result) && top_level_result.is_object()) {
-        has_top_level_result = true;
-    } else if (route_kind == NuRaftRouteKind::kDocumentDelete &&
-               parse_json_if_present(previous_document_body, top_level_result) && top_level_result.is_object()) {
-        has_top_level_result = true;
-    }
-
-    if (request->http_method == "POST" && !request->body.empty()) {
-        try {
-            response_body["result"] = nlohmann::json::parse(request->body);
-        } catch (const std::exception&) {
-            response_body["result_raw"] = request->body;
-        }
-    }
-
-    if (has_top_level_result) {
-        if (!response_body.contains("result")) {
-            response_body["result"] = top_level_result;
-        }
-        for (auto it = response_body.begin(); it != response_body.end(); ++it) {
-            top_level_result[it.key()] = it.value();
-        }
-        response->set_body(request->http_method == "POST" ? 201 : 200, top_level_result.dump());
-    } else if (request->http_method == "POST" && !request->body.empty()) {
-        response->set_body(201, response_body.dump());
+    // Use the real handler response directly (standard Typesense API format).
+    if (handler_response->status_code != 0) {
+        response->set_body(handler_response->status_code, handler_response->body);
+        response->content_type_header = handler_response->content_type_header;
     } else {
-        response->set_body(200, response_body.dump());
+        // Handler didn't set a response (e.g., unknown route that succeeded).
+        response->set_body(request->http_method == "POST" ? 201 : 200, "{}");
     }
 
     send_response(request, response);
@@ -1259,6 +1260,8 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
                                    bool first_chunk,
                                    bool last_chunk,
                                    std::string& chunk_error) -> bool {
+        // Inject auto-IDs into import docs missing "id" before Raft serialization.
+        inject_auto_ids_into_import_body(chunk_body);
         auto chunk_request = build_import_chunk_request(*request, std::move(chunk_body), first_chunk, last_chunk);
         const std::string request_payload = build_applied_request(*chunk_request).encode_binary();
 
@@ -1363,11 +1366,18 @@ bool NuRaftHttpRuntimeService::is_write_caught_up() const {
 }
 
 bool NuRaftHttpRuntimeService::is_alive() const {
-    return initialized_.load();
+    if (!initialized_.load() || !raft_server_) return false;
+    // Single-node: always alive once initialized.
+    if (bootstrap_config_.peers.empty()) return true;
+    // Multi-node: alive if we know who the leader is.
+    return raft_server_->get_leader() >= 0;
 }
 
 uint64_t NuRaftHttpRuntimeService::node_state() const {
-    return initialized_.load() ? 1 : 0;
+    if (!initialized_.load()) return 0;
+    // Match upstream braft State enum: 1 = STATE_LEADER, 4 = STATE_FOLLOWER.
+    if (raft_server_ && raft_server_->is_leader()) return 1;
+    return 4;
 }
 
 nlohmann::json NuRaftHttpRuntimeService::get_status() {
