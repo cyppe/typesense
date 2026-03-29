@@ -57,7 +57,10 @@ bool NuRaftBootstrapBuilder::build(const std::string& local_host,
             return false;
         }
 
-        if (peer.api_port == api_port) {
+        // Match self by host + peer_port (the peering endpoint). This handles
+        // standard cluster deployments where all nodes share the same api_port
+        // and are distinguished by IP address.
+        if (peer.host == local_host && peer.peer_port == peer_port) {
             built.self = peer;
             found_self = true;
         } else {
@@ -66,7 +69,9 @@ bool NuRaftBootstrapBuilder::build(const std::string& local_host,
     }
 
     if (!found_self) {
-        error = "NuRaft bootstrap config does not include the local api_port";
+        error = "NuRaft bootstrap config does not include local peering endpoint " +
+                local_host + ":" + std::to_string(peer_port) +
+                " (from --peering-address/--peering-port or --node-host)";
         return false;
     }
 

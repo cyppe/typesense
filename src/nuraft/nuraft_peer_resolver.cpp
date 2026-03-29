@@ -30,7 +30,17 @@ bool parse_port(const std::string& value, uint32_t& port, std::string& error) {
 }  // namespace
 
 int32_t NuRaftPeerAddress::server_id() const {
-    return static_cast<int32_t>(api_port);
+    // Hash the peer endpoint (host:peer_port) to produce a unique server_id.
+    // This supports clusters where all nodes share the same api_port and are
+    // distinguished by IP address.
+    std::string key = host + ":" + std::to_string(peer_port);
+    uint32_t hash = 2166136261u;  // FNV-1a offset basis
+    for (char c : key) {
+        hash ^= static_cast<uint8_t>(c);
+        hash *= 16777619u;  // FNV-1a prime
+    }
+    // Map to [1, INT32_MAX] — NuRaft requires positive non-zero server IDs.
+    return static_cast<int32_t>((hash % 0x7FFFFFFE) + 1);
 }
 
 std::string NuRaftPeerAddress::peer_endpoint() const {

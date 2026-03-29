@@ -34,7 +34,9 @@ TEST_F(NuRaftStateInitializerTest, WritesIdentityAndBootstrapMetadata) {
     std::string error;
     ASSERT_TRUE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) << error;
 
-    EXPECT_EQ(identity.server_id, 8108);
+    // server_id is a hash of peer endpoint, not api_port.
+    EXPECT_NE(identity.server_id, 0);
+    EXPECT_GT(identity.server_id, 0);
     EXPECT_EQ(identity.peer_endpoint, "127.0.0.1:7107");
     EXPECT_TRUE(bootstrap_config.peers.empty());
 
@@ -51,8 +53,9 @@ TEST_F(NuRaftStateInitializerTest, WritesIdentityAndBootstrapMetadata) {
 TEST_F(NuRaftStateInitializerTest, UsesNodesConfigToSelectSelfIdentity) {
     NuRaftPrototypeOptions options;
     options.data_dir = temp_dir_;
-    options.local_host = "127.0.0.99";
-    options.peer_port = 7999;
+    // Self is matched by local_host + peer_port → "127.0.0.2:7109"
+    options.local_host = "127.0.0.2";
+    options.peer_port = 7109;
     options.api_port = 8110;
     options.nodes_config = "127.0.0.1:7107:8108,127.0.0.2:7109:8110";
     options.api_uses_ssl = true;
@@ -62,7 +65,8 @@ TEST_F(NuRaftStateInitializerTest, UsesNodesConfigToSelectSelfIdentity) {
     std::string error;
     ASSERT_TRUE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) << error;
 
-    EXPECT_EQ(identity.server_id, 8110);
+    EXPECT_NE(identity.server_id, 0);
+    EXPECT_GT(identity.server_id, 0);
     EXPECT_EQ(identity.peer_endpoint, "127.0.0.2:7109");
     EXPECT_TRUE(bootstrap_config.api_uses_ssl);
     EXPECT_EQ(bootstrap_config.self, (NuRaftPeerAddress{"127.0.0.2", 7109, 8110}));
@@ -120,9 +124,12 @@ TEST_F(NuRaftStateInitializerTest, RejectsPersistedSelfAddressRewriteForMultiNod
     std::string error;
     ASSERT_TRUE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error)) << error;
 
+    options.local_host = "10.0.0.5";
+    options.peer_port = 7207;
     options.nodes_config = "10.0.0.5:7207:8108,127.0.0.2:7109:8109";
     ASSERT_FALSE(NuRaftStateInitializer::initialize(options, identity, bootstrap_config, error));
-    EXPECT_EQ(error, "NuRaft state initializer refuses to rewrite the persisted self peer address for a multi-node bootstrap");
+    // Rejected because server_id changed (hash of new peer endpoint differs from persisted).
+    EXPECT_EQ(error, "NuRaft state initializer refuses to change the persisted server identity");
 }
 
 TEST_F(NuRaftStateInitializerTest, RejectsMissingDataDir) {

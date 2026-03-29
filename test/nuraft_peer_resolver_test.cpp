@@ -11,7 +11,14 @@ TEST(NuRaftPeerResolverTest, ParsesIpv4Address) {
     EXPECT_EQ(address.host, "127.0.0.1");
     EXPECT_EQ(address.peer_port, 8107u);
     EXPECT_EQ(address.api_port, 8108u);
-    EXPECT_EQ(address.server_id(), 8108);
+    // server_id is a hash of peer endpoint "127.0.0.1:8107", not the api_port.
+    EXPECT_NE(address.server_id(), 0);
+    EXPECT_GT(address.server_id(), 0);
+    // Two addresses with different peer endpoints must produce different IDs.
+    NuRaftPeerAddress other;
+    std::string err2;
+    ASSERT_TRUE(NuRaftPeerResolver::parse_address("127.0.0.2:8107:8108", other, err2));
+    EXPECT_NE(address.server_id(), other.server_id());
     EXPECT_EQ(address.peer_endpoint(), "127.0.0.1:8107");
     EXPECT_EQ(address.leader_url(false), "http://127.0.0.1:8108/");
 }

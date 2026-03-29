@@ -251,5 +251,8 @@ void PersonalizationModelManager::dispose() {
         model_embedders[model_id] = nullptr;
     }
     model_embedders.clear();
-    store->close();
+    // NOTE: do NOT call store->close() here — the Store is owned by main() and
+    // will be destroyed when it goes out of scope. Closing it here would null
+    // the RocksDB pointer, causing a SIGSEGV if CollectionManager::dispose()
+    // runs afterward and calls store->remove().
 }

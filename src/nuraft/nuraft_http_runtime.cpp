@@ -864,14 +864,30 @@ bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
 
 bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     std::unique_lock<std::shared_mutex> lock(mutex_);
+    TS_LOG(INFO) << "NuRaft init: state initializer starting (data_dir="
+                 << options_.startup_options.data_dir
+                 << " local_host=" << options_.startup_options.local_host
+                 << " peer_port=" << options_.startup_options.peer_port
+                 << " api_port=" << options_.startup_options.api_port
+                 << " nodes_config=" << (options_.startup_options.nodes_config.empty()
+                                         ? "(single-node)" : options_.startup_options.nodes_config)
+                 << ")";
     if (!NuRaftStateInitializer::initialize(options_.startup_options, identity_, bootstrap_config_, error)) {
+        TS_LOG(ERROR) << "NuRaft init: state initializer failed: " << error;
         return false;
     }
+    TS_LOG(INFO) << "NuRaft init: identity server_id=" << identity_.server_id
+                 << " peer_endpoint=" << identity_.peer_endpoint
+                 << " self=" << bootstrap_config_.self.host
+                 << ":" << bootstrap_config_.self.peer_port
+                 << ":" << bootstrap_config_.self.api_port
+                 << " peers=" << bootstrap_config_.peers.size();
 
     materialized_state_sink_ = std::make_unique<NuRaftKvStateMachineSink>(layout_);
 
     uint64_t last_applied_index = 0;
     if (!materialized_state_sink_->read_last_applied_index(last_applied_index, error)) {
+        TS_LOG(ERROR) << "NuRaft init: failed to read materialized state: " << error;
         materialized_state_sink_.reset();
         return false;
     }
@@ -897,6 +913,7 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     }
 
     if (!initialize_raft_server(error)) {
+        TS_LOG(ERROR) << "NuRaft init: raft server initialization failed: " << error;
         materialized_state_sink_.reset();
         return false;
     }

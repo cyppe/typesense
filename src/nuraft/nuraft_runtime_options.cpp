@@ -87,7 +87,13 @@ bool resolve_nodes_config(const std::string& configured_nodes, std::string& reso
         return false;
     }
 
-    resolved_nodes = nodes_op.get();
+    // Strip trailing whitespace/newlines from file content.
+    std::string content = nodes_op.get();
+    while (!content.empty() && (content.back() == '\n' || content.back() == '\r' ||
+                                content.back() == ' ' || content.back() == '\t')) {
+        content.pop_back();
+    }
+    resolved_nodes = std::move(content);
     error.clear();
     return true;
 }

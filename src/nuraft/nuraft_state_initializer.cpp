@@ -55,17 +55,23 @@ bool refresh_existing_metadata(const NuRaftMetadataStore& store,
         return false;
     }
 
-    if (persisted_identity.server_id != built_identity.server_id ||
-        persisted_identity.api_port != built_identity.api_port) {
-        error = "NuRaft state initializer refuses to change the persisted server identity";
-        return false;
-    }
-
     const bool self_changed = !(persisted_bootstrap_config.self == built_bootstrap_config.self) ||
                               persisted_identity.peer_endpoint != built_identity.peer_endpoint;
     const bool allow_self_rewrite = self_changed &&
                                     persisted_bootstrap_config.peers.empty() &&
                                     built_bootstrap_config.peers.empty();
+
+    // In single-node mode, allow server_id to change along with the address
+    // (server_id is derived from the peer endpoint hash). In multi-node mode,
+    // reject identity changes to prevent Raft conflicts.
+    if (!allow_self_rewrite) {
+        if (persisted_identity.server_id != built_identity.server_id ||
+            persisted_identity.api_port != built_identity.api_port) {
+            error = "NuRaft state initializer refuses to change the persisted server identity";
+            return false;
+        }
+    }
+
     if (self_changed && !allow_self_rewrite) {
         error = "NuRaft state initializer refuses to rewrite the persisted self peer address for a multi-node bootstrap";
         return false;
