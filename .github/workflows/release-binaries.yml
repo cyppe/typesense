@@ -34,7 +34,7 @@ on:
       push_docker_images:
         description: Push Linux runtime Docker images to Docker Hub after successful Linux artifact builds
         required: false
-        default: false
+        default: true
         type: boolean
       target_scope:
         description: Limit the workflow to a platform group or single lane
@@ -78,6 +78,9 @@ jobs:
       core_enabled: ${{ steps.select.outputs.core_enabled }}
       gpu_matrix: ${{ steps.select.outputs.gpu_matrix }}
       gpu_enabled: ${{ steps.select.outputs.gpu_enabled }}
+      has_linux_amd64: ${{ steps.select.outputs.has_linux_amd64 }}
+      has_linux_arm64: ${{ steps.select.outputs.has_linux_arm64 }}
+      has_linux_arm64_lg_page16: ${{ steps.select.outputs.has_linux_arm64_lg_page16 }}
     steps:
       - name: Resolve checkout ref
         id: resolve_ref
@@ -244,11 +247,16 @@ jobs:
           if build_server_artifacts and not selected_core:
               raise SystemExit(f"No core release targets matched target_scope={scope!r}")
 
+          selected_core_names = {t["artifact_name"] for t in selected_core} if build_server_artifacts else set()
+
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"core_matrix={json.dumps({'include': selected_core if build_server_artifacts else []})}\n")
               fh.write(f"core_enabled={'true' if build_server_artifacts and selected_core else 'false'}\n")
               fh.write(f"gpu_matrix={json.dumps({'include': selected_gpu if build_gpu_deps else []})}\n")
               fh.write(f"gpu_enabled={'true' if build_gpu_deps and selected_gpu else 'false'}\n")
+              fh.write(f"has_linux_amd64={'true' if 'linux-amd64' in selected_core_names else 'false'}\n")
+              fh.write(f"has_linux_arm64={'true' if 'linux-arm64' in selected_core_names else 'false'}\n")
+              fh.write(f"has_linux_arm64_lg_page16={'true' if 'linux-arm64-lg-page16' in selected_core_names else 'false'}\n")
           PY
 
   core-binaries:
@@ -749,7 +757,7 @@ jobs:
       inputs.push_docker_images &&
       inputs.upload_artifacts &&
       needs.core-binaries.result == 'success' &&
-      (inputs.target_scope == 'all' || inputs.target_scope == 'linux')
+      (needs.select_targets.outputs.has_linux_amd64 == 'true' || needs.select_targets.outputs.has_linux_arm64 == 'true')
     needs:
       - select_targets
       - core-binaries
@@ -762,19 +770,21 @@ jobs:
           ref: ${{ needs.select_targets.outputs.checkout_ref }}
 
       - name: Download linux-amd64 artifact
+        if: needs.select_targets.outputs.has_linux_amd64 == 'true'
         uses: actions/download-artifact@v8
         with:
           name: typesense-server-${{ inputs.version_label }}-linux-amd64
           path: ${{ github.workspace }}/docker-release/linux-amd64
 
       - name: Download linux-arm64 artifact
+        if: needs.select_targets.outputs.has_linux_arm64 == 'true'
         uses: actions/download-artifact@v8
         with:
           name: typesense-server-${{ inputs.version_label }}-linux-arm64
           path: ${{ github.workspace }}/docker-release/linux-arm64
 
       - name: Download linux-arm64-lg-page16 artifact
-        if: inputs.target_scope == 'all' || inputs.target_scope == 'linux'
+        if: needs.select_targets.outputs.has_linux_arm64_lg_page16 == 'true'
         uses: actions/download-artifact@v8
         with:
           name: typesense-server-${{ inputs.version_label }}-linux-arm64-lg-page16
@@ -785,6 +795,9 @@ jobs:
         env:
           VERSION_LABEL: ${{ inputs.version_label }}
           INPUT_REF: ${{ inputs.ref }}
+          HAS_LINUX_AMD64: ${{ needs.select_targets.outputs.has_linux_amd64 }}
+          HAS_LINUX_ARM64: ${{ needs.select_targets.outputs.has_linux_arm64 }}
+          HAS_LINUX_ARM64_LG_PAGE16: ${{ needs.select_targets.outputs.has_linux_arm64_lg_page16 }}
         run: |
           set -euo pipefail
           FULL_SHA="$(git rev-parse HEAD)"
@@ -818,22 +831,22 @@ jobs:
           echo "TREE_STATUS=${TREE_STATUS}" >>"$GITHUB_ENV"
           echo "IMAGE_CREATED=${IMAGE_CREATED}" >>"$GITHUB_ENV"
 
-          mkdir -p \
-            "${{ github.workspace }}/docker-context/linux-amd64" \
-            "${{ github.workspace }}/docker-context/linux-arm64" \
-            "${{ github.workspace }}/docker-context/linux-arm64-lg-page16"
+          if [ "${HAS_LINUX_AMD64}" = "true" ]; then
+            mkdir -p "${{ github.workspace }}/docker-context/linux-amd64"
+            tar -xzf "${{ github.workspace }}/docker-release/linux-amd64/typesense-server-${VERSION_LABEL}-linux-amd64.tar.gz" \
+              -C "${{ github.workspace }}/docker-context/linux-amd64"
+          fi
 
-          tar -xzf "${{ github.workspace }}/docker-release/linux-amd64/typesense-server-${VERSION_LABEL}-linux-amd64.tar.gz" \
-            -C "${{ github.workspace }}/docker-context/linux-amd64"
-          tar -xzf "${{ github.workspace }}/docker-release/linux-arm64/typesense-server-${VERSION_LABEL}-linux-arm64.tar.gz" \
-            -C "${{ github.workspace }}/docker-context/linux-arm64"
+          if [ "${HAS_LINUX_ARM64}" = "true" ]; then
+            mkdir -p "${{ github.workspace }}/docker-context/linux-arm64"
+            tar -xzf "${{ github.workspace }}/docker-release/linux-arm64/typesense-server-${VERSION_LABEL}-linux-arm64.tar.gz" \
+              -C "${{ github.workspace }}/docker-context/linux-arm64"
+          fi
 
-          if [ -f "${{ github.workspace }}/docker-release/linux-arm64-lg-page16/typesense-server-${VERSION_LABEL}-linux-arm64-lg-page16.tar.gz" ]; then
+          if [ "${HAS_LINUX_ARM64_LG_PAGE16}" = "true" ]; then
+            mkdir -p "${{ github.workspace }}/docker-context/linux-arm64-lg-page16"
             tar -xzf "${{ github.workspace }}/docker-release/linux-arm64-lg-page16/typesense-server-${VERSION_LABEL}-linux-arm64-lg-page16.tar.gz" \
               -C "${{ github.workspace }}/docker-context/linux-arm64-lg-page16"
-            echo "has_lg_page16=true" >>"$GITHUB_OUTPUT"
-          else
-            echo "has_lg_page16=false" >>"$GITHUB_OUTPUT"
           fi
 
       - name: Set up QEMU
@@ -849,6 +862,7 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push linux-amd64 image
+        if: needs.select_targets.outputs.has_linux_amd64 == 'true'
         uses: docker/build-push-action@v7
         with:
           context: ${{ github.workspace }}/docker-context/linux-amd64
@@ -869,6 +883,7 @@ jobs:
           tags: ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-${{ env.SHORT_SHA }}-linux-amd64
 
       - name: Build and push linux-arm64 image
+        if: needs.select_targets.outputs.has_linux_arm64 == 'true'
         uses: docker/build-push-action@v7
         with:
           context: ${{ github.workspace }}/docker-context/linux-arm64
@@ -889,6 +904,7 @@ jobs:
           tags: ${{ vars.DOCKERHUB_USERNAME }}/typesense:${{ env.BRANCH_TAG }}-${{ env.SHORT_SHA }}-linux-arm64
 
       - name: Publish multi-arch runtime tags
+        if: needs.select_targets.outputs.has_linux_amd64 == 'true' && needs.select_targets.outputs.has_linux_arm64 == 'true'
         run: |
           docker buildx imagetools create \
             -t "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}-${SHORT_SHA}" \
@@ -896,8 +912,18 @@ jobs:
             "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}-${SHORT_SHA}-linux-amd64" \
             "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}-${SHORT_SHA}-linux-arm64"
 
+      - name: Publish single-arch runtime tags
+        if: (needs.select_targets.outputs.has_linux_amd64 == 'true') != (needs.select_targets.outputs.has_linux_arm64 == 'true')
+        env:
+          ARCH_SUFFIX: ${{ needs.select_targets.outputs.has_linux_amd64 == 'true' && 'linux-amd64' || 'linux-arm64' }}
+        run: |
+          docker buildx imagetools create \
+            -t "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}-${SHORT_SHA}" \
+            -t "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}" \
+            "${{ vars.DOCKERHUB_USERNAME }}/typesense:${BRANCH_TAG}-${SHORT_SHA}-${ARCH_SUFFIX}"
+
       - name: Build and push linux-arm64-lg-page16 image
-        if: steps.prep.outputs.has_lg_page16 == 'true'
+        if: needs.select_targets.outputs.has_linux_arm64_lg_page16 == 'true'
         uses: docker/build-push-action@v7
         with:
           context: ${{ github.workspace }}/docker-context/linux-arm64-lg-page16
