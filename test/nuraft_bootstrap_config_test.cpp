@@ -46,14 +46,32 @@ TEST_F(NuRaftBootstrapConfigTest, RejectsDuplicateServerIdsIncludingSelf) {
     std::string error;
     ASSERT_TRUE(store.initialize(error)) << error;
 
+    // server_id is hashed from host:peer_port, so duplicate IDs require
+    // identical peer endpoints.
     NuRaftBootstrapConfig config;
     config.self = {"127.0.0.1", 7107, 8108};
     config.peers = {
-        {"127.0.0.2", 7109, 8108},
+        {"127.0.0.1", 7107, 9108},  // same host:peer_port as self → duplicate server_id
     };
 
     ASSERT_FALSE(store.write_bootstrap_config(config, error));
     EXPECT_EQ(error, "NuRaft bootstrap config contains duplicate server ids");
+}
+
+TEST_F(NuRaftBootstrapConfigTest, AllowsSameApiPortDifferentHosts) {
+    // Standard cluster deployment: all nodes share api_port but differ by host.
+    NuRaftMetadataStore store(NuRaftStateLayout::from_data_dir(temp_dir_));
+    std::string error;
+    ASSERT_TRUE(store.initialize(error)) << error;
+
+    NuRaftBootstrapConfig config;
+    config.self = {"172.28.10.11", 8107, 8108};
+    config.peers = {
+        {"172.28.10.12", 8107, 8108},
+        {"172.28.10.13", 8107, 8108},
+    };
+
+    ASSERT_TRUE(store.write_bootstrap_config(config, error)) << error;
 }
 
 TEST_F(NuRaftBootstrapConfigTest, RejectsMalformedBootstrapJson) {
