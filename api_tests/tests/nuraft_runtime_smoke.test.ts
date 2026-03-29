@@ -83,6 +83,22 @@ describe(Phases.SINGLE_FRESH, () => {
     expect(fetchedBody.title).toBe("Auto ID Book");
   });
 
+  it("returns 404 when deleting a non-existent collection", async () => {
+    const deleteRes = await fetchSingleNode("/collections/nonexistent_xyz", {
+      method: "DELETE",
+    });
+    expect(deleteRes.status).toBe(404);
+    const deleteBody: any = await deleteRes.json();
+    expect(deleteBody.message).toContain("No collection with name");
+  });
+
+  it("returns 404 when getting a non-existent document", async () => {
+    const getRes = await fetchSingleNode("/collections/books/documents/does_not_exist");
+    expect(getRes.status).toBe(404);
+    const getBody: any = await getRes.json();
+    expect(getBody.message).toContain("not found");
+  });
+
   it("reports correct node state in /debug", async () => {
     const debugRes = await fetchSingleNode("/debug");
     expect(debugRes.ok).toBe(true);

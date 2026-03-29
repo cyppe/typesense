@@ -1186,19 +1186,14 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
 
     update_single_node_document_cache(*request, route_kind);
 
-    // Use the real handler response (standard Typesense API format) when
-    // the mirror succeeded with a valid status. If the mirror failed (e.g.,
-    // handler returned an error), the Raft write already succeeded — return
-    // a generic success so the client isn't misled. The mirror error is logged above.
-    if (mirror_ok && handler_response->status_code != 0) {
-        response->set_body(handler_response->status_code, handler_response->body);
-        response->content_type_header = handler_response->content_type_header;
-    } else if (handler_response->status_code >= 200 && handler_response->status_code < 400) {
+    // Use the real Typesense handler response (standard API format).
+    // When the handler returns a client error (4xx), that IS the correct
+    // response — e.g., DELETE non-existent collection should be 404, not 200.
+    if (handler_response->status_code != 0) {
         response->set_body(handler_response->status_code, handler_response->body);
         response->content_type_header = handler_response->content_type_header;
     } else {
-        // Mirror failed but Raft write succeeded. Return the request body as
-        // a best-effort response (the client's document was committed to Raft).
+        // Handler didn't set a status (e.g., unknown route that succeeded).
         const uint32_t code = request->http_method == "POST" ? 201 : 200;
         response->set_body(code, request->body);
     }

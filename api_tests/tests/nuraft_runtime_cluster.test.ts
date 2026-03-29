@@ -97,6 +97,16 @@ describe(Phases.MULTI_FRESH, () => {
     expect(leaders.length).toBe(1);
     expect(followers.length).toBe(2);
   });
+
+  it("returns 404 when deleting a non-existent collection via follower", async () => {
+    // Regression: DELETE non-existent collection must return 404, not 200 empty.
+    const deleteRes = await fetchMultiNodeRequest(2, "/collections/nonexistent_cluster_xyz", {
+      method: "DELETE",
+    });
+    expect(deleteRes.status).toBe(404);
+    const body: any = await deleteRes.json();
+    expect(body.message).toContain("No collection with name");
+  });
 });
 
 describe(Phases.MULTI_RESTARTED, () => {
