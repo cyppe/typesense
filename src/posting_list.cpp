@@ -1923,8 +1923,8 @@ size_t posting_list_t::get_first_offset(const posting_list_t::iterator_t& it, bo
             int pos = offsets[start_offset];
             start_offset++;
 
-            if(pos < min_offset) {
-                min_offset = pos;
+            if(pos >= 0 && static_cast<size_t>(pos) < min_offset) {
+                min_offset = static_cast<size_t>(pos);
             }
 
             if(pos == prev_pos) {  // indicates end of array index
