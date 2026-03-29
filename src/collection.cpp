@@ -7699,8 +7699,6 @@ void Collection::reset_referencing_documents(const std::string& field_name, cons
     }
     auto& field = it.value();
     const auto is_field_singular = field.is_singular();
-    const auto is_field_optional = field.optional;
-
     const auto ref_it = reference_fields.find(field_name);
     if (ref_it == reference_fields.end()) {
         return;
@@ -7846,9 +7844,9 @@ void Collection::reset_referencing_documents(const std::string& field_name, cons
     std::shared_lock alter_shlock(alter_mutex);
 
     std::unordered_set<std::string> dummy_set;
-    size_t num_indexed = Index::batch_memory_index(index, index_records, default_sorting_field,
-                                                   search_schema, embedding_fields, fallback_field_type,
-                                                   token_separators, symbols_to_index, dummy_set);
+    Index::batch_memory_index(index, index_records, default_sorting_field,
+                              search_schema, embedding_fields, fallback_field_type,
+                              token_separators, symbols_to_index, dummy_set);
 }
 
 void Collection::cascade_remove_helper(const std::vector<index_record>& records, cascade_remove_node_t* cascade_node,
@@ -8095,9 +8093,9 @@ void Collection::cascade_remove(const std::vector<index_record>& records, const 
                                              fallback_field_type, token_separators, symbols_to_index, true);
 
         std::unordered_set<std::string> dummy_set;
-        size_t num_indexed = Index::batch_memory_index(index, update_records, default_sorting_field,
-                                                       search_schema, embedding_fields, fallback_field_type,
-                                                       token_separators, symbols_to_index, dummy_set);
+        Index::batch_memory_index(index, update_records, default_sorting_field,
+                                  search_schema, embedding_fields, fallback_field_type,
+                                  token_separators, symbols_to_index, dummy_set);
         for (auto& update_record: update_records) {
             remove_flat_fields(update_record.new_doc);
             for(auto& f: fields) {
