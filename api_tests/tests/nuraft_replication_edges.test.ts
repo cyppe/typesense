@@ -42,8 +42,7 @@ describe(Phases.MULTI_FRESH, () => {
     });
     expect(res.ok).toBe(true);
     const body: any = await res.json();
-    const name = body.name ?? body.result?.name;
-    expect(name).toBe("edge_products_alias");
+    expect(body.name).toBe("edge_products_alias");
   });
 
   it("alias visible on leader node 1", async () => {
@@ -71,8 +70,7 @@ describe(Phases.MULTI_FRESH, () => {
     });
     expect(res.ok).toBe(true);
     const body: any = await res.json();
-    const name = body.name ?? body.result?.name;
-    expect(name).toBe("edge_default_search");
+    expect(body.name).toBe("edge_default_search");
   });
 
   it("preset visible on follower node 3", async () => {

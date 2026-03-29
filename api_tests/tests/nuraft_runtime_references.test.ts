@@ -43,7 +43,7 @@ describe(Phases.MULTI_FRESH, () => {
     });
     expect(res.ok).toBe(true);
     const body: any = await res.json();
-    expect(body.success).toBe(true);
+    expect(body.name).toBe("ref_products");
   });
 
   it("insert category documents", async () => {

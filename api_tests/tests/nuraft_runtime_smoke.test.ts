@@ -16,10 +16,14 @@ describe(Phases.SINGLE_FRESH, () => {
 
     expect(createCollection.ok).toBe(true);
     const createCollectionBody: any = await createCollection.json();
-    expect(createCollectionBody.success).toBe(true);
-    expect(createCollectionBody.forwarded_to_leader).toBe(false);
-    expect(createCollectionBody.target_server_id).toBeGreaterThan(0);
-    expect(createCollectionBody.result.name).toBe("books");
+    expect(createCollectionBody.name).toBe("books");
+    // Standard Typesense response: no Raft metadata fields.
+    expect(createCollectionBody.success).toBeUndefined();
+    expect(createCollectionBody.forwarded_to_leader).toBeUndefined();
+    expect(createCollectionBody.target_server_id).toBeUndefined();
+    expect(createCollectionBody.appended_index).toBeUndefined();
+    // created_at must be a real timestamp, not 0.
+    expect(createCollectionBody.created_at).toBeGreaterThan(0);
 
     const createDocument = await fetchSingleNode("/collections/books/documents", {
       method: "POST",
@@ -31,8 +35,11 @@ describe(Phases.SINGLE_FRESH, () => {
 
     expect(createDocument.ok).toBe(true);
     const createDocumentBody: any = await createDocument.json();
-    expect(createDocumentBody.success).toBe(true);
-    expect(createDocumentBody.result.id).toBe("1");
+    expect(createDocumentBody.id).toBe("1");
+    expect(createDocumentBody.title).toBe("Dune");
+    // Standard Typesense response: no Raft metadata.
+    expect(createDocumentBody.success).toBeUndefined();
+    expect(createDocumentBody.forwarded_to_leader).toBeUndefined();
 
     const collection = await fetchSingleNode("/collections/books");
     expect(collection.ok).toBe(true);
@@ -52,6 +59,36 @@ describe(Phases.SINGLE_FRESH, () => {
     expect(statusBody.is_leader).toBe(true);
     expect(statusBody.committed_index).toBeGreaterThanOrEqual(2);
     expect(statusBody.known_applied_index).toBeGreaterThanOrEqual(2);
+  });
+
+  it("supports auto-generated document IDs", async () => {
+    // Regression test: documents POSTed without an "id" field must get a
+    // server-generated ID returned in the response body.
+    const createAutoId = await fetchSingleNode("/collections/books/documents", {
+      method: "POST",
+      body: JSON.stringify({ title: "Auto ID Book" }),
+    });
+
+    expect(createAutoId.ok).toBe(true);
+    const autoIdBody: any = await createAutoId.json();
+    expect(typeof autoIdBody.id).toBe("string");
+    expect(autoIdBody.id.length).toBeGreaterThan(0);
+    expect(autoIdBody.title).toBe("Auto ID Book");
+
+    // Verify the document is retrievable by its generated ID.
+    const fetchDoc = await fetchSingleNode(`/collections/books/documents/${autoIdBody.id}`);
+    expect(fetchDoc.ok).toBe(true);
+    const fetchedBody: any = await fetchDoc.json();
+    expect(fetchedBody.id).toBe(autoIdBody.id);
+    expect(fetchedBody.title).toBe("Auto ID Book");
+  });
+
+  it("reports correct node state in /debug", async () => {
+    const debugRes = await fetchSingleNode("/debug");
+    expect(debugRes.ok).toBe(true);
+    const debugBody: any = await debugRes.json();
+    // Single-node should report state:1 (leader).
+    expect(debugBody.state).toBe(1);
   });
 });
 

@@ -1169,7 +1169,8 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     // standard API responses (correct created_at, document IDs, etc.) instead
     // of the manually constructed Raft metadata that breaks client compatibility.
     auto handler_response = std::make_shared<http_res>(nullptr);
-    if (!mirror_single_node_typesense_state(request, route_kind, error, handler_response)) {
+    const bool mirror_ok = mirror_single_node_typesense_state(request, route_kind, error, handler_response);
+    if (!mirror_ok) {
         if (is_expected_missing_collection_mirror_skip(route_kind, error)) {
             TS_LOG(INFO) << "NuRaft runtime skipped live Typesense state mirror for missing collection drop: "
                          << error;
@@ -1185,13 +1186,21 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
 
     update_single_node_document_cache(*request, route_kind);
 
-    // Use the real handler response directly (standard Typesense API format).
-    if (handler_response->status_code != 0) {
+    // Use the real handler response (standard Typesense API format) when
+    // the mirror succeeded with a valid status. If the mirror failed (e.g.,
+    // handler returned an error), the Raft write already succeeded — return
+    // a generic success so the client isn't misled. The mirror error is logged above.
+    if (mirror_ok && handler_response->status_code != 0) {
+        response->set_body(handler_response->status_code, handler_response->body);
+        response->content_type_header = handler_response->content_type_header;
+    } else if (handler_response->status_code >= 200 && handler_response->status_code < 400) {
         response->set_body(handler_response->status_code, handler_response->body);
         response->content_type_header = handler_response->content_type_header;
     } else {
-        // Handler didn't set a response (e.g., unknown route that succeeded).
-        response->set_body(request->http_method == "POST" ? 201 : 200, "{}");
+        // Mirror failed but Raft write succeeded. Return the request body as
+        // a best-effort response (the client's document was committed to Raft).
+        const uint32_t code = request->http_method == "POST" ? 201 : 200;
+        response->set_body(code, request->body);
     }
 
     send_response(request, response);

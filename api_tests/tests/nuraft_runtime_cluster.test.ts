@@ -16,8 +16,7 @@ describe(Phases.MULTI_FRESH, () => {
 
     expect(createCollection.ok).toBe(true);
     const createCollectionBody: any = await createCollection.json();
-    expect(createCollectionBody.success).toBe(true);
-    expect(createCollectionBody.forwarded_to_leader).toBe(true);
+    expect(createCollectionBody.name).toBe("books");
 
     const createDocument = await fetchMultiNode(3, "/collections/books/documents", {
       method: "POST",
@@ -29,8 +28,7 @@ describe(Phases.MULTI_FRESH, () => {
 
     expect(createDocument.ok).toBe(true);
     const createDocumentBody: any = await createDocument.json();
-    expect(createDocumentBody.success).toBe(true);
-    expect(createDocumentBody.forwarded_to_leader).toBe(true);
+    expect(createDocumentBody.id).toBe("1");
 
     const collection = await fetchMultiNode(1, "/collections/books");
     expect(collection.ok).toBe(true);
@@ -53,6 +51,51 @@ describe(Phases.MULTI_FRESH, () => {
     const followerStatusBody: any = await followerStatus.json();
     expect(followerStatusBody.is_leader).toBe(false);
     expect(followerStatusBody.leader_url).toBe(leaderStatusBody.leader_url);
+  });
+
+  it("replicates auto-ID documents across the cluster", async () => {
+    // Regression: documents POSTed without "id" must replicate to all nodes.
+    const createAutoId = await fetchMultiNode(2, "/collections/books/documents", {
+      method: "POST",
+      body: JSON.stringify({ title: "Auto ID Cluster Test" }),
+    });
+
+    expect(createAutoId.ok).toBe(true);
+    const autoIdBody: any = await createAutoId.json();
+    expect(typeof autoIdBody.id).toBe("string");
+    expect(autoIdBody.id.length).toBeGreaterThan(0);
+    expect(autoIdBody.title).toBe("Auto ID Cluster Test");
+
+    // Verify the document is visible on a different node.
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    const fetchDoc = await fetchMultiNodeRequest(3, `/collections/books/documents/${autoIdBody.id}`);
+    expect(fetchDoc.ok).toBe(true);
+    const fetchedBody: any = await fetchDoc.json();
+    expect(fetchedBody.id).toBe(autoIdBody.id);
+    expect(fetchedBody.title).toBe("Auto ID Cluster Test");
+  });
+
+  it("reports correct /debug state for leader and follower", async () => {
+    // Find which node is leader vs follower.
+    const debug1 = await fetchMultiNodeRequest(1, "/debug");
+    const debug2 = await fetchMultiNodeRequest(2, "/debug");
+    const debug3 = await fetchMultiNodeRequest(3, "/debug");
+
+    expect(debug1.ok).toBe(true);
+    expect(debug2.ok).toBe(true);
+    expect(debug3.ok).toBe(true);
+
+    const states = [
+      (await debug1.json() as any).state,
+      (await debug2.json() as any).state,
+      (await debug3.json() as any).state,
+    ];
+
+    // Exactly one leader (state:1), the rest are followers (state:4).
+    const leaders = states.filter((s) => s === 1);
+    const followers = states.filter((s) => s === 4);
+    expect(leaders.length).toBe(1);
+    expect(followers.length).toBe(2);
   });
 });
 
