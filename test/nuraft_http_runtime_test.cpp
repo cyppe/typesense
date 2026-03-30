@@ -907,4 +907,96 @@ TEST_F(NuRaftHttpRuntimeTest, MirrorsFollowerOriginatedWritesWithoutReplaySync) 
         << "follower log: " << follower.log_path();
 }
 
+TEST_F(NuRaftHttpRuntimeTest, MirrorsFollowerOriginatedStemmingDictionaryImports) {
+    const uint32_t api_port_1 = pick_free_port();
+    const uint32_t peer_port_1 = pick_free_port();
+    const uint32_t api_port_2 = pick_free_port();
+    const uint32_t peer_port_2 = pick_free_port();
+    const std::string nodes_config = "127.0.0.1:" + std::to_string(peer_port_1) + ":" + std::to_string(api_port_1) +
+                                     ",127.0.0.1:" + std::to_string(peer_port_2) + ":" + std::to_string(api_port_2);
+
+    NuRaftHttpServerOptions options_1;
+    options_1.startup_options.data_dir = node_dir("stem-cluster-node-1");
+    options_1.startup_options.local_host = "127.0.0.1";
+    options_1.startup_options.peer_port = peer_port_1;
+    options_1.startup_options.api_port = api_port_1;
+    options_1.startup_options.nodes_config = nodes_config;
+    options_1.listen_address = "127.0.0.1";
+    options_1.listen_port = api_port_1;
+    options_1.api_key = "xyz";
+
+    NuRaftHttpServerOptions options_2 = options_1;
+    options_2.startup_options.data_dir = node_dir("stem-cluster-node-2");
+    options_2.startup_options.peer_port = peer_port_2;
+    options_2.startup_options.api_port = api_port_2;
+    options_2.listen_port = api_port_2;
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options_1, error, false)) << error;
+    ASSERT_TRUE(node2_.start(options_2, error, false)) << error;
+
+    auto fetch_json = [&](const NuRaftHttpRuntimeHarness& node,
+                          const std::string& path,
+                          nlohmann::json& body) -> long {
+        std::string response;
+        std::map<std::string, std::string> headers;
+        const long status = HttpClient::get_response(node.base_url() + path,
+                                                     response,
+                                                     headers,
+                                                     {},
+                                                     5000,
+                                                     true);
+        if (status == 200) {
+            body = parse_json(response);
+        }
+        return status;
+    };
+
+    nlohmann::json status_1;
+    nlohmann::json status_2;
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               status_1["is_leader"].get<bool>() != status_2["is_leader"].get<bool>();
+    }, std::chrono::milliseconds(15000)))
+        << "node1 log: " << node1_.log_path() << ", node2 log: " << node2_.log_path();
+
+    const NuRaftHttpRuntimeHarness& follower = status_1["is_leader"].get<bool>() ? node2_ : node1_;
+    const std::string import_body = R"({"word":"people","root":"person"}
+{"word":"geese","root":"goose"})";
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(200,
+              HttpClient::post_response(follower.base_url() + "/stemming/dictionaries/import?id=irregulars",
+                                        import_body,
+                                        response,
+                                        headers,
+                                        {},
+                                        10000,
+                                        true))
+        << "follower log: " << follower.log_path();
+    EXPECT_EQ(import_body, response) << "follower log: " << follower.log_path();
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               status_1["live_product_applied_index"].get<uint64_t>() >= status_1["committed_index"].get<uint64_t>() &&
+               status_2["live_product_applied_index"].get<uint64_t>() >= status_2["committed_index"].get<uint64_t>();
+    }, std::chrono::milliseconds(15000)))
+        << "node1 log: " << node1_.log_path() << ", node2 log: " << node2_.log_path();
+
+    nlohmann::json dictionary_1;
+    nlohmann::json dictionary_2;
+    ASSERT_EQ(200, fetch_json(node1_, "/stemming/dictionaries/irregulars", dictionary_1))
+        << "node1 log: " << node1_.log_path();
+    ASSERT_EQ(200, fetch_json(node2_, "/stemming/dictionaries/irregulars", dictionary_2))
+        << "node2 log: " << node2_.log_path();
+
+    EXPECT_EQ("irregulars", dictionary_1["id"].get<std::string>()) << "node1 log: " << node1_.log_path();
+    ASSERT_EQ(2u, dictionary_1["words"].size()) << "node1 log: " << node1_.log_path();
+    EXPECT_EQ(dictionary_1, dictionary_2) << "node1 log: " << node1_.log_path()
+                                          << ", node2 log: " << node2_.log_path();
+}
+
 }  // namespace

@@ -2006,8 +2006,8 @@ void register_nuraft_http_runtime_routes(HttpServer* server) {
 
     register_post_write("/stemming/dictionaries/import",
                         post_import_stemming_dictionary,
-                        NuRaftWriteRouteMode::kOriginHandlerAfterRaft,
-                        true,
+                        NuRaftWriteRouteMode::kMirrorWorker,
+                        false,
                         true);
     server->get("/stemming/dictionaries", synced_read_handler<get_stemming_dictionaries>);
     server->get("/stemming/dictionaries/:id", synced_read_handler<get_stemming_dictionary>);
