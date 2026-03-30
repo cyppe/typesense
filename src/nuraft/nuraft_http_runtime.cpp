@@ -701,7 +701,6 @@ bool NuRaftHttpRuntimeService::wait_for_mirrored_result(uint64_t response_token,
 
 bool NuRaftHttpRuntimeService::wait_for_live_product_state(uint32_t timeout_ms, std::string& error) {
     cumulative_sync_calls_.fetch_add(1, std::memory_order_relaxed);
-    last_sync_replay_ms_.store(0, std::memory_order_relaxed);
 
     uint64_t target_index = 0;
     {
@@ -1124,9 +1123,9 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
     uint32_t response_status_code = 200;
     const auto import_start = std::chrono::steady_clock::now();
     uint64_t logical_chunks = 0;
-    uint64_t replay_chunks = 0;
+    uint64_t apply_chunks = 0;
     uint64_t append_ms = 0;
-    uint64_t replay_ms = 0;
+    uint64_t apply_wait_ms = 0;
     uint64_t docs_estimate = 0;
     if (!request->body.empty()) {
         docs_estimate = 1;
@@ -1150,9 +1149,9 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
         last_import_request_bytes_.store(request->body.size(), std::memory_order_relaxed);
         last_import_docs_estimate_.store(docs_estimate, std::memory_order_relaxed);
         last_import_logical_chunks_.store(logical_chunks, std::memory_order_relaxed);
-        last_import_replay_chunks_.store(replay_chunks, std::memory_order_relaxed);
+        last_import_apply_chunks_.store(apply_chunks, std::memory_order_relaxed);
         last_import_append_ms_.store(append_ms, std::memory_order_relaxed);
-        last_import_replay_ms_.store(replay_ms, std::memory_order_relaxed);
+        last_import_apply_wait_ms_.store(apply_wait_ms, std::memory_order_relaxed);
         last_import_total_ms_.store(total_ms, std::memory_order_relaxed);
         last_import_response_bytes_.store(aggregated_response_body.size(), std::memory_order_relaxed);
         last_import_docs_per_sec_.store(total_ms == 0 ? docs_estimate : (docs_estimate * 1000ULL) / total_ms,
@@ -1211,9 +1210,9 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
 
         auto chunk_response = std::make_shared<http_res>(nullptr);
         MirroredWriteResult chunk_result;
-        const auto chunk_replay_start = std::chrono::steady_clock::now();
+        const auto chunk_wait_start = std::chrono::steady_clock::now();
         const bool got_result = wait_for_mirrored_result(response_token, options_.request_timeout_ms, chunk_result);
-        replay_ms += elapsed_ms_since(chunk_replay_start);
+        apply_wait_ms += elapsed_ms_since(chunk_wait_start);
         if (!got_result) {
             chunk_error = "Timed out waiting for NuRaft mirror worker import response.";
             return false;
@@ -1245,7 +1244,7 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
             chunk_error.clear();
             return false;
         }
-        replay_chunks++;
+        apply_chunks++;
         return true;
     };
 
@@ -1271,9 +1270,9 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
     if (total_ms >= 2000) {
         TS_LOG(INFO) << "NuRaft import timing: bytes=" << request->body.size()
                      << " logical_chunks=" << logical_chunks
-                     << " replay_chunks=" << replay_chunks
+                     << " apply_chunks=" << apply_chunks
                      << " append_ms=" << append_ms
-                     << " replay_ms=" << replay_ms
+                     << " apply_wait_ms=" << apply_wait_ms
                      << " total_ms=" << total_ms;
     }
 
@@ -1316,7 +1315,6 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
     const auto snapshot_metrics = raft_state_machine_ != nullptr ?
         raft_state_machine_->get_snapshot_metrics() : TypesenseSnapshotMetricsSnapshot{};
     const uint64_t sync_calls = cumulative_sync_calls_.load(std::memory_order_relaxed);
-    const uint64_t sync_replay_calls = cumulative_sync_replay_calls_.load(std::memory_order_relaxed);
     nlohmann::json status = {
         {"state", initialized_.load() ? "running" : "initializing"},
         {"server_id", identity_.server_id},
@@ -1333,9 +1331,9 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         {"last_import_request_bytes", last_import_request_bytes_.load(std::memory_order_relaxed)},
         {"last_import_docs_estimate", last_import_docs_estimate_.load(std::memory_order_relaxed)},
         {"last_import_logical_chunks", last_import_logical_chunks_.load(std::memory_order_relaxed)},
-        {"last_import_replay_chunks", last_import_replay_chunks_.load(std::memory_order_relaxed)},
+        {"last_import_apply_chunks", last_import_apply_chunks_.load(std::memory_order_relaxed)},
         {"last_import_append_ms", last_import_append_ms_.load(std::memory_order_relaxed)},
-        {"last_import_replay_ms", last_import_replay_ms_.load(std::memory_order_relaxed)},
+        {"last_import_apply_wait_ms", last_import_apply_wait_ms_.load(std::memory_order_relaxed)},
         {"last_import_total_ms", last_import_total_ms_.load(std::memory_order_relaxed)},
         {"last_import_response_bytes", last_import_response_bytes_.load(std::memory_order_relaxed)},
         {"last_import_docs_per_sec", last_import_docs_per_sec_.load(std::memory_order_relaxed)},
@@ -1343,13 +1341,9 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         {"max_import_total_ms", max_import_total_ms_.load(std::memory_order_relaxed)},
         {"sync_cumulative_calls", sync_calls},
         {"sync_cumulative_fast_path_hits", cumulative_sync_fast_path_hits_.load(std::memory_order_relaxed)},
-        {"sync_cumulative_replay_calls", sync_replay_calls},
         {"sync_last_total_ms", last_sync_total_ms_.load(std::memory_order_relaxed)},
-        {"sync_last_replay_ms", last_sync_replay_ms_.load(std::memory_order_relaxed)},
         {"sync_avg_total_ms", sync_calls == 0 ? 0 :
                               cumulative_sync_total_ms_.load(std::memory_order_relaxed) / sync_calls},
-        {"sync_avg_replay_ms", sync_replay_calls == 0 ? 0 :
-                               cumulative_sync_replay_ms_.load(std::memory_order_relaxed) / sync_replay_calls},
         {"sync_max_total_ms", max_sync_total_ms_.load(std::memory_order_relaxed)},
         {"snapshot_in_progress", snapshot_metrics.snapshot_in_progress},
         {"last_snapshot_success", snapshot_metrics.last_snapshot_success},

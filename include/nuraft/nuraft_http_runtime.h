@@ -171,9 +171,9 @@ private:
     std::atomic<uint64_t> last_import_request_bytes_{0};
     std::atomic<uint64_t> last_import_docs_estimate_{0};
     std::atomic<uint64_t> last_import_logical_chunks_{0};
-    std::atomic<uint64_t> last_import_replay_chunks_{0};
+    std::atomic<uint64_t> last_import_apply_chunks_{0};
     std::atomic<uint64_t> last_import_append_ms_{0};
-    std::atomic<uint64_t> last_import_replay_ms_{0};
+    std::atomic<uint64_t> last_import_apply_wait_ms_{0};
     std::atomic<uint64_t> last_import_total_ms_{0};
     std::atomic<uint64_t> last_import_response_bytes_{0};
     std::atomic<uint64_t> last_import_docs_per_sec_{0};
@@ -181,11 +181,8 @@ private:
     std::atomic<uint64_t> max_import_total_ms_{0};
     std::atomic<uint64_t> cumulative_sync_calls_{0};
     std::atomic<uint64_t> cumulative_sync_fast_path_hits_{0};
-    std::atomic<uint64_t> cumulative_sync_replay_calls_{0};
     std::atomic<uint64_t> cumulative_sync_total_ms_{0};
-    std::atomic<uint64_t> cumulative_sync_replay_ms_{0};
     std::atomic<uint64_t> last_sync_total_ms_{0};
-    std::atomic<uint64_t> last_sync_replay_ms_{0};
     std::atomic<uint64_t> max_sync_total_ms_{0};
     std::mutex live_state_progress_mutex_;
     std::condition_variable live_state_progress_cv_;
