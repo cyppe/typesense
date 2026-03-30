@@ -96,7 +96,7 @@ describe(Phases.SINGLE_FRESH, () => {
     const getRes = await fetchSingleNode("/collections/books/documents/does_not_exist");
     expect(getRes.status).toBe(404);
     const getBody: any = await getRes.json();
-    expect(getBody.message).toContain("not found");
+    expect(getBody.message).toContain("Could not find a document");
   });
 
   it("reports correct node state in /debug", async () => {

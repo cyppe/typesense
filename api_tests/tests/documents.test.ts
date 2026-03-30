@@ -67,7 +67,7 @@ async function waitForMultiNodeDocument(
   let lastDoc: Document | null = null;
 
   while (Date.now() < deadline) {
-    const response = await fetchMultiNode(node, `/collections/companies_docs_multi/documents/${id}`, { method: "GET" });
+    const response = await fetchMultiNode(node, `/collections/companies_docs_multi_basic/documents/${id}`, { method: "GET" });
     if (response.ok) {
       const parsed = DocumentSchema.safeParse(await response.json());
       if (parsed.success) {
@@ -352,7 +352,7 @@ describe(Phases.MULTI_FRESH, () => {
     let res = await fetchMultiNode(1, "/collections", {
       method: "POST",
       body: JSON.stringify({
-        name: "companies_docs_multi",
+        name: "companies_docs_multi_basic",
         fields: [
           { name: "id", type: "string" },
           { name: "company_name", type: "string" },
@@ -362,7 +362,7 @@ describe(Phases.MULTI_FRESH, () => {
       }),
     });
     expect(res.ok).toBe(true);
-    res = await fetchMultiNode(1, "/collections/companies_docs_multi/documents", {
+    res = await fetchMultiNode(1, "/collections/companies_docs_multi_basic/documents", {
       method: "POST",
       body: JSON.stringify({
         id: "m1",
@@ -375,14 +375,14 @@ describe(Phases.MULTI_FRESH, () => {
     let d1 = DocumentSchema.safeParse(await res.json());
     expect(d1.success).toBe(true);
 
-    res = await fetchMultiNode(2, "/collections/companies_docs_multi/documents/m1", { method: "GET" });
+    res = await fetchMultiNode(2, "/collections/companies_docs_multi_basic/documents/m1", { method: "GET" });
     expect(res.ok).toBe(true);
     const dGet = DocumentSchema.safeParse(await res.json());
     expect(dGet.success).toBe(true);
 
     res = await fetchMultiNode(
       3,
-      "/collections/companies_docs_multi/documents/search?q=wayne&query_by=company_name",
+      "/collections/companies_docs_multi_basic/documents/search?q=wayne&query_by=company_name",
       { method: "GET" }
     );
     expect(res.ok).toBe(true);
@@ -400,7 +400,7 @@ describe(Phases.MULTI_FRESH, () => {
 
     const res = await fetchMultiNode(
       1,
-      "/collections/companies_docs_multi/documents/import?action=upsert",
+      "/collections/companies_docs_multi_basic/documents/import?action=upsert",
       { method: "POST", body: jsonl }
     );
     expect(res.ok).toBe(true);
@@ -420,7 +420,7 @@ describe(Phases.MULTI_FRESH, () => {
   });
 
   it("delete document across nodes", async () => {
-    const res = await fetchMultiNode(1, "/collections/companies_docs_multi/documents/m1", {
+    const res = await fetchMultiNode(1, "/collections/companies_docs_multi_basic/documents/m1", {
       method: "DELETE",
     });
     expect(res.ok).toBe(true);
@@ -432,7 +432,7 @@ describe(Phases.MULTI_FRESH, () => {
 
 describe(Phases.MULTI_RESTARTED, () => {
   it("create and persist a document post-restart", async () => {
-    let res = await fetchMultiNode(1, "/collections/companies_docs_multi/documents", {
+    let res = await fetchMultiNode(1, "/collections/companies_docs_multi_basic/documents", {
       method: "POST",
       body: JSON.stringify({ id: "m2", company_name: "Oscorp", num_employees: 800, country: "US" }),
     });
@@ -440,7 +440,7 @@ describe(Phases.MULTI_RESTARTED, () => {
     const d = DocumentSchema.safeParse(await res.json());
     expect(d.success).toBe(true);
 
-    res = await fetchMultiNode(2, "/collections/companies_docs_multi/documents/m2", { method: "GET" });
+    res = await fetchMultiNode(2, "/collections/companies_docs_multi_basic/documents/m2", { method: "GET" });
     expect(res.ok).toBe(true);
     const d2 = DocumentSchema.safeParse(await res.json());
     expect(d2.success).toBe(true);
@@ -449,7 +449,7 @@ describe(Phases.MULTI_RESTARTED, () => {
 
 describe(Phases.MULTI_SNAPSHOT, () => {
   it("get a created document after snapshot", async () => {
-    const res = await fetchMultiNode(3, "/collections/companies_docs_multi/documents/m2", { method: "GET" });
+    const res = await fetchMultiNode(3, "/collections/companies_docs_multi_basic/documents/m2", { method: "GET" });
     expect(res.ok).toBe(true);
     const d = DocumentSchema.safeParse(await res.json());
     expect(d.success).toBe(true);
