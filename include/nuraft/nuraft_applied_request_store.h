@@ -20,6 +20,8 @@ struct NuRaftAppliedRequest {
     uint64_t index = 0;
     uint64_t route_hash = 0;
     NuRaftRouteKind route_kind = NuRaftRouteKind::kUnknown;
+    uint64_t origin_server_id = 0;
+    uint64_t response_token = 0;
     std::map<std::string, std::string> params;
     std::string metadata;
     std::string body;

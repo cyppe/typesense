@@ -3,11 +3,13 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <unordered_map>
 #include <vector>
@@ -60,6 +62,16 @@ struct NuRaftHttpServerOptions {
 
 class NuRaftHttpRuntimeService : public ReplicationService {
 public:
+    struct MirroredWriteResult {
+        bool handler_ok = false;
+        bool should_apply = false;
+        uint32_t status_code = 0;
+        std::string body;
+        std::string content_type_header;
+        std::string error;
+        uint64_t applied_index = 0;
+    };
+
     explicit NuRaftHttpRuntimeService(HttpServer* server, NuRaftHttpServerOptions options);
 
     bool initialize(std::string& error);
@@ -94,11 +106,12 @@ public:
                           nlohmann::json& result,
                           std::string& error) const;
     bool is_single_node_mode() const;
-    bool sync_live_product_state(std::string& error);
-    bool sync_live_product_state_fast_path(std::string& error);
+    bool wait_for_live_product_state(uint32_t timeout_ms, std::string& error);
     void shutdown();
 
 private:
+    void start_mirror_worker();
+    void stop_mirror_worker();
     bool initialize_raft_server(std::string& error);
     bool process_document_import_write(const std::shared_ptr<http_req>& request,
                                        const std::shared_ptr<http_res>& response,
@@ -129,6 +142,14 @@ private:
                        const std::shared_ptr<http_res>& response) const;
     void advance_live_product_state_applied_index(uint64_t applied_index);
     bool wait_for_applied_index(uint64_t target_index, uint32_t timeout_ms);
+    uint64_t allocate_response_token();
+    void enqueue_mirrored_request(const NuRaftAppliedRequest& request);
+    void mirror_worker_loop();
+    MirroredWriteResult apply_mirrored_request(const NuRaftAppliedRequest& applied_request);
+    bool wait_for_mirrored_result(uint64_t response_token,
+                                  uint32_t timeout_ms,
+                                  MirroredWriteResult& result);
+    void store_mirrored_result(uint64_t response_token, MirroredWriteResult result);
 
     HttpServer* server_;
     NuRaftHttpServerOptions options_;
@@ -168,6 +189,15 @@ private:
     std::atomic<uint64_t> max_sync_total_ms_{0};
     std::mutex live_state_progress_mutex_;
     std::condition_variable live_state_progress_cv_;
+    std::atomic<uint64_t> next_response_token_{1};
+    std::mutex mirrored_results_mutex_;
+    std::condition_variable mirrored_results_cv_;
+    std::unordered_map<uint64_t, MirroredWriteResult> mirrored_results_;
+    std::mutex mirror_worker_mutex_;
+    std::condition_variable mirror_worker_cv_;
+    std::deque<NuRaftAppliedRequest> mirror_worker_queue_;
+    bool mirror_worker_stopping_ = false;
+    std::thread mirror_worker_thread_;
     mutable std::shared_mutex mutex_;
 
     // Real NuRaft consensus members.

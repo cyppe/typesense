@@ -26,7 +26,7 @@ bool decode_binary_request(std::string_view encoded,
                            std::string& error);
 
 constexpr uint32_t kBinaryAppliedRequestMagic = 0x54534152;  // TSAR
-constexpr uint16_t kBinaryAppliedRequestVersion = 1;
+constexpr uint16_t kBinaryAppliedRequestVersion = 2;
 
 template <typename T>
 void append_le(std::string& out, T value) {
@@ -90,6 +90,8 @@ bool NuRaftAppliedRequest::operator==(const NuRaftAppliedRequest& other) const {
     return index == other.index &&
            route_hash == other.route_hash &&
            route_kind == other.route_kind &&
+           origin_server_id == other.origin_server_id &&
+           response_token == other.response_token &&
            params == other.params &&
            metadata == other.metadata &&
            body == other.body &&
@@ -133,6 +135,10 @@ bool NuRaftAppliedRequest::from_log_entry(const NuRaftLogEntry& entry,
         applied_request.index = entry.index;
         applied_request.route_hash = request["route_hash"].get<uint64_t>();
         applied_request.route_kind = NuRaftRouteClassifier::classify(applied_request.route_hash);
+        applied_request.origin_server_id = request.contains("origin_server_id") ?
+                                           request["origin_server_id"].get<uint64_t>() : 0;
+        applied_request.response_token = request.contains("response_token") ?
+                                         request["response_token"].get<uint64_t>() : 0;
         applied_request.params = request["params"].get<std::map<std::string, std::string>>();
         applied_request.metadata = request.contains("metadata") ? request["metadata"].get<std::string>() : "";
         applied_request.body = request["body"].get<std::string>();
@@ -183,6 +189,8 @@ nlohmann::json encode_request(const NuRaftAppliedRequest& request) {
         {"index", request.index},
         {"route_hash", request.route_hash},
         {"route_kind", NuRaftRouteClassifier::kind_name(request.route_kind)},
+        {"origin_server_id", request.origin_server_id},
+        {"response_token", request.response_token},
         {"params", request.params},
         {"metadata", request.metadata},
         {"body", request.body},
@@ -196,13 +204,15 @@ nlohmann::json encode_request(const NuRaftAppliedRequest& request) {
 
 std::string encode_binary_request(const NuRaftAppliedRequest& request) {
     std::string encoded;
-    encoded.reserve(sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint64_t) * 5 + sizeof(int64_t) +
+    encoded.reserve(sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint64_t) * 7 + sizeof(int64_t) +
                     request.metadata.size() + request.body.size() + request.params.size() * 24);
 
     append_le<uint32_t>(encoded, kBinaryAppliedRequestMagic);
     append_le<uint16_t>(encoded, kBinaryAppliedRequestVersion);
     append_le<uint64_t>(encoded, request.index);
     append_le<uint64_t>(encoded, request.route_hash);
+    append_le<uint64_t>(encoded, request.origin_server_id);
+    append_le<uint64_t>(encoded, request.response_token);
     append_le<uint32_t>(encoded, request.params.size());
     for (const auto& [key, value] : request.params) {
         append_string(encoded, key);
@@ -235,7 +245,7 @@ bool decode_binary_request(std::string_view encoded,
         return false;
     }
 
-    if (version != kBinaryAppliedRequestVersion) {
+    if (version != 1 && version != kBinaryAppliedRequestVersion) {
         error = "NuRaft applied request binary payload version is unsupported.";
         return false;
     }
@@ -243,10 +253,27 @@ bool decode_binary_request(std::string_view encoded,
     request = {};
     uint32_t params_count = 0;
     if (!read_le<uint64_t>(encoded, offset, request.index) ||
-        !read_le<uint64_t>(encoded, offset, request.route_hash) ||
-        !read_le<uint32_t>(encoded, offset, params_count)) {
+        !read_le<uint64_t>(encoded, offset, request.route_hash)) {
         error = "NuRaft applied request binary payload is missing fixed fields.";
         return false;
+    }
+
+    if (version >= 2) {
+        if (!read_le<uint64_t>(encoded, offset, request.origin_server_id) ||
+            !read_le<uint64_t>(encoded, offset, request.response_token)) {
+            error = "NuRaft applied request binary payload is missing origin fields.";
+            return false;
+        }
+    }
+
+    if (!read_le<uint32_t>(encoded, offset, params_count)) {
+        error = "NuRaft applied request binary payload is missing fixed fields.";
+        return false;
+    }
+
+    if (version == 1) {
+        request.origin_server_id = 0;
+        request.response_token = 0;
     }
 
     for (uint32_t i = 0; i < params_count; ++i) {
@@ -302,6 +329,8 @@ bool decode_request(const nlohmann::json& encoded,
     request.index = encoded["index"].get<uint64_t>();
     request.route_hash = encoded["route_hash"].get<uint64_t>();
     request.route_kind = NuRaftRouteClassifier::classify(request.route_hash);
+    request.origin_server_id = encoded.contains("origin_server_id") ? encoded["origin_server_id"].get<uint64_t>() : 0;
+    request.response_token = encoded.contains("response_token") ? encoded["response_token"].get<uint64_t>() : 0;
     request.params = encoded["params"].get<std::map<std::string, std::string>>();
     request.metadata = encoded["metadata"].get<std::string>();
     request.body = encoded["body"].get<std::string>();

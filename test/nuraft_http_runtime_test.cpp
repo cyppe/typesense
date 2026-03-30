@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <functional>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -59,6 +60,19 @@ uint32_t pick_free_port() {
     return port;
 }
 
+bool wait_until_condition(const std::function<bool()>& predicate,
+                          std::chrono::milliseconds timeout = std::chrono::milliseconds(10000),
+                          std::chrono::milliseconds poll_interval = std::chrono::milliseconds(50)) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (predicate()) {
+            return true;
+        }
+        std::this_thread::sleep_for(poll_interval);
+    }
+    return predicate();
+}
+
 class NuRaftHttpRuntimeHarness {
 public:
     NuRaftHttpRuntimeHarness() = default;
@@ -67,7 +81,9 @@ public:
         stop();
     }
 
-    bool start(const NuRaftHttpServerOptions& options, std::string& error) {
+    bool start(const NuRaftHttpServerOptions& options,
+               std::string& error,
+               bool require_healthy = true) {
         stop();
         options_ = options;
         const std::string binary_path = resolve_test_path({
@@ -117,7 +133,7 @@ public:
             _exit(127);
         }
 
-        return wait_until_ready(error);
+        return wait_until_ready(error, require_healthy);
     }
 
     void stop() {
@@ -143,7 +159,7 @@ public:
     }
 
 private:
-    bool wait_until_ready(std::string& error) {
+    bool wait_until_ready(std::string& error, bool require_healthy) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         for (int attempt = 0; attempt < 400; ++attempt) {
             std::string response;
@@ -154,7 +170,8 @@ private:
                                                          {},
                                                          200,
                                                          true);
-            if (status == 200) {
+            if ((require_healthy && status == 200) ||
+                (!require_healthy && status != 0)) {
                 error.clear();
                 return true;
             }
@@ -644,6 +661,198 @@ TEST_F(NuRaftHttpRuntimeTest, ExposesBuildProvenanceInDebugAndMetrics) {
               metrics["build_git_exact_tag"].get<std::string>()) << "runtime log: " << node1_.log_path();
     EXPECT_EQ(debug["build"]["git_tree_status"].get<std::string>(),
               metrics["build_git_tree_status"].get<std::string>()) << "runtime log: " << node1_.log_path();
+}
+
+TEST_F(NuRaftHttpRuntimeTest, PreservesConflictResponsesFromMirrorWorker) {
+    const uint32_t api_port = pick_free_port();
+    const uint32_t peer_port = pick_free_port();
+    const std::string data_dir = node_dir("single-node-conflict-response");
+
+    NuRaftHttpServerOptions options;
+    options.startup_options.data_dir = data_dir;
+    options.startup_options.local_host = "127.0.0.1";
+    options.startup_options.peer_port = peer_port;
+    options.startup_options.api_port = api_port;
+    options.listen_address = "127.0.0.1";
+    options.listen_port = api_port;
+    options.api_key = "xyz";
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options, error)) << error;
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(201,
+              HttpClient::post_response(node1_.base_url() + "/collections",
+                                        kBooksCollectionSchema,
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true));
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(201,
+              HttpClient::post_response(node1_.base_url() + "/collections/books/documents",
+                                        R"({"id":"1","title":"Dune"})",
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true));
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(409,
+              HttpClient::post_response(node1_.base_url() + "/collections/books/documents",
+                                        R"({"id":"1","title":"Dune Messiah"})",
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true))
+        << "runtime log: " << node1_.log_path();
+    EXPECT_TRUE(parse_json(response)["message"].get<std::string>().find("already exists") != std::string::npos)
+        << "runtime log: " << node1_.log_path();
+}
+
+TEST_F(NuRaftHttpRuntimeTest, MirrorsFollowerOriginatedWritesWithoutReplaySync) {
+    const uint32_t api_port_1 = pick_free_port();
+    const uint32_t peer_port_1 = pick_free_port();
+    const uint32_t api_port_2 = pick_free_port();
+    const uint32_t peer_port_2 = pick_free_port();
+    const std::string nodes_config = "127.0.0.1:" + std::to_string(peer_port_1) + ":" + std::to_string(api_port_1) +
+                                     ",127.0.0.1:" + std::to_string(peer_port_2) + ":" + std::to_string(api_port_2);
+
+    NuRaftHttpServerOptions options_1;
+    options_1.startup_options.data_dir = node_dir("mirror-cluster-node-1");
+    options_1.startup_options.local_host = "127.0.0.1";
+    options_1.startup_options.peer_port = peer_port_1;
+    options_1.startup_options.api_port = api_port_1;
+    options_1.startup_options.nodes_config = nodes_config;
+    options_1.listen_address = "127.0.0.1";
+    options_1.listen_port = api_port_1;
+    options_1.api_key = "xyz";
+
+    NuRaftHttpServerOptions options_2 = options_1;
+    options_2.startup_options.data_dir = node_dir("mirror-cluster-node-2");
+    options_2.startup_options.peer_port = peer_port_2;
+    options_2.startup_options.api_port = api_port_2;
+    options_2.listen_port = api_port_2;
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options_1, error, false)) << error;
+    ASSERT_TRUE(node2_.start(options_2, error, false)) << error;
+
+    auto fetch_json = [&](const NuRaftHttpRuntimeHarness& node,
+                          const std::string& path,
+                          nlohmann::json& body) -> long {
+        std::string response;
+        std::map<std::string, std::string> headers;
+        const long status = HttpClient::get_response(node.base_url() + path,
+                                                     response,
+                                                     headers,
+                                                     {},
+                                                     5000,
+                                                     true);
+        if (status == 200) {
+            body = parse_json(response);
+        }
+        return status;
+    };
+
+    nlohmann::json status_1;
+    nlohmann::json status_2;
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               status_1["is_leader"].get<bool>() != status_2["is_leader"].get<bool>();
+    }, std::chrono::milliseconds(15000)))
+        << "node1 log: " << node1_.log_path() << ", node2 log: " << node2_.log_path();
+
+    const NuRaftHttpRuntimeHarness& leader = status_1["is_leader"].get<bool>() ? node1_ : node2_;
+    const NuRaftHttpRuntimeHarness& follower = status_1["is_leader"].get<bool>() ? node2_ : node1_;
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(201,
+              HttpClient::post_response(follower.base_url() + "/collections",
+                                        kBooksCollectionSchema,
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true))
+        << "follower log: " << follower.log_path();
+    EXPECT_EQ("books", parse_json(response)["name"].get<std::string>()) << "follower log: " << follower.log_path();
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(200,
+              HttpClient::post_response(follower.base_url() + "/collections/books/documents/import?action=create",
+                                        R"({"id":"1","title":"Dune"}
+{"id":"2","title":"Hyperion"})",
+                                        response,
+                                        headers,
+                                        {},
+                                        10000,
+                                        true))
+        << "follower log: " << follower.log_path();
+    const size_t newline_pos = response.find('\n');
+    ASSERT_NE(std::string::npos, newline_pos) << "follower log: " << follower.log_path();
+    const auto first_import_line = parse_json(response.substr(0, newline_pos));
+    const auto second_import_line = parse_json(response.substr(newline_pos + 1));
+    EXPECT_TRUE(first_import_line["success"].get<bool>()) << "follower log: " << follower.log_path();
+    EXPECT_TRUE(second_import_line["success"].get<bool>()) << "follower log: " << follower.log_path();
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(200,
+              HttpClient::put_response(follower.base_url() + "/aliases/books_alias",
+                                       R"({"collection_name":"books"})",
+                                       response,
+                                       headers,
+                                       5000,
+                                       true))
+        << "follower log: " << follower.log_path();
+    const auto alias_body = parse_json(response);
+    EXPECT_EQ("books_alias", alias_body["name"].get<std::string>()) << "follower log: " << follower.log_path();
+    EXPECT_EQ("books", alias_body["collection_name"].get<std::string>()) << "follower log: " << follower.log_path();
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               status_1["live_product_applied_index"].get<uint64_t>() >= status_1["committed_index"].get<uint64_t>() &&
+               status_2["live_product_applied_index"].get<uint64_t>() >= status_2["committed_index"].get<uint64_t>();
+    }, std::chrono::milliseconds(15000)))
+        << "node1 log: " << node1_.log_path() << ", node2 log: " << node2_.log_path();
+
+    EXPECT_EQ(0u, status_1["sync_cumulative_calls"].get<uint64_t>()) << "node1 log: " << node1_.log_path();
+    EXPECT_EQ(0u, status_2["sync_cumulative_calls"].get<uint64_t>()) << "node2 log: " << node2_.log_path();
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(200,
+              HttpClient::get_response(leader.base_url() + "/collections/books",
+                                       response,
+                                       headers,
+                                       {},
+                                       5000,
+                                       true));
+    EXPECT_EQ("books", parse_json(response)["name"].get<std::string>()) << "leader log: " << leader.log_path();
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(200,
+              HttpClient::get_response(follower.base_url() + "/aliases/books_alias",
+                                       response,
+                                       headers,
+                                       {},
+                                       5000,
+                                       true));
+    EXPECT_EQ("books", parse_json(response)["collection_name"].get<std::string>())
+        << "follower log: " << follower.log_path();
 }
 
 }  // namespace

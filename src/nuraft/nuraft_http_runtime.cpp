@@ -254,10 +254,14 @@ std::shared_ptr<http_req> build_import_chunk_request(const http_req& source,
     return request;
 }
 
-NuRaftAppliedRequest build_applied_request(const http_req& request) {
+NuRaftAppliedRequest build_applied_request(const http_req& request,
+                                           uint64_t origin_server_id = 0,
+                                           uint64_t response_token = 0) {
     NuRaftAppliedRequest applied_request;
     applied_request.route_hash = request.route_hash;
     applied_request.route_kind = NuRaftRouteClassifier::classify(request.route_hash);
+    applied_request.origin_server_id = origin_server_id;
+    applied_request.response_token = response_token;
     applied_request.params = request.params;
     applied_request.metadata = request.metadata;
     applied_request.body = request.body;
@@ -267,6 +271,31 @@ NuRaftAppliedRequest build_applied_request(const http_req& request) {
     applied_request.log_index = request.log_index;
     applied_request.is_binary_body = request.is_binary_body;
     return applied_request;
+}
+
+bool should_apply_mirrored_route(const NuRaftAppliedRequest& applied_request,
+                                 const route_path& route) {
+    switch (applied_request.route_kind) {
+        case NuRaftRouteKind::kCollectionCreate:
+        case NuRaftRouteKind::kCollectionDrop:
+        case NuRaftRouteKind::kDocumentWrite:
+        case NuRaftRouteKind::kDocumentDelete:
+        case NuRaftRouteKind::kDocumentImport:
+            return true;
+        case NuRaftRouteKind::kUnknown:
+            break;
+        default:
+            return false;
+    }
+
+    if (route.async_req || route.async_res || route.path_parts.empty()) {
+        return false;
+    }
+
+    const std::string& root_resource = route.path_parts.front();
+    return root_resource != "operations" &&
+           root_resource != "proxy" &&
+           root_resource != "proxy_sse";
 }
 
 template <typename ConsumeChunk>
@@ -358,7 +387,7 @@ bool invoke_registered_handler(HttpServer* server,
     return false;
 }
 
-bool should_replay_live_product_state(const NuRaftAppliedRequest& applied_request) {
+[[maybe_unused]] bool should_replay_live_product_state(const NuRaftAppliedRequest& applied_request) {
     switch (applied_request.route_kind) {
         case NuRaftRouteKind::kCollectionCreate:
         case NuRaftRouteKind::kCollectionDrop:
@@ -392,24 +421,24 @@ std::shared_ptr<http_req> build_replay_request(const NuRaftAppliedRequest& appli
     return request;
 }
 
-// Sync live product state on the thread pool (not the event loop).
-// Called at the start of NuRaft read handlers to ensure they see recent writes.
-void sync_before_read() {
+// Wait for the background mirror worker to catch up before executing a read on
+// the thread pool. This avoids replaying committed entries on demand.
+void wait_before_read() {
     NuRaftHttpRuntimeService* runtime = current_runtime_service();
     if (runtime != nullptr) {
         std::string error;
-        runtime->sync_live_product_state(error);
+        runtime->wait_for_live_product_state(5000, error);
     }
 }
 
-// Wrapper that syncs before delegating to any standard read handler.
-// Registered instead of the original handler for routes that read mutable state.
-// This ensures sync runs on the thread pool (not the h2o event loop).
+// Wrapper that waits for the live in-memory state before delegating to any
+// standard read handler. Registered instead of the original handler for routes
+// that read mutable state so the wait happens on the thread pool.
 template<bool (*OriginalHandler)(const std::shared_ptr<http_req>&,
                                   const std::shared_ptr<http_res>&)>
 bool synced_read_handler(const std::shared_ptr<http_req>& req,
                          const std::shared_ptr<http_res>& res) {
-    sync_before_read();
+    wait_before_read();
     return OriginalHandler(req, res);
 }
 
@@ -419,7 +448,7 @@ bool get_runtime_collections(const std::shared_ptr<http_req>& request, const std
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
-    sync_before_read();
+    wait_before_read();
 
     if (!CollectionManager::get_instance().get_collection_names().empty()) {
         return get_collections(request, response);
@@ -442,7 +471,7 @@ bool get_runtime_collection(const std::shared_ptr<http_req>& request, const std:
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
-    sync_before_read();
+    wait_before_read();
 
     const auto it = request->params.find("collection");
     if (it == request->params.end() || it->second.empty()) {
@@ -475,7 +504,7 @@ bool get_runtime_document(const std::shared_ptr<http_req>& request, const std::s
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
-    sync_before_read();
+    wait_before_read();
 
     const auto collection_it = request->params.find("collection");
     const auto id_it = request->params.find("id");
@@ -511,7 +540,7 @@ bool search_runtime_documents(const std::shared_ptr<http_req>& request, const st
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
-    sync_before_read();
+    wait_before_read();
 
     const auto collection_it = request->params.find("collection");
     if (collection_it == request->params.end() || collection_it->second.empty()) {
@@ -618,9 +647,9 @@ bool mirror_single_node_typesense_state(const std::shared_ptr<http_req>& request
 // curations, analytics, etc.) from the full materialized state history.
 // These are NOT loaded by collection_manager.load() and need explicit replay.
 // Classified routes (collection/document operations) are already in RocksDB.
-bool replay_unknown_routes_from_history(HttpServer* server,
-                                        const NuRaftKvStateMachineSink& sink,
-                                        std::string& error) {
+[[maybe_unused]] bool replay_unknown_routes_from_history(HttpServer* server,
+                                                         const NuRaftKvStateMachineSink& sink,
+                                                         std::string& error) {
     if (server == nullptr) {
         error = "NuRaft runtime server is not attached.";
         return false;
@@ -683,11 +712,11 @@ bool replay_unknown_routes_from_history(HttpServer* server,
 // Overload for startup: reads ALL entries, skips classified routes below
 // skip_classified_through_index (already in RocksDB), replays kUnknown
 // routes from the full history (not loaded by collection_manager.load()).
-bool replay_live_product_state(HttpServer* server,
-                               const NuRaftKvStateMachineSink& sink,
-                               uint64_t& replayed_through_index,
-                               uint64_t skip_classified_through_index,
-                               std::string& error) {
+[[maybe_unused]] bool replay_live_product_state(HttpServer* server,
+                                                const NuRaftKvStateMachineSink& sink,
+                                                uint64_t& replayed_through_index,
+                                                uint64_t skip_classified_through_index,
+                                                std::string& error) {
     if (server == nullptr) {
         error = "NuRaft runtime server is not attached.";
         return false;
@@ -776,10 +805,10 @@ bool replay_live_product_state(HttpServer* server,
 
 // Overload for sync path: reads only entries after replayed_through_index.
 // All route kinds (classified and kUnknown) in the delta are replayed.
-bool replay_live_product_state(HttpServer* server,
-                               const NuRaftKvStateMachineSink& sink,
-                               uint64_t& replayed_through_index,
-                               std::string& error) {
+[[maybe_unused]] bool replay_live_product_state(HttpServer* server,
+                                                const NuRaftKvStateMachineSink& sink,
+                                                uint64_t& replayed_through_index,
+                                                std::string& error) {
     if (server == nullptr) {
         error = "NuRaft runtime server is not attached.";
         return false;
@@ -839,140 +868,197 @@ bool replay_live_product_state(HttpServer* server,
     return true;
 }
 
-bool NuRaftHttpRuntimeService::sync_live_product_state(std::string& error) {
-    const auto sync_start = std::chrono::steady_clock::now();
+void NuRaftHttpRuntimeService::start_mirror_worker() {
+    std::lock_guard<std::mutex> lock(mirror_worker_mutex_);
+    if (mirror_worker_thread_.joinable()) {
+        return;
+    }
+    mirror_worker_stopping_ = false;
+    mirror_worker_thread_ = std::thread(&NuRaftHttpRuntimeService::mirror_worker_loop, this);
+}
+
+void NuRaftHttpRuntimeService::stop_mirror_worker() {
+    {
+        std::lock_guard<std::mutex> lock(mirror_worker_mutex_);
+        mirror_worker_stopping_ = true;
+    }
+    mirror_worker_cv_.notify_all();
+
+    if (mirror_worker_thread_.joinable()) {
+        mirror_worker_thread_.join();
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mirrored_results_mutex_);
+        mirrored_results_.clear();
+    }
+    mirrored_results_cv_.notify_all();
+}
+
+uint64_t NuRaftHttpRuntimeService::allocate_response_token() {
+    return next_response_token_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void NuRaftHttpRuntimeService::enqueue_mirrored_request(const NuRaftAppliedRequest& request) {
+    {
+        std::lock_guard<std::mutex> lock(mirror_worker_mutex_);
+        mirror_worker_queue_.push_back(request);
+    }
+    mirror_worker_cv_.notify_one();
+}
+
+void NuRaftHttpRuntimeService::store_mirrored_result(uint64_t response_token, MirroredWriteResult result) {
+    {
+        std::lock_guard<std::mutex> lock(mirrored_results_mutex_);
+        mirrored_results_[response_token] = std::move(result);
+    }
+    mirrored_results_cv_.notify_all();
+}
+
+bool NuRaftHttpRuntimeService::wait_for_mirrored_result(uint64_t response_token,
+                                                        uint32_t timeout_ms,
+                                                        MirroredWriteResult& result) {
+    std::unique_lock<std::mutex> lock(mirrored_results_mutex_);
+    const bool ready = mirrored_results_cv_.wait_for(lock,
+                                                     std::chrono::milliseconds(timeout_ms),
+                                                     [&] {
+                                                         return mirrored_results_.count(response_token) != 0;
+                                                     });
+    if (!ready) {
+        return false;
+    }
+
+    const auto it = mirrored_results_.find(response_token);
+    if (it == mirrored_results_.end()) {
+        return false;
+    }
+
+    result = std::move(it->second);
+    mirrored_results_.erase(it);
+    return true;
+}
+
+bool NuRaftHttpRuntimeService::wait_for_live_product_state(uint32_t timeout_ms, std::string& error) {
     cumulative_sync_calls_.fetch_add(1, std::memory_order_relaxed);
     last_sync_replay_ms_.store(0, std::memory_order_relaxed);
 
-    auto finish_sync_metrics = [&](uint64_t replay_ms) {
-        const uint64_t total_ms = elapsed_ms_since(sync_start);
-        cumulative_sync_total_ms_.fetch_add(total_ms, std::memory_order_relaxed);
-        last_sync_total_ms_.store(total_ms, std::memory_order_relaxed);
-        max_sync_total_ms_.store(std::max(max_sync_total_ms_.load(std::memory_order_relaxed), total_ms),
-                                 std::memory_order_relaxed);
-        last_sync_replay_ms_.store(replay_ms, std::memory_order_relaxed);
-        if (replay_ms != 0) {
-            cumulative_sync_replay_ms_.fetch_add(replay_ms, std::memory_order_relaxed);
-        }
-    };
-
-    auto state_is_caught_up = [&](uint64_t local_applied_index) {
-        return live_product_state_applied_index_.load(std::memory_order_relaxed) >= local_applied_index;
-    };
-    auto wait_for_inflight_import_apply = [&](uint64_t target_index) {
-        if (active_import_requests_.load(std::memory_order_relaxed) == 0 ||
-            inflight_import_target_index_.load(std::memory_order_relaxed) < target_index) {
-            return false;
-        }
-
-        std::unique_lock<std::mutex> progress_lock(live_state_progress_mutex_);
-        live_state_progress_cv_.wait_for(progress_lock, std::chrono::milliseconds(100), [&] {
-            return state_is_caught_up(target_index) ||
-                   active_import_requests_.load(std::memory_order_relaxed) == 0;
-        });
-        return state_is_caught_up(target_index);
-    };
-
-    uint64_t local_applied_index = 0;
+    uint64_t target_index = 0;
     {
         std::shared_lock<std::shared_mutex> lock(mutex_);
         if (!initialized_.load()) {
             error.clear();
             cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
-            finish_sync_metrics(0);
             return true;
         }
-
-        if (raft_state_machine_ != nullptr && materialized_state_sink_ != nullptr) {
-            local_applied_index = raft_state_machine_->get_last_commit_index();
-            if (state_is_caught_up(local_applied_index)) {
-                error.clear();
-                cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
-                finish_sync_metrics(0);
-                return true;
-            }
-        }
+        target_index = raft_state_machine_ != nullptr ? raft_state_machine_->get_last_commit_index() : 0;
     }
 
-    if (wait_for_inflight_import_apply(local_applied_index)) {
+    if (live_product_state_applied_index_.load(std::memory_order_relaxed) >= target_index) {
         error.clear();
         cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
-        finish_sync_metrics(0);
         return true;
     }
 
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    if (!initialized_.load()) {
-        error.clear();
-        cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
-        finish_sync_metrics(0);
-        return true;
+    const auto wait_start = std::chrono::steady_clock::now();
+    const bool ok = wait_for_applied_index(target_index, timeout_ms);
+    const uint64_t wait_ms = elapsed_ms_since(wait_start);
+    cumulative_sync_total_ms_.fetch_add(wait_ms, std::memory_order_relaxed);
+    last_sync_total_ms_.store(wait_ms, std::memory_order_relaxed);
+    max_sync_total_ms_.store(std::max(max_sync_total_ms_.load(std::memory_order_relaxed), wait_ms),
+                             std::memory_order_relaxed);
+
+    if (!ok) {
+        error = "Timed out waiting for live product state to reach committed index " +
+                std::to_string(target_index);
+        return false;
     }
 
-    if (raft_state_machine_ != nullptr && materialized_state_sink_ != nullptr) {
-        local_applied_index = raft_state_machine_->get_last_commit_index();
-        if (state_is_caught_up(local_applied_index)) {
-            error.clear();
-            cumulative_sync_fast_path_hits_.fetch_add(1, std::memory_order_relaxed);
-            finish_sync_metrics(0);
-            return true;
-        }
-    }
-
-    if (materialized_state_sink_ != nullptr) {
-        uint64_t replayed_through_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
-        const auto replay_start = std::chrono::steady_clock::now();
-        const bool ok = replay_live_product_state(server_,
-                                                  *materialized_state_sink_,
-                                                  replayed_through_index,
-                                                  error);
-        const uint64_t replay_ms = elapsed_ms_since(replay_start);
-        if (ok) {
-            advance_live_product_state_applied_index(replayed_through_index);
-            cumulative_sync_replay_calls_.fetch_add(1, std::memory_order_relaxed);
-        }
-        finish_sync_metrics(replay_ms);
-        return ok;
-    }
-
-    NuRaftKvStateMachineSink sink(layout_);
-    uint64_t replayed_through_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
-    const auto replay_start = std::chrono::steady_clock::now();
-    if (!replay_live_product_state(server_, sink,
-                                   replayed_through_index,
-                                   error)) {
-        TS_LOG(WARNING) << "NuRaft sync replay deferred: " << error;
-        error.clear();
-    } else {
-        advance_live_product_state_applied_index(replayed_through_index);
-        cumulative_sync_replay_calls_.fetch_add(1, std::memory_order_relaxed);
-    }
-    finish_sync_metrics(elapsed_ms_since(replay_start));
+    error.clear();
     return true;
 }
 
-bool NuRaftHttpRuntimeService::sync_live_product_state_fast_path(std::string& error) {
-    // Fast-path-only sync: just check if the state is already caught up.
-    // NO exclusive lock, NO replay. Safe to call on the h2o event loop thread.
-    // Returns true if state is caught up, false if replay is needed.
-    std::shared_lock<std::shared_mutex> lock(mutex_);
-    if (!initialized_.load()) {
-        error.clear();
-        return true;
+NuRaftHttpRuntimeService::MirroredWriteResult
+NuRaftHttpRuntimeService::apply_mirrored_request(const NuRaftAppliedRequest& applied_request) {
+    MirroredWriteResult result;
+    result.applied_index = applied_request.index;
+
+    route_path* route = nullptr;
+    std::string error;
+    if (!find_registered_route(server_, applied_request.route_hash, route, error)) {
+        result.error = error;
+        return result;
     }
 
-    if (raft_state_machine_ != nullptr && materialized_state_sink_ != nullptr) {
-        const uint64_t sm_committed = raft_state_machine_->get_last_commit_index();
-        if (live_product_state_applied_index_.load(std::memory_order_relaxed) >= sm_committed) {
-            error.clear();
-            return true;
+    if (route == nullptr) {
+        result.error = "NuRaft runtime could not resolve registered route handler.";
+        return result;
+    }
+
+    result.should_apply = should_apply_mirrored_route(applied_request, *route);
+    if (!result.should_apply) {
+        result.handler_ok = true;
+        return result;
+    }
+
+    auto request = build_replay_request(applied_request, *route);
+    auto response = std::make_shared<http_res>(nullptr);
+
+    if (applied_request.route_kind != NuRaftRouteKind::kUnknown) {
+        result.handler_ok = mirror_single_node_typesense_state(request,
+                                                               applied_request.route_kind,
+                                                               error,
+                                                               response);
+        if (!result.handler_ok && !is_expected_missing_collection_mirror_skip(applied_request.route_kind, error)) {
+            TS_LOG(WARNING) << "NuRaft mirror worker apply failed for route '"
+                            << request->http_method << " " << request->path_without_query
+                            << "': " << error;
+        }
+        update_single_node_document_cache(*request, applied_request.route_kind);
+    } else {
+        result.handler_ok = invoke_registered_handler(server_, request, response, error);
+        if (!result.handler_ok && response->status_code == 0) {
+            TS_LOG(WARNING) << "NuRaft mirror worker apply failed for route '"
+                            << request->http_method << " " << request->path_without_query
+                            << "': " << error;
         }
     }
 
-    // State is behind — the slow path (replay) will be done by read handlers
-    // on the thread pool via synced_read_handler<>.
-    error.clear();
-    return false;
+    result.status_code = response->status_code;
+    result.body = response->body;
+    result.content_type_header = response->content_type_header;
+    result.error = error;
+    return result;
+}
+
+void NuRaftHttpRuntimeService::mirror_worker_loop() {
+    for (;;) {
+        NuRaftAppliedRequest applied_request;
+        {
+            std::unique_lock<std::mutex> lock(mirror_worker_mutex_);
+            mirror_worker_cv_.wait(lock, [&] {
+                return mirror_worker_stopping_ || !mirror_worker_queue_.empty();
+            });
+
+            if (mirror_worker_queue_.empty()) {
+                if (mirror_worker_stopping_) {
+                    return;
+                }
+                continue;
+            }
+
+            applied_request = std::move(mirror_worker_queue_.front());
+            mirror_worker_queue_.pop_front();
+        }
+
+        MirroredWriteResult result = apply_mirrored_request(applied_request);
+        advance_live_product_state_applied_index(applied_request.index);
+
+        if (applied_request.response_token != 0 &&
+            applied_request.origin_server_id == static_cast<uint64_t>(identity_.server_id)) {
+            result.applied_index = applied_request.index;
+            store_mirrored_result(applied_request.response_token, std::move(result));
+        }
+    }
 }
 
 bool NuRaftHttpRuntimeService::initialize(std::string& error) {
@@ -1009,9 +1095,9 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
     // Product state (collections, documents, aliases, presets, stopwords,
     // synonyms, curations, analytics) is already loaded from the main RocksDB
     // store by collection_manager.load(). The main store has WAL enabled so
-    // all writes from the leader's product handlers are durable. Just advance
-    // the applied-index to match the materialized state so the sync path
-    // starts delta replay from the correct point.
+    // all writes from the product handlers are durable. Just advance the
+    // applied index to match the materialized state so the background mirror
+    // worker starts from the correct point.
     advance_live_product_state_applied_index(last_applied_index);
     TS_LOG(INFO) << "NuRaft init: skipped startup replay (state loaded from main store), "
                  << "advanced applied index to " << last_applied_index;
@@ -1025,8 +1111,11 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         materialized_read_preferred_collections_.clear();
     }
 
+    start_mirror_worker();
+
     if (!initialize_raft_server(error)) {
         TS_LOG(ERROR) << "NuRaft init: raft server initialization failed: " << error;
+        stop_mirror_worker();
         materialized_state_sink_.reset();
         return false;
     }
@@ -1122,17 +1211,6 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         }
     } handler_scope(request);
 
-    // Sync product state before the write. This ensures the write handler sees
-    // collections/documents created by other nodes' writes (replayed from KV
-    // sink to CollectionManager). Runs on the thread pool, not the event loop.
-    // With the commit callback advancing live_product_state_applied_index_,
-    // the sync fast path (atomic check) succeeds more often, reducing time
-    // spent in the slow replay path.
-    {
-        std::string sync_error;
-        sync_live_product_state(sync_error);
-    }
-
     std::shared_lock<std::shared_mutex> lock(mutex_);
     std::string error;
     if (!initialized_.load()) {
@@ -1147,7 +1225,13 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     const bool supports_generic_registered_write =
         route_kind == NuRaftRouteKind::kUnknown &&
         has_registered_route;
+    NuRaftAppliedRequest route_probe;
+    route_probe.route_kind = route_kind;
+    const bool delegates_to_mirror_worker =
+        route_kind != NuRaftRouteKind::kUnknown ||
+        (supports_generic_registered_write && route != nullptr && should_apply_mirrored_route(route_probe, *route));
     const bool delegates_to_registered_import_handler =
+        delegates_to_mirror_worker &&
         route_kind == NuRaftRouteKind::kDocumentImport &&
         has_registered_route &&
         route != nullptr;
@@ -1161,23 +1245,6 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         response->set_422("Unsupported NuRaft runtime write route.");
         send_response(request, response);
         return;
-    }
-
-    std::string previous_collection_body;
-    std::string previous_document_body;
-    if (route_kind == NuRaftRouteKind::kCollectionDrop) {
-        const auto collection_it = request->params.find("collection");
-        if (collection_it != request->params.end()) {
-            std::string ignored_error;
-            read_collection(collection_it->second, previous_collection_body, ignored_error);
-        }
-    } else if (route_kind == NuRaftRouteKind::kDocumentDelete) {
-        const auto collection_it = request->params.find("collection");
-        const auto id_it = request->params.find("id");
-        if (collection_it != request->params.end() && id_it != request->params.end()) {
-            std::string ignored_error;
-            read_document(collection_it->second, id_it->second, previous_document_body, ignored_error);
-        }
     }
 
     request->metadata = request->http_method;
@@ -1209,15 +1276,13 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
             send_response(request, response);
             return;
         }
-        const uint64_t applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
-        if (committed_index > applied_index) {
-            advance_live_product_state_applied_index(committed_index);
-        }
         send_response(request, response);
         return;
     }
 
-    const std::string request_payload = build_applied_request(*request).encode_binary();
+    const uint64_t response_token = delegates_to_mirror_worker ? allocate_response_token() : 0;
+    const std::string request_payload =
+        build_applied_request(*request, identity_.server_id, response_token).encode_binary();
     if (!append_via_raft(request_payload,
                          NuRaftRequestEnvelope::kAppliedRequestBinaryEncoding,
                          *request,
@@ -1240,7 +1305,7 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         wait_for_applied_index(committed_index - 1, 5000);
     }
 
-    if (supports_generic_registered_write) {
+    if (!delegates_to_mirror_worker) {
         error.clear();
         const bool handler_ok = invoke_registered_handler(server_, request, response, error);
         if (!handler_ok && response->status_code == 0) {
@@ -1259,35 +1324,19 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         return;
     }
 
-    // Run the real Typesense handler and capture its response. This gives us
-    // standard API responses (correct created_at, document IDs, etc.) instead
-    // of the manually constructed Raft metadata that breaks client compatibility.
-    auto handler_response = std::make_shared<http_res>(nullptr);
-    const bool mirror_ok = mirror_single_node_typesense_state(request, route_kind, error, handler_response);
-    if (!mirror_ok) {
-        if (is_expected_missing_collection_mirror_skip(route_kind, error)) {
-            TS_LOG(INFO) << "NuRaft runtime skipped live Typesense state mirror for missing collection drop: "
-                         << error;
-        } else {
-            TS_LOG(WARNING) << "NuRaft runtime skipped live Typesense state mirror: " << error;
-        }
-        error.clear();
-    }
-    const uint64_t applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
-    if (committed_index > applied_index) {
-        advance_live_product_state_applied_index(committed_index);
+    MirroredWriteResult mirrored_result;
+    if (!wait_for_mirrored_result(response_token, options_.request_timeout_ms, mirrored_result)) {
+        response->set_500("Timed out waiting for NuRaft mirror worker response.");
+        send_response(request, response);
+        return;
     }
 
-    update_single_node_document_cache(*request, route_kind);
-
-    // Use the real Typesense handler response (standard API format).
-    // When the handler returns a client error (4xx), that IS the correct
-    // response — e.g., DELETE non-existent collection should be 404, not 200.
-    if (handler_response->status_code != 0) {
-        response->set_body(handler_response->status_code, handler_response->body);
-        response->content_type_header = handler_response->content_type_header;
+    if (mirrored_result.status_code != 0) {
+        response->set_body(mirrored_result.status_code, mirrored_result.body);
+        response->content_type_header = mirrored_result.content_type_header;
+    } else if (!mirrored_result.handler_ok && !mirrored_result.error.empty()) {
+        response->set_500(mirrored_result.error);
     } else {
-        // Handler didn't set a status (e.g., unknown route that succeeded).
         const uint32_t code = request->http_method == "POST" ? 201 : 200;
         response->set_body(code, request->body);
     }
@@ -1361,7 +1410,9 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
         // Inject auto-IDs into import docs missing "id" before Raft serialization.
         inject_auto_ids_into_import_body(chunk_body);
         auto chunk_request = build_import_chunk_request(*request, std::move(chunk_body), first_chunk, last_chunk);
-        const std::string request_payload = build_applied_request(*chunk_request).encode_binary();
+        const uint64_t response_token = allocate_response_token();
+        const std::string request_payload =
+            build_applied_request(*chunk_request, identity_.server_id, response_token).encode_binary();
 
         uint64_t chunk_committed_index = 0;
         bool chunk_forwarded_to_leader = false;
@@ -1398,12 +1449,24 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
         }
 
         auto chunk_response = std::make_shared<http_res>(nullptr);
+        MirroredWriteResult chunk_result;
         const auto chunk_replay_start = std::chrono::steady_clock::now();
-        const bool handler_ok = invoke_registered_handler(server_, chunk_request, chunk_response, chunk_error);
+        const bool got_result = wait_for_mirrored_result(response_token, options_.request_timeout_ms, chunk_result);
         replay_ms += elapsed_ms_since(chunk_replay_start);
-        if (!handler_ok && chunk_response->status_code == 0) {
+        if (!got_result) {
+            chunk_error = "Timed out waiting for NuRaft mirror worker import response.";
             return false;
         }
+        if (!chunk_result.handler_ok && chunk_result.status_code == 0) {
+            chunk_error = chunk_result.error.empty()
+                              ? "NuRaft mirror worker import apply failed without an HTTP response."
+                              : chunk_result.error;
+            return false;
+        }
+
+        chunk_response->status_code = chunk_result.status_code;
+        chunk_response->body = chunk_result.body;
+        chunk_response->content_type_header = chunk_result.content_type_header;
 
         if (!chunk_response->content_type_header.empty()) {
             response_content_type = chunk_response->content_type_header;
@@ -1421,8 +1484,6 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
             chunk_error.clear();
             return false;
         }
-
-        advance_live_product_state_applied_index(chunk_committed_index);
         replay_chunks++;
         return true;
     };
@@ -1546,10 +1607,9 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         status["last_index"] = last_idx;
         status["committed_index"] = committed_idx;
         // Report state_machine_applied_index as known_applied_index. This reflects
-        // what the KV sink has actually applied via NuRaft's commit thread —
-        // accurate even without sync_live_product_state() running on the event loop.
-        // The live_product_state_applied_index_ tracks CollectionManager mirroring
-        // which may lag behind the KV sink.
+        // what the KV sink has actually applied via NuRaft's commit thread.
+        // The live_product_state_applied_index_ tracks the background mirror
+        // worker and may lag behind the KV sink briefly.
         status["known_applied_index"] = state_machine_applied_index;
         status["read_caught_up"] = initialized_.load() && state_machine_applied_index >= committed_idx;
         status["live_product_applied_index"] = live_product_state_applied_index_.load(std::memory_order_relaxed);
@@ -2012,18 +2072,6 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
         return true;
     }
 
-    // Fast-path-only sync on the event loop: just an atomic comparison (<1μs).
-    // If the state is already caught up, live_product_state_applied_index_ is
-    // advanced immediately. If NOT caught up, we skip the expensive replay —
-    // that happens on the thread pool via synced_read_handler<> wrappers.
-    // This avoids the 288ms event-loop blocking during imports while still
-    // keeping followers' known_applied_index advancing for convergence checks.
-    NuRaftHttpRuntimeService* runtime = current_runtime_service();
-    if (runtime != nullptr) {
-        std::string error;
-        runtime->sync_live_product_state_fast_path(error);
-    }
-
     return handle_authentication(params, embedded_params_vec, body, rpath, auth_key);
 }
 
@@ -2048,9 +2096,10 @@ void register_nuraft_http_runtime_routes(HttpServer* server) {
     server->del("/collections/:collection", del_drop_collection);
     server->get("/collections/:collection", get_runtime_collection);
 
-    // GET handlers that read mutable state use synced_read_handler<> to ensure
-    // sync runs on the thread pool (not the h2o event loop). Write handlers
-    // use wait_for_applied_index() for ordering and don't need sync wrappers.
+    // GET handlers that read mutable state use synced_read_handler<> to wait
+    // for the background mirror worker on the thread pool (not the h2o event
+    // loop). Write handlers use wait_for_applied_index() for predecessor
+    // ordering and per-entry mirrored results for their own response.
     server->get("/aliases", synced_read_handler<get_aliases>);
     server->get("/aliases/:alias", synced_read_handler<get_alias>);
     server->put("/aliases/:alias", put_upsert_alias);
@@ -2157,17 +2206,14 @@ void register_nuraft_http_runtime_routes(HttpServer* server) {
 // --- Real NuRaft consensus integration ---
 
 bool NuRaftHttpRuntimeService::initialize_raft_server(std::string& error) {
-    // Create state machine with commit callback.
-    // NOTE: The callback is a no-op for now. A full worker thread that mirrors
-    // to CollectionManager in the callback is planned for a future PR. The
-    // current architecture relies on sync_live_product_state() replay for
-    // CollectionManager mirroring on non-originating nodes.
+    // Create state machine with a post-commit callback that queues each
+    // committed request for the background mirror worker.
     raft_state_machine_ = nuraft::cs_new<TypesenseStateMachine>(
         layout_,
         materialized_state_sink_.get(),
-        [](uint64_t log_idx, const NuRaftAppliedRequest& request) {
+        [this](uint64_t log_idx, const NuRaftAppliedRequest& request) {
             (void)log_idx;
-            (void)request;
+            enqueue_mirrored_request(request);
         });
 
     // Create state manager.
@@ -2317,6 +2363,7 @@ void NuRaftHttpRuntimeService::shutdown() {
     if (raft_launcher_) {
         raft_launcher_->shutdown(5);
     }
+    stop_mirror_worker();
     raft_server_.reset();
     raft_state_machine_.reset();
     raft_state_manager_.reset();

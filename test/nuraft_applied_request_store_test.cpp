@@ -36,6 +36,8 @@ TEST_F(NuRaftAppliedRequestStoreTest, DecodesLogEntryIntoStructuredRequest) {
     EXPECT_EQ(applied_request.index, 7u);
     EXPECT_EQ(applied_request.route_hash, 1234u);
     EXPECT_EQ(applied_request.route_kind, NuRaftRouteKind::kUnknown);
+    EXPECT_EQ(applied_request.origin_server_id, 0u);
+    EXPECT_EQ(applied_request.response_token, 0u);
     EXPECT_EQ(applied_request.params.at("collection"), "books");
     EXPECT_EQ(applied_request.metadata, "meta");
     EXPECT_EQ(applied_request.body, "{\"id\":\"1\"}");
@@ -51,6 +53,8 @@ TEST_F(NuRaftAppliedRequestStoreTest, AppendsAndReadsStructuredRequests) {
     expected.index = 1;
     expected.route_hash = 1234;
     expected.route_kind = NuRaftRouteKind::kUnknown;
+    expected.origin_server_id = 9;
+    expected.response_token = 42;
     expected.params = {{"collection", "books"}};
     expected.body = "{\"id\":\"1\"}";
     expected.metadata = "meta";
