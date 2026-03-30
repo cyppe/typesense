@@ -392,12 +392,23 @@ std::shared_ptr<http_req> build_replay_request(const NuRaftAppliedRequest& appli
     return request;
 }
 
+// Sync live product state on the thread pool (not the event loop).
+// Called at the start of NuRaft read handlers to ensure they see recent writes.
+void sync_before_read() {
+    NuRaftHttpRuntimeService* runtime = current_runtime_service();
+    if (runtime != nullptr) {
+        std::string error;
+        runtime->sync_live_product_state(error);
+    }
+}
+
 bool get_runtime_collections(const std::shared_ptr<http_req>& request, const std::shared_ptr<http_res>& response) {
     NuRaftHttpRuntimeService* runtime = current_runtime_service();
     if (runtime == nullptr) {
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
+    sync_before_read();
 
     if (!CollectionManager::get_instance().get_collection_names().empty()) {
         return get_collections(request, response);
@@ -420,6 +431,7 @@ bool get_runtime_collection(const std::shared_ptr<http_req>& request, const std:
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
+    sync_before_read();
 
     const auto it = request->params.find("collection");
     if (it == request->params.end() || it->second.empty()) {
@@ -452,6 +464,7 @@ bool get_runtime_document(const std::shared_ptr<http_req>& request, const std::s
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
+    sync_before_read();
 
     const auto collection_it = request->params.find("collection");
     const auto id_it = request->params.find("id");
@@ -487,6 +500,7 @@ bool search_runtime_documents(const std::shared_ptr<http_req>& request, const st
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
+    sync_before_read();
 
     const auto collection_it = request->params.find("collection");
     if (collection_it == request->params.end() || collection_it->second.empty()) {
@@ -997,6 +1011,19 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         TS_LOG(WARNING) << "NuRaft init: failed to acquire leadership after 5 seconds.";
     }
 
+    // Align live_product_state_applied_index_ with the Raft server's committed
+    // index. NuRaft commits internal entries (e.g., initial cluster config at
+    // index 1) during init and leadership acquisition. Without this alignment,
+    // the first user write's wait_for_applied_index(committed_index - 1) would
+    // wait forever for an internal entry that was never tracked.
+    if (raft_server_) {
+        const uint64_t raft_committed = raft_server_->get_committed_log_idx();
+        if (raft_committed > live_product_state_applied_index_.load(std::memory_order_relaxed)) {
+            advance_live_product_state_applied_index(raft_committed);
+            TS_LOG(INFO) << "NuRaft init: aligned applied index to raft committed index " << raft_committed;
+        }
+    }
+
     initialized_.store(true);
     TS_LOG(INFO) << "NuRaft runtime initialization complete.";
     error.clear();
@@ -1031,6 +1058,16 @@ void NuRaftHttpRuntimeService::advance_live_product_state_applied_index(uint64_t
     if (current < applied_index) {
         live_state_progress_cv_.notify_all();
     }
+}
+
+bool NuRaftHttpRuntimeService::wait_for_applied_index(uint64_t target_index, uint32_t timeout_ms) {
+    if (live_product_state_applied_index_.load(std::memory_order_relaxed) >= target_index) {
+        return true;
+    }
+    std::unique_lock<std::mutex> lock(live_state_progress_mutex_);
+    return live_state_progress_cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&] {
+        return live_product_state_applied_index_.load(std::memory_order_relaxed) >= target_index;
+    });
 }
 
 void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
@@ -1144,6 +1181,17 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         response->set_500(error);
         send_response(request, response);
         return;
+    }
+
+    // Wait for all preceding USER writes to be applied locally before running
+    // the handler. Without this, CREATE and IMPORT can race: the import handler
+    // runs before the create mirror completes, getting 404 "Collection not found".
+    // Use a short non-blocking wait — if the predecessor hasn't been applied yet,
+    // give it up to 5 seconds. This only matters when concurrent writes are
+    // in flight (e.g., CREATE followed immediately by IMPORT).
+    if (committed_index > 1 &&
+        live_product_state_applied_index_.load(std::memory_order_relaxed) < committed_index - 1) {
+        wait_for_applied_index(committed_index - 1, 5000);
     }
 
     if (supports_generic_registered_write) {
@@ -1293,6 +1341,15 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
                                                                     std::memory_order_relaxed)) {
         }
         logical_chunks++;
+
+        // Wait for preceding entries (e.g., a collection CREATE) to be applied
+        // before running the import handler which needs the collection to exist.
+        {
+            const uint64_t current_applied = live_product_state_applied_index_.load(std::memory_order_relaxed);
+            if (chunk_committed_index > current_applied + 1) {
+                wait_for_applied_index(chunk_committed_index - 1, 5000);
+            }
+        }
 
         auto chunk_response = std::make_shared<http_res>(nullptr);
         const auto chunk_replay_start = std::chrono::steady_clock::now();
@@ -1904,17 +1961,23 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
         return true;
     }
 
-    // Sync replayed product state before handling the request.
-    const bool is_read_only = (rpath.http_method == "GET") ||
-                               (rpath.handler == post_create_event) ||
-                               (rpath.handler == post_multi_search);
+    // Sync product state before handling the request. For writes, the sync
+    // ensures the handler sees recent state. For reads in multi-node mode,
+    // it ensures followers have caught up. The sync has a fast path (atomic
+    // check) that's near-instant when state is already caught up.
+    // TODO: The slow path (exclusive lock + replay) blocks the h2o event loop
+    // during active imports. Investigate moving replay to a background thread
+    // or the thread pool for better concurrency.
     NuRaftHttpRuntimeService* runtime = current_runtime_service();
-    const bool needs_sync = !is_read_only ||
-                             (runtime != nullptr && !runtime->is_single_node_mode());
-    if (needs_sync && runtime != nullptr) {
-        std::string error;
-        if (!runtime->sync_live_product_state(error)) {
-            TS_LOG(WARNING) << "NuRaft runtime failed to sync live product state before handling request: " << error;
+    if (runtime != nullptr) {
+        const bool is_read_only = (rpath.http_method == "GET") ||
+                                   (rpath.handler == post_create_event) ||
+                                   (rpath.handler == post_multi_search);
+        const bool needs_sync = !is_read_only ||
+                                 !runtime->is_single_node_mode();
+        if (needs_sync) {
+            std::string error;
+            runtime->sync_live_product_state(error);
         }
     }
 

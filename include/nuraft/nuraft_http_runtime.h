@@ -127,6 +127,7 @@ private:
     void send_response(const std::shared_ptr<http_req>& request,
                        const std::shared_ptr<http_res>& response) const;
     void advance_live_product_state_applied_index(uint64_t applied_index);
+    bool wait_for_applied_index(uint64_t target_index, uint32_t timeout_ms);
 
     HttpServer* server_;
     NuRaftHttpServerOptions options_;
