@@ -561,8 +561,7 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
         bool write_op = is_write_request(h2o_handler->http_server->get_replication_state(),
                                          route_hash,
                                          root_resource,
-                                         http_method,
-                                         rpath->handler);
+                                         http_method);
         bool read_op = !write_op;
 
         std::string message = "{ \"message\": \"Not Ready or Lagging\"}";
@@ -755,22 +754,17 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
 bool HttpServer::is_write_request(ReplicationService* replication_state,
                                   uint64_t route_hash,
                                   const std::string& root_resource,
-                                  const std::string& http_method,
-                                  bool (*rpath_handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&)) {
+                                  const std::string& http_method) {
     if(http_method == "GET") {
         return false;
     }
 
-    if (replication_state != nullptr && replication_state->should_replicate_write(route_hash)) {
-        return true;
-    }
-
-    if(rpath_handler == post_create_event) {
-        return false;
-    }
-
-    if(rpath_handler == post_analytics_flush) {
-        return false;
+    if (replication_state != nullptr) {
+        bool known_route = false;
+        const bool should_replicate = replication_state->should_replicate_write(route_hash, &known_route);
+        if (known_route) {
+            return should_replicate;
+        }
     }
 
     bool write_free_request = (root_resource == "multi_search" || root_resource == "proxy" ||
@@ -926,8 +920,7 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
     bool is_write = is_write_request(handler->http_server->get_replication_state(),
                                      request->route_hash,
                                      root_resource,
-                                     rpath->http_method,
-                                     rpath->handler);
+                                     rpath->http_method);
 
     request->is_write = is_write;
 

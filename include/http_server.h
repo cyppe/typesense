@@ -214,8 +214,7 @@ private:
     static bool is_write_request(ReplicationService* replication_state,
                                  uint64_t route_hash,
                                  const std::string& root_resource,
-                                 const std::string& http_method,
-                                 bool (*handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&));
+                                 const std::string& http_method);
     static bool should_handle_inline_route(std::string_view root_resource, const route_path& rpath);
     static bool is_write_stream_response(const std::string& type, void* data);
 

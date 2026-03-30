@@ -83,7 +83,7 @@ public:
 
     void write(const std::shared_ptr<http_req>& request,
                const std::shared_ptr<http_res>& response) override;
-    bool should_replicate_write(uint64_t route_hash) const override;
+    bool should_replicate_write(uint64_t route_hash, bool* known = nullptr) const override;
     bool is_read_caught_up() const override;
     bool is_write_caught_up() const override;
     bool is_alive() const override;

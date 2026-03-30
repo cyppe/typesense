@@ -714,10 +714,13 @@ bool NuRaftHttpRuntimeService::cache_enabled() const {
     return materialized_state_sink_ != nullptr;
 }
 
-bool NuRaftHttpRuntimeService::should_replicate_write(uint64_t route_hash) const {
+bool NuRaftHttpRuntimeService::should_replicate_write(uint64_t route_hash, bool* known) const {
     NuRaftWriteRouteMode route_mode = NuRaftWriteRouteMode::kLocalOnly;
-    return nuraft_http_runtime_lookup_write_route_mode(route_hash, route_mode) &&
-           route_mode == NuRaftWriteRouteMode::kMirrorWorker;
+    const bool found = nuraft_http_runtime_lookup_write_route_mode(route_hash, route_mode);
+    if (known != nullptr) {
+        *known = found;
+    }
+    return found && route_mode == NuRaftWriteRouteMode::kMirrorWorker;
 }
 
 bool mirror_single_node_typesense_state(const std::shared_ptr<http_req>& request,
