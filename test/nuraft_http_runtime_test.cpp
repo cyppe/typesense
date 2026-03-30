@@ -663,6 +663,58 @@ TEST_F(NuRaftHttpRuntimeTest, ExposesBuildProvenanceInDebugAndMetrics) {
               metrics["build_git_tree_status"].get<std::string>()) << "runtime log: " << node1_.log_path();
 }
 
+TEST_F(NuRaftHttpRuntimeTest, BypassesRaftForLocalOnlyHealthWrite) {
+    const uint32_t api_port = pick_free_port();
+    const uint32_t peer_port = pick_free_port();
+
+    NuRaftHttpServerOptions options;
+    options.startup_options.data_dir = node_dir("health-local-only");
+    options.startup_options.local_host = "127.0.0.1";
+    options.startup_options.peer_port = peer_port;
+    options.startup_options.api_port = api_port;
+    options.listen_address = "127.0.0.1";
+    options.listen_port = api_port;
+    options.api_key = "xyz";
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options, error)) << error;
+
+    auto fetch_status = [&](nlohmann::json& body) -> long {
+        std::string response;
+        std::map<std::string, std::string> headers;
+        const long status = HttpClient::get_response(node1_.base_url() + "/status",
+                                                     response,
+                                                     headers,
+                                                     {},
+                                                     5000,
+                                                     true);
+        if (status == 200) {
+            body = parse_json(response);
+        }
+        return status;
+    };
+
+    nlohmann::json status_before;
+    ASSERT_EQ(200, fetch_status(status_before)) << "log: " << node1_.log_path();
+    const uint64_t committed_before = status_before["committed_index"].get<uint64_t>();
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(200,
+              HttpClient::post_response(node1_.base_url() + "/health",
+                                        "",
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true))
+        << "log: " << node1_.log_path();
+
+    nlohmann::json status_after;
+    ASSERT_EQ(200, fetch_status(status_after)) << "log: " << node1_.log_path();
+    EXPECT_EQ(committed_before, status_after["committed_index"].get<uint64_t>()) << "log: " << node1_.log_path();
+}
+
 TEST_F(NuRaftHttpRuntimeTest, PreservesConflictResponsesFromMirrorWorker) {
     const uint32_t api_port = pick_free_port();
     const uint32_t peer_port = pick_free_port();

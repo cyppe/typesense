@@ -60,6 +60,12 @@ struct NuRaftHttpServerOptions {
     NuRaftRaftParams raft_params;
 };
 
+enum class NuRaftWriteRouteMode {
+    kMirrorWorker,
+    kOriginHandlerAfterRaft,
+    kLocalOnly,
+};
+
 class NuRaftHttpRuntimeService : public ReplicationService {
 public:
     struct MirroredWriteResult {
@@ -209,5 +215,8 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
                               const std::string& body,
                               const route_path& rpath,
                               const std::string& auth_key);
+
+bool nuraft_http_runtime_lookup_write_route_mode(uint64_t route_hash,
+                                                 NuRaftWriteRouteMode& mode);
 
 void register_nuraft_http_runtime_routes(HttpServer* server);

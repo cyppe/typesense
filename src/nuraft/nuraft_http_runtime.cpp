@@ -29,6 +29,43 @@ constexpr const char* kCollectionPrefix = "state/collections/";
 constexpr const char* kDocumentPrefix = "state/documents/";
 constexpr size_t kDocumentImportRaftChunkMaxBytes = 4 * 1024 * 1024;
 
+std::mutex& write_route_modes_mutex() {
+    static auto* mutex = new std::mutex();
+    return *mutex;
+}
+
+std::unordered_map<uint64_t, NuRaftWriteRouteMode>& write_route_modes() {
+    static auto* modes = new std::unordered_map<uint64_t, NuRaftWriteRouteMode>();
+    return *modes;
+}
+
+std::vector<std::string> split_route_path_parts(const std::string& path) {
+    if (path.empty() || path == "/") {
+        return {};
+    }
+
+    std::string trimmed = path;
+    if (!trimmed.empty() && trimmed.front() == '/') {
+        trimmed.erase(trimmed.begin());
+    }
+
+    std::vector<std::string> path_parts;
+    StringUtils::split(trimmed, path_parts, "/");
+    return path_parts;
+}
+
+void register_write_route_mode(const std::string& http_method,
+                               const std::string& path,
+                               bool (*handler)(const std::shared_ptr<http_req>&,
+                                               const std::shared_ptr<http_res>&),
+                               bool async_req,
+                               bool async_res,
+                               NuRaftWriteRouteMode mode) {
+    route_path route(http_method, split_route_path_parts(path), handler, async_req, async_res);
+    std::lock_guard<std::mutex> lock(write_route_modes_mutex());
+    write_route_modes()[route.route_hash()] = mode;
+}
+
 // Generate a unique document ID for auto-ID documents before Raft serialization.
 // Uses hex timestamp + random to avoid collisions with Typesense's seq_id-based decimal IDs.
 std::string generate_auto_document_id() {
@@ -271,31 +308,6 @@ NuRaftAppliedRequest build_applied_request(const http_req& request,
     applied_request.log_index = request.log_index;
     applied_request.is_binary_body = request.is_binary_body;
     return applied_request;
-}
-
-bool should_apply_mirrored_route(const NuRaftAppliedRequest& applied_request,
-                                 const route_path& route) {
-    switch (applied_request.route_kind) {
-        case NuRaftRouteKind::kCollectionCreate:
-        case NuRaftRouteKind::kCollectionDrop:
-        case NuRaftRouteKind::kDocumentWrite:
-        case NuRaftRouteKind::kDocumentDelete:
-        case NuRaftRouteKind::kDocumentImport:
-            return true;
-        case NuRaftRouteKind::kUnknown:
-            break;
-        default:
-            return false;
-    }
-
-    if (route.async_req || route.async_res || route.path_parts.empty()) {
-        return false;
-    }
-
-    const std::string& root_resource = route.path_parts.front();
-    return root_resource != "operations" &&
-           root_resource != "proxy" &&
-           root_resource != "proxy_sse";
 }
 
 template <typename ConsumeChunk>
@@ -589,6 +601,18 @@ bool search_runtime_documents(const std::shared_ptr<http_req>& request, const st
 
 }  // namespace
 
+bool nuraft_http_runtime_lookup_write_route_mode(uint64_t route_hash,
+                                                 NuRaftWriteRouteMode& mode) {
+    std::lock_guard<std::mutex> lock(write_route_modes_mutex());
+    const auto it = write_route_modes().find(route_hash);
+    if (it == write_route_modes().end()) {
+        return false;
+    }
+
+    mode = it->second;
+    return true;
+}
+
 NuRaftHttpRuntimeService::NuRaftHttpRuntimeService(HttpServer* server, NuRaftHttpServerOptions options)
     : server_(server),
       options_(std::move(options)),
@@ -754,7 +778,9 @@ NuRaftHttpRuntimeService::apply_mirrored_request(const NuRaftAppliedRequest& app
         return result;
     }
 
-    result.should_apply = should_apply_mirrored_route(applied_request, *route);
+    NuRaftWriteRouteMode route_mode = NuRaftWriteRouteMode::kOriginHandlerAfterRaft;
+    result.should_apply = nuraft_http_runtime_lookup_write_route_mode(applied_request.route_hash, route_mode) &&
+                          route_mode == NuRaftWriteRouteMode::kMirrorWorker;
     if (!result.should_apply) {
         result.handler_ok = true;
         return result;
@@ -982,27 +1008,35 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
     const NuRaftRouteKind route_kind = NuRaftRouteClassifier::classify(request->route_hash);
     route_path* route = nullptr;
     const bool has_registered_route = find_registered_route(server_, request->route_hash, route, error);
-    const bool supports_generic_registered_write =
-        route_kind == NuRaftRouteKind::kUnknown &&
-        has_registered_route;
-    NuRaftAppliedRequest route_probe;
-    route_probe.route_kind = route_kind;
-    const bool delegates_to_mirror_worker =
-        route_kind != NuRaftRouteKind::kUnknown ||
-        (supports_generic_registered_write && route != nullptr && should_apply_mirrored_route(route_probe, *route));
+    NuRaftWriteRouteMode route_mode = NuRaftWriteRouteMode::kOriginHandlerAfterRaft;
+    const bool has_explicit_route_mode =
+        has_registered_route &&
+        nuraft_http_runtime_lookup_write_route_mode(request->route_hash, route_mode);
+    const bool delegates_to_mirror_worker = has_explicit_route_mode &&
+                                            route_mode == NuRaftWriteRouteMode::kMirrorWorker;
     const bool delegates_to_registered_import_handler =
         delegates_to_mirror_worker &&
         route_kind == NuRaftRouteKind::kDocumentImport &&
         has_registered_route &&
         route != nullptr;
 
-    if (!supports_generic_registered_write &&
-        route_kind != NuRaftRouteKind::kCollectionCreate &&
-        route_kind != NuRaftRouteKind::kCollectionDrop &&
-        route_kind != NuRaftRouteKind::kDocumentWrite &&
-        route_kind != NuRaftRouteKind::kDocumentDelete &&
-        route_kind != NuRaftRouteKind::kDocumentImport) {
+    if (!has_explicit_route_mode) {
         response->set_422("Unsupported NuRaft runtime write route.");
+        send_response(request, response);
+        return;
+    }
+
+    if (route_mode == NuRaftWriteRouteMode::kLocalOnly) {
+        error.clear();
+        const bool handler_ok = invoke_registered_handler(server_, request, response, error);
+        if (!handler_ok && response->status_code == 0) {
+            response->set_500(error);
+        }
+
+        if (route != nullptr && (route->async_req || route->async_res)) {
+            return;
+        }
+
         send_response(request, response);
         return;
     }
@@ -1831,24 +1865,79 @@ bool nuraft_http_runtime_auth(std::map<std::string, std::string>& params,
 }
 
 void register_nuraft_http_runtime_routes(HttpServer* server) {
+    const auto register_post_write =
+        [server](const std::string& path,
+                 bool (*handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&),
+                 NuRaftWriteRouteMode mode,
+                 bool async_req = false,
+                 bool async_res = false) {
+            register_write_route_mode("POST", path, handler, async_req, async_res, mode);
+            server->post(path, handler, async_req, async_res);
+        };
+    const auto register_put_write =
+        [server](const std::string& path,
+                 bool (*handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&),
+                 NuRaftWriteRouteMode mode,
+                 bool async_req = false,
+                 bool async_res = false) {
+            register_write_route_mode("PUT", path, handler, async_req, async_res, mode);
+            server->put(path, handler, async_req, async_res);
+        };
+    const auto register_patch_write =
+        [server](const std::string& path,
+                 bool (*handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&),
+                 NuRaftWriteRouteMode mode,
+                 bool async_req = false,
+                 bool async_res = false) {
+            register_write_route_mode("PATCH", path, handler, async_req, async_res, mode);
+            server->patch(path, handler, async_req, async_res);
+        };
+    const auto register_delete_write =
+        [server](const std::string& path,
+                 bool (*handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&),
+                 NuRaftWriteRouteMode mode,
+                 bool async_req = false,
+                 bool async_res = false) {
+            register_write_route_mode("DELETE", path, handler, async_req, async_res, mode);
+            server->del(path, handler, async_req, async_res);
+        };
+
     server->get("/collections/:collection/documents/search", search_runtime_documents);
     server->post("/multi_search", post_multi_search, false, true);
 
-    server->post("/collections/:collection/documents", post_add_document);
-    server->del("/collections/:collection/documents", del_remove_documents, false, true);
+    register_post_write("/collections/:collection/documents",
+                        post_add_document,
+                        NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/collections/:collection/documents",
+                          del_remove_documents,
+                          NuRaftWriteRouteMode::kMirrorWorker,
+                          false,
+                          true);
     // Buffer one logical import request before entering the Raft write path so
     // transport chunking does not become log-entry granularity.
-    server->post("/collections/:collection/documents/import", post_import_documents, false, true);
+    register_post_write("/collections/:collection/documents/import",
+                        post_import_documents,
+                        NuRaftWriteRouteMode::kMirrorWorker,
+                        false,
+                        true);
     server->get("/collections/:collection/documents/export", get_export_documents, false, true);
     server->get("/collections/:collection/documents/:id", get_runtime_document);
-    server->patch("/collections/:collection/documents/:id", patch_update_document);
-    server->patch("/collections/:collection/documents", patch_update_documents);
-    server->del("/collections/:collection/documents/:id", del_remove_document);
+    register_patch_write("/collections/:collection/documents/:id",
+                         patch_update_document,
+                         NuRaftWriteRouteMode::kMirrorWorker);
+    register_patch_write("/collections/:collection/documents",
+                         patch_update_documents,
+                         NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/collections/:collection/documents/:id",
+                          del_remove_document,
+                          NuRaftWriteRouteMode::kMirrorWorker);
 
-    server->post("/collections", post_create_collection);
-    server->patch("/collections/:collection", patch_update_collection);
+    register_post_write("/collections", post_create_collection, NuRaftWriteRouteMode::kMirrorWorker);
+    register_patch_write("/collections/:collection",
+                         patch_update_collection,
+                         NuRaftWriteRouteMode::kMirrorWorker);
     server->get("/collections", get_runtime_collections);
-    server->del("/collections/:collection", del_drop_collection);
+    register_delete_write("/collections/:collection", del_drop_collection, NuRaftWriteRouteMode::kMirrorWorker);
     server->get("/collections/:collection", get_runtime_collection);
 
     // GET handlers that read mutable state use synced_read_handler<> to wait
@@ -1857,105 +1946,131 @@ void register_nuraft_http_runtime_routes(HttpServer* server) {
     // ordering and per-entry mirrored results for their own response.
     server->get("/aliases", synced_read_handler<get_aliases>);
     server->get("/aliases/:alias", synced_read_handler<get_alias>);
-    server->put("/aliases/:alias", put_upsert_alias);
-    server->del("/aliases/:alias", del_alias);
+    register_put_write("/aliases/:alias", put_upsert_alias, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/aliases/:alias", del_alias, NuRaftWriteRouteMode::kMirrorWorker);
 
     server->get("/keys", synced_read_handler<get_keys>);
     server->get("/keys/:id", synced_read_handler<get_key>);
-    server->post("/keys", post_create_key);
-    server->del("/keys/:id", del_key);
-    server->patch("/keys/:id", patch_key);
+    register_post_write("/keys", post_create_key, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/keys/:id", del_key, NuRaftWriteRouteMode::kMirrorWorker);
+    register_patch_write("/keys/:id", patch_key, NuRaftWriteRouteMode::kMirrorWorker);
 
     server->get("/presets", synced_read_handler<get_presets>);
     server->get("/presets/:name", synced_read_handler<get_preset>);
-    server->put("/presets/:name", put_upsert_preset);
-    server->del("/presets/:name", del_preset);
+    register_put_write("/presets/:name", put_upsert_preset, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/presets/:name", del_preset, NuRaftWriteRouteMode::kMirrorWorker);
 
     server->get("/stopwords", synced_read_handler<get_stopwords>);
     server->get("/stopwords/:name", synced_read_handler<get_stopword>);
-    server->put("/stopwords/:name", put_upsert_stopword);
-    server->del("/stopwords/:name", del_stopword);
+    register_put_write("/stopwords/:name", put_upsert_stopword, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/stopwords/:name", del_stopword, NuRaftWriteRouteMode::kMirrorWorker);
 
     server->get("/synonym_sets", synced_read_handler<get_synonym_sets>);
     server->get("/synonym_sets/:name", synced_read_handler<get_synonym_set>);
-    server->put("/synonym_sets/:name", put_synonym_set);
-    server->del("/synonym_sets/:name", del_synonym_set);
+    register_put_write("/synonym_sets/:name", put_synonym_set, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/synonym_sets/:name", del_synonym_set, NuRaftWriteRouteMode::kMirrorWorker);
     server->get("/synonym_sets/:name/items", synced_read_handler<get_synonym_set_items>);
     server->get("/synonym_sets/:name/items/:id", synced_read_handler<get_synonym_set_item>);
-    server->put("/synonym_sets/:name/items/:id", put_synonym_set_item);
-    server->del("/synonym_sets/:name/items/:id", del_synonym_set_item);
+    register_put_write("/synonym_sets/:name/items/:id",
+                       put_synonym_set_item,
+                       NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/synonym_sets/:name/items/:id",
+                          del_synonym_set_item,
+                          NuRaftWriteRouteMode::kMirrorWorker);
 
     server->get("/curation_sets", synced_read_handler<get_curation_sets>);
     server->get("/curation_sets/:name", synced_read_handler<get_curation_set>);
-    server->put("/curation_sets/:name", put_curation_set);
-    server->del("/curation_sets/:name", del_curation_set);
+    register_put_write("/curation_sets/:name", put_curation_set, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/curation_sets/:name", del_curation_set, NuRaftWriteRouteMode::kMirrorWorker);
     server->get("/curation_sets/:name/items", synced_read_handler<get_curation_set_items>);
     server->get("/curation_sets/:name/items/:id", synced_read_handler<get_curation_set_item>);
-    server->put("/curation_sets/:name/items/:id", put_curation_set_item);
-    server->del("/curation_sets/:name/items/:id", del_curation_set_item);
+    register_put_write("/curation_sets/:name/items/:id",
+                       put_curation_set_item,
+                       NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/curation_sets/:name/items/:id",
+                          del_curation_set_item,
+                          NuRaftWriteRouteMode::kMirrorWorker);
 
     server->get("/analytics/rules", synced_read_handler<get_analytics_rules>);
     server->get("/analytics/rules/:name", synced_read_handler<get_analytics_rule>);
-    server->post("/analytics/rules", post_create_analytics_rules);
-    server->put("/analytics/rules/:name", put_upsert_analytics_rules);
-    server->del("/analytics/rules/:name", del_analytics_rules);
-    server->post("/analytics/events", post_create_event);
-    server->post("/analytics/aggregate_events", post_write_analytics_to_db);
+    register_post_write("/analytics/rules", post_create_analytics_rules, NuRaftWriteRouteMode::kMirrorWorker);
+    register_put_write("/analytics/rules/:name", put_upsert_analytics_rules, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/analytics/rules/:name", del_analytics_rules, NuRaftWriteRouteMode::kMirrorWorker);
+    register_post_write("/analytics/events", post_create_event, NuRaftWriteRouteMode::kMirrorWorker);
+    register_post_write("/analytics/aggregate_events",
+                        post_write_analytics_to_db,
+                        NuRaftWriteRouteMode::kMirrorWorker);
     server->get("/analytics/events", synced_read_handler<get_analytics_events>);
-    server->post("/analytics/flush", post_analytics_flush);
+    register_post_write("/analytics/flush", post_analytics_flush, NuRaftWriteRouteMode::kMirrorWorker);
     server->get("/analytics/status", synced_read_handler<get_analytics_status>);
 
-    server->post("/stemming/dictionaries/import", post_import_stemming_dictionary, true, true);
+    register_post_write("/stemming/dictionaries/import",
+                        post_import_stemming_dictionary,
+                        NuRaftWriteRouteMode::kOriginHandlerAfterRaft,
+                        true,
+                        true);
     server->get("/stemming/dictionaries", synced_read_handler<get_stemming_dictionaries>);
     server->get("/stemming/dictionaries/:id", synced_read_handler<get_stemming_dictionary>);
-    server->del("/stemming/dictionaries/:id", del_stemming_dictionary);
+    register_delete_write("/stemming/dictionaries/:id",
+                          del_stemming_dictionary,
+                          NuRaftWriteRouteMode::kMirrorWorker);
 
     server->get("/metrics.json", get_metrics_json);
     server->get("/stats.json", get_stats_json);
     server->get("/debug", get_debug);
     server->get("/health", get_health);
     server->get("/health_with_rusage", get_health_with_resource_usage);
-    server->post("/health", post_health);
+    register_post_write("/health", post_health, NuRaftWriteRouteMode::kLocalOnly);
     server->get("/status", get_status);
 
-    server->post("/operations/snapshot", post_snapshot, false, true);
-    server->post("/operations/vote", post_vote, false, false);
-    server->post("/operations/cache/clear", post_clear_cache, false, false);
-    server->post("/operations/db/compact", post_compact_db, false, false);
-    server->post("/operations/reset_peers", post_reset_peers, false, false);
+    register_post_write("/operations/snapshot", post_snapshot, NuRaftWriteRouteMode::kLocalOnly, false, true);
+    register_post_write("/operations/vote", post_vote, NuRaftWriteRouteMode::kLocalOnly);
+    register_post_write("/operations/cache/clear", post_clear_cache, NuRaftWriteRouteMode::kLocalOnly);
+    register_post_write("/operations/db/compact", post_compact_db, NuRaftWriteRouteMode::kLocalOnly);
+    register_post_write("/operations/reset_peers", post_reset_peers, NuRaftWriteRouteMode::kLocalOnly);
     server->get("/operations/schema_changes", get_schema_changes);
 
-    server->post("/conversations/models", post_conversation_model);
+    register_post_write("/conversations/models", post_conversation_model, NuRaftWriteRouteMode::kMirrorWorker);
     server->get("/conversations/models", get_conversation_models);
     server->get("/conversations/models/:id", get_conversation_model);
-    server->put("/conversations/models/:id", put_conversation_model);
-    server->del("/conversations/models/:id", del_conversation_model);
+    register_put_write("/conversations/models/:id",
+                       put_conversation_model,
+                       NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/conversations/models/:id",
+                          del_conversation_model,
+                          NuRaftWriteRouteMode::kMirrorWorker);
 
-    server->post("/personalization/models", post_personalization_model);
+    register_post_write("/personalization/models",
+                        post_personalization_model,
+                        NuRaftWriteRouteMode::kMirrorWorker);
     server->get("/personalization/models", get_personalization_models);
     server->get("/personalization/models/:id", get_personalization_model);
-    server->del("/personalization/models/:id", del_personalization_model);
-    server->put("/personalization/models/:id", put_personalization_model);
+    register_delete_write("/personalization/models/:id",
+                          del_personalization_model,
+                          NuRaftWriteRouteMode::kMirrorWorker);
+    register_put_write("/personalization/models/:id",
+                       put_personalization_model,
+                       NuRaftWriteRouteMode::kMirrorWorker);
 
     server->get("/limits", get_rate_limits);
     server->get("/limits/active", get_active_throttles);
     server->get("/limits/exceeds", get_limit_exceed_counts);
     server->get("/limits/:id", get_rate_limit);
-    server->post("/limits", post_rate_limit);
-    server->put("/limits/:id", put_rate_limit);
-    server->del("/limits/:id", del_rate_limit);
-    server->del("/limits/active/:id", del_throttle);
-    server->del("/limits/exceeds/:id", del_exceed);
-    server->post("/config", post_config, false, false);
+    register_post_write("/limits", post_rate_limit, NuRaftWriteRouteMode::kMirrorWorker);
+    register_put_write("/limits/:id", put_rate_limit, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/limits/:id", del_rate_limit, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/limits/active/:id", del_throttle, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/limits/exceeds/:id", del_exceed, NuRaftWriteRouteMode::kMirrorWorker);
+    register_post_write("/config", post_config, NuRaftWriteRouteMode::kMirrorWorker);
 
-    server->post("/proxy", post_proxy);
-    server->post("/proxy_sse", post_proxy_sse, false, true);
+    register_post_write("/proxy", post_proxy, NuRaftWriteRouteMode::kLocalOnly);
+    register_post_write("/proxy_sse", post_proxy_sse, NuRaftWriteRouteMode::kLocalOnly, false, true);
 
-    server->post("/nl_search_models", post_nl_search_model);
+    register_post_write("/nl_search_models", post_nl_search_model, NuRaftWriteRouteMode::kMirrorWorker);
     server->get("/nl_search_models", get_nl_search_models);
     server->get("/nl_search_models/:id", get_nl_search_model);
-    server->put("/nl_search_models/:id", put_nl_search_model);
-    server->del("/nl_search_models/:id", delete_nl_search_model);
+    register_put_write("/nl_search_models/:id", put_nl_search_model, NuRaftWriteRouteMode::kMirrorWorker);
+    register_delete_write("/nl_search_models/:id", delete_nl_search_model, NuRaftWriteRouteMode::kMirrorWorker);
 }
 
 // --- Real NuRaft consensus integration ---
