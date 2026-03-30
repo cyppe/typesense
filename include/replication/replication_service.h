@@ -15,6 +15,7 @@ public:
 
     virtual void write(const std::shared_ptr<http_req>& request,
                        const std::shared_ptr<http_res>& response) = 0;
+    virtual bool should_replicate_write(uint64_t route_hash) const = 0;
     virtual bool is_read_caught_up() const = 0;
     virtual bool is_write_caught_up() const = 0;
     virtual bool is_alive() const = 0;

@@ -558,7 +558,11 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
     bool use_meta_thread_pool = should_use_meta_thread_pool(root_resource);
 
     if(needs_readiness_check) {
-        bool write_op = is_write_request(root_resource, http_method, rpath->handler);
+        bool write_op = is_write_request(h2o_handler->http_server->get_replication_state(),
+                                         route_hash,
+                                         root_resource,
+                                         http_method,
+                                         rpath->handler);
         bool read_op = !write_op;
 
         std::string message = "{ \"message\": \"Not Ready or Lagging\"}";
@@ -748,10 +752,17 @@ int HttpServer::catch_all_handler(h2o_handler_t *_h2o_handler, h2o_req_t *req) {
 }
 
 
-bool HttpServer::is_write_request(const std::string& root_resource, const std::string& http_method,
+bool HttpServer::is_write_request(ReplicationService* replication_state,
+                                  uint64_t route_hash,
+                                  const std::string& root_resource,
+                                  const std::string& http_method,
                                   bool (*rpath_handler)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&)) {
     if(http_method == "GET") {
         return false;
+    }
+
+    if (replication_state != nullptr && replication_state->should_replicate_write(route_hash)) {
+        return true;
     }
 
     if(rpath_handler == post_create_event) {
@@ -912,7 +923,11 @@ int HttpServer::process_request(const std::shared_ptr<http_req>& request, const 
         }
     }
 
-    bool is_write = is_write_request(root_resource, rpath->http_method, rpath->handler);
+    bool is_write = is_write_request(handler->http_server->get_replication_state(),
+                                     request->route_hash,
+                                     root_resource,
+                                     rpath->http_method,
+                                     rpath->handler);
 
     request->is_write = is_write;
 

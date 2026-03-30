@@ -76,6 +76,10 @@ bool SearchAnalytics::check_rule_type_collection(const std::string& collection, 
 
 Option<bool> SearchAnalytics::add_event(const std::string& client_ip, const nlohmann::json& event_data) {
   std::unique_lock lock(mutex);
+  return add_event_locked(client_ip, event_data);
+}
+
+Option<bool> SearchAnalytics::add_event_locked(const std::string& client_ip, const nlohmann::json& event_data) {
   auto now_ts_useconds = std::chrono::duration_cast<std::chrono::microseconds>(
               std::chrono::system_clock::now().time_since_epoch()).count();
   const auto& event_name = event_data["name"].get<std::string>();
@@ -419,43 +423,53 @@ search_rule_config_t SearchAnalytics::get_search_rule(const std::string& name) {
   return search_rules.find(name)->second;
 }
 
-void SearchAnalytics::compact_single_user_queries(uint64_t now_ts_us, const std::string& user_id, const std::string& type, std::unordered_map<std::string, std::vector<search_event_t>>& user_prefix_queries) {
-  std::unique_lock lock(user_compaction_mutex);
-
-  for(auto& query_events : user_prefix_queries) {
-    const auto& collection = query_events.first;
-    auto& prefix_queries = query_events.second;
-    int64_t last_consolidated_index = -1;
-    for(uint32_t i = 0; i < prefix_queries.size(); i++) {
-      uint64_t diff_micros = (i == prefix_queries.size() - 1) ? (now_ts_us - prefix_queries[i].timestamp) : 
-                              (prefix_queries[i + 1].timestamp - prefix_queries[i].timestamp);
-      if(diff_micros > QUERY_FINALIZATION_INTERVAL_MICROS || i == prefix_queries.size() - 1) {
-        auto rules_it = collection_rules_map.find(collection);
-        // if a rule was removed after prefix events were queued, 
-        // the per-user prefix maps can still contain that collection, but collection_rules_map may no longer have it. 
-        if (rules_it == collection_rules_map.end()) {
-          prefix_queries.clear();
-          break;
-        }
-        const auto& rules = rules_it->second;
-        for(const auto& rule : rules) {
-          const auto& rule_config = search_rules.find(rule)->second;
-          if(rule_config.type == type && rule_config.capture_search_requests) {
-            nlohmann::json event_data;
-            event_data["event_type"] = prefix_queries[i].event_type;
-            event_data["timestamp"] = prefix_queries[i].timestamp;
-            event_data["name"] = rule;
-            event_data["data"]["q"] = prefix_queries[i].query;
-            event_data["data"]["user_id"] = user_id;
-            event_data["data"]["filter_by"] = prefix_queries[i].filter_str;
-            event_data["data"]["analytics_tag"] = prefix_queries[i].tag_str;
-            add_event(user_id, event_data);
-            last_consolidated_index = i;
+void SearchAnalytics::compact_single_user_queries(uint64_t now_ts_us,
+                                                  const std::string& user_id,
+                                                  const std::string& type,
+                                                  std::unordered_map<std::string, std::vector<search_event_t>>& user_prefix_queries) {
+  std::vector<nlohmann::json> finalized_events;
+  std::unique_lock lock(mutex);
+  {
+    std::unique_lock user_lock(user_compaction_mutex);
+    for(auto& query_events : user_prefix_queries) {
+      const auto& collection = query_events.first;
+      auto& prefix_queries = query_events.second;
+      int64_t last_consolidated_index = -1;
+      for(uint32_t i = 0; i < prefix_queries.size(); i++) {
+        uint64_t diff_micros = (i == prefix_queries.size() - 1) ? (now_ts_us - prefix_queries[i].timestamp) :
+                                (prefix_queries[i + 1].timestamp - prefix_queries[i].timestamp);
+        if(diff_micros > QUERY_FINALIZATION_INTERVAL_MICROS || i == prefix_queries.size() - 1) {
+          auto rules_it = collection_rules_map.find(collection);
+          // If a rule was removed after prefix events were queued, the per-user
+          // prefix maps can still contain that collection.
+          if (rules_it == collection_rules_map.end()) {
+            prefix_queries.clear();
+            break;
+          }
+          const auto& rules = rules_it->second;
+          for(const auto& rule : rules) {
+            const auto& rule_config = search_rules.find(rule)->second;
+            if(rule_config.type == type && rule_config.capture_search_requests) {
+              nlohmann::json event_data;
+              event_data["event_type"] = prefix_queries[i].event_type;
+              event_data["timestamp"] = prefix_queries[i].timestamp;
+              event_data["name"] = rule;
+              event_data["data"]["q"] = prefix_queries[i].query;
+              event_data["data"]["user_id"] = user_id;
+              event_data["data"]["filter_by"] = prefix_queries[i].filter_str;
+              event_data["data"]["analytics_tag"] = prefix_queries[i].tag_str;
+              finalized_events.push_back(std::move(event_data));
+              last_consolidated_index = i;
+            }
           }
         }
       }
+      prefix_queries.erase(prefix_queries.begin(), prefix_queries.begin() + last_consolidated_index + 1);
     }
-    prefix_queries.erase(prefix_queries.begin(), prefix_queries.begin() + last_consolidated_index + 1);
+  }
+
+  for (const auto& event_data : finalized_events) {
+    add_event_locked(user_id, event_data);
   }
 }
 
@@ -549,4 +563,3 @@ void SearchAnalytics::remove_all_rules() {
 void SearchAnalytics::dispose() {
   remove_all_rules();
 }
-

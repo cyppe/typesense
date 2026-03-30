@@ -92,6 +92,7 @@ struct search_rule_config_t {
 
 class SearchAnalytics {
 private:
+  Option<bool> add_event_locked(const std::string& client_ip, const nlohmann::json& event_data);
   mutable std::shared_mutex user_compaction_mutex;
   mutable std::shared_mutex mutex;
   std::unordered_map<std::string, search_rule_config_t> search_rules;
