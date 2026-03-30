@@ -222,6 +222,7 @@ protected:
     void TearDown() override {
         node1_.stop();
         node2_.stop();
+        node3_.stop();
         typesense_test::cleanup_test_temp_dir(temp_dir_);
     }
 
@@ -233,9 +234,27 @@ protected:
         return nlohmann::json::parse(encoded);
     }
 
+    static long fetch_json(const NuRaftHttpRuntimeHarness& node,
+                           const std::string& path,
+                           nlohmann::json& body) {
+        std::string response;
+        std::map<std::string, std::string> headers;
+        const long status = HttpClient::get_response(node.base_url() + path,
+                                                     response,
+                                                     headers,
+                                                     {},
+                                                     5000,
+                                                     true);
+        if (status == 200) {
+            body = parse_json(response);
+        }
+        return status;
+    }
+
     std::string temp_dir_;
     NuRaftHttpRuntimeHarness node1_;
     NuRaftHttpRuntimeHarness node2_;
+    NuRaftHttpRuntimeHarness node3_;
 };
 
 TEST_F(NuRaftHttpRuntimeTest, PersistsHttpWritesAcrossRestartAndSnapshot) {
@@ -1101,6 +1120,217 @@ TEST_F(NuRaftHttpRuntimeTest, MirrorsFollowerOriginatedStemmingDictionaryImports
     ASSERT_EQ(2u, dictionary_1["words"].size()) << "node1 log: " << node1_.log_path();
     EXPECT_EQ(dictionary_1, dictionary_2) << "node1 log: " << node1_.log_path()
                                           << ", node2 log: " << node2_.log_path();
+}
+
+TEST_F(NuRaftHttpRuntimeTest, SearchReadsBypassSyncDuringConcurrentImportsOnThreeNodeCluster) {
+    const uint32_t api_port_1 = pick_free_port();
+    const uint32_t peer_port_1 = pick_free_port();
+    const uint32_t api_port_2 = pick_free_port();
+    const uint32_t peer_port_2 = pick_free_port();
+    const uint32_t api_port_3 = pick_free_port();
+    const uint32_t peer_port_3 = pick_free_port();
+    const std::string nodes_config =
+        "127.0.0.1:" + std::to_string(peer_port_1) + ":" + std::to_string(api_port_1) + "," +
+        "127.0.0.1:" + std::to_string(peer_port_2) + ":" + std::to_string(api_port_2) + "," +
+        "127.0.0.1:" + std::to_string(peer_port_3) + ":" + std::to_string(api_port_3);
+
+    NuRaftHttpServerOptions options_1;
+    options_1.startup_options.data_dir = node_dir("search-latency-cluster-node-1");
+    options_1.startup_options.local_host = "127.0.0.1";
+    options_1.startup_options.peer_port = peer_port_1;
+    options_1.startup_options.api_port = api_port_1;
+    options_1.startup_options.nodes_config = nodes_config;
+    options_1.listen_address = "127.0.0.1";
+    options_1.listen_port = api_port_1;
+    options_1.api_key = "xyz";
+
+    NuRaftHttpServerOptions options_2 = options_1;
+    options_2.startup_options.data_dir = node_dir("search-latency-cluster-node-2");
+    options_2.startup_options.peer_port = peer_port_2;
+    options_2.startup_options.api_port = api_port_2;
+    options_2.listen_port = api_port_2;
+
+    NuRaftHttpServerOptions options_3 = options_1;
+    options_3.startup_options.data_dir = node_dir("search-latency-cluster-node-3");
+    options_3.startup_options.peer_port = peer_port_3;
+    options_3.startup_options.api_port = api_port_3;
+    options_3.listen_port = api_port_3;
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options_1, error, false)) << error;
+    ASSERT_TRUE(node2_.start(options_2, error, false)) << error;
+    ASSERT_TRUE(node3_.start(options_3, error, false)) << error;
+
+    nlohmann::json status_1;
+    nlohmann::json status_2;
+    nlohmann::json status_3;
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               fetch_json(node3_, "/status", status_3) == 200 &&
+               static_cast<int>(status_1["is_leader"].get<bool>()) +
+                   static_cast<int>(status_2["is_leader"].get<bool>()) +
+                   static_cast<int>(status_3["is_leader"].get<bool>()) == 1;
+    }, std::chrono::milliseconds(15000)))
+        << "node1 log: " << node1_.log_path()
+        << ", node2 log: " << node2_.log_path()
+        << ", node3 log: " << node3_.log_path();
+
+    const NuRaftHttpRuntimeHarness* leader = &node1_;
+    if (status_2["is_leader"].get<bool>()) {
+        leader = &node2_;
+    } else if (status_3["is_leader"].get<bool>()) {
+        leader = &node3_;
+    }
+
+    const std::string schema = R"({
+      "name":"books",
+      "fields":[
+        {"name":"title","type":"string"},
+        {"name":"f1","type":"string","optional":true},
+        {"name":"f2","type":"string","optional":true},
+        {"name":"f3","type":"string","optional":true},
+        {"name":"f4","type":"string","optional":true},
+        {"name":"f5","type":"string","optional":true}
+      ]
+    })";
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(201,
+              HttpClient::post_response(leader->base_url() + "/collections",
+                                        schema,
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true));
+
+    const std::string payload = std::string(256, 'x');
+    std::vector<std::string> import_lines;
+    import_lines.reserve(4000);
+    for (size_t i = 0; i < 4000; ++i) {
+        nlohmann::json doc = {
+            {"id", std::to_string(i + 1)},
+            {"title", "title " + std::to_string(i + 1)},
+            {"f1", payload},
+            {"f2", payload},
+            {"f3", payload},
+            {"f4", payload},
+            {"f5", payload},
+        };
+        import_lines.push_back(doc.dump());
+    }
+
+    std::string import_body;
+    for (size_t i = 0; i < import_lines.size(); ++i) {
+        if (i != 0) {
+            import_body.push_back('\n');
+        }
+        import_body += import_lines[i];
+    }
+
+    std::atomic<bool> import_started{false};
+    std::atomic<bool> stop_searches{false};
+    std::vector<long> search_statuses;
+    std::mutex search_statuses_mutex;
+    std::thread search_thread([&] {
+        while (!import_started.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        while (!stop_searches.load()) {
+            std::string search_response;
+            std::map<std::string, std::string> search_headers;
+            const long status = HttpClient::get_response(node2_.base_url() +
+                                                             "/collections/books/documents/search?q=title&query_by=title&per_page=1",
+                                                         search_response,
+                                                         search_headers,
+                                                         {},
+                                                         5000,
+                                                         true);
+            std::lock_guard<std::mutex> lock(search_statuses_mutex);
+            search_statuses.push_back(status);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    });
+
+    import_started.store(true);
+    ASSERT_EQ(200,
+              HttpClient::post_response(node3_.base_url() + "/collections/books/documents/import?action=upsert&batch_size=250",
+                                        import_body,
+                                        response,
+                                        headers,
+                                        {},
+                                        30000,
+                                        true))
+        << "node3 log: " << node3_.log_path();
+    stop_searches.store(true);
+    search_thread.join();
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               fetch_json(node3_, "/status", status_3) == 200 &&
+               status_1["live_product_applied_index"].get<uint64_t>() >= status_1["committed_index"].get<uint64_t>() &&
+               status_2["live_product_applied_index"].get<uint64_t>() >= status_2["committed_index"].get<uint64_t>() &&
+               status_3["live_product_applied_index"].get<uint64_t>() >= status_3["committed_index"].get<uint64_t>();
+    }, std::chrono::milliseconds(15000)))
+        << "node1 log: " << node1_.log_path()
+        << ", node2 log: " << node2_.log_path()
+        << ", node3 log: " << node3_.log_path();
+
+    ASSERT_FALSE(search_statuses.empty());
+    for (const long status : search_statuses) {
+        EXPECT_EQ(200, status) << "node2 log: " << node2_.log_path();
+    }
+
+    EXPECT_EQ(0u, status_1["sync_cumulative_calls"].get<uint64_t>()) << "node1 log: " << node1_.log_path();
+    EXPECT_EQ(0u, status_2["sync_cumulative_calls"].get<uint64_t>()) << "node2 log: " << node2_.log_path();
+    EXPECT_EQ(0u, status_3["sync_cumulative_calls"].get<uint64_t>()) << "node3 log: " << node3_.log_path();
+}
+
+TEST_F(NuRaftHttpRuntimeTest, StrongReadConsistencyOptInStillUsesLiveStateSync) {
+    const uint32_t api_port = pick_free_port();
+    const uint32_t peer_port = pick_free_port();
+    const std::string data_dir = node_dir("single-node-strong-read");
+
+    NuRaftHttpServerOptions options;
+    options.startup_options.data_dir = data_dir;
+    options.startup_options.local_host = "127.0.0.1";
+    options.startup_options.peer_port = peer_port;
+    options.startup_options.api_port = api_port;
+    options.listen_address = "127.0.0.1";
+    options.listen_port = api_port;
+    options.api_key = "xyz";
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options, error)) << error;
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(201,
+              HttpClient::post_response(node1_.base_url() + "/collections",
+                                        kBooksCollectionSchema,
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true));
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(200,
+              HttpClient::get_response(node1_.base_url() +
+                                           "/collections/books/documents/search?q=*&query_by=title&per_page=1&read_consistency=strong",
+                                       response,
+                                       headers,
+                                       {},
+                                       5000,
+                                       true));
+
+    nlohmann::json status;
+    ASSERT_EQ(200, fetch_json(node1_, "/status", status));
+    EXPECT_GT(status["sync_cumulative_calls"].get<uint64_t>(), 0u) << "node1 log: " << node1_.log_path();
 }
 
 }  // namespace

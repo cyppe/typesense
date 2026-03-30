@@ -116,6 +116,12 @@ scripts/release_ort_bundle.sh --build --target-arch arm64
 scripts/bazel_in_docker.sh run //:typesense-server -- --help
 scripts/bazel_in_docker.sh test //:nuraft-runtime-options-test --test_output=errors
 
+# focused 3-node NuRaft import/search responsiveness regression
+test/scripts/replay_typesense_test.sh NuRaftHttpRuntimeTest.SearchReadsBypassSyncDuringConcurrentImportsOnThreeNodeCluster
+
+# measured 3-node NuRaft import/search latency replay
+python3 scripts/replay_nuraft_import_search_latency.py --binary ./bazel-bin/typesense-server
+
 # focused USearch vector-backend replay: metric-kernel comparison + mixed update/search workload
 scripts/bazel_in_docker.sh run //:usearch-vector-backend-benchmark -- --docs 20000 --dims 384 --cycles 10 --updates-per-cycle 400 --replacements-per-cycle 100 --searches-per-cycle 200 --k 20 --ef 80 --kernel-samples 4096 --kernel-repeats 64 --seed 42
 
@@ -334,6 +340,32 @@ Notes:
 - If you want to validate the import slow-request log payload itself, pass `--server-arg=--log-slow-requests-time-ms=<threshold>` to the replay and inspect the emitted `slow_request_samples` in the final log summary.
 - The replay also surfaces snapshot posture now (`nuraft_snapshot_distance`, `nuraft_snapshot_in_progress`, `nuraft_last_snapshot_*`, `nuraft_cumulative_snapshots`). If a DDEV-only timeout happens at a repeatable document count, validate this lane before changing import code again: a too-low snapshot distance can stall the commit thread inside `snapshot_and_compact()` and look like a generic write timeout from the client side.
 - For profiling, use host tools against the local replay PID rather than trying to hide `perf`/eBPF inside a container. The build/test flow remains Docker-first; the profiling flow is host-side because `perf`, `runqlat`, and related tools need direct kernel and PID-namespace visibility.
+
+## 9) NuRaft 3-node import/search latency replay
+
+Use this when the question is specifically "do cheap reads stay responsive while a 3-node NuRaft cluster is importing?"
+Unlike the reference-helper replay above, this lane boots three local NuRaft nodes, elects a leader, creates a collection,
+imports large NDJSON batches through one follower, and continuously probes search on another follower.
+
+Typical replay:
+
+```bash
+scripts/bazel_in_docker.sh build //:typesense-server
+python3 scripts/replay_nuraft_import_search_latency.py \
+  --binary ./bazel-bin/typesense-server \
+  --total-docs 30000 \
+  --http-batch-docs 1000 \
+  --import-workers 3 \
+  --extra-fields 30 \
+  --payload-bytes 1024 \
+  --server-batch-size 250
+```
+
+What to look for:
+- `search_wall_*_ms` should stay close to the reported `search_internal_avg_ms`, not explode into import-sized stalls.
+- `sync_cumulative_calls` should stay at `0` for the default read path. If this starts climbing again, someone likely reintroduced a global read barrier.
+- `search_error_count` should stay at `0`, and `live_product_applied_index` should converge to `committed_index` on all three nodes at the end of the run.
+- Pass `--keep-temp` if you need to inspect the per-node `server.log` files afterward.
 
 Update-heavy fitment replay that mirrors the sibling-fitment phase without DDEV:
 

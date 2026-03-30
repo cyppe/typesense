@@ -19,6 +19,41 @@ That blind spot is now covered by the repo-owned `scripts/replay_fitment_import_
 
 ---
 
+## Run 45: Removing The Default NuRaft Read Barrier Restores Live Search Responsiveness During 3-Node Imports (2026-03-30)
+
+**Baseline reference:** same local 3-node NuRaft replay harness before this patch
+**Candidate:** current branch head with opt-in strong reads only
+**Command:**
+- `python3 scripts/replay_nuraft_import_search_latency.py --binary ./bazel-bin/typesense-server --total-docs 30000 --http-batch-docs 1000 --import-workers 3 --extra-fields 30 --payload-bytes 1024 --server-batch-size 250`
+
+**Scenario:** the fork had already moved write application off the HTTP thread, but mutable reads still called `wait_for_live_product_state()` unconditionally before search or collection/document reads. Under active imports that forced cheap follower reads to wait behind the newest committed import chunk even when the local applied state was already good enough, so `search_time_ms` stayed around `2-3ms` while wall time inflated into import-sized stalls. The runtime now keeps that behavior only for explicit `read_consistency=strong` reads and otherwise serves the latest locally applied state.
+
+### Findings
+
+- The old default read barrier was real and measurable. On the same local 3-node lane before the change, search wall time averaged `17.2ms` with `46.4ms` p95, `92.7ms` p99, and `155.6ms` max while the internal search engine still reported only `2.5ms` average work.
+- The current runtime removes that extra wait from the default read path. On the repo-owned replay lane after the change, search wall time dropped to `6.0ms` average, `13.4ms` p95, `73.0ms` p99, and `102.3ms` max, with internal search still at `2.1ms` average.
+- The behavior change shows up directly in runtime status. Before the patch, `sync_cumulative_calls` climbed into roughly `136-156` calls per node during the run; after the patch, the replay and the targeted regression test both hold all three nodes at `0`.
+- Durability semantics stay available when they are actually needed. The new targeted regression `NuRaftHttpRuntimeTest.StrongReadConsistencyOptInStillUsesLiveStateSync` confirms that `read_consistency=strong` still triggers the old wait-for-live-state path explicitly.
+
+### Summary Table
+
+| Metric | Before | After | Outcome |
+|---|---:|---:|---|
+| Search wall avg | `17.2 ms` | `6.0 ms` | Much better |
+| Search wall p95 | `46.4 ms` | `13.4 ms` | Much better |
+| Search wall p99 | `92.7 ms` | `73.0 ms` | Better |
+| Search wall max | `155.6 ms` | `102.3 ms` | Better |
+| Internal `search_time_ms` avg | `2.5 ms` | `2.1 ms` | Flat |
+| `sync_cumulative_calls` | `~136-156` | `0` | Barrier removed from default reads |
+
+### Decision
+
+- Keep the default NuRaft read path on the latest locally applied product state. That is the right performance/safety trade-off for dashboard/search traffic during imports.
+- Keep stronger semantics opt-in through `read_consistency=strong` instead of forcing every mutable read to wait behind the newest committed import.
+- Keep the new `scripts/replay_nuraft_import_search_latency.py` lane and the targeted 3-node regression test in the runbook. This latency bug was not visible in the canonical `quick/core` or `standard/core` benchmark lanes, so future agents need a dedicated replay for it.
+
+---
+
 ## Run 44: Hybrid Byte + Doc Caps Trim Async-Helper Tail Latency On The 3M Late-Fanout Lane Without Hurting The 1M Guardrail (2026-03-24)
 
 **Baseline reference:** current branch head before this patch, reproduced locally on the same machine

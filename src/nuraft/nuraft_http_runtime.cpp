@@ -510,9 +510,23 @@ std::shared_ptr<http_req> build_replay_request(const NuRaftAppliedRequest& appli
     return request;
 }
 
-// Wait for the background mirror worker to catch up before executing a read on
-// the thread pool. This avoids replaying committed entries on demand.
-void wait_before_read() {
+bool request_requires_strong_read_consistency(const std::shared_ptr<http_req>& req) {
+    const auto consistency_it = req->params.find("read_consistency");
+    if (consistency_it == req->params.end()) {
+        return false;
+    }
+
+    return consistency_it->second == "strong" || consistency_it->second == "linearizable";
+}
+
+// Default reads should serve the latest locally applied product state instead of
+// stalling behind the newest committed write. Callers that explicitly need the
+// pre-existing behavior can request it with `read_consistency=strong`.
+void maybe_wait_before_read(const std::shared_ptr<http_req>& req) {
+    if (!request_requires_strong_read_consistency(req)) {
+        return;
+    }
+
     NuRaftHttpRuntimeService* runtime = current_runtime_service();
     if (runtime != nullptr) {
         std::string error;
@@ -527,7 +541,7 @@ template<bool (*OriginalHandler)(const std::shared_ptr<http_req>&,
                                   const std::shared_ptr<http_res>&)>
 bool synced_read_handler(const std::shared_ptr<http_req>& req,
                          const std::shared_ptr<http_res>& res) {
-    wait_before_read();
+    maybe_wait_before_read(req);
     return OriginalHandler(req, res);
 }
 
@@ -537,7 +551,7 @@ bool get_runtime_collections(const std::shared_ptr<http_req>& request, const std
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
-    wait_before_read();
+    maybe_wait_before_read(request);
 
     if (!CollectionManager::get_instance().get_collection_names().empty()) {
         return get_collections(request, response);
@@ -560,7 +574,7 @@ bool get_runtime_collection(const std::shared_ptr<http_req>& request, const std:
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
-    wait_before_read();
+    maybe_wait_before_read(request);
 
     const auto it = request->params.find("collection");
     if (it == request->params.end() || it->second.empty()) {
@@ -593,7 +607,7 @@ bool get_runtime_document(const std::shared_ptr<http_req>& request, const std::s
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
-    wait_before_read();
+    maybe_wait_before_read(request);
 
     const auto collection_it = request->params.find("collection");
     const auto id_it = request->params.find("id");
@@ -629,7 +643,7 @@ bool search_runtime_documents(const std::shared_ptr<http_req>& request, const st
         response->set_500("NuRaft runtime service is not attached.");
         return true;
     }
-    wait_before_read();
+    maybe_wait_before_read(request);
 
     const auto collection_it = request->params.find("collection");
     if (collection_it == request->params.end() || collection_it->second.empty()) {
@@ -1987,10 +2001,12 @@ void register_nuraft_http_runtime_routes(HttpServer* server) {
     server->get("/collections", get_runtime_collections);
     server->get("/collections/:collection", get_runtime_collection);
 
-    // GET handlers that read mutable state use synced_read_handler<> to wait
-    // for the background mirror worker on the thread pool (not the h2o event
-    // loop). Write handlers use wait_for_applied_index() for predecessor
-    // ordering and per-entry mirrored results for their own response.
+    // GET handlers that read mutable state serve the latest locally applied
+    // product state by default. Opt-in strong reads (`read_consistency=strong`)
+    // retain the old wait-for-live-state behavior on the thread pool rather
+    // than on the h2o event loop. Write handlers still use
+    // wait_for_applied_index() for predecessor ordering and per-entry mirrored
+    // results for their own response.
     server->get("/aliases", synced_read_handler<get_aliases>);
     server->get("/aliases/:alias", synced_read_handler<get_alias>);
 
