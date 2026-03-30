@@ -95,6 +95,7 @@ public:
                           std::string& error) const;
     bool is_single_node_mode() const;
     bool sync_live_product_state(std::string& error);
+    bool sync_live_product_state_fast_path(std::string& error);
     void shutdown();
 
 private:
