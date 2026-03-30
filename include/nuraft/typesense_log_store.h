@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <vector>
 
@@ -52,7 +53,7 @@ private:
 
     std::string db_path_;
     std::shared_ptr<rocksdb::DB> db_;
-    mutable std::mutex lock_;
+    mutable std::shared_mutex lock_;
     nuraft::ulong start_index_;
     nuraft::ulong next_index_;
 };

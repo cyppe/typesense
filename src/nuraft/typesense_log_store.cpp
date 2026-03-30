@@ -70,7 +70,7 @@ TypesenseLogStore::~TypesenseLogStore() {
 }
 
 void TypesenseLogStore::close() {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::unique_lock<std::shared_mutex> guard(lock_);
     db_.reset();
 }
 
@@ -121,17 +121,17 @@ nuraft::ptr<nuraft::log_entry> TypesenseLogStore::make_dummy_entry() const {
 }
 
 nuraft::ulong TypesenseLogStore::next_slot() const {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::shared_lock<std::shared_mutex> guard(lock_);
     return next_index_;
 }
 
 nuraft::ulong TypesenseLogStore::start_index() const {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::shared_lock<std::shared_mutex> guard(lock_);
     return start_index_;
 }
 
 nuraft::ptr<nuraft::log_entry> TypesenseLogStore::last_entry() const {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::shared_lock<std::shared_mutex> guard(lock_);
     if (next_index_ <= start_index_) {
         return make_dummy_entry();
     }
@@ -146,7 +146,7 @@ nuraft::ptr<nuraft::log_entry> TypesenseLogStore::last_entry() const {
 }
 
 nuraft::ulong TypesenseLogStore::append(nuraft::ptr<nuraft::log_entry>& entry) {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::unique_lock<std::shared_mutex> guard(lock_);
     nuraft::ulong index = next_index_;
     auto serialized = entry->serialize();
     db_->Put(rocksdb::WriteOptions(),
@@ -158,7 +158,7 @@ nuraft::ulong TypesenseLogStore::append(nuraft::ptr<nuraft::log_entry>& entry) {
 }
 
 void TypesenseLogStore::write_at(nuraft::ulong index, nuraft::ptr<nuraft::log_entry>& entry) {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::unique_lock<std::shared_mutex> guard(lock_);
 
     // Truncate everything from index onward.
     rocksdb::WriteBatch batch;
@@ -182,7 +182,7 @@ TypesenseLogStore::log_entries(nuraft::ulong start, nuraft::ulong end) {
 nuraft::ptr<std::vector<nuraft::ptr<nuraft::log_entry>>>
 TypesenseLogStore::log_entries_ext(nuraft::ulong start, nuraft::ulong end,
                                    nuraft::int64 batch_size_hint_in_bytes) {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::shared_lock<std::shared_mutex> guard(lock_);
     auto result = nuraft::cs_new<std::vector<nuraft::ptr<nuraft::log_entry>>>();
     if (start >= end) {
         return result;
@@ -217,7 +217,7 @@ TypesenseLogStore::log_entries_ext(nuraft::ulong start, nuraft::ulong end,
 }
 
 nuraft::ptr<nuraft::log_entry> TypesenseLogStore::entry_at(nuraft::ulong index) {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::shared_lock<std::shared_mutex> guard(lock_);
     if (index < start_index_ || index >= next_index_) {
         return make_dummy_entry();
     }
@@ -232,7 +232,7 @@ nuraft::ptr<nuraft::log_entry> TypesenseLogStore::entry_at(nuraft::ulong index) 
 }
 
 nuraft::ulong TypesenseLogStore::term_at(nuraft::ulong index) {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::shared_lock<std::shared_mutex> guard(lock_);
     if (index < start_index_ || index >= next_index_) {
         return 0;
     }
@@ -247,7 +247,7 @@ nuraft::ulong TypesenseLogStore::term_at(nuraft::ulong index) {
 }
 
 nuraft::ptr<nuraft::buffer> TypesenseLogStore::pack(nuraft::ulong index, nuraft::int32 cnt) {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::shared_lock<std::shared_mutex> guard(lock_);
 
     // Collect serialized entries.
     std::vector<nuraft::ptr<nuraft::buffer>> entries;
@@ -276,7 +276,7 @@ nuraft::ptr<nuraft::buffer> TypesenseLogStore::pack(nuraft::ulong index, nuraft:
 }
 
 void TypesenseLogStore::apply_pack(nuraft::ulong index, nuraft::buffer& pack) {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::unique_lock<std::shared_mutex> guard(lock_);
     pack.pos(0);
     nuraft::int32 count = pack.get_int();
 
@@ -297,7 +297,7 @@ void TypesenseLogStore::apply_pack(nuraft::ulong index, nuraft::buffer& pack) {
 }
 
 bool TypesenseLogStore::compact(nuraft::ulong last_log_index) {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::unique_lock<std::shared_mutex> guard(lock_);
     if (last_log_index < start_index_) {
         return true;
     }
@@ -316,7 +316,7 @@ bool TypesenseLogStore::compact(nuraft::ulong last_log_index) {
 }
 
 bool TypesenseLogStore::flush() {
-    std::lock_guard<std::mutex> guard(lock_);
+    std::unique_lock<std::shared_mutex> guard(lock_);
     if (db_) {
         rocksdb::FlushOptions opts;
         opts.wait = true;

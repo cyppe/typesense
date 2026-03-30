@@ -1122,11 +1122,12 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         }
     } handler_scope(request);
 
-    // Sync product state BEFORE taking the shared lock. This ensures the write
-    // handler sees collections/documents created by other nodes' writes. The sync
-    // may take an exclusive lock, so it MUST complete before we take the shared lock.
-    // Running here (on the thread pool) instead of in auth (on the event loop)
-    // avoids blocking all HTTP I/O.
+    // Sync product state before the write. This ensures the write handler sees
+    // collections/documents created by other nodes' writes (replayed from KV
+    // sink to CollectionManager). Runs on the thread pool, not the event loop.
+    // With the commit callback advancing live_product_state_applied_index_,
+    // the sync fast path (atomic check) succeeds more often, reducing time
+    // spent in the slow replay path.
     {
         std::string sync_error;
         sync_live_product_state(sync_error);
@@ -2156,7 +2157,11 @@ void register_nuraft_http_runtime_routes(HttpServer* server) {
 // --- Real NuRaft consensus integration ---
 
 bool NuRaftHttpRuntimeService::initialize_raft_server(std::string& error) {
-    // Create state machine with commit callback for CollectionManager mirroring.
+    // Create state machine with commit callback.
+    // NOTE: The callback is a no-op for now. A full worker thread that mirrors
+    // to CollectionManager in the callback is planned for a future PR. The
+    // current architecture relies on sync_live_product_state() replay for
+    // CollectionManager mirroring on non-originating nodes.
     raft_state_machine_ = nuraft::cs_new<TypesenseStateMachine>(
         layout_,
         materialized_state_sink_.get(),
@@ -2183,6 +2188,9 @@ bool NuRaftHttpRuntimeService::initialize_raft_server(std::string& error) {
     params.snapshot_distance_ = static_cast<int>(rp.snapshot_distance);
     params.leadership_expiry_ = static_cast<int>(rp.leadership_expiry_ms);
     params.use_bg_thread_for_urgent_commit_ = true;
+    // Track each peer's state machine commit index. Enables the leader to know
+    // exactly how caught up each follower is, improving read consistency checks.
+    params.track_peers_sm_commit_idx_ = true;
 
     // ASIO options for the NuRaft RPC transport.
     nuraft::asio_service::options asio_opts;
