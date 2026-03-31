@@ -1280,19 +1280,30 @@ void NuRaftHttpRuntimeService::refresh_startup_materialization_state() {
     const uint64_t committed_index = raft_server_ != nullptr ? raft_server_->get_committed_log_idx() : 0;
     const bool raft_is_recovering = raft_server_ != nullptr &&
         (raft_server_->is_catching_up() || raft_server_->is_receiving_snapshot());
+    const uint64_t snapshot_reload_target_index =
+        last_snapshot_reload_target_index_.load(std::memory_order_relaxed);
+    const bool snapshot_reload_pending =
+        snapshot_reload_in_progress_.load(std::memory_order_relaxed) ||
+        snapshot_reload_target_index > live_applied_index;
     bool tracking = startup_materialization_tracking_.load(std::memory_order_relaxed);
+
+    if (!tracking && (raft_is_recovering || snapshot_reload_pending)) {
+        startup_materialization_tracking_.store(true, std::memory_order_relaxed);
+        tracking = true;
+    }
 
     if (materialized_state_applied_index > live_applied_index) {
         if (!tracking) {
-            startup_materialization_tracking_.store(true, std::memory_order_relaxed);
+            return;
         }
         startup_materialization_pending_.store(true, std::memory_order_relaxed);
         return;
     }
 
-    if (raft_is_recovering && materialized_state_applied_index < committed_index) {
+    if ((raft_is_recovering || snapshot_reload_pending) &&
+        materialized_state_applied_index < committed_index) {
         if (!tracking) {
-            startup_materialization_tracking_.store(true, std::memory_order_relaxed);
+            return;
         }
         startup_materialization_pending_.store(true, std::memory_order_relaxed);
         return;
@@ -1300,6 +1311,16 @@ void NuRaftHttpRuntimeService::refresh_startup_materialization_state() {
 
     if (!tracking) {
         return;
+    }
+
+    const uint64_t base_index = startup_materialization_base_index_.load(std::memory_order_relaxed);
+    if (live_applied_index <= base_index) {
+        const uint64_t started_at_ms = startup_materialization_started_at_ms_.load(std::memory_order_relaxed);
+        const uint64_t elapsed_ms = started_at_ms == 0 ? 0 : (steady_clock_now_ms() - started_at_ms);
+        if (elapsed_ms < kStartupMaterializationGraceMs) {
+            startup_materialization_pending_.store(true, std::memory_order_relaxed);
+            return;
+        }
     }
 
     startup_materialization_pending_.store(false, std::memory_order_relaxed);
