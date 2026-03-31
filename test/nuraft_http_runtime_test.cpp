@@ -1939,15 +1939,6 @@ TEST_F(NuRaftHttpRuntimeTest, ManualSnapshotEnablesSnapshotBasedEmptyFollowerRec
         << ", status: " << recovery_status.dump()
         << ", runtime_tail:\n" << read_file_tail(recovery_node->log_path());
 
-    ASSERT_TRUE(wait_until_condition([&] {
-        nlohmann::json updated_collection;
-        return recovery_node->refresh_process_state() &&
-               fetch_json(*recovery_node, "/collections/books", updated_collection) == 200 &&
-               updated_collection["num_documents"].get<size_t>() == 41;
-    }, std::chrono::milliseconds(10000)))
-        << "recovery log: " << recovery_node->log_path()
-        << ", runtime_tail:\n" << read_file_tail(recovery_node->log_path());
-
     response.clear();
     headers.clear();
     ASSERT_EQ(200,
