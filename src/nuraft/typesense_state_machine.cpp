@@ -48,11 +48,13 @@ void list_files_recursive(const std::string& base_dir,
 TypesenseStateMachine::TypesenseStateMachine(
     const NuRaftStateLayout& layout,
     NuRaftKvStateMachineSink* kv_sink,
-    TypesenseCommitCallback commit_callback)
+    TypesenseCommitCallback commit_callback,
+    TypesenseSnapshotAppliedCallback snapshot_applied_callback)
     : layout_(layout),
       kv_sink_(kv_sink),
       snapshot_coordinator_(layout),
       commit_callback_(std::move(commit_callback)),
+      snapshot_applied_callback_(std::move(snapshot_applied_callback)),
       last_commit_index_(0) {
     // Recover last commit index from the KV sink's applied index.
     uint64_t last_applied = 0;
@@ -186,28 +188,34 @@ void TypesenseStateMachine::create_snapshot(
 }
 
 bool TypesenseStateMachine::apply_snapshot(nuraft::snapshot& s) {
-    std::lock_guard<std::mutex> guard(snapshot_mutex_);
-
-    // The snapshot data was received via save_logical_snp_obj.
-    // The actual state is in the snapshot directory.
     NuRaftSnapshotDescriptor desc;
     std::string error;
-    if (!snapshot_coordinator_.read_last_snapshot(desc, error)) {
-        std::cerr << "TypesenseStateMachine: apply_snapshot failed to read descriptor: "
-                        << error << "\n";
-        return false;
+    {
+        std::lock_guard<std::mutex> guard(snapshot_mutex_);
+
+        // The snapshot data was received via save_logical_snp_obj.
+        // The actual state is in the snapshot directory.
+        if (!snapshot_coordinator_.read_last_snapshot(desc, error)) {
+            std::cerr << "TypesenseStateMachine: apply_snapshot failed to read descriptor: "
+                            << error << "\n";
+            return false;
+        }
+
+        auto cfg = nuraft::cs_new<nuraft::cluster_config>();
+        last_snapshot_ptr_ = nuraft::cs_new<nuraft::snapshot>(
+            s.get_last_log_idx(),
+            s.get_last_log_term(),
+            cfg);
+        last_commit_index_.store(s.get_last_log_idx());
+        last_snapshot_log_index_.store(s.get_last_log_idx(), std::memory_order_relaxed);
+        last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
+        last_snapshot_success_.store(true, std::memory_order_relaxed);
+        last_snapshot_completed_at_ms_.store(steady_clock_now_ms(), std::memory_order_relaxed);
     }
 
-    auto cfg = nuraft::cs_new<nuraft::cluster_config>();
-    last_snapshot_ptr_ = nuraft::cs_new<nuraft::snapshot>(
-        s.get_last_log_idx(),
-        s.get_last_log_term(),
-        cfg);
-    last_commit_index_.store(s.get_last_log_idx());
-    last_snapshot_log_index_.store(s.get_last_log_idx(), std::memory_order_relaxed);
-    last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
-    last_snapshot_success_.store(true, std::memory_order_relaxed);
-    last_snapshot_completed_at_ms_.store(steady_clock_now_ms(), std::memory_order_relaxed);
+    if (snapshot_applied_callback_) {
+        snapshot_applied_callback_(s.get_last_log_idx(), desc);
+    }
 
     std::cerr << "TypesenseStateMachine: applied snapshot at index "
                  << s.get_last_log_idx() << "\n";
@@ -328,8 +336,6 @@ void TypesenseStateMachine::save_logical_snp_obj(
     nuraft::buffer& data,
     bool is_first_obj,
     bool is_last_obj) {
-    std::lock_guard<std::mutex> guard(snapshot_mutex_);
-
     if (is_first_obj && obj_id == 0) {
         // Receiving file manifest. Parse file list (we don't actually need it
         // here since each subsequent object self-describes its filename).
@@ -363,11 +369,13 @@ void TypesenseStateMachine::save_logical_snp_obj(
         }
     }
 
+    bool installed_snapshot = false;
+    NuRaftSnapshotDescriptor installed_descriptor;
     if (is_last_obj) {
+        std::lock_guard<std::mutex> guard(snapshot_mutex_);
         // Install the snapshot.
-        NuRaftSnapshotDescriptor desc;
         std::string error;
-        if (!snapshot_coordinator_.install_snapshot(snap_dir, desc, error)) {
+        if (!snapshot_coordinator_.install_snapshot(snap_dir, installed_descriptor, error)) {
             std::cerr << "TypesenseStateMachine: failed to install incoming snapshot at index "
                       << s.get_last_log_idx() << ": " << error << "\n";
             obj_id = obj_id + 1;
@@ -381,9 +389,14 @@ void TypesenseStateMachine::save_logical_snp_obj(
             cfg);
         last_commit_index_.store(s.get_last_log_idx());
         last_snapshot_log_index_.store(s.get_last_log_idx(), std::memory_order_relaxed);
-        last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
+        last_snapshot_applied_index_.store(installed_descriptor.last_applied_index, std::memory_order_relaxed);
         last_snapshot_success_.store(true, std::memory_order_relaxed);
         last_snapshot_completed_at_ms_.store(steady_clock_now_ms(), std::memory_order_relaxed);
+        installed_snapshot = true;
+    }
+
+    if (installed_snapshot && snapshot_applied_callback_) {
+        snapshot_applied_callback_(s.get_last_log_idx(), installed_descriptor);
     }
 
     obj_id = obj_id + 1;

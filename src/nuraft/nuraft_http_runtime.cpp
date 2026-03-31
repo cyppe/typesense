@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <random>
 #include <set>
 #include <thread>
@@ -14,12 +15,18 @@
 #include "core_api.h"
 #include "json.hpp"
 #include "collection_manager.h"
+#include "conversation_model_manager.h"
 #include "nuraft/nuraft_route_classifier.h"
 #include "nuraft/nuraft_snapshot_coordinator.h"
 #include "nuraft/nuraft_state_initializer.h"
 #include "nuraft/nuraft_state_machine_sink.h"
 #include "nuraft/nuraft_metadata_store.h"
+#include "natural_language_search_model_manager.h"
+#include "personalization_model_manager.h"
+#include "ratelimit_manager.h"
 #include "search_analytics.h"
+#include "stemmer_manager.h"
+#include "stopwords_manager.h"
 #include "tokenizer.h"
 #include "typesense_server_utils.h"
 #include "tsconfig.h"
@@ -915,6 +922,21 @@ NuRaftHttpRuntimeService::get_snapshot_peer_lag_metrics(uint64_t committed_index
     return metrics;
 }
 
+uint64_t NuRaftHttpRuntimeService::get_materialized_state_applied_index() const {
+    if (materialized_state_sink_ == nullptr) {
+        return 0;
+    }
+
+    uint64_t applied_index = 0;
+    std::string error;
+    if (!materialized_state_sink_->read_last_applied_index(applied_index, error)) {
+        TS_LOG(WARNING) << "NuRaft runtime could not read materialized-state applied index: "
+                        << error;
+        return 0;
+    }
+    return applied_index;
+}
+
 uint64_t NuRaftHttpRuntimeService::allocate_response_token() {
     return next_response_token_.fetch_add(1, std::memory_order_relaxed);
 }
@@ -1023,6 +1045,7 @@ NuRaftHttpRuntimeService::apply_mirrored_request(const NuRaftAppliedRequest& app
 
     auto request = build_replay_request(applied_request, *route);
     auto response = std::make_shared<http_res>(nullptr);
+    std::lock_guard<std::mutex> apply_lock(live_apply_mutex_);
 
     if (applied_request.route_kind != NuRaftRouteKind::kUnknown) {
         result.handler_ok = mirror_single_node_typesense_state(request,
@@ -1246,8 +1269,7 @@ bool NuRaftHttpRuntimeService::is_materialization_ready() const {
 }
 
 uint64_t NuRaftHttpRuntimeService::materialization_lag() const {
-    const uint64_t committed_index = raft_state_machine_ != nullptr ?
-        raft_state_machine_->get_last_commit_index() : 0;
+    const uint64_t committed_index = get_materialized_state_applied_index();
     const uint64_t live_applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
     return committed_index >= live_applied_index ? (committed_index - live_applied_index) : 0;
 }
@@ -1257,28 +1279,142 @@ void NuRaftHttpRuntimeService::refresh_startup_materialization_state() {
         return;
     }
 
-    const uint64_t state_machine_applied_index = raft_state_machine_ != nullptr ?
-        raft_state_machine_->get_last_commit_index() : 0;
+    const uint64_t materialized_state_applied_index = get_materialized_state_applied_index();
     const uint64_t live_applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
     const uint64_t committed_index = raft_server_ != nullptr ? raft_server_->get_committed_log_idx() : 0;
+    const bool raft_is_recovering = raft_server_ != nullptr &&
+        (raft_server_->is_catching_up() || raft_server_->is_receiving_snapshot());
 
-    if (state_machine_applied_index > live_applied_index || state_machine_applied_index < committed_index) {
+    if (materialized_state_applied_index > live_applied_index) {
         startup_materialization_pending_.store(true, std::memory_order_relaxed);
         return;
     }
 
-    const uint64_t base_index = startup_materialization_base_index_.load(std::memory_order_relaxed);
-    if (state_machine_applied_index <= base_index) {
-        const uint64_t started_at_ms = startup_materialization_started_at_ms_.load(std::memory_order_relaxed);
-        const uint64_t elapsed_ms = started_at_ms == 0 ? 0 : (steady_clock_now_ms() - started_at_ms);
-        if (elapsed_ms < kStartupMaterializationGraceMs) {
-            startup_materialization_pending_.store(true, std::memory_order_relaxed);
-            return;
-        }
+    if (raft_is_recovering && materialized_state_applied_index < committed_index) {
+        startup_materialization_pending_.store(true, std::memory_order_relaxed);
+        return;
     }
 
     startup_materialization_pending_.store(false, std::memory_order_relaxed);
     startup_materialization_tracking_.store(false, std::memory_order_relaxed);
+}
+
+bool NuRaftHttpRuntimeService::reload_live_product_state_from_snapshot(
+    const NuRaftSnapshotDescriptor& descriptor,
+    std::string& error) {
+    const auto snapshot_db_dir = std::filesystem::path(layout_.snapshot_dir) /
+                                 descriptor.snapshot_id / "db";
+    if (!std::filesystem::is_directory(snapshot_db_dir)) {
+        error = "NuRaft snapshot is missing the main Typesense db checkpoint at '" +
+                snapshot_db_dir.string() + "'";
+        return false;
+    }
+
+    std::lock_guard<std::mutex> apply_lock(live_apply_mutex_);
+
+    CollectionManager& collection_manager = CollectionManager::get_instance();
+    Store* store = collection_manager.get_store();
+    if (store == nullptr) {
+        error = "CollectionManager store is not initialized";
+        return false;
+    }
+
+    StopwordsManager::get_instance().dispose();
+    StemmerManager::get_instance().dispose();
+    collection_manager.dispose();
+
+    if (store->reload(true, snapshot_db_dir.string()) != 0) {
+        error = "Failed to reload Typesense main store from snapshot checkpoint";
+        return false;
+    }
+
+    Config& config = Config::get_instance();
+    const size_t proc_count = std::max<size_t>(1, std::thread::hardware_concurrency());
+    const size_t configured_parallel_collection_load = config.get_num_collections_parallel_load();
+    const size_t num_collections_parallel_load =
+        configured_parallel_collection_load == 0 ? (proc_count * 4) : configured_parallel_collection_load;
+    const auto load_op = collection_manager.load(num_collections_parallel_load,
+                                                 config.get_num_documents_parallel_load());
+    if (!load_op.ok()) {
+        error = load_op.error();
+        return false;
+    }
+
+    RateLimitManager::getInstance()->clear_all();
+    const auto rate_limit_init = RateLimitManager::getInstance()->init(store);
+    if (!rate_limit_init.ok()) {
+        error = rate_limit_init.error();
+        return false;
+    }
+
+    ConversationModelManager::dispose();
+    const auto conversation_model_init = ConversationModelManager::init(store);
+    if (!conversation_model_init.ok()) {
+        error = conversation_model_init.error();
+        return false;
+    }
+
+    PersonalizationModelManager::dispose();
+    const auto personalization_model_init = PersonalizationModelManager::init(store);
+    if (!personalization_model_init.ok()) {
+        error = personalization_model_init.error();
+        return false;
+    }
+
+    NaturalLanguageSearchModelManager::dispose();
+    const auto nl_model_init = NaturalLanguageSearchModelManager::init(store);
+    if (!nl_model_init.ok()) {
+        error = nl_model_init.error();
+        return false;
+    }
+
+    {
+        std::unique_lock<std::shared_mutex> cache_lock(document_cache_mutex_);
+        document_cache_.clear();
+    }
+    {
+        std::unique_lock<std::shared_mutex> preference_lock(read_preference_mutex_);
+        materialized_read_preferred_collections_.clear();
+    }
+
+    advance_live_product_state_applied_index(descriptor.last_applied_index);
+    error.clear();
+    return true;
+}
+
+void NuRaftHttpRuntimeService::handle_applied_snapshot(
+    uint64_t log_index,
+    const NuRaftSnapshotDescriptor& descriptor) {
+    const uint64_t previous_target = last_snapshot_reload_target_index_.load(std::memory_order_relaxed);
+    if (descriptor.last_applied_index <= previous_target) {
+        return;
+    }
+    last_snapshot_reload_target_index_.store(descriptor.last_applied_index, std::memory_order_relaxed);
+    startup_materialization_tracking_.store(true, std::memory_order_relaxed);
+    startup_materialization_pending_.store(true, std::memory_order_relaxed);
+    startup_materialization_started_at_ms_.store(steady_clock_now_ms(), std::memory_order_relaxed);
+    startup_materialization_base_index_.store(
+        live_product_state_applied_index_.load(std::memory_order_relaxed),
+        std::memory_order_relaxed);
+
+    bool expected = false;
+    if (!snapshot_reload_in_progress_.compare_exchange_strong(expected, true, std::memory_order_relaxed)) {
+        return;
+    }
+
+    std::thread([this, log_index, descriptor]() {
+        std::string error;
+        if (!reload_live_product_state_from_snapshot(descriptor, error)) {
+            TS_LOG(ERROR) << "NuRaft snapshot apply failed to reload live Typesense state at log_index="
+                          << log_index << ": " << error;
+        } else {
+            TS_LOG(INFO) << "NuRaft snapshot apply reloaded live Typesense state at log_index="
+                         << log_index << ", applied_index=" << descriptor.last_applied_index;
+        }
+        snapshot_reload_in_progress_.store(false, std::memory_order_relaxed);
+        refresh_startup_materialization_state();
+        live_state_progress_cv_.notify_all();
+    }).detach();
 }
 
 bool NuRaftHttpRuntimeService::wait_for_applied_index(uint64_t target_index, uint32_t timeout_ms) {
@@ -2372,6 +2508,9 @@ bool NuRaftHttpRuntimeService::initialize_raft_server(std::string& error) {
             (void)log_idx;
             refresh_startup_materialization_state();
             enqueue_mirrored_request(request);
+        },
+        [this](uint64_t log_idx, const NuRaftSnapshotDescriptor& descriptor) {
+            handle_applied_snapshot(log_idx, descriptor);
         });
 
     // Create state manager.

@@ -594,6 +594,7 @@ That lane pins the intended NuRaft recovery contract on this fork:
 - if a follower falls beyond the retained-log window, the leader should refresh the snapshot before the long periodic interval elapses
 - a wiped follower must stay out of service until materialized search state catches up
 - once retained logs are compacted away, a recovering follower must be able to use the latest snapshot instead of replaying the entire old log window
+- snapshot install validation must assert real collections, document counts, or search results on the recovering follower, not just `last_snapshot_applied_index > 0`
 - periodic snapshots must keep the recovery point moving without needing a manual `/operations/snapshot` call
 
 The recovery metrics now expose the same policy directly on `/status` and `/metrics.json`: `nuraft_snapshot_recovery_point_lag`, `nuraft_snapshot_lagging_peer_count`, `nuraft_snapshot_max_peer_log_gap`, `nuraft_snapshot_max_peer_response_age_ms`, and `nuraft_last_snapshot_completed_at_ms`.

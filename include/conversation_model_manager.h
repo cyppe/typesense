@@ -25,6 +25,7 @@ class ConversationModelManager
         static Option<nlohmann::json> get_all_models();
         static Option<int> init(Store* store);
         static bool migrate_model(nlohmann::json& model);
+        static void dispose();
         static std::unordered_set<std::string> get_history_collections(); 
         // For testing Purpose only
         static void insert_model_for_testing(const std::string& model_id, nlohmann::json model) {

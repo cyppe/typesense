@@ -19,6 +19,9 @@
 // Parameters: log_index, decoded request.
 using TypesenseCommitCallback = std::function<void(uint64_t log_index,
                                                    const NuRaftAppliedRequest& request)>;
+using TypesenseSnapshotAppliedCallback = std::function<void(
+    uint64_t log_index,
+    const NuRaftSnapshotDescriptor& descriptor)>;
 
 struct TypesenseSnapshotMetricsSnapshot {
     bool snapshot_in_progress = false;
@@ -41,7 +44,8 @@ class TypesenseStateMachine : public nuraft::state_machine {
 public:
     TypesenseStateMachine(const NuRaftStateLayout& layout,
                           NuRaftKvStateMachineSink* kv_sink,
-                          TypesenseCommitCallback commit_callback = nullptr);
+                          TypesenseCommitCallback commit_callback = nullptr,
+                          TypesenseSnapshotAppliedCallback snapshot_applied_callback = nullptr);
     ~TypesenseStateMachine() override;
 
     // nuraft::state_machine interface
@@ -79,6 +83,7 @@ private:
     NuRaftKvStateMachineSink* kv_sink_;
     NuRaftSnapshotCoordinator snapshot_coordinator_;
     TypesenseCommitCallback commit_callback_;
+    TypesenseSnapshotAppliedCallback snapshot_applied_callback_;
 
     std::atomic<uint64_t> last_commit_index_;
     std::atomic<bool> snapshot_in_progress_{false};

@@ -168,6 +168,11 @@ Option<int> ConversationModelManager::init(Store* store) {
     return Option<int>(loaded_models);
 }
 
+void ConversationModelManager::dispose() {
+    std::unique_lock lock(models_mutex);
+    models.clear();
+}
+
 std::string ConversationModelManager::get_model_key(const std::string& model_id) {
     return std::string(MODEL_KEY_PREFIX) + "_" + model_id;
 }

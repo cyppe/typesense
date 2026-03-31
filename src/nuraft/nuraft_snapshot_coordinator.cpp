@@ -150,6 +150,12 @@ bool build_descriptor(const NuRaftStateLayout& layout,
     return true;
 }
 
+std::filesystem::path data_dir_from_layout(const NuRaftStateLayout& layout) {
+    const auto prototype_root = std::filesystem::path(layout.root_dir);
+    const auto state_dir = prototype_root.parent_path();
+    return state_dir.parent_path();
+}
+
 }  // namespace
 
 bool NuRaftSnapshotDescriptor::operator==(const NuRaftSnapshotDescriptor& other) const {
@@ -181,11 +187,17 @@ bool NuRaftSnapshotCoordinator::create_snapshot(const std::string& export_path,
     }
 
     const std::filesystem::path local_root = std::filesystem::path(layout_.snapshot_dir) / descriptor.snapshot_id;
+    const std::filesystem::path main_store_dir = data_dir_from_layout(layout_) / "db";
     if (!remove_tree(local_root, error)) {
         return false;
     }
     if (!replace_tree(layout_.meta_dir, local_root / "meta", error) ||
         !replace_tree(layout_.log_dir, local_root / "log", error)) {
+        return false;
+    }
+
+    if (std::filesystem::exists(main_store_dir) &&
+        !replace_tree(main_store_dir, local_root / "db", error)) {
         return false;
     }
 
@@ -256,6 +268,7 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
 
     std::filesystem::path snapshot_state_root;
     const std::filesystem::path snapshot_archive_root = root / "snapshot";
+    const std::filesystem::path main_store_dir = data_dir_from_layout(layout_) / "db";
     if (std::filesystem::is_directory(snapshot_archive_root)) {
         snapshot_state_root = snapshot_archive_root / descriptor.snapshot_id;
     } else {
@@ -316,6 +329,14 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
             return false;
         }
     } else if (!remove_tree(layout_.materialized_state_dir, error)) {
+        return false;
+    }
+
+    if (std::filesystem::exists(snapshot_state_root / "db")) {
+        if (!replace_tree(snapshot_state_root / "db", main_store_dir, error)) {
+            return false;
+        }
+    } else if (!remove_tree(main_store_dir, error)) {
         return false;
     }
 

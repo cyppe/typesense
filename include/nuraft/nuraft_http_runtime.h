@@ -128,6 +128,9 @@ private:
     void stop_snapshot_scheduler();
     void snapshot_scheduler_loop();
     SnapshotPeerLagMetrics get_snapshot_peer_lag_metrics(uint64_t committed_index) const;
+    uint64_t get_materialized_state_applied_index() const;
+    void handle_applied_snapshot(uint64_t log_index, const NuRaftSnapshotDescriptor& descriptor);
+    bool reload_live_product_state_from_snapshot(const NuRaftSnapshotDescriptor& descriptor, std::string& error);
     bool initialize_raft_server(std::string& error);
     bool process_document_import_write(const std::shared_ptr<http_req>& request,
                                        const std::shared_ptr<http_res>& response,
@@ -218,6 +221,9 @@ private:
     std::deque<NuRaftAppliedRequest> mirror_worker_queue_;
     bool mirror_worker_stopping_ = false;
     std::thread mirror_worker_thread_;
+    std::mutex live_apply_mutex_;
+    std::atomic<bool> snapshot_reload_in_progress_{false};
+    std::atomic<uint64_t> last_snapshot_reload_target_index_{0};
     uint32_t test_mirror_worker_apply_delay_ms_ = 0;
     std::mutex snapshot_scheduler_mutex_;
     std::condition_variable snapshot_scheduler_cv_;

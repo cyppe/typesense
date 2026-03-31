@@ -77,6 +77,10 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsSnapshotExport) {
     req2.body = R"({"id":"doc-1","title":"Dune"})";
 
     ASSERT_TRUE(source_sink->apply_all({req1, req2}, error)) << error;
+    std::filesystem::create_directories(std::filesystem::path(source_dir) / "db");
+    ASSERT_TRUE(NuRaftFileStore::write_file_atomically((std::filesystem::path(source_dir) / "db" / "sentinel.txt").string(),
+                                                       "live-store",
+                                                       error)) << error;
 
     NuRaftSnapshotCoordinator coordinator(source_layout);
     NuRaftSnapshotDescriptor descriptor;
@@ -93,6 +97,9 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsSnapshotExport) {
     EXPECT_TRUE(std::filesystem::is_directory(
         std::filesystem::path(export_dir) / "state" / NuRaftStateLayout::kPrototypeRootName /
             "snapshot" / descriptor.snapshot_id / "materialized_state"));
+    EXPECT_TRUE(std::filesystem::exists(
+        std::filesystem::path(export_dir) / "state" / NuRaftStateLayout::kPrototypeRootName /
+            "snapshot" / descriptor.snapshot_id / "db" / "sentinel.txt"));
 
     NuRaftPrototypeOptions restored_options;
     restored_options.data_dir = restored_dir;
@@ -124,6 +131,7 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsSnapshotExport) {
     ASSERT_EQ(entries.size(), 2u);
     EXPECT_EQ(entries[0].first, "state/collections/books");
     EXPECT_EQ(entries[1].first, "state/documents/books/doc-1");
+    EXPECT_TRUE(std::filesystem::exists(std::filesystem::path(restored_dir) / "db" / "sentinel.txt"));
 }
 
 TEST_F(NuRaftSnapshotCoordinatorTest, InstallClearsStaleMaterializedStateWhenSourceSnapshotHasNone) {

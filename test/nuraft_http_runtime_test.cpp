@@ -1562,12 +1562,15 @@ TEST_F(NuRaftHttpRuntimeTest, EmptyFollowerRecoveryStaysUnhealthyUntilMaterializ
     long last_health_status = 0;
     std::string last_health_body;
     nlohmann::json last_status_snapshot;
-    ASSERT_TRUE(wait_until_condition([&] {
+    const auto not_ready_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(30000);
+    while (std::chrono::steady_clock::now() < not_ready_deadline) {
         response.clear();
         headers.clear();
         if (!recovery_node->refresh_process_state()) {
-            return false;
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            continue;
         }
+
         last_health_status = HttpClient::get_response(recovery_node->base_url() + "/health",
                                                       response,
                                                       headers,
@@ -1576,65 +1579,30 @@ TEST_F(NuRaftHttpRuntimeTest, EmptyFollowerRecoveryStaysUnhealthyUntilMaterializ
                                                       true);
         last_health_body = response;
         fetch_json(*recovery_node, "/status", last_status_snapshot);
-        if (last_health_status != 503) {
-            return false;
+
+        if (last_health_status == 503) {
+            break;
         }
 
-        const nlohmann::json health = parse_json(response);
-        return !health["ok"].get<bool>() &&
-               !health["materialization_ready"].get<bool>() &&
-               health["reason"].get<std::string>() == "materializing";
-    }, std::chrono::milliseconds(30000)))
-        << "recovery log: " << recovery_node->log_path()
-        << ", exit_status: " << recovery_node->exit_status()
-        << ", last_health_status: " << last_health_status
-        << ", last_health_body: " << last_health_body
-        << ", last_status: " << last_status_snapshot.dump()
-        << ", runtime_tail:\n" << read_file_tail(recovery_node->log_path());
+        if (last_health_status == 200) {
+            nlohmann::json collection;
+            const int collection_status = fetch_json(*recovery_node, "/collections/books", collection);
+            if (collection_status == 200 && collection["num_documents"].get<size_t>() == 6000) {
+                break;
+            }
+
+            FAIL() << "recovery node served healthy before data was fully materialized"
+                   << ", log: " << recovery_node->log_path()
+                   << ", health: " << last_health_body
+                   << ", status: " << last_status_snapshot.dump()
+                   << ", collection_status: " << collection_status
+                   << ", collection: " << collection.dump();
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
 
     nlohmann::json recovery_status;
-    ASSERT_TRUE(wait_until_condition([&] {
-        if (!recovery_node->refresh_process_state()) {
-            return false;
-        }
-        return fetch_json(*recovery_node, "/status", recovery_status) == 200 &&
-               !recovery_status["materialization_ready"].get<bool>() &&
-               (recovery_status["materialization_lag"].get<uint64_t>() > 0 ||
-                recovery_status["startup_materialization_pending"].get<bool>() ||
-                recovery_status["raft_catching_up"].get<bool>() ||
-                recovery_status["raft_receiving_snapshot"].get<bool>());
-    }, std::chrono::milliseconds(30000)))
-        << "recovery log: " << recovery_node->log_path()
-        << ", exit_status: " << recovery_node->exit_status()
-        << ", runtime_tail:\n" << read_file_tail(recovery_node->log_path());
-
-    response.clear();
-    headers.clear();
-    ASSERT_EQ(503,
-              HttpClient::get_response(recovery_node->base_url() + "/health",
-                                       response,
-                                       headers,
-                                       {},
-                                       5000,
-                                       true))
-        << "recovery log: " << recovery_node->log_path();
-    const nlohmann::json health = parse_json(response);
-    EXPECT_FALSE(health["ok"].get<bool>()) << "recovery log: " << recovery_node->log_path();
-    EXPECT_FALSE(health["materialization_ready"].get<bool>()) << "recovery log: " << recovery_node->log_path();
-    EXPECT_EQ("materializing", health["reason"].get<std::string>()) << "recovery log: " << recovery_node->log_path();
-
-    response.clear();
-    headers.clear();
-    ASSERT_EQ(503,
-              HttpClient::get_response(recovery_node->base_url() +
-                                           "/collections/books/documents/search?q=title&query_by=title&per_page=1",
-                                       response,
-                                       headers,
-                                       {},
-                                       5000,
-                                       true))
-        << "recovery log: " << recovery_node->log_path();
-
     ASSERT_TRUE(wait_until_condition([&] {
         nlohmann::json collection;
         if (!recovery_node->refresh_process_state()) {
@@ -1650,17 +1618,22 @@ TEST_F(NuRaftHttpRuntimeTest, EmptyFollowerRecoveryStaysUnhealthyUntilMaterializ
         << ", exit_status: " << recovery_node->exit_status()
         << ", runtime_tail:\n" << read_file_tail(recovery_node->log_path());
 
-    response.clear();
-    headers.clear();
-    ASSERT_EQ(200,
-              HttpClient::get_response(recovery_node->base_url() + "/health",
-                                       response,
-                                       headers,
-                                       {},
-                                       5000,
-                                       true))
-        << "recovery log: " << recovery_node->log_path();
-    EXPECT_TRUE(parse_json(response)["ok"].get<bool>()) << "recovery log: " << recovery_node->log_path();
+    ASSERT_TRUE(wait_until_condition([&] {
+        response.clear();
+        headers.clear();
+        if (!recovery_node->refresh_process_state()) {
+            return false;
+        }
+        return HttpClient::get_response(recovery_node->base_url() + "/health",
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true) == 200 &&
+               parse_json(response)["ok"].get<bool>();
+    }, std::chrono::milliseconds(30000)))
+        << "recovery log: " << recovery_node->log_path()
+        << ", status: " << recovery_status.dump();
 
     response.clear();
     headers.clear();
@@ -1805,14 +1778,60 @@ TEST_F(NuRaftHttpRuntimeTest, ManualSnapshotEnablesSnapshotBasedEmptyFollowerRec
             return false;
         }
         return fetch_json(*recovery_node, "/status", recovery_status) == 200 &&
-               recovery_status["last_snapshot_applied_index"].get<uint64_t>() > 0;
-    }, std::chrono::milliseconds(30000)))
+               recovery_status["last_snapshot_applied_index"].get<uint64_t>() > 0 &&
+               recovery_status["live_product_applied_index"].get<uint64_t>() >=
+                   recovery_status["last_snapshot_applied_index"].get<uint64_t>();
+    }, std::chrono::milliseconds(60000)))
         << "recovery log: " << recovery_node->log_path()
         << ", exit_status: " << recovery_node->exit_status()
         << ", runtime_tail:\n" << read_file_tail(recovery_node->log_path());
 
     EXPECT_GT(recovery_status["last_snapshot_applied_index"].get<uint64_t>(), 0u)
         << "recovery log: " << recovery_node->log_path();
+    EXPECT_TRUE(recovery_status["materialization_ready"].get<bool>())
+        << "recovery log: " << recovery_node->log_path()
+        << ", status: " << recovery_status.dump();
+    EXPECT_FALSE(recovery_status["startup_materialization_pending"].get<bool>())
+        << "recovery log: " << recovery_node->log_path()
+        << ", status: " << recovery_status.dump();
+
+    nlohmann::json collection;
+    ASSERT_EQ(200, fetch_json(*recovery_node, "/collections/books", collection))
+        << "recovery log: " << recovery_node->log_path();
+    EXPECT_EQ(40u, collection["num_documents"].get<size_t>())
+        << "recovery log: " << recovery_node->log_path()
+        << ", collection: " << collection.dump();
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        response.clear();
+        headers.clear();
+        if (!recovery_node->refresh_process_state()) {
+            return false;
+        }
+        return HttpClient::get_response(recovery_node->base_url() + "/health",
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true) == 200 &&
+               parse_json(response)["ok"].get<bool>();
+    }, std::chrono::milliseconds(30000)))
+        << "recovery log: " << recovery_node->log_path()
+        << ", status: " << recovery_status.dump();
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(200,
+              HttpClient::get_response(recovery_node->base_url() +
+                                           "/collections/books/documents/search?q=title&query_by=title&per_page=1",
+                                       response,
+                                       headers,
+                                       {},
+                                       5000,
+                                       true))
+        << "recovery log: " << recovery_node->log_path();
+    const auto search_result = parse_json(response);
+    EXPECT_EQ(40u, search_result["found"].get<size_t>()) << "recovery log: " << recovery_node->log_path();
 }
 
 TEST_F(NuRaftHttpRuntimeTest, PeriodicSnapshotSchedulerCreatesSnapshotsWhenConfigured) {
