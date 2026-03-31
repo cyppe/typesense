@@ -319,6 +319,19 @@ cc_test(
 )
 
 cc_test(
+    name = "nuraft-state-machine-test",
+    srcs = [
+        "test/nuraft_state_machine_test.cpp",
+    ],
+    copts = COPTS + ["-O0", "-DTEST_BUILD"],
+    deps = [
+        ":headers",
+        ":nuraft_lib",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+cc_test(
     name = "nuraft-snapshot-coordinator-test",
     srcs = [
         "test/nuraft_snapshot_coordinator_test.cpp",

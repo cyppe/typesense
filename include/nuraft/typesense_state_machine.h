@@ -79,6 +79,8 @@ public:
     TypesenseSnapshotMetricsSnapshot get_snapshot_metrics() const;
 
 private:
+    struct IncomingSnapshotCtx;
+
     NuRaftStateLayout layout_;
     NuRaftKvStateMachineSink* kv_sink_;
     NuRaftSnapshotCoordinator snapshot_coordinator_;
@@ -97,11 +99,6 @@ private:
     std::atomic<uint64_t> cumulative_snapshot_failures_{0};
     mutable std::mutex snapshot_mutex_;
     nuraft::ptr<nuraft::snapshot> last_snapshot_ptr_;
-
-    // Snapshot transfer state.
-    struct SnapshotTransferCtx {
-        std::string snapshot_dir;
-        std::vector<std::string> file_list;
-        nuraft::ptr<nuraft::snapshot> snap;
-    };
+    std::mutex incoming_snapshot_mutex_;
+    std::unique_ptr<IncomingSnapshotCtx> incoming_snapshot_ctx_;
 };

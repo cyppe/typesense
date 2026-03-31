@@ -8,12 +8,13 @@
 class NuRaftKvStateMachineSink;
 
 struct NuRaftSnapshotDescriptor {
-    static constexpr uint32_t kCurrentFormatVersion = 1;
+    static constexpr uint32_t kCurrentFormatVersion = 2;
 
     uint32_t format_version = kCurrentFormatVersion;
     std::string snapshot_id;
     uint64_t last_log_index = 0;
     uint64_t last_applied_index = 0;
+    bool includes_main_db_checkpoint = false;
 
     bool operator==(const NuRaftSnapshotDescriptor& other) const;
 };

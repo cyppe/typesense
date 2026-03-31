@@ -87,6 +87,7 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsSnapshotExport) {
     ASSERT_TRUE(coordinator.create_snapshot(export_dir, source_sink.get(), descriptor, error)) << error;
     EXPECT_EQ(descriptor.last_log_index, 2u);
     EXPECT_EQ(descriptor.last_applied_index, 2u);
+    EXPECT_TRUE(descriptor.includes_main_db_checkpoint);
 
     NuRaftSnapshotDescriptor persisted_descriptor;
     ASSERT_TRUE(coordinator.read_last_snapshot(persisted_descriptor, error)) << error;
@@ -148,6 +149,7 @@ TEST_F(NuRaftSnapshotCoordinatorTest, InstallClearsStaleMaterializedStateWhenSou
     NuRaftSnapshotCoordinator source_coordinator(source_layout);
     NuRaftSnapshotDescriptor source_descriptor;
     ASSERT_TRUE(source_coordinator.create_snapshot(export_dir, nullptr, source_descriptor, error)) << error;
+    EXPECT_FALSE(source_descriptor.includes_main_db_checkpoint);
 
     // Create stale materialized state in the restored node.
     const NuRaftStateLayout restored_layout = NuRaftStateLayout::from_data_dir(restored_dir);

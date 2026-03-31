@@ -24,6 +24,7 @@ nlohmann::json encode_descriptor(const NuRaftSnapshotDescriptor& descriptor) {
         {"snapshot_id", descriptor.snapshot_id},
         {"last_log_index", descriptor.last_log_index},
         {"last_applied_index", descriptor.last_applied_index},
+        {"includes_main_db_checkpoint", descriptor.includes_main_db_checkpoint},
     };
 }
 
@@ -51,6 +52,9 @@ bool decode_descriptor(const std::string& encoded,
     descriptor.snapshot_id = parsed["snapshot_id"].get<std::string>();
     descriptor.last_log_index = parsed["last_log_index"].get<uint64_t>();
     descriptor.last_applied_index = parsed["last_applied_index"].get<uint64_t>();
+    descriptor.includes_main_db_checkpoint =
+        parsed.contains("includes_main_db_checkpoint") && parsed["includes_main_db_checkpoint"].is_boolean() ?
+            parsed["includes_main_db_checkpoint"].get<bool>() : false;
     error.clear();
     return true;
 }
@@ -111,8 +115,8 @@ bool replace_tree(const std::filesystem::path& source,
 }
 
 bool resolve_snapshot_root(const std::string& snapshot_path,
-                          std::filesystem::path& root,
-                          std::string& error) {
+                           std::filesystem::path& root,
+                           std::string& error) {
     const std::filesystem::path direct(snapshot_path);
     const std::filesystem::path exported = direct / "state" / NuRaftStateLayout::kPrototypeRootName;
     if (std::filesystem::is_directory(exported)) {
@@ -130,6 +134,8 @@ bool resolve_snapshot_root(const std::string& snapshot_path,
     return true;
 }
 
+std::filesystem::path data_dir_from_layout(const NuRaftStateLayout& layout);
+
 bool build_descriptor(const NuRaftStateLayout& layout,
                       const NuRaftKvStateMachineSink* kv_sink,
                       NuRaftSnapshotDescriptor& descriptor,
@@ -146,6 +152,7 @@ bool build_descriptor(const NuRaftStateLayout& layout,
     descriptor.last_applied_index = last_applied_index;
     descriptor.snapshot_id = "snapshot-" + zero_padded_index(descriptor.last_applied_index) + "-" +
                              zero_padded_index(descriptor.last_log_index);
+    descriptor.includes_main_db_checkpoint = std::filesystem::is_directory(data_dir_from_layout(layout) / "db");
     error.clear();
     return true;
 }
@@ -162,7 +169,8 @@ bool NuRaftSnapshotDescriptor::operator==(const NuRaftSnapshotDescriptor& other)
     return format_version == other.format_version &&
            snapshot_id == other.snapshot_id &&
            last_log_index == other.last_log_index &&
-           last_applied_index == other.last_applied_index;
+           last_applied_index == other.last_applied_index &&
+           includes_main_db_checkpoint == other.includes_main_db_checkpoint;
 }
 
 NuRaftSnapshotCoordinator::NuRaftSnapshotCoordinator(NuRaftStateLayout layout)
@@ -280,6 +288,10 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
         return false;
     }
 
+    const bool expects_main_db_checkpoint =
+        descriptor.format_version >= 2 ? descriptor.includes_main_db_checkpoint :
+            std::filesystem::exists(snapshot_state_root / "db");
+
     // Logical snapshot transfer currently serializes only files, so empty
     // directories such as a fully compacted log/ tree may be absent on the
     // receiver. Recreate the empty directory instead of rejecting the
@@ -332,7 +344,13 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
         return false;
     }
 
-    if (std::filesystem::exists(snapshot_state_root / "db")) {
+    if (expects_main_db_checkpoint && !std::filesystem::is_directory(snapshot_state_root / "db")) {
+        error = "NuRaft snapshot is missing the main Typesense db checkpoint at '" +
+                (snapshot_state_root / "db").string() + "'";
+        return false;
+    }
+
+    if (expects_main_db_checkpoint) {
         if (!replace_tree(snapshot_state_root / "db", main_store_dir, error)) {
             return false;
         }

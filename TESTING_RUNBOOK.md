@@ -585,7 +585,8 @@ The current runtime smoke covers a real subprocess-backed HTTP binary with healt
 When you are touching NuRaft recovery semantics, snapshot policy, or `/health` readiness, run the focused recovery lane as well:
 
 ```bash
-scripts/bazel_in_docker.sh test //:typesense-test --test_output=errors --test_timeout=1200 '--test_arg=--gtest_filter=NuRaftHttpRuntimeTest.ManualSnapshotWorksBeforeUserWrites:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerRunsWhileFollowerOffline:NuRaftHttpRuntimeTest.LaggingFollowerBeyondRetainedWindowTriggersSnapshotBeforePeriodicInterval:NuRaftHttpRuntimeTest.ManualSnapshotEnablesSnapshotBasedEmptyFollowerRecovery:NuRaftHttpRuntimeTest.EmptyFollowerRecoveryStaysUnhealthyUntilMaterialized:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerCreatesSnapshotsWhenConfigured'
+scripts/bazel_in_docker.sh test //:nuraft-state-machine-test //:nuraft-snapshot-coordinator-test --test_output=errors --test_timeout=1200
+scripts/bazel_in_docker.sh test //:typesense-test --test_output=errors --test_timeout=1200 '--test_arg=--gtest_filter=TypesenseStateMachineTest.*:NuRaftSnapshotCoordinatorTest.*:NuRaftHttpRuntimeTest.ManualSnapshotWorksBeforeUserWrites:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerRunsWhileFollowerOffline:NuRaftHttpRuntimeTest.LaggingFollowerBeyondRetainedWindowTriggersSnapshotBeforePeriodicInterval:NuRaftHttpRuntimeTest.ManualSnapshotEnablesSnapshotBasedEmptyFollowerRecovery:NuRaftHttpRuntimeTest.LargeDbFilesInSnapshotTransferRecoverEmptyFollowerEndToEnd:NuRaftHttpRuntimeTest.EmptyFollowerRecoveryStaysUnhealthyUntilMaterialized:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerCreatesSnapshotsWhenConfigured'
 ```
 
 That lane pins the intended NuRaft recovery contract on this fork:
@@ -594,6 +595,8 @@ That lane pins the intended NuRaft recovery contract on this fork:
 - if a follower falls beyond the retained-log window, the leader should refresh the snapshot before the long periodic interval elapses
 - a wiped follower must stay out of service until materialized search state catches up
 - once retained logs are compacted away, a recovering follower must be able to use the latest snapshot instead of replaying the entire old log window
+- the logical snapshot sender must chunk large `db/` checkpoint files instead of handing NuRaft one whole RocksDB SST per logical object
+- a snapshot that advertised a main `db/` checkpoint must fail install loudly if that payload is missing on the receiver
 - snapshot install validation must assert real collections, document counts, or search results on the recovering follower, not just `last_snapshot_applied_index > 0`
 - periodic snapshots must keep the recovery point moving without needing a manual `/operations/snapshot` call
 
