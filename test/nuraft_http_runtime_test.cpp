@@ -1891,10 +1891,35 @@ TEST_F(NuRaftHttpRuntimeTest, ManualSnapshotEnablesSnapshotBasedEmptyFollowerRec
     response.clear();
     headers.clear();
     ASSERT_EQ(201,
+              HttpClient::post_response(recovery_node->base_url() + "/collections/books/documents",
+                                        nlohmann::json({
+                                            {"id", "42"},
+                                            {"title", "title 42"},
+                                        }).dump(),
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true))
+        << "recovery log: " << recovery_node->log_path()
+        << ", status: " << recovery_status.dump();
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        nlohmann::json updated_collection;
+        return recovery_node->refresh_process_state() &&
+               fetch_json(*leader, "/collections/books", updated_collection) == 200 &&
+               updated_collection["num_documents"].get<size_t>() == 41;
+    }, std::chrono::milliseconds(10000)))
+        << "leader log: " << leader->log_path()
+        << ", recovery log: " << recovery_node->log_path();
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(201,
               HttpClient::post_response(leader->base_url() + "/collections/books/documents",
                                         nlohmann::json({
-                                            {"id", "41"},
-                                            {"title", "title 41"},
+                                            {"id", "43"},
+                                            {"title", "title 43"},
                                         }).dump(),
                                         response,
                                         headers,
@@ -1906,8 +1931,8 @@ TEST_F(NuRaftHttpRuntimeTest, ManualSnapshotEnablesSnapshotBasedEmptyFollowerRec
     ASSERT_TRUE(wait_until_condition([&] {
         return recovery_node->refresh_process_state() &&
                fetch_json(*recovery_node, "/status", recovery_status) == 200 &&
-               recovery_status["state_machine_applied_index"].get<uint64_t>() >= 43 &&
-               recovery_status["live_product_applied_index"].get<uint64_t>() >= 43 &&
+               recovery_status["state_machine_applied_index"].get<uint64_t>() >= 45 &&
+               recovery_status["live_product_applied_index"].get<uint64_t>() >= 45 &&
                recovery_status["materialization_lag"].get<uint64_t>() == 0;
     }, std::chrono::milliseconds(30000)))
         << "recovery log: " << recovery_node->log_path()
@@ -1927,7 +1952,7 @@ TEST_F(NuRaftHttpRuntimeTest, ManualSnapshotEnablesSnapshotBasedEmptyFollowerRec
     headers.clear();
     ASSERT_EQ(200,
               HttpClient::get_response(recovery_node->base_url() +
-                                           "/collections/books/documents/41",
+                                           "/collections/books/documents/43",
                                        response,
                                        headers,
                                        {},
@@ -1935,7 +1960,7 @@ TEST_F(NuRaftHttpRuntimeTest, ManualSnapshotEnablesSnapshotBasedEmptyFollowerRec
                                        true))
         << "recovery log: " << recovery_node->log_path();
     const auto replicated_doc = parse_json(response);
-    EXPECT_EQ("title 41", replicated_doc["title"].get<std::string>())
+    EXPECT_EQ("title 43", replicated_doc["title"].get<std::string>())
         << "recovery log: " << recovery_node->log_path();
 }
 

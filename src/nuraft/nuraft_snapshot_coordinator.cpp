@@ -318,11 +318,12 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
         return false;
     }
 
-    // Remove source node's NuRaft cluster config and server state so the target
-    // node performs a clean first-boot election with its own identity.
+    // Remove the source node's server state so the target node rejoins with its
+    // own persisted identity, but keep the cluster config because it is the
+    // shared membership record needed to re-establish peer connectivity after
+    // recovery.
     {
         std::error_code ec;
-        std::filesystem::remove(layout_.cluster_config_file, ec);
         std::filesystem::remove(layout_.server_state_file, ec);
     }
 

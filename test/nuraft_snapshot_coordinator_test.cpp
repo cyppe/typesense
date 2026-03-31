@@ -9,6 +9,7 @@
 #include "nuraft/nuraft_snapshot_coordinator.h"
 #include "nuraft/nuraft_state_initializer.h"
 #include "nuraft/nuraft_state_machine_sink.h"
+#include "nuraft/typesense_state_manager.h"
 #include "string_utils.h"
 
 namespace {
@@ -60,6 +61,14 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsSnapshotExport) {
 
     const NuRaftStateLayout source_layout = NuRaftStateLayout::from_data_dir(source_dir);
     std::string error;
+
+    NuRaftMetadataStore source_metadata(source_layout);
+    NuRaftIdentity source_identity;
+    NuRaftBootstrapConfig source_bootstrap;
+    ASSERT_TRUE(source_metadata.read_identity(source_identity, error)) << error;
+    ASSERT_TRUE(source_metadata.read_bootstrap_config(source_bootstrap, error)) << error;
+    TypesenseStateManager source_state_manager(source_layout, source_identity, source_bootstrap);
+    source_state_manager.save_config(*source_state_manager.load_config());
 
     // Populate the KV sink with applied requests directly.
     auto source_sink = std::make_unique<NuRaftKvStateMachineSink>(source_layout);
@@ -125,6 +134,8 @@ TEST_F(NuRaftSnapshotCoordinatorTest, CreatesAndInstallsSnapshotExport) {
     NuRaftIdentity restored_identity_after;
     ASSERT_TRUE(restored_metadata.read_identity(restored_identity_after, error)) << error;
     EXPECT_EQ(restored_identity_after, restored_identity_before);
+    EXPECT_TRUE(std::filesystem::exists(NuRaftStateLayout::from_data_dir(restored_dir).cluster_config_file))
+        << "installed snapshots must leave cluster_config.bin so recovered followers can rejoin peers";
 
     NuRaftKvStateMachineSink restored_sink(NuRaftStateLayout::from_data_dir(restored_dir));
     std::vector<std::pair<std::string, std::string>> entries;
