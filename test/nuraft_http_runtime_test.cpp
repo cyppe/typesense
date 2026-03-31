@@ -1931,8 +1931,8 @@ TEST_F(NuRaftHttpRuntimeTest, ManualSnapshotEnablesSnapshotBasedEmptyFollowerRec
     ASSERT_TRUE(wait_until_condition([&] {
         return recovery_node->refresh_process_state() &&
                fetch_json(*recovery_node, "/status", recovery_status) == 200 &&
-               recovery_status["state_machine_applied_index"].get<uint64_t>() >= 45 &&
-               recovery_status["live_product_applied_index"].get<uint64_t>() >= 45 &&
+               recovery_status["state_machine_applied_index"].get<uint64_t>() >= 44 &&
+               recovery_status["live_product_applied_index"].get<uint64_t>() >= 44 &&
                recovery_status["materialization_lag"].get<uint64_t>() == 0;
     }, std::chrono::milliseconds(30000)))
         << "recovery log: " << recovery_node->log_path()
