@@ -1580,7 +1580,23 @@ TEST_F(NuRaftHttpRuntimeTest, EmptyFollowerRecoveryStaysUnhealthyUntilMaterializ
         last_health_body = response;
         fetch_json(*recovery_node, "/status", last_status_snapshot);
 
-        if (last_health_status == 503) {
+        if (last_health_status == 503 &&
+            (last_status_snapshot["committed_index"].get<uint64_t>() > 0 ||
+             last_status_snapshot["state_machine_applied_index"].get<uint64_t>() > 0 ||
+             last_status_snapshot["last_snapshot_applied_index"].get<uint64_t>() > 0 ||
+             last_status_snapshot["raft_catching_up"].get<bool>() ||
+             last_status_snapshot["raft_receiving_snapshot"].get<bool>())) {
+            ASSERT_TRUE(last_status_snapshot.is_object())
+                << "recovery log: " << recovery_node->log_path();
+            EXPECT_FALSE(last_status_snapshot["materialization_ready"].get<bool>())
+                << "recovery log: " << recovery_node->log_path()
+                << ", status: " << last_status_snapshot.dump();
+            EXPECT_TRUE(last_status_snapshot["startup_materialization_pending"].get<bool>())
+                << "recovery log: " << recovery_node->log_path()
+                << ", status: " << last_status_snapshot.dump();
+            EXPECT_GT(last_status_snapshot["materialization_lag"].get<uint64_t>(), 0u)
+                << "recovery log: " << recovery_node->log_path()
+                << ", status: " << last_status_snapshot.dump();
             break;
         }
 
@@ -1832,6 +1848,65 @@ TEST_F(NuRaftHttpRuntimeTest, ManualSnapshotEnablesSnapshotBasedEmptyFollowerRec
         << "recovery log: " << recovery_node->log_path();
     const auto search_result = parse_json(response);
     EXPECT_EQ(40u, search_result["found"].get<size_t>()) << "recovery log: " << recovery_node->log_path();
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        return recovery_node->refresh_process_state() &&
+               fetch_json(*recovery_node, "/status", recovery_status) == 200 &&
+               recovery_status["raft_leader_id"].get<int64_t>() != -1 &&
+               !recovery_status["leader_url"].get<std::string>().empty();
+    }, std::chrono::milliseconds(30000)))
+        << "recovery log: " << recovery_node->log_path()
+        << ", status: " << recovery_status.dump();
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(201,
+              HttpClient::post_response(leader->base_url() + "/collections/books/documents",
+                                        nlohmann::json({
+                                            {"id", "41"},
+                                            {"title", "title 41"},
+                                        }).dump(),
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true))
+        << "leader log: " << leader->log_path();
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        return recovery_node->refresh_process_state() &&
+               fetch_json(*recovery_node, "/status", recovery_status) == 200 &&
+               recovery_status["state_machine_applied_index"].get<uint64_t>() >= 43 &&
+               recovery_status["live_product_applied_index"].get<uint64_t>() >= 43 &&
+               recovery_status["materialization_lag"].get<uint64_t>() == 0;
+    }, std::chrono::milliseconds(30000)))
+        << "recovery log: " << recovery_node->log_path()
+        << ", status: " << recovery_status.dump()
+        << ", runtime_tail:\n" << read_file_tail(recovery_node->log_path());
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        nlohmann::json updated_collection;
+        return recovery_node->refresh_process_state() &&
+               fetch_json(*recovery_node, "/collections/books", updated_collection) == 200 &&
+               updated_collection["num_documents"].get<size_t>() == 41;
+    }, std::chrono::milliseconds(10000)))
+        << "recovery log: " << recovery_node->log_path()
+        << ", runtime_tail:\n" << read_file_tail(recovery_node->log_path());
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(200,
+              HttpClient::get_response(recovery_node->base_url() +
+                                           "/collections/books/documents/41",
+                                       response,
+                                       headers,
+                                       {},
+                                       5000,
+                                       true))
+        << "recovery log: " << recovery_node->log_path();
+    const auto replicated_doc = parse_json(response);
+    EXPECT_EQ("title 41", replicated_doc["title"].get<std::string>())
+        << "recovery log: " << recovery_node->log_path();
 }
 
 TEST_F(NuRaftHttpRuntimeTest, PeriodicSnapshotSchedulerCreatesSnapshotsWhenConfigured) {

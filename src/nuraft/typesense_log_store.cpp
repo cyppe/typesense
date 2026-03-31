@@ -311,6 +311,9 @@ bool TypesenseLogStore::compact(nuraft::ulong last_log_index) {
                      begin_key, end_key);
 
     start_index_ = last_log_index + 1;
+    if (next_index_ < start_index_) {
+        next_index_ = start_index_;
+    }
     persist_start_index();
     return true;
 }

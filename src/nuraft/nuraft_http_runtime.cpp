@@ -1261,6 +1261,10 @@ bool NuRaftHttpRuntimeService::is_materialization_ready() const {
         return false;
     }
 
+    if (materialization_lag() > 0) {
+        return false;
+    }
+
     if (!startup_materialization_pending_.load(std::memory_order_relaxed)) {
         return true;
     }
@@ -1275,23 +1279,30 @@ uint64_t NuRaftHttpRuntimeService::materialization_lag() const {
 }
 
 void NuRaftHttpRuntimeService::refresh_startup_materialization_state() {
-    if (!startup_materialization_tracking_.load(std::memory_order_relaxed)) {
-        return;
-    }
-
     const uint64_t materialized_state_applied_index = get_materialized_state_applied_index();
     const uint64_t live_applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
     const uint64_t committed_index = raft_server_ != nullptr ? raft_server_->get_committed_log_idx() : 0;
     const bool raft_is_recovering = raft_server_ != nullptr &&
         (raft_server_->is_catching_up() || raft_server_->is_receiving_snapshot());
+    bool tracking = startup_materialization_tracking_.load(std::memory_order_relaxed);
 
     if (materialized_state_applied_index > live_applied_index) {
+        if (!tracking) {
+            startup_materialization_tracking_.store(true, std::memory_order_relaxed);
+        }
         startup_materialization_pending_.store(true, std::memory_order_relaxed);
         return;
     }
 
     if (raft_is_recovering && materialized_state_applied_index < committed_index) {
+        if (!tracking) {
+            startup_materialization_tracking_.store(true, std::memory_order_relaxed);
+        }
         startup_materialization_pending_.store(true, std::memory_order_relaxed);
+        return;
+    }
+
+    if (!tracking) {
         return;
     }
 

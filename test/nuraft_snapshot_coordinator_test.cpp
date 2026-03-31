@@ -169,3 +169,32 @@ TEST_F(NuRaftSnapshotCoordinatorTest, InstallClearsStaleMaterializedStateWhenSou
     EXPECT_EQ(restored_descriptor, source_descriptor);
     EXPECT_FALSE(std::filesystem::exists(restored_layout.materialized_state_dir));
 }
+
+TEST_F(NuRaftSnapshotCoordinatorTest, InstallClearsStaleMainStoreWhenSourceSnapshotHasNoDbCheckpoint) {
+    const std::string source_dir = (std::filesystem::path(temp_dir_) / "source-no-db").string();
+    const std::string restored_dir = (std::filesystem::path(temp_dir_) / "restored-with-db").string();
+    const std::string export_dir = (std::filesystem::path(temp_dir_) / "exported-no-db").string();
+    initialize_node(source_dir);
+    initialize_node(restored_dir);
+
+    const NuRaftStateLayout source_layout = NuRaftStateLayout::from_data_dir(source_dir);
+    const NuRaftStateLayout restored_layout = NuRaftStateLayout::from_data_dir(restored_dir);
+    std::string error;
+
+    std::filesystem::create_directories(std::filesystem::path(restored_dir) / "db");
+    ASSERT_TRUE(NuRaftFileStore::write_file_atomically((std::filesystem::path(restored_dir) / "db" / "stale.txt").string(),
+                                                       "stale-live-store",
+                                                       error)) << error;
+    ASSERT_TRUE(std::filesystem::exists(std::filesystem::path(restored_dir) / "db" / "stale.txt"));
+
+    NuRaftSnapshotCoordinator source_coordinator(source_layout);
+    NuRaftSnapshotDescriptor source_descriptor;
+    ASSERT_TRUE(source_coordinator.create_snapshot(export_dir, nullptr, source_descriptor, error)) << error;
+
+    NuRaftSnapshotCoordinator restored_coordinator(restored_layout);
+    NuRaftSnapshotDescriptor restored_descriptor;
+    ASSERT_TRUE(restored_coordinator.install_snapshot(export_dir, restored_descriptor, error)) << error;
+    EXPECT_EQ(restored_descriptor, source_descriptor);
+    EXPECT_FALSE(std::filesystem::exists(std::filesystem::path(restored_dir) / "db"))
+        << "stale main store should be removed when the source snapshot has no db checkpoint";
+}
