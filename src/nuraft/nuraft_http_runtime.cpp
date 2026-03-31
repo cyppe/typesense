@@ -1261,10 +1261,6 @@ bool NuRaftHttpRuntimeService::is_materialization_ready() const {
         return false;
     }
 
-    if (materialization_lag() > 0) {
-        return false;
-    }
-
     if (!startup_materialization_pending_.load(std::memory_order_relaxed)) {
         return true;
     }

@@ -1289,6 +1289,24 @@ TEST_F(NuRaftHttpRuntimeTest, SearchReadsBypassSyncDuringConcurrentImportsOnThre
                                         5000,
                                         true));
 
+    ASSERT_TRUE(wait_until_condition([&] {
+        nlohmann::json collection_1;
+        nlohmann::json collection_2;
+        nlohmann::json collection_3;
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               fetch_json(node3_, "/status", status_3) == 200 &&
+               status_1["live_product_applied_index"].get<uint64_t>() >= status_1["committed_index"].get<uint64_t>() &&
+               status_2["live_product_applied_index"].get<uint64_t>() >= status_2["committed_index"].get<uint64_t>() &&
+               status_3["live_product_applied_index"].get<uint64_t>() >= status_3["committed_index"].get<uint64_t>() &&
+               fetch_json(node1_, "/collections/books", collection_1) == 200 &&
+               fetch_json(node2_, "/collections/books", collection_2) == 200 &&
+               fetch_json(node3_, "/collections/books", collection_3) == 200;
+    }, std::chrono::milliseconds(15000)))
+        << "node1 log: " << node1_.log_path()
+        << ", node2 log: " << node2_.log_path()
+        << ", node3 log: " << node3_.log_path();
+
     const std::string payload = std::string(256, 'x');
     std::vector<std::string> import_lines;
     import_lines.reserve(4000);
