@@ -929,6 +929,7 @@ bool get_debug(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_
 bool get_health_with_resource_usage(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
     nlohmann::json result;
     bool alive = server->is_alive();
+    const nlohmann::json node_status = server->node_status();
 
     auto resource_check = cached_resource_stat_t::get_instance().has_enough_resources(
         Config::get_instance().get_data_dir(),
@@ -956,6 +957,21 @@ bool get_health_with_resource_usage(const std::shared_ptr<http_req>& req, const 
         alive = alive && !is_lagging;
     }
 
+    if (node_status.contains("materialization_ready")) {
+        const bool materialization_ready = node_status["materialization_ready"].get<bool>();
+        result["materialization_ready"] = materialization_ready;
+        alive = alive && materialization_ready;
+        if (!materialization_ready) {
+            result["reason"] = "materializing";
+        }
+    }
+    if (node_status.contains("materialization_lag")) {
+        result["materialization_lag"] = node_status["materialization_lag"];
+    }
+    if (node_status.contains("startup_materialization_pending")) {
+        result["startup_materialization_pending"] = node_status["startup_materialization_pending"];
+    }
+
     result["ok"] = alive;
 
     if(alive) {
@@ -970,6 +986,7 @@ bool get_health_with_resource_usage(const std::shared_ptr<http_req>& req, const 
 bool get_health(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
     nlohmann::json result;
     bool alive = server->is_alive();
+    const nlohmann::json node_status = server->node_status();
     result["ok"] = alive;
 
     auto resource_check = cached_resource_stat_t::get_instance().has_enough_resources(
@@ -980,6 +997,22 @@ bool get_health(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
 
     if (resource_check != cached_resource_stat_t::resource_check_t::OK) {
         result["resource_error"] = cached_resource_stat_t::to_string(resource_check);
+    }
+
+    if (node_status.contains("materialization_ready")) {
+        const bool materialization_ready = node_status["materialization_ready"].get<bool>();
+        result["materialization_ready"] = materialization_ready;
+        alive = alive && materialization_ready;
+        result["ok"] = alive;
+        if (!materialization_ready) {
+            result["reason"] = "materializing";
+        }
+    }
+    if (node_status.contains("materialization_lag")) {
+        result["materialization_lag"] = node_status["materialization_lag"];
+    }
+    if (node_status.contains("startup_materialization_pending")) {
+        result["startup_materialization_pending"] = node_status["startup_materialization_pending"];
     }
 
     if(alive) {
@@ -994,7 +1027,24 @@ bool get_health(const std::shared_ptr<http_req>& req, const std::shared_ptr<http
 bool post_health(const std::shared_ptr<http_req>& req, const std::shared_ptr<http_res>& res) {
     nlohmann::json result;
     bool alive = server->is_alive();
+    const nlohmann::json node_status = server->node_status();
     result["ok"] = alive;
+
+    if (node_status.contains("materialization_ready")) {
+        const bool materialization_ready = node_status["materialization_ready"].get<bool>();
+        result["materialization_ready"] = materialization_ready;
+        alive = alive && materialization_ready;
+        result["ok"] = alive;
+        if (!materialization_ready) {
+            result["reason"] = "materializing";
+        }
+    }
+    if (node_status.contains("materialization_lag")) {
+        result["materialization_lag"] = node_status["materialization_lag"];
+    }
+    if (node_status.contains("startup_materialization_pending")) {
+        result["startup_materialization_pending"] = node_status["startup_materialization_pending"];
+    }
 
     if(alive) {
         res->set_body(200, result.dump());
@@ -1036,6 +1086,10 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
             node_status["committed_index"].is_number_unsigned()) {
             result["nuraft_committed_index"] = node_status["committed_index"];
         }
+        if (node_status.contains("log_store_start_index") &&
+            node_status["log_store_start_index"].is_number_unsigned()) {
+            result["nuraft_log_store_start_index"] = node_status["log_store_start_index"];
+        }
         if (node_status.contains("known_applied_index") &&
             node_status["known_applied_index"].is_number_unsigned()) {
             result["nuraft_known_applied_index"] = node_status["known_applied_index"];
@@ -1044,11 +1098,30 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
             node_status["state_machine_applied_index"].is_number_unsigned()) {
             result["nuraft_state_machine_applied_index"] = node_status["state_machine_applied_index"];
         }
+        if (node_status.contains("live_product_applied_index") &&
+            node_status["live_product_applied_index"].is_number_unsigned()) {
+            result["nuraft_live_product_applied_index"] = node_status["live_product_applied_index"];
+        }
         if (node_status.contains("read_caught_up")) {
             result["nuraft_read_caught_up"] = node_status["read_caught_up"];
         }
         if (node_status.contains("write_caught_up")) {
             result["nuraft_write_caught_up"] = node_status["write_caught_up"];
+        }
+        if (node_status.contains("materialization_ready")) {
+            result["nuraft_materialization_ready"] = node_status["materialization_ready"];
+        }
+        if (node_status.contains("startup_materialization_pending")) {
+            result["nuraft_startup_materialization_pending"] = node_status["startup_materialization_pending"];
+        }
+        if (node_status.contains("materialization_lag")) {
+            result["nuraft_materialization_lag"] = node_status["materialization_lag"];
+        }
+        if (node_status.contains("raft_catching_up")) {
+            result["nuraft_raft_catching_up"] = node_status["raft_catching_up"];
+        }
+        if (node_status.contains("raft_receiving_snapshot")) {
+            result["nuraft_raft_receiving_snapshot"] = node_status["raft_receiving_snapshot"];
         }
         if (node_status.contains("is_leader")) {
             result["nuraft_is_leader"] = node_status["is_leader"];
@@ -1156,11 +1229,11 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         }
 
         if (result.contains("nuraft_committed_index") &&
-            result.contains("nuraft_known_applied_index")) {
+            result.contains("nuraft_live_product_applied_index")) {
             const auto committed_index = result["nuraft_committed_index"].get<uint64_t>();
-            const auto known_applied_index = result["nuraft_known_applied_index"].get<uint64_t>();
-            result["nuraft_live_apply_lag"] = committed_index >= known_applied_index ?
-                                              (committed_index - known_applied_index) : 0;
+            const auto live_product_applied_index = result["nuraft_live_product_applied_index"].get<uint64_t>();
+            result["nuraft_live_apply_lag"] = committed_index >= live_product_applied_index ?
+                                              (committed_index - live_product_applied_index) : 0;
         }
 
         if (result.contains("nuraft_committed_index") &&

@@ -582,6 +582,19 @@ scripts/bazel_in_docker.sh test //:nuraft-http-runtime-test
 
 The current runtime smoke covers a real subprocess-backed HTTP binary with health/status, collection/document writes, restart persistence, snapshot export, and snapshot install into a fresh node. It is intentionally narrower than the full `api_tests` harness and currently keeps the NuRaft write/snapshot response path on a simplified synchronous model until broader async/import/streaming parity is revisited.
 
+When you are touching NuRaft recovery semantics, snapshot policy, or `/health` readiness, run the focused recovery lane as well:
+
+```bash
+scripts/bazel_in_docker.sh test //:typesense-test --test_output=errors --test_timeout=1200 '--test_arg=--gtest_filter=NuRaftHttpRuntimeTest.ManualSnapshotWorksBeforeUserWrites:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerRunsWhileFollowerOffline:NuRaftHttpRuntimeTest.ManualSnapshotEnablesSnapshotBasedEmptyFollowerRecovery:NuRaftHttpRuntimeTest.EmptyFollowerRecoveryStaysUnhealthyUntilMaterialized:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerCreatesSnapshotsWhenConfigured'
+```
+
+That lane pins the intended NuRaft recovery contract on this fork:
+- admin snapshots must work even on a bootstrap-only server with no user writes yet
+- leaders must keep creating fresh snapshots while a follower is offline
+- a wiped follower must stay out of service until materialized search state catches up
+- once retained logs are compacted away, a recovering follower must be able to use the latest snapshot instead of replaying the entire old log window
+- periodic snapshots must keep the recovery point moving without needing a manual `/operations/snapshot` call
+
 The same bounded runtime now also passes the real `api_tests` wrapper for the focused single-node smoke lane:
 
 ```bash

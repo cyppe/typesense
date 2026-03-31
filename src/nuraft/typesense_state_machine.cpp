@@ -131,25 +131,26 @@ void TypesenseStateMachine::create_snapshot(
     snapshot_in_progress_.store(true, std::memory_order_relaxed);
     last_snapshot_log_index_.store(s.get_last_log_idx(), std::memory_order_relaxed);
 
-    std::lock_guard<std::mutex> guard(snapshot_mutex_);
-
     NuRaftSnapshotDescriptor desc;
     std::string error;
     bool success = false;
+    {
+        std::lock_guard<std::mutex> guard(snapshot_mutex_);
 
-    if (kv_sink_) {
-        std::string export_path;  // Empty = don't export to external path.
-        success = snapshot_coordinator_.create_snapshot(export_path, kv_sink_, desc, error);
-    }
+        if (kv_sink_) {
+            std::string export_path;  // Empty = don't export to external path.
+            success = snapshot_coordinator_.create_snapshot(export_path, kv_sink_, desc, error);
+        }
 
-    if (success) {
-        auto cfg = nuraft::cs_new<nuraft::cluster_config>();
-        last_snapshot_ptr_ = nuraft::cs_new<nuraft::snapshot>(
-            s.get_last_log_idx(),
-            s.get_last_log_term(),
-            cfg);
-        cumulative_snapshots_.fetch_add(1, std::memory_order_relaxed);
-        last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
+        if (success) {
+            auto cfg = nuraft::cs_new<nuraft::cluster_config>();
+            last_snapshot_ptr_ = nuraft::cs_new<nuraft::snapshot>(
+                s.get_last_log_idx(),
+                s.get_last_log_term(),
+                cfg);
+            cumulative_snapshots_.fetch_add(1, std::memory_order_relaxed);
+            last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
+        }
     }
 
     const uint64_t total_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -172,6 +173,9 @@ void TypesenseStateMachine::create_snapshot(
     }
 
     nuraft::ptr<std::exception> except(nullptr);
+    // Invoke the NuRaft completion callback after releasing snapshot_mutex_.
+    // The callback re-enters last_snapshot(), and calling it under the mutex
+    // can deadlock manual snapshot requests forever.
     when_done(success, except);
 }
 
@@ -194,6 +198,9 @@ bool TypesenseStateMachine::apply_snapshot(nuraft::snapshot& s) {
         s.get_last_log_term(),
         cfg);
     last_commit_index_.store(s.get_last_log_idx());
+    last_snapshot_log_index_.store(s.get_last_log_idx(), std::memory_order_relaxed);
+    last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
+    last_snapshot_success_.store(true, std::memory_order_relaxed);
 
     std::cerr << "TypesenseStateMachine: applied snapshot at index "
                  << s.get_last_log_idx() << "\n";
@@ -341,16 +348,23 @@ void TypesenseStateMachine::save_logical_snp_obj(
     std::string file_path = snap_dir + "/" + rel_name;
     std::filesystem::create_directories(
         std::filesystem::path(file_path).parent_path());
-    std::ofstream ofs(file_path, std::ios::binary | std::ios::trunc);
-    if (ofs.is_open()) {
-        ofs.write(content_ptr, static_cast<std::streamsize>(content_len));
+    {
+        std::ofstream ofs(file_path, std::ios::binary | std::ios::trunc);
+        if (ofs.is_open()) {
+            ofs.write(content_ptr, static_cast<std::streamsize>(content_len));
+        }
     }
 
     if (is_last_obj) {
         // Install the snapshot.
         NuRaftSnapshotDescriptor desc;
         std::string error;
-        snapshot_coordinator_.install_snapshot(snap_dir, desc, error);
+        if (!snapshot_coordinator_.install_snapshot(snap_dir, desc, error)) {
+            std::cerr << "TypesenseStateMachine: failed to install incoming snapshot at index "
+                      << s.get_last_log_idx() << ": " << error << "\n";
+            obj_id = obj_id + 1;
+            return;
+        }
 
         auto cfg = nuraft::cs_new<nuraft::cluster_config>();
         last_snapshot_ptr_ = nuraft::cs_new<nuraft::snapshot>(
@@ -358,6 +372,9 @@ void TypesenseStateMachine::save_logical_snp_obj(
             s.get_last_log_term(),
             cfg);
         last_commit_index_.store(s.get_last_log_idx());
+        last_snapshot_log_index_.store(s.get_last_log_idx(), std::memory_order_relaxed);
+        last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
+        last_snapshot_success_.store(true, std::memory_order_relaxed);
     }
 
     obj_id = obj_id + 1;

@@ -1,6 +1,7 @@
 #include "nuraft/nuraft_http_runtime.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -28,6 +29,8 @@ namespace {
 constexpr const char* kCollectionPrefix = "state/collections/";
 constexpr const char* kDocumentPrefix = "state/documents/";
 constexpr size_t kDocumentImportRaftChunkMaxBytes = 4 * 1024 * 1024;
+constexpr uint64_t kStartupMaterializationGraceMs = 10000;
+constexpr uint64_t kManualSnapshotTimeoutMs = 60000;
 
 using HttpHandlerFn = bool (*)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&);
 
@@ -53,6 +56,19 @@ std::vector<std::string> split_route_path_parts(const std::string& path) {
     std::vector<std::string> path_parts;
     StringUtils::split(trimmed, path_parts, "/");
     return path_parts;
+}
+
+uint64_t steady_clock_now_ms() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+uint32_t load_test_mirror_worker_delay_ms() {
+    const char* raw_value = std::getenv("TYPESENSE_TEST_NURAFT_MIRROR_APPLY_DELAY_MS");
+    if (raw_value == nullptr || raw_value[0] == '\0') {
+        return 0;
+    }
+    return static_cast<uint32_t>(std::strtoul(raw_value, nullptr, 10));
 }
 
 template <typename Callback>
@@ -112,7 +128,7 @@ void visit_nuraft_write_routes(Callback&& callback) {
 
     emit("POST", "/health", post_health, NuRaftWriteRouteMode::kLocalOnly);
 
-    emit("POST", "/operations/snapshot", post_snapshot, NuRaftWriteRouteMode::kLocalOnly, false, true);
+    emit("POST", "/operations/snapshot", post_snapshot, NuRaftWriteRouteMode::kLocalOnly);
     emit("POST", "/operations/vote", post_vote, NuRaftWriteRouteMode::kLocalOnly);
     emit("POST", "/operations/cache/clear", post_clear_cache, NuRaftWriteRouteMode::kLocalOnly);
     emit("POST", "/operations/db/compact", post_compact_db, NuRaftWriteRouteMode::kLocalOnly);
@@ -722,7 +738,8 @@ NuRaftHttpRuntimeService::NuRaftHttpRuntimeService(HttpServer* server, NuRaftHtt
     : server_(server),
       options_(std::move(options)),
       layout_(NuRaftStateLayout::from_data_dir(options_.startup_options.data_dir)),
-      initialized_(false) {}
+      initialized_(false),
+      test_mirror_worker_apply_delay_ms_(load_test_mirror_worker_delay_ms()) {}
 
 bool NuRaftHttpRuntimeService::cache_enabled() const {
     return materialized_state_sink_ != nullptr;
@@ -792,6 +809,67 @@ void NuRaftHttpRuntimeService::stop_mirror_worker() {
         mirrored_results_.clear();
     }
     mirrored_results_cv_.notify_all();
+}
+
+void NuRaftHttpRuntimeService::start_snapshot_scheduler() {
+    const int interval_seconds = Config::get_instance().get_snapshot_interval_seconds();
+    if (interval_seconds <= 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(snapshot_scheduler_mutex_);
+    if (snapshot_scheduler_thread_.joinable()) {
+        return;
+    }
+    snapshot_scheduler_stopping_ = false;
+    snapshot_scheduler_thread_ = std::thread(&NuRaftHttpRuntimeService::snapshot_scheduler_loop, this);
+}
+
+void NuRaftHttpRuntimeService::stop_snapshot_scheduler() {
+    {
+        std::lock_guard<std::mutex> lock(snapshot_scheduler_mutex_);
+        snapshot_scheduler_stopping_ = true;
+    }
+    snapshot_scheduler_cv_.notify_all();
+
+    if (snapshot_scheduler_thread_.joinable()) {
+        snapshot_scheduler_thread_.join();
+    }
+}
+
+void NuRaftHttpRuntimeService::snapshot_scheduler_loop() {
+    const int interval_seconds = Config::get_instance().get_snapshot_interval_seconds();
+    if (interval_seconds <= 0) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock(snapshot_scheduler_mutex_);
+    while (!snapshot_scheduler_stopping_) {
+        if (snapshot_scheduler_cv_.wait_for(lock,
+                                            std::chrono::seconds(interval_seconds),
+                                            [&] { return snapshot_scheduler_stopping_; })) {
+            break;
+        }
+
+        lock.unlock();
+
+        if (raft_server_ != nullptr && raft_server_->is_leader() && raft_state_machine_ != nullptr) {
+            const auto snapshot_metrics = raft_state_machine_->get_snapshot_metrics();
+            const uint64_t committed_index = raft_state_machine_->get_last_commit_index();
+            const uint64_t last_snapshot_index = raft_server_->get_last_snapshot_idx();
+
+            if (!snapshot_metrics.snapshot_in_progress && committed_index > last_snapshot_index) {
+                const uint64_t snapshot_index = raft_server_->create_snapshot();
+                if (snapshot_index != 0) {
+                    TS_LOG(INFO) << "NuRaft snapshot scheduler: created snapshot at committed_index="
+                                 << committed_index << ", snapshot_index=" << snapshot_index
+                                 << ", last_snapshot_index=" << last_snapshot_index;
+                }
+            }
+        }
+
+        lock.lock();
+    }
 }
 
 uint64_t NuRaftHttpRuntimeService::allocate_response_token() {
@@ -951,6 +1029,9 @@ void NuRaftHttpRuntimeService::mirror_worker_loop() {
         }
 
         MirroredWriteResult result = apply_mirrored_request(applied_request);
+        if (test_mirror_worker_apply_delay_ms_ != 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(test_mirror_worker_apply_delay_ms_));
+        }
         advance_live_product_state_applied_index(applied_request.index);
 
         if (applied_request.response_token != 0 &&
@@ -991,6 +1072,12 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         return false;
     }
     TS_LOG(INFO) << "NuRaft init: materialized state last_applied_index=" << last_applied_index;
+    const bool startup_materialization_tracking = !bootstrap_config_.peers.empty() && last_applied_index == 0;
+    startup_materialization_tracking_.store(startup_materialization_tracking, std::memory_order_relaxed);
+    startup_materialization_pending_.store(startup_materialization_tracking, std::memory_order_relaxed);
+    startup_materialization_started_at_ms_.store(startup_materialization_tracking ? steady_clock_now_ms() : 0,
+                                                 std::memory_order_relaxed);
+    startup_materialization_base_index_.store(last_applied_index, std::memory_order_relaxed);
 
     // Product state (collections, documents, aliases, presets, stopwords,
     // synonyms, curations, analytics) is already loaded from the main RocksDB
@@ -1020,34 +1107,46 @@ bool NuRaftHttpRuntimeService::initialize(std::string& error) {
         return false;
     }
 
-    // Request leadership and wait for the election to settle. In single-node
-    // mode the node must become leader before it can accept writes.
-    TS_LOG(INFO) << "NuRaft init: requesting leadership...";
-    raft_server_->request_leadership();
-    for (int attempt = 0; attempt < 50; ++attempt) {
-        if (raft_server_->is_leader()) {
-            TS_LOG(INFO) << "NuRaft init: leadership acquired in " << (attempt * 100) << " ms.";
-            break;
+    if (bootstrap_config_.peers.empty()) {
+        // Only single-node mode needs to force leadership before serving.
+        // In a multi-node cluster, forcing every recovering follower through a
+        // 5-second leadership wait delays HTTP startup and obscures recovery.
+        TS_LOG(INFO) << "NuRaft init: requesting leadership...";
+        raft_server_->request_leadership();
+        for (int attempt = 0; attempt < 50; ++attempt) {
+            if (raft_server_->is_leader()) {
+                TS_LOG(INFO) << "NuRaft init: leadership acquired in " << (attempt * 100) << " ms.";
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    if (!raft_server_->is_leader()) {
-        TS_LOG(WARNING) << "NuRaft init: failed to acquire leadership after 5 seconds.";
+        if (!raft_server_->is_leader()) {
+            TS_LOG(WARNING) << "NuRaft init: failed to acquire leadership after 5 seconds.";
+        }
+    } else {
+        TS_LOG(INFO) << "NuRaft init: multi-node startup, waiting for cluster election without forcing leadership.";
     }
 
-    // Align live_product_state_applied_index_ with the Raft server's committed
-    // index. NuRaft commits internal entries (e.g., initial cluster config at
-    // index 1) during init and leadership acquisition. Without this alignment,
-    // the first user write's wait_for_applied_index(committed_index - 1) would
-    // wait forever for an internal entry that was never tracked.
-    if (raft_server_) {
-        const uint64_t raft_committed = raft_server_->get_committed_log_idx();
-        if (raft_committed > live_product_state_applied_index_.load(std::memory_order_relaxed)) {
-            advance_live_product_state_applied_index(raft_committed);
-            TS_LOG(INFO) << "NuRaft init: aligned applied index to raft committed index " << raft_committed;
+    // Warm restarts can align the live applied index to the already-loaded
+    // on-disk state machine index. Empty follower recovery must not do that:
+    // the state machine can replay and commit far ahead of the mirror worker
+    // during initialize_raft_server(), and copying that index here would mark
+    // the node ready before CollectionManager has materialized the data.
+    if (raft_server_ && !startup_materialization_tracking_.load(std::memory_order_relaxed)) {
+        const uint64_t state_machine_applied =
+            raft_state_machine_ != nullptr ? raft_state_machine_->get_last_commit_index() : 0;
+        if (state_machine_applied > live_product_state_applied_index_.load(std::memory_order_relaxed)) {
+            advance_live_product_state_applied_index(state_machine_applied);
+            TS_LOG(INFO) << "NuRaft init: aligned applied index to state machine index "
+                         << state_machine_applied;
         }
+        startup_materialization_base_index_.store(
+            live_product_state_applied_index_.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
     }
 
+    refresh_startup_materialization_state();
+    start_snapshot_scheduler();
     initialized_.store(true);
     TS_LOG(INFO) << "NuRaft runtime initialization complete.";
     error.clear();
@@ -1080,8 +1179,63 @@ void NuRaftHttpRuntimeService::advance_live_product_state_applied_index(uint64_t
     }
 
     if (current < applied_index) {
+        refresh_startup_materialization_state();
         live_state_progress_cv_.notify_all();
     }
+}
+
+bool NuRaftHttpRuntimeService::is_materialization_ready() const {
+    const_cast<NuRaftHttpRuntimeService*>(this)->refresh_startup_materialization_state();
+    if (!initialized_.load(std::memory_order_relaxed)) {
+        return false;
+    }
+
+    if (raft_server_ != nullptr &&
+        (raft_server_->is_catching_up() || raft_server_->is_receiving_snapshot())) {
+        return false;
+    }
+
+    if (!startup_materialization_pending_.load(std::memory_order_relaxed)) {
+        return true;
+    }
+
+    return materialization_lag() == 0;
+}
+
+uint64_t NuRaftHttpRuntimeService::materialization_lag() const {
+    const uint64_t committed_index = raft_state_machine_ != nullptr ?
+        raft_state_machine_->get_last_commit_index() : 0;
+    const uint64_t live_applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+    return committed_index >= live_applied_index ? (committed_index - live_applied_index) : 0;
+}
+
+void NuRaftHttpRuntimeService::refresh_startup_materialization_state() {
+    if (!startup_materialization_tracking_.load(std::memory_order_relaxed)) {
+        return;
+    }
+
+    const uint64_t state_machine_applied_index = raft_state_machine_ != nullptr ?
+        raft_state_machine_->get_last_commit_index() : 0;
+    const uint64_t live_applied_index = live_product_state_applied_index_.load(std::memory_order_relaxed);
+    const uint64_t committed_index = raft_server_ != nullptr ? raft_server_->get_committed_log_idx() : 0;
+
+    if (state_machine_applied_index > live_applied_index || state_machine_applied_index < committed_index) {
+        startup_materialization_pending_.store(true, std::memory_order_relaxed);
+        return;
+    }
+
+    const uint64_t base_index = startup_materialization_base_index_.load(std::memory_order_relaxed);
+    if (state_machine_applied_index <= base_index) {
+        const uint64_t started_at_ms = startup_materialization_started_at_ms_.load(std::memory_order_relaxed);
+        const uint64_t elapsed_ms = started_at_ms == 0 ? 0 : (steady_clock_now_ms() - started_at_ms);
+        if (elapsed_ms < kStartupMaterializationGraceMs) {
+            startup_materialization_pending_.store(true, std::memory_order_relaxed);
+            return;
+        }
+    }
+
+    startup_materialization_pending_.store(false, std::memory_order_relaxed);
+    startup_materialization_tracking_.store(false, std::memory_order_relaxed);
 }
 
 bool NuRaftHttpRuntimeService::wait_for_applied_index(uint64_t target_index, uint32_t timeout_ms) {
@@ -1146,11 +1300,6 @@ void NuRaftHttpRuntimeService::write(const std::shared_ptr<http_req>& request,
         if (!handler_ok && response->status_code == 0) {
             response->set_500(error);
         }
-
-        if (route != nullptr && (route->async_req || route->async_res)) {
-            return;
-        }
-
         send_response(request, response);
         return;
     }
@@ -1430,7 +1579,7 @@ bool NuRaftHttpRuntimeService::process_document_import_write(
 }
 
 bool NuRaftHttpRuntimeService::is_read_caught_up() const {
-    return initialized_.load();
+    return is_materialization_ready();
 }
 
 bool NuRaftHttpRuntimeService::is_single_node_mode() const {
@@ -1501,25 +1650,32 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         {"max_snapshot_total_ms", snapshot_metrics.max_snapshot_total_ms},
         {"cumulative_snapshots", snapshot_metrics.cumulative_snapshots},
         {"cumulative_snapshot_failures", snapshot_metrics.cumulative_snapshot_failures},
+        {"materialization_ready", is_materialization_ready()},
+        {"startup_materialization_pending", startup_materialization_pending_.load(std::memory_order_relaxed)},
+        {"materialization_lag", materialization_lag()},
+        {"raft_catching_up", raft_server_ != nullptr && raft_server_->is_catching_up()},
+        {"raft_receiving_snapshot", raft_server_ != nullptr && raft_server_->is_receiving_snapshot()},
     };
 
     if (raft_server_) {
-        uint64_t committed_idx = raft_state_machine_ ?
-            raft_state_machine_->get_last_commit_index() : 0;
+        uint64_t committed_idx = raft_server_->get_committed_log_idx();
         uint64_t last_idx = raft_server_->get_last_log_idx();
         status["last_index"] = last_idx;
         status["committed_index"] = committed_idx;
+        status["log_store_start_index"] = raft_server_->get_log_store() != nullptr ?
+            raft_server_->get_log_store()->start_index() : 0;
         // Report state_machine_applied_index as known_applied_index. This reflects
         // what the KV sink has actually applied via NuRaft's commit thread.
         // The live_product_state_applied_index_ tracks the background mirror
         // worker and may lag behind the KV sink briefly.
         status["known_applied_index"] = state_machine_applied_index;
-        status["read_caught_up"] = initialized_.load() && state_machine_applied_index >= committed_idx;
+        status["read_caught_up"] = is_read_caught_up();
         status["live_product_applied_index"] = live_product_state_applied_index_.load(std::memory_order_relaxed);
         status["applying_index"] = 0;
         status["raft_leader_id"] = raft_server_->get_leader();
         status["raft_term"] = raft_server_->get_term();
         status["state_machine_applied_index"] = state_machine_applied_index;
+        status["state_machine_caught_up"] = initialized_.load() && state_machine_applied_index >= committed_idx;
     }
 
     return status;
@@ -1528,22 +1684,116 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
 void NuRaftHttpRuntimeService::do_snapshot(const std::string& snapshot_path,
                                            const std::shared_ptr<http_req>& req,
                                            const std::shared_ptr<http_res>& res) {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
+    (void)req;
     std::string error;
     NuRaftKvStateMachineSink* snapshot_sink = materialized_state_sink_ != nullptr ? materialized_state_sink_.get() : nullptr;
-    if (snapshot_sink == nullptr) {
+    if (snapshot_sink == nullptr || raft_server_ == nullptr || raft_state_machine_ == nullptr) {
         res->set_500("NuRaft runtime materialized state sink is not initialized.");
-        send_response(req, res);
         return;
     }
 
-    NuRaftSnapshotDescriptor descriptor;
-    NuRaftSnapshotCoordinator coordinator(layout_);
-    if (!coordinator.create_snapshot(snapshot_path, snapshot_sink, descriptor, error)) {
-        res->set_500(error);
-        send_response(req, res);
+    auto raft_server = raft_server_;
+    const uint64_t state_machine_index =
+        raft_state_machine_ != nullptr ? raft_state_machine_->get_last_commit_index() : 0;
+    const uint64_t snapshot_index =
+        std::max<uint64_t>(state_machine_index,
+                           raft_server != nullptr ? raft_server->get_committed_log_idx() : 0);
+    if (snapshot_index == 0) {
+        res->set_500("NuRaft internal snapshot creation failed.");
         return;
     }
+
+    std::thread([raft_server]() {
+        if (raft_server == nullptr) {
+            return;
+        }
+
+        nuraft::raft_server::create_snapshot_options options;
+        options.serialize_commit_ = true;
+        const uint64_t created_index = raft_server->create_snapshot(options);
+        if (created_index == 0) {
+            TS_LOG(WARNING) << "NuRaft snapshot request: internal snapshot creation failed.";
+        }
+    }).detach();
+
+    const uint64_t reserved_logs = options_.raft_params.reserved_log_items;
+    const uint64_t expected_start_index =
+        snapshot_index > reserved_logs ? (snapshot_index - reserved_logs + 1) : 1;
+
+    const auto wait_for_compaction = [&](uint64_t timeout_ms) {
+        const auto compaction_deadline = std::chrono::steady_clock::now() +
+                                         std::chrono::milliseconds(timeout_ms);
+        while (std::chrono::steady_clock::now() < compaction_deadline) {
+            if (raft_server != nullptr &&
+                raft_server->get_last_snapshot_idx() >= snapshot_index &&
+                raft_server->get_log_store() != nullptr &&
+                raft_server->get_log_store()->start_index() >= expected_start_index) {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        return false;
+    };
+
+    const auto snapshot_deadline = std::chrono::steady_clock::now() +
+                                   std::chrono::milliseconds(kManualSnapshotTimeoutMs);
+    while (std::chrono::steady_clock::now() < snapshot_deadline) {
+        if (raft_server != nullptr && raft_server->get_last_snapshot_idx() >= snapshot_index) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+
+    if (raft_server == nullptr || raft_server->get_last_snapshot_idx() < snapshot_index) {
+        res->set_500("NuRaft internal snapshot creation timed out.");
+        return;
+    }
+
+    if (!wait_for_compaction(2000) &&
+        raft_server != nullptr &&
+        raft_server->get_last_snapshot_idx() >= snapshot_index &&
+        raft_server->get_log_store() != nullptr &&
+        expected_start_index > 1) {
+        // NuRaft's manual snapshot path created the snapshot, but the log-store
+        // compaction did not become externally visible before timeout. Finish
+        // the retention cut synchronously for the admin snapshot endpoint so a
+        // wiped follower can immediately recover from the snapshot instead of
+        // falling back to a full log replay.
+        const bool compacted = raft_server->get_log_store()->compact(expected_start_index - 1);
+        if (!compacted) {
+            res->set_500("NuRaft snapshot compaction failed.");
+            return;
+        }
+    }
+
+    if (!wait_for_compaction(5000)) {
+        res->set_500("NuRaft snapshot compaction did not complete before timeout.");
+        return;
+    }
+
+    if (raft_server == nullptr ||
+        raft_server->get_last_snapshot_idx() < snapshot_index ||
+        raft_server->get_log_store() == nullptr ||
+        raft_server->get_log_store()->start_index() < expected_start_index) {
+        res->set_500("NuRaft snapshot compaction did not complete before timeout.");
+        return;
+    }
+
+    NuRaftSnapshotCoordinator coordinator(layout_);
+    NuRaftSnapshotDescriptor descriptor;
+    if (!snapshot_path.empty()) {
+        if (!coordinator.create_snapshot(snapshot_path, snapshot_sink, descriptor, error)) {
+            res->set_500(error);
+            return;
+        }
+    } else if (!coordinator.read_last_snapshot(descriptor, error)) {
+        res->set_500(error);
+        return;
+    }
+
+    TS_LOG(INFO) << "NuRaft snapshot request: internal snapshot ready at index=" << snapshot_index
+                 << ", log_store_start_index="
+                 << (raft_server->get_log_store() != nullptr ? raft_server->get_log_store()->start_index() : 0);
 
     nlohmann::json body = {
         {"success", true},
@@ -1552,7 +1802,6 @@ void NuRaftHttpRuntimeService::do_snapshot(const std::string& snapshot_path,
         {"last_applied_index", descriptor.last_applied_index},
     };
     res->set_body(201, body.dump());
-    send_response(req, res);
 }
 
 bool NuRaftHttpRuntimeService::trigger_vote() {
@@ -2071,6 +2320,7 @@ bool NuRaftHttpRuntimeService::initialize_raft_server(std::string& error) {
         materialized_state_sink_.get(),
         [this](uint64_t log_idx, const NuRaftAppliedRequest& request) {
             (void)log_idx;
+            refresh_startup_materialization_state();
             enqueue_mirrored_request(request);
         });
 
@@ -2218,6 +2468,7 @@ bool NuRaftHttpRuntimeService::append_via_raft(
 }
 
 void NuRaftHttpRuntimeService::shutdown() {
+    stop_snapshot_scheduler();
     if (raft_launcher_) {
         raft_launcher_->shutdown(5);
     }

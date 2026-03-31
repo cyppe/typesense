@@ -262,10 +262,23 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
         snapshot_state_root = root;
     }
 
-    if (!std::filesystem::is_directory(snapshot_state_root / "meta") ||
-        !std::filesystem::is_directory(snapshot_state_root / "log")) {
+    if (!std::filesystem::is_directory(snapshot_state_root / "meta")) {
         error = "NuRaft snapshot path does not contain the descriptor-selected snapshot payload";
         return false;
+    }
+
+    // Logical snapshot transfer currently serializes only files, so empty
+    // directories such as a fully compacted log/ tree may be absent on the
+    // receiver. Recreate the empty directory instead of rejecting the
+    // snapshot outright.
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(snapshot_state_root / "log", ec);
+        if (ec) {
+            error = "Failed to create NuRaft snapshot log dir '" +
+                    (snapshot_state_root / "log").string() + "': " + ec.message();
+            return false;
+        }
     }
 
     if (!replace_tree(root / "meta", layout_.meta_dir, error) ||

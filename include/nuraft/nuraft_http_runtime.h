@@ -118,6 +118,9 @@ public:
 private:
     void start_mirror_worker();
     void stop_mirror_worker();
+    void start_snapshot_scheduler();
+    void stop_snapshot_scheduler();
+    void snapshot_scheduler_loop();
     bool initialize_raft_server(std::string& error);
     bool process_document_import_write(const std::shared_ptr<http_req>& request,
                                        const std::shared_ptr<http_res>& response,
@@ -147,6 +150,9 @@ private:
     void send_response(const std::shared_ptr<http_req>& request,
                        const std::shared_ptr<http_res>& response) const;
     void advance_live_product_state_applied_index(uint64_t applied_index);
+    bool is_materialization_ready() const;
+    uint64_t materialization_lag() const;
+    void refresh_startup_materialization_state();
     bool wait_for_applied_index(uint64_t target_index, uint32_t timeout_ms);
     uint64_t allocate_response_token();
     void enqueue_mirrored_request(const NuRaftAppliedRequest& request);
@@ -169,6 +175,10 @@ private:
     mutable std::shared_mutex read_preference_mutex_;
     mutable std::unordered_set<std::string> materialized_read_preferred_collections_;
     std::atomic<uint64_t> live_product_state_applied_index_{0};
+    std::atomic<bool> startup_materialization_tracking_{false};
+    std::atomic<bool> startup_materialization_pending_{false};
+    std::atomic<uint64_t> startup_materialization_started_at_ms_{0};
+    std::atomic<uint64_t> startup_materialization_base_index_{0};
     std::atomic<uint64_t> inflight_import_target_index_{0};
     std::atomic<uint64_t> active_import_requests_{0};
     std::atomic<uint64_t> cumulative_import_requests_{0};
@@ -201,6 +211,11 @@ private:
     std::deque<NuRaftAppliedRequest> mirror_worker_queue_;
     bool mirror_worker_stopping_ = false;
     std::thread mirror_worker_thread_;
+    uint32_t test_mirror_worker_apply_delay_ms_ = 0;
+    std::mutex snapshot_scheduler_mutex_;
+    std::condition_variable snapshot_scheduler_cv_;
+    bool snapshot_scheduler_stopping_ = false;
+    std::thread snapshot_scheduler_thread_;
     mutable std::shared_mutex mutex_;
 
     // Real NuRaft consensus members.
