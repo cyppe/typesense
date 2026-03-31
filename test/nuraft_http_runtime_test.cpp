@@ -2018,4 +2018,110 @@ TEST_F(NuRaftHttpRuntimeTest, PeriodicSnapshotSchedulerRunsWhileFollowerOffline)
         << ", offline follower log: " << offline_follower->log_path();
 }
 
+TEST_F(NuRaftHttpRuntimeTest, LaggingFollowerBeyondRetainedWindowTriggersSnapshotBeforePeriodicInterval) {
+    ScopedEnvVar snapshot_interval("TYPESENSE_SNAPSHOT_INTERVAL_SECONDS", "3600");
+    ScopedEnvVar reserved_logs("TYPESENSE_RAFT_RESERVED_LOG_ITEMS", "1");
+
+    const uint32_t api_port_1 = pick_free_port();
+    const uint32_t peer_port_1 = pick_free_port();
+    const uint32_t api_port_2 = pick_free_port();
+    const uint32_t peer_port_2 = pick_free_port();
+    const uint32_t api_port_3 = pick_free_port();
+    const uint32_t peer_port_3 = pick_free_port();
+    const std::string nodes_config =
+        "127.0.0.1:" + std::to_string(peer_port_1) + ":" + std::to_string(api_port_1) + "," +
+        "127.0.0.1:" + std::to_string(peer_port_2) + ":" + std::to_string(api_port_2) + "," +
+        "127.0.0.1:" + std::to_string(peer_port_3) + ":" + std::to_string(api_port_3);
+
+    NuRaftHttpServerOptions options_1;
+    options_1.startup_options.data_dir = node_dir("lag-window-snapshot-node-1");
+    options_1.startup_options.local_host = "127.0.0.1";
+    options_1.startup_options.peer_port = peer_port_1;
+    options_1.startup_options.api_port = api_port_1;
+    options_1.startup_options.nodes_config = nodes_config;
+    options_1.listen_address = "127.0.0.1";
+    options_1.listen_port = api_port_1;
+    options_1.api_key = "xyz";
+
+    NuRaftHttpServerOptions options_2 = options_1;
+    options_2.startup_options.data_dir = node_dir("lag-window-snapshot-node-2");
+    options_2.startup_options.peer_port = peer_port_2;
+    options_2.startup_options.api_port = api_port_2;
+    options_2.listen_port = api_port_2;
+
+    NuRaftHttpServerOptions options_3 = options_1;
+    options_3.startup_options.data_dir = node_dir("lag-window-snapshot-node-3");
+    options_3.startup_options.peer_port = peer_port_3;
+    options_3.startup_options.api_port = api_port_3;
+    options_3.listen_port = api_port_3;
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options_1, error, false)) << error;
+    ASSERT_TRUE(node2_.start(options_2, error, false)) << error;
+    ASSERT_TRUE(node3_.start(options_3, error, false)) << error;
+
+    nlohmann::json status_1;
+    nlohmann::json status_2;
+    nlohmann::json status_3;
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               fetch_json(node3_, "/status", status_3) == 200 &&
+               static_cast<int>(status_1["is_leader"].get<bool>()) +
+                   static_cast<int>(status_2["is_leader"].get<bool>()) +
+                   static_cast<int>(status_3["is_leader"].get<bool>()) == 1;
+    }, std::chrono::milliseconds(15000)));
+
+    NuRaftHttpRuntimeHarness* leader = &node1_;
+    NuRaftHttpRuntimeHarness* offline_follower = &node3_;
+    if (status_2["is_leader"].get<bool>()) {
+        leader = &node2_;
+    } else if (status_3["is_leader"].get<bool>()) {
+        leader = &node3_;
+        offline_follower = &node2_;
+    }
+
+    offline_follower->stop();
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(201,
+              HttpClient::post_response(leader->base_url() + "/collections",
+                                        kBooksCollectionSchema,
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true))
+        << "leader log: " << leader->log_path();
+
+    for (size_t i = 0; i < 5; ++i) {
+        response.clear();
+        headers.clear();
+        ASSERT_EQ(201,
+                  HttpClient::post_response(leader->base_url() + "/collections/books/documents",
+                                            nlohmann::json({
+                                                {"id", std::to_string(i + 1)},
+                                                {"title", "title " + std::to_string(i + 1)},
+                                            }).dump(),
+                                            response,
+                                            headers,
+                                            {},
+                                            5000,
+                                            true))
+            << "leader log: " << leader->log_path();
+    }
+
+    nlohmann::json leader_status;
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(*leader, "/status", leader_status) == 200 &&
+               leader_status["cumulative_snapshots"].get<uint64_t>() > 0 &&
+               leader_status["last_snapshot_applied_index"].get<uint64_t>() > 0 &&
+               leader_status["snapshot_lagging_peer_count"].get<size_t>() > 0 &&
+               leader_status["snapshot_max_peer_log_gap"].get<uint64_t>() > 1;
+    }, std::chrono::milliseconds(15000)))
+        << "leader log: " << leader->log_path()
+        << ", offline follower log: " << offline_follower->log_path();
+}
+
 }  // namespace

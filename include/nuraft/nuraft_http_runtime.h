@@ -67,6 +67,12 @@ enum class NuRaftWriteRouteMode {
 
 class NuRaftHttpRuntimeService : public ReplicationService {
 public:
+    struct SnapshotPeerLagMetrics {
+        size_t lagging_peer_count = 0;
+        uint64_t max_peer_log_gap = 0;
+        uint64_t max_peer_response_age_ms = 0;
+    };
+
     struct MirroredWriteResult {
         bool handler_ok = false;
         bool should_apply = false;
@@ -121,6 +127,7 @@ private:
     void start_snapshot_scheduler();
     void stop_snapshot_scheduler();
     void snapshot_scheduler_loop();
+    SnapshotPeerLagMetrics get_snapshot_peer_lag_metrics(uint64_t committed_index) const;
     bool initialize_raft_server(std::string& error);
     bool process_document_import_write(const std::shared_ptr<http_req>& request,
                                        const std::shared_ptr<http_res>& response,

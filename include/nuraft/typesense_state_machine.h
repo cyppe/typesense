@@ -25,6 +25,7 @@ struct TypesenseSnapshotMetricsSnapshot {
     bool last_snapshot_success = false;
     uint64_t last_snapshot_log_index = 0;
     uint64_t last_snapshot_applied_index = 0;
+    uint64_t last_snapshot_completed_at_ms = 0;
     uint64_t last_snapshot_total_ms = 0;
     uint64_t max_snapshot_total_ms = 0;
     uint64_t cumulative_snapshots = 0;
@@ -84,6 +85,7 @@ private:
     std::atomic<bool> last_snapshot_success_{false};
     std::atomic<uint64_t> last_snapshot_log_index_{0};
     std::atomic<uint64_t> last_snapshot_applied_index_{0};
+    std::atomic<uint64_t> last_snapshot_completed_at_ms_{0};
     std::atomic<uint64_t> last_snapshot_total_ms_{0};
     std::atomic<uint64_t> max_snapshot_total_ms_{0};
     std::atomic<uint64_t> cumulative_snapshots_{0};

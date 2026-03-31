@@ -26,6 +26,11 @@ void update_atomic_max(std::atomic<uint64_t>& target, uint64_t value) {
     }
 }
 
+uint64_t steady_clock_now_ms() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
 // Build a flat list of all files in a directory tree (relative paths).
 void list_files_recursive(const std::string& base_dir,
                           const std::string& rel_prefix,
@@ -150,6 +155,7 @@ void TypesenseStateMachine::create_snapshot(
                 cfg);
             cumulative_snapshots_.fetch_add(1, std::memory_order_relaxed);
             last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
+            last_snapshot_completed_at_ms_.store(steady_clock_now_ms(), std::memory_order_relaxed);
         }
     }
 
@@ -201,6 +207,7 @@ bool TypesenseStateMachine::apply_snapshot(nuraft::snapshot& s) {
     last_snapshot_log_index_.store(s.get_last_log_idx(), std::memory_order_relaxed);
     last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
     last_snapshot_success_.store(true, std::memory_order_relaxed);
+    last_snapshot_completed_at_ms_.store(steady_clock_now_ms(), std::memory_order_relaxed);
 
     std::cerr << "TypesenseStateMachine: applied snapshot at index "
                  << s.get_last_log_idx() << "\n";
@@ -226,6 +233,7 @@ TypesenseSnapshotMetricsSnapshot TypesenseStateMachine::get_snapshot_metrics() c
     snapshot.last_snapshot_success = last_snapshot_success_.load(std::memory_order_relaxed);
     snapshot.last_snapshot_log_index = last_snapshot_log_index_.load(std::memory_order_relaxed);
     snapshot.last_snapshot_applied_index = last_snapshot_applied_index_.load(std::memory_order_relaxed);
+    snapshot.last_snapshot_completed_at_ms = last_snapshot_completed_at_ms_.load(std::memory_order_relaxed);
     snapshot.last_snapshot_total_ms = last_snapshot_total_ms_.load(std::memory_order_relaxed);
     snapshot.max_snapshot_total_ms = max_snapshot_total_ms_.load(std::memory_order_relaxed);
     snapshot.cumulative_snapshots = cumulative_snapshots_.load(std::memory_order_relaxed);
@@ -375,6 +383,7 @@ void TypesenseStateMachine::save_logical_snp_obj(
         last_snapshot_log_index_.store(s.get_last_log_idx(), std::memory_order_relaxed);
         last_snapshot_applied_index_.store(desc.last_applied_index, std::memory_order_relaxed);
         last_snapshot_success_.store(true, std::memory_order_relaxed);
+        last_snapshot_completed_at_ms_.store(steady_clock_now_ms(), std::memory_order_relaxed);
     }
 
     obj_id = obj_id + 1;

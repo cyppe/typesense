@@ -1150,6 +1150,9 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         if (node_status.contains("last_snapshot_applied_index")) {
             result["nuraft_last_snapshot_applied_index"] = node_status["last_snapshot_applied_index"];
         }
+        if (node_status.contains("last_snapshot_completed_at_ms")) {
+            result["nuraft_last_snapshot_completed_at_ms"] = node_status["last_snapshot_completed_at_ms"];
+        }
         if (node_status.contains("last_snapshot_total_ms")) {
             result["nuraft_last_snapshot_total_ms"] = node_status["last_snapshot_total_ms"];
         }
@@ -1161,6 +1164,18 @@ bool get_metrics_json(const std::shared_ptr<http_req>& req, const std::shared_pt
         }
         if (node_status.contains("cumulative_snapshot_failures")) {
             result["nuraft_cumulative_snapshot_failures"] = node_status["cumulative_snapshot_failures"];
+        }
+        if (node_status.contains("snapshot_recovery_point_lag")) {
+            result["nuraft_snapshot_recovery_point_lag"] = node_status["snapshot_recovery_point_lag"];
+        }
+        if (node_status.contains("snapshot_lagging_peer_count")) {
+            result["nuraft_snapshot_lagging_peer_count"] = node_status["snapshot_lagging_peer_count"];
+        }
+        if (node_status.contains("snapshot_max_peer_log_gap")) {
+            result["nuraft_snapshot_max_peer_log_gap"] = node_status["snapshot_max_peer_log_gap"];
+        }
+        if (node_status.contains("snapshot_max_peer_response_age_ms")) {
+            result["nuraft_snapshot_max_peer_response_age_ms"] = node_status["snapshot_max_peer_response_age_ms"];
         }
         if (node_status.contains("active_import_requests")) {
             result["nuraft_active_import_requests"] = node_status["active_import_requests"];

@@ -585,15 +585,18 @@ The current runtime smoke covers a real subprocess-backed HTTP binary with healt
 When you are touching NuRaft recovery semantics, snapshot policy, or `/health` readiness, run the focused recovery lane as well:
 
 ```bash
-scripts/bazel_in_docker.sh test //:typesense-test --test_output=errors --test_timeout=1200 '--test_arg=--gtest_filter=NuRaftHttpRuntimeTest.ManualSnapshotWorksBeforeUserWrites:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerRunsWhileFollowerOffline:NuRaftHttpRuntimeTest.ManualSnapshotEnablesSnapshotBasedEmptyFollowerRecovery:NuRaftHttpRuntimeTest.EmptyFollowerRecoveryStaysUnhealthyUntilMaterialized:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerCreatesSnapshotsWhenConfigured'
+scripts/bazel_in_docker.sh test //:typesense-test --test_output=errors --test_timeout=1200 '--test_arg=--gtest_filter=NuRaftHttpRuntimeTest.ManualSnapshotWorksBeforeUserWrites:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerRunsWhileFollowerOffline:NuRaftHttpRuntimeTest.LaggingFollowerBeyondRetainedWindowTriggersSnapshotBeforePeriodicInterval:NuRaftHttpRuntimeTest.ManualSnapshotEnablesSnapshotBasedEmptyFollowerRecovery:NuRaftHttpRuntimeTest.EmptyFollowerRecoveryStaysUnhealthyUntilMaterialized:NuRaftHttpRuntimeTest.PeriodicSnapshotSchedulerCreatesSnapshotsWhenConfigured'
 ```
 
 That lane pins the intended NuRaft recovery contract on this fork:
 - admin snapshots must work even on a bootstrap-only server with no user writes yet
 - leaders must keep creating fresh snapshots while a follower is offline
+- if a follower falls beyond the retained-log window, the leader should refresh the snapshot before the long periodic interval elapses
 - a wiped follower must stay out of service until materialized search state catches up
 - once retained logs are compacted away, a recovering follower must be able to use the latest snapshot instead of replaying the entire old log window
 - periodic snapshots must keep the recovery point moving without needing a manual `/operations/snapshot` call
+
+The recovery metrics now expose the same policy directly on `/status` and `/metrics.json`: `nuraft_snapshot_recovery_point_lag`, `nuraft_snapshot_lagging_peer_count`, `nuraft_snapshot_max_peer_log_gap`, `nuraft_snapshot_max_peer_response_age_ms`, and `nuraft_last_snapshot_completed_at_ms`.
 
 The same bounded runtime now also passes the real `api_tests` wrapper for the focused single-node smoke lane:
 

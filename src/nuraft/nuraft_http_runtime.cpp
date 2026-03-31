@@ -31,6 +31,7 @@ constexpr const char* kDocumentPrefix = "state/documents/";
 constexpr size_t kDocumentImportRaftChunkMaxBytes = 4 * 1024 * 1024;
 constexpr uint64_t kStartupMaterializationGraceMs = 10000;
 constexpr uint64_t kManualSnapshotTimeoutMs = 60000;
+constexpr uint64_t kSnapshotSchedulerPollMs = 1000;
 
 using HttpHandlerFn = bool (*)(const std::shared_ptr<http_req>&, const std::shared_ptr<http_res>&);
 
@@ -843,10 +844,12 @@ void NuRaftHttpRuntimeService::snapshot_scheduler_loop() {
         return;
     }
 
+    auto next_interval_check = std::chrono::steady_clock::now() +
+                               std::chrono::seconds(interval_seconds);
     std::unique_lock<std::mutex> lock(snapshot_scheduler_mutex_);
     while (!snapshot_scheduler_stopping_) {
         if (snapshot_scheduler_cv_.wait_for(lock,
-                                            std::chrono::seconds(interval_seconds),
+                                            std::chrono::milliseconds(kSnapshotSchedulerPollMs),
                                             [&] { return snapshot_scheduler_stopping_; })) {
             break;
         }
@@ -857,19 +860,59 @@ void NuRaftHttpRuntimeService::snapshot_scheduler_loop() {
             const auto snapshot_metrics = raft_state_machine_->get_snapshot_metrics();
             const uint64_t committed_index = raft_state_machine_->get_last_commit_index();
             const uint64_t last_snapshot_index = raft_server_->get_last_snapshot_idx();
+            const auto peer_lag_metrics = get_snapshot_peer_lag_metrics(committed_index);
+            const bool interval_due = std::chrono::steady_clock::now() >= next_interval_check;
+            const bool lagging_peers_exceed_retained_window =
+                peer_lag_metrics.lagging_peer_count > 0 &&
+                committed_index > last_snapshot_index &&
+                (committed_index - last_snapshot_index) > options_.raft_params.reserved_log_items;
 
-            if (!snapshot_metrics.snapshot_in_progress && committed_index > last_snapshot_index) {
+            if (!snapshot_metrics.snapshot_in_progress &&
+                committed_index > last_snapshot_index &&
+                (interval_due || lagging_peers_exceed_retained_window)) {
                 const uint64_t snapshot_index = raft_server_->create_snapshot();
                 if (snapshot_index != 0) {
                     TS_LOG(INFO) << "NuRaft snapshot scheduler: created snapshot at committed_index="
                                  << committed_index << ", snapshot_index=" << snapshot_index
-                                 << ", last_snapshot_index=" << last_snapshot_index;
+                                 << ", last_snapshot_index=" << last_snapshot_index
+                                 << ", reason=" << (interval_due ? "interval" : "lagging_peer_window")
+                                 << ", lagging_peer_count=" << peer_lag_metrics.lagging_peer_count
+                                 << ", max_peer_log_gap=" << peer_lag_metrics.max_peer_log_gap;
                 }
+                next_interval_check = std::chrono::steady_clock::now() +
+                                      std::chrono::seconds(interval_seconds);
+            } else if (interval_due) {
+                next_interval_check = std::chrono::steady_clock::now() +
+                                      std::chrono::seconds(interval_seconds);
             }
         }
 
         lock.lock();
     }
+}
+
+NuRaftHttpRuntimeService::SnapshotPeerLagMetrics
+NuRaftHttpRuntimeService::get_snapshot_peer_lag_metrics(uint64_t committed_index) const {
+    SnapshotPeerLagMetrics metrics;
+    if (raft_server_ == nullptr || !raft_server_->is_leader()) {
+        return metrics;
+    }
+
+    const auto peer_infos = raft_server_->get_peer_info_all();
+    for (const auto& peer_info : peer_infos) {
+        const uint64_t peer_log_gap = committed_index > peer_info.last_log_idx_
+                                          ? (committed_index - peer_info.last_log_idx_)
+                                          : 0;
+        const uint64_t peer_response_age_ms = peer_info.last_succ_resp_us_ / 1000;
+        metrics.max_peer_log_gap = std::max(metrics.max_peer_log_gap, peer_log_gap);
+        metrics.max_peer_response_age_ms = std::max(metrics.max_peer_response_age_ms,
+                                                    peer_response_age_ms);
+        if (peer_log_gap > options_.raft_params.reserved_log_items) {
+            metrics.lagging_peer_count++;
+        }
+    }
+
+    return metrics;
 }
 
 uint64_t NuRaftHttpRuntimeService::allocate_response_token() {
@@ -1611,6 +1654,8 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         raft_state_machine_->get_last_commit_index() : 0;
     const auto snapshot_metrics = raft_state_machine_ != nullptr ?
         raft_state_machine_->get_snapshot_metrics() : TypesenseSnapshotMetricsSnapshot{};
+    const uint64_t committed_idx = raft_server_ != nullptr ? raft_server_->get_committed_log_idx() : 0;
+    const auto peer_lag_metrics = get_snapshot_peer_lag_metrics(committed_idx);
     const uint64_t sync_calls = cumulative_sync_calls_.load(std::memory_order_relaxed);
     nlohmann::json status = {
         {"state", initialized_.load() ? "running" : "initializing"},
@@ -1646,10 +1691,16 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         {"last_snapshot_success", snapshot_metrics.last_snapshot_success},
         {"last_snapshot_log_index", snapshot_metrics.last_snapshot_log_index},
         {"last_snapshot_applied_index", snapshot_metrics.last_snapshot_applied_index},
+        {"last_snapshot_completed_at_ms", snapshot_metrics.last_snapshot_completed_at_ms},
         {"last_snapshot_total_ms", snapshot_metrics.last_snapshot_total_ms},
         {"max_snapshot_total_ms", snapshot_metrics.max_snapshot_total_ms},
         {"cumulative_snapshots", snapshot_metrics.cumulative_snapshots},
         {"cumulative_snapshot_failures", snapshot_metrics.cumulative_snapshot_failures},
+        {"snapshot_recovery_point_lag", committed_idx >= snapshot_metrics.last_snapshot_log_index ?
+            (committed_idx - snapshot_metrics.last_snapshot_log_index) : 0},
+        {"snapshot_lagging_peer_count", peer_lag_metrics.lagging_peer_count},
+        {"snapshot_max_peer_log_gap", peer_lag_metrics.max_peer_log_gap},
+        {"snapshot_max_peer_response_age_ms", peer_lag_metrics.max_peer_response_age_ms},
         {"materialization_ready", is_materialization_ready()},
         {"startup_materialization_pending", startup_materialization_pending_.load(std::memory_order_relaxed)},
         {"materialization_lag", materialization_lag()},
@@ -1658,7 +1709,6 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
     };
 
     if (raft_server_) {
-        uint64_t committed_idx = raft_server_->get_committed_log_idx();
         uint64_t last_idx = raft_server_->get_last_log_idx();
         status["last_index"] = last_idx;
         status["committed_index"] = committed_idx;
