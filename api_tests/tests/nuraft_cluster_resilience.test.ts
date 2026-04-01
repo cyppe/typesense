@@ -90,6 +90,28 @@ async function waitForConvergence(ports: number[], timeoutMs = 15000): Promise<b
   return false;
 }
 
+async function waitForClusterHealthy(ports: number[], timeoutMs = 30000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const health = await Promise.all(ports.map(async (port) => {
+      try {
+        const res = await fetchNode(port, "/health");
+        return res.ok;
+      } catch {
+        return false;
+      }
+    }));
+
+    if (health.every(Boolean)) {
+      return true;
+    }
+
+    await Bun.sleep(300);
+  }
+
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Test suite
 // ---------------------------------------------------------------------------
@@ -334,6 +356,120 @@ describe("NuRaft cluster resilience", () => {
     const followerStatus = await getStatus(followerPort);
     expect(followerStatus.committed_index).toBe(statusAfter.committed_index);
   }, 90000);
+
+  it("lone survivor stays alive through quorum loss and restarts under write pressure", async () => {
+    const leaderBefore = await waitForLeaderOnNodes([port1, port2, port3]);
+    expect(leaderBefore).not.toBeNull();
+
+    const statuses = await Promise.all([getStatus(port1), getStatus(port2), getStatus(port3)]);
+    const ports = [port1, port2, port3];
+    const leaderPort = leaderBefore!.leaderPort;
+    const leaderNodeIndex = (ports.indexOf(leaderPort) + 1) as 1 | 2 | 3;
+    const followerIndices = statuses
+      .map((status, index) => ({ status, index: (index + 1) as 1 | 2 | 3, port: ports[index] }))
+      .filter((entry) => entry.status?.is_leader === false);
+
+    expect(followerIndices.length).toBe(2);
+
+    const firstKilledFollower = followerIndices[0];
+    const loneSurvivor = followerIndices[1];
+
+    await manager.hardKillMultiNodeServer(firstKilledFollower.index);
+
+    const remainingLeader = await waitForLeaderOnNodes([leaderPort, loneSurvivor.port], 20000);
+    expect(remainingLeader).not.toBeNull();
+    expect(remainingLeader!.leaderPort).toBe(leaderPort);
+
+    let trafficStop = false;
+    let attempts = 0;
+    let failures = 0;
+    const trafficLoop = (async () => {
+      while (!trafficStop) {
+        attempts += 1;
+        const lines = Array.from({ length: 20 }, (_, offset) => JSON.stringify({
+          id: `quorum-${attempts}-${offset}`,
+          title: `Quorum product ${attempts}-${offset}`,
+          price: attempts * 100 + offset,
+        }));
+
+        try {
+          const response = await fetchNode(
+            loneSurvivor.port,
+            `/collections/${COLLECTION_NAME}/documents/import?action=upsert`,
+            {
+              method: "POST",
+              body: lines.join("\n"),
+              signal: AbortSignal.timeout(5000),
+            },
+          );
+          if (!response.ok) {
+            failures += 1;
+          }
+        } catch {
+          failures += 1;
+        }
+
+        await Bun.sleep(100);
+      }
+    })();
+
+    await Bun.sleep(1000);
+    await manager.hardKillMultiNodeServer(leaderNodeIndex);
+
+    const loneSurvivorIndex = loneSurvivor.index;
+    const quorumLossDeadline = Date.now() + 15000;
+    while (Date.now() < quorumLossDeadline) {
+      expect(manager.getMultiNodeServerExitCode(loneSurvivorIndex)).toBeNull();
+      await Bun.sleep(250);
+    }
+
+    trafficStop = true;
+    await trafficLoop;
+    expect(attempts).toBeGreaterThan(0);
+    expect(failures).toBeGreaterThan(0);
+    expect(manager.getMultiNodeServerExitCode(loneSurvivorIndex)).toBeNull();
+
+    await manager.restartMultiNodeServer(leaderNodeIndex);
+    await manager.restartMultiNodeServer(firstKilledFollower.index);
+
+    const healthy = await waitForClusterHealthy([port1, port2, port3], 60000);
+    expect(healthy).toBe(true);
+
+    const leaderAfterRecovery = await waitForLeaderOnNodes([port1, port2, port3], 30000);
+    expect(leaderAfterRecovery).not.toBeNull();
+
+    for (const port of [port1, port2, port3]) {
+      const status = await getStatus(port);
+      expect(status).not.toBeNull();
+      expect(status.read_caught_up).toBe(true);
+      expect(status.write_caught_up).toBe(true);
+      expect(status.raft_leader_id).toBe(leaderAfterRecovery!.leaderServerId);
+    }
+
+    const followerPortAfterRecovery = [port1, port2, port3].find((port) => port !== leaderAfterRecovery!.leaderPort)!;
+    const recoveredWrite = await fetchNode(
+      followerPortAfterRecovery,
+      `/collections/${COLLECTION_NAME}/documents`,
+      {
+        method: "POST",
+        body: JSON.stringify({ id: "recovered-write", title: "Recovered write", price: 999.0 }),
+      },
+    );
+    expect(recoveredWrite.ok).toBe(true);
+
+    for (const port of [port1, port2, port3]) {
+      const readRes = await fetchNode(port, `/collections/${COLLECTION_NAME}/documents/recovered-write`);
+      expect(readRes.ok).toBe(true);
+      const doc: any = await readRes.json();
+      expect(doc.title).toBe("Recovered write");
+    }
+
+    for (const index of [1, 2, 3] as const) {
+      const exitCode = manager.getMultiNodeServerExitCode(index);
+      expect(exitCode === null || exitCode === 0).toBe(true);
+      expect(exitCode).not.toBe(139);
+    }
+  }, 120000);
 
   // -- 6. All original data still intact after all failure scenarios ------
 

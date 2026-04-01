@@ -154,6 +154,14 @@ export class TypesenseProcessManager {
     await this.stopServer(this.getMultiNodeName(index));
   }
 
+  async hardKillMultiNodeServer(index: 1 | 2 | 3) {
+    await this.hardKillServer(this.getMultiNodeName(index));
+  }
+
+  getMultiNodeServerExitCode(index: 1 | 2 | 3): number | null {
+    return this.getServerExitCode(this.getMultiNodeName(index));
+  }
+
   async restartMultiNodeServer(index: 1 | 2 | 3) {
     if (!this.multiNodeConfigs) {
       throw new Error("Cannot restart individual multi-node server before startMultiNode has run");
@@ -377,6 +385,16 @@ export class TypesenseProcessManager {
     this.processOutputTails.delete(name);
   }
 
+  async hardKillServer(name: string) {
+    const instance = this.processes.get(name);
+    if (!instance) return;
+
+    await this.forceKillProcess(instance);
+    this.processes.delete(name);
+    this.processExitCodes.delete(name);
+    this.processOutputTails.delete(name);
+  }
+
   async restartSingleNode() {
     if (!this.singleNodeState) {
       throw new Error("Cannot restart single node before startSingleNode has run");
@@ -515,6 +533,15 @@ export class TypesenseProcessManager {
     return undefined;
   }
 
+  private getServerExitCode(name: string): number | null {
+    const instance = this.processes.get(name);
+    if (instance && typeof instance.process.exitCode === "number") {
+      return instance.process.exitCode;
+    }
+
+    return this.processExitCodes.get(name) ?? null;
+  }
+
   private async resolveSinglePorts(): Promise<[number, number]> {
     if (
       this.configuredSingleApiPort !== null
@@ -627,6 +654,16 @@ export class TypesenseProcessManager {
       }
       await instance.process.exited;
     }
+  }
+
+  private async forceKillProcess(instance: ServerInstance) {
+    try {
+      instance.process.kill("SIGKILL");
+    } catch {
+      // Process may already be gone.
+    }
+
+    await instance.process.exited;
   }
 
   private installSignalHandlers() {

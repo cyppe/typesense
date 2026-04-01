@@ -621,6 +621,7 @@ scripts/run_api_tests.sh --server-binary ./bazel-bin/typesense-server -- --no-se
 ```
 
 Treat that full no-secrets replay as the main hardening lane now. The targeted suite commands above are still useful for isolating failures quickly, but they are no longer enough on their own to claim broad runtime parity.
+That broad replay now includes the standalone `api_tests/tests/nuraft_cluster_resilience.test.ts` hard-kill quorum-loss scenario, so local confidence requires passing both the normal binary replay and any focused ASAN replay you used while debugging crash reports.
 
 ## 13) Historical Raft comparison note
 
