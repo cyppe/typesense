@@ -3,6 +3,8 @@
 #include <filesystem>
 #include <utility>
 
+#include <libnuraft/nuraft.hxx>
+
 #include "json.hpp"
 #include "nuraft/nuraft_applied_request_store.h"
 #include "nuraft/nuraft_file_store.h"
@@ -163,6 +165,35 @@ std::filesystem::path data_dir_from_layout(const NuRaftStateLayout& layout) {
     return state_dir.parent_path();
 }
 
+nuraft::ptr<nuraft::cluster_config> build_cluster_config(const NuRaftIdentity& identity,
+                                                         const NuRaftBootstrapConfig& bootstrap_config) {
+    auto config = nuraft::cs_new<nuraft::cluster_config>();
+    auto self_srv = nuraft::cs_new<nuraft::srv_config>(
+        identity.server_id,
+        0,
+        identity.peer_endpoint,
+        "",
+        false);
+    config->get_servers().push_back(self_srv);
+
+    for (const auto& peer : bootstrap_config.peers) {
+        const int32_t peer_id = peer.server_id();
+        if (peer_id == identity.server_id) {
+            continue;
+        }
+
+        auto peer_srv = nuraft::cs_new<nuraft::srv_config>(
+            peer_id,
+            0,
+            peer.peer_endpoint(),
+            "",
+            false);
+        config->get_servers().push_back(peer_srv);
+    }
+
+    return config;
+}
+
 }  // namespace
 
 bool NuRaftSnapshotDescriptor::operator==(const NuRaftSnapshotDescriptor& other) const {
@@ -318,13 +349,25 @@ bool NuRaftSnapshotCoordinator::install_snapshot(const std::string& snapshot_pat
         return false;
     }
 
-    // Remove the source node's server state so the target node rejoins with its
-    // own persisted identity, but keep the cluster config because it is the
-    // shared membership record needed to re-establish peer connectivity after
-    // recovery.
+    // Rebuild the target node's cluster config from its own persisted
+    // identity/bootstrap metadata instead of carrying over the source node's
+    // serialized config. This keeps single-node installs self-led and lets
+    // recovered multi-node followers rejoin using their local membership view.
     {
         std::error_code ec;
+        std::filesystem::remove(layout_.cluster_config_file, ec);
         std::filesystem::remove(layout_.server_state_file, ec);
+    }
+
+    if (had_identity && had_bootstrap_config) {
+        const auto cluster_config = build_cluster_config(preserved_identity, preserved_bootstrap_config);
+        auto serialized_config = cluster_config->serialize();
+        if (!NuRaftFileStore::write_file_atomically(layout_.cluster_config_file,
+                                                    std::string(reinterpret_cast<const char*>(serialized_config->data_begin()),
+                                                                serialized_config->size()),
+                                                    error)) {
+            return false;
+        }
     }
 
     if (std::filesystem::is_directory(snapshot_archive_root)) {
