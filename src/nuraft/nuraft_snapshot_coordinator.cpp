@@ -25,6 +25,7 @@ nlohmann::json encode_descriptor(const NuRaftSnapshotDescriptor& descriptor) {
         {"format_version", descriptor.format_version},
         {"snapshot_id", descriptor.snapshot_id},
         {"last_log_index", descriptor.last_log_index},
+        {"last_log_term", descriptor.last_log_term},
         {"last_applied_index", descriptor.last_applied_index},
         {"includes_main_db_checkpoint", descriptor.includes_main_db_checkpoint},
     };
@@ -53,6 +54,9 @@ bool decode_descriptor(const std::string& encoded,
     descriptor.format_version = parsed["format_version"].get<uint32_t>();
     descriptor.snapshot_id = parsed["snapshot_id"].get<std::string>();
     descriptor.last_log_index = parsed["last_log_index"].get<uint64_t>();
+    descriptor.last_log_term =
+        parsed.contains("last_log_term") && parsed["last_log_term"].is_number_unsigned() ?
+            parsed["last_log_term"].get<uint64_t>() : 0;
     descriptor.last_applied_index = parsed["last_applied_index"].get<uint64_t>();
     descriptor.includes_main_db_checkpoint =
         parsed.contains("includes_main_db_checkpoint") && parsed["includes_main_db_checkpoint"].is_boolean() ?
@@ -141,6 +145,8 @@ std::filesystem::path data_dir_from_layout(const NuRaftStateLayout& layout);
 bool build_descriptor(const NuRaftStateLayout& layout,
                       const NuRaftKvStateMachineSink* kv_sink,
                       NuRaftSnapshotDescriptor& descriptor,
+                      uint64_t last_log_index,
+                      uint64_t last_log_term,
                       std::string& error) {
     uint64_t last_applied_index = 0;
     if (kv_sink != nullptr) {
@@ -150,7 +156,8 @@ bool build_descriptor(const NuRaftStateLayout& layout,
     }
 
     descriptor = NuRaftSnapshotDescriptor();
-    descriptor.last_log_index = last_applied_index;
+    descriptor.last_log_index = last_log_index == 0 ? last_applied_index : last_log_index;
+    descriptor.last_log_term = last_log_term;
     descriptor.last_applied_index = last_applied_index;
     descriptor.snapshot_id = "snapshot-" + zero_padded_index(descriptor.last_applied_index) + "-" +
                              zero_padded_index(descriptor.last_log_index);
@@ -200,6 +207,7 @@ bool NuRaftSnapshotDescriptor::operator==(const NuRaftSnapshotDescriptor& other)
     return format_version == other.format_version &&
            snapshot_id == other.snapshot_id &&
            last_log_index == other.last_log_index &&
+           last_log_term == other.last_log_term &&
            last_applied_index == other.last_applied_index &&
            includes_main_db_checkpoint == other.includes_main_db_checkpoint;
 }
@@ -210,12 +218,14 @@ NuRaftSnapshotCoordinator::NuRaftSnapshotCoordinator(NuRaftStateLayout layout)
 bool NuRaftSnapshotCoordinator::create_snapshot(const std::string& export_path,
                                                 const NuRaftKvStateMachineSink* kv_sink,
                                                 NuRaftSnapshotDescriptor& descriptor,
+                                                uint64_t last_log_index,
+                                                uint64_t last_log_term,
                                                 std::string& error) const {
     if (!NuRaftFileStore::ensure_layout(layout_, error)) {
         return false;
     }
 
-    if (!build_descriptor(layout_, kv_sink, descriptor, error)) {
+    if (!build_descriptor(layout_, kv_sink, descriptor, last_log_index, last_log_term, error)) {
         return false;
     }
 

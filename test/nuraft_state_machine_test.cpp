@@ -155,6 +155,23 @@ protected:
         ASSERT_TRUE(success);
     }
 
+    void create_snapshot(TypesenseStateMachine& state_machine,
+                         uint64_t last_log_index,
+                         uint64_t last_log_term) {
+        auto config = nuraft::cs_new<nuraft::cluster_config>();
+        nuraft::snapshot snapshot(last_log_index, last_log_term, config);
+        bool completed = false;
+        bool success = false;
+        nuraft::async_result<bool>::handler_type handler =
+            [&](bool result, nuraft::ptr<std::exception>& /*except*/) {
+                completed = true;
+                success = result;
+            };
+        state_machine.create_snapshot(snapshot, handler);
+        ASSERT_TRUE(completed);
+        ASSERT_TRUE(success);
+    }
+
     std::string temp_dir_;
 };
 
@@ -224,6 +241,29 @@ TEST_F(TypesenseStateMachineTest, LogicalSnapshotTransferChunksLargeDbFilesAndPr
     EXPECT_EQ(kLargeSnapshotSentinelBytes, std::filesystem::file_size(target_snapshot_file));
 
     EXPECT_EQ(1u, target_descriptor.last_applied_index);
+}
+
+TEST_F(TypesenseStateMachineTest, SnapshotDescriptorPersistsLastLogTermAcrossRestart) {
+    const std::string source_dir = (std::filesystem::path(temp_dir_) / "source-term").string();
+    initialize_node(source_dir);
+
+    const NuRaftStateLayout source_layout = NuRaftStateLayout::from_data_dir(source_dir);
+    std::string error;
+
+    auto source_sink = std::make_unique<NuRaftKvStateMachineSink>(source_layout);
+    TypesenseStateMachine source_state_machine(source_layout, source_sink.get());
+    create_snapshot(source_state_machine, 7, 9);
+
+    NuRaftSnapshotCoordinator coordinator(source_layout);
+    NuRaftSnapshotDescriptor descriptor;
+    ASSERT_TRUE(coordinator.read_last_snapshot(descriptor, error)) << error;
+    EXPECT_EQ(9u, descriptor.last_log_term);
+
+    TypesenseStateMachine restarted_state_machine(source_layout, source_sink.get());
+    auto restarted_snapshot = restarted_state_machine.last_snapshot();
+    ASSERT_TRUE(restarted_snapshot != nullptr);
+    EXPECT_EQ(7u, restarted_snapshot->get_last_log_idx());
+    EXPECT_EQ(9u, restarted_snapshot->get_last_log_term());
 }
 
 TEST_F(TypesenseStateMachineTest, LogicalSnapshotTransferRejectsMissingExpectedDbPayload) {

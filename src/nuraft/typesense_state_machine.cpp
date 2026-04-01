@@ -131,7 +131,7 @@ TypesenseStateMachine::TypesenseStateMachine(
         auto cfg = nuraft::cs_new<nuraft::cluster_config>();
         last_snapshot_ptr_ = nuraft::cs_new<nuraft::snapshot>(
             desc.last_log_index,
-            0,  // term (not tracked in descriptor, NuRaft will update)
+            desc.last_log_term,
             cfg);
     }
 }
@@ -208,7 +208,12 @@ void TypesenseStateMachine::create_snapshot(
 
         if (kv_sink_) {
             std::string export_path;  // Empty = don't export to external path.
-            success = snapshot_coordinator_.create_snapshot(export_path, kv_sink_, desc, error);
+            success = snapshot_coordinator_.create_snapshot(export_path,
+                                                            kv_sink_,
+                                                            desc,
+                                                            s.get_last_log_idx(),
+                                                            s.get_last_log_term(),
+                                                            error);
         }
 
         if (success) {
@@ -540,7 +545,6 @@ void TypesenseStateMachine::save_logical_snp_obj(
         return;
     }
 
-    bool installed_snapshot = false;
     NuRaftSnapshotDescriptor installed_descriptor;
     if (is_last_obj) {
         bool saw_db_file = false;
@@ -612,14 +616,9 @@ void TypesenseStateMachine::save_logical_snp_obj(
         last_snapshot_applied_index_.store(installed_descriptor.last_applied_index, std::memory_order_relaxed);
         last_snapshot_success_.store(true, std::memory_order_relaxed);
         last_snapshot_completed_at_ms_.store(steady_clock_now_ms(), std::memory_order_relaxed);
-        installed_snapshot = true;
 
         std::lock_guard<std::mutex> incoming_guard(incoming_snapshot_mutex_);
         incoming_snapshot_ctx_.reset();
-    }
-
-    if (installed_snapshot && snapshot_applied_callback_) {
-        snapshot_applied_callback_(s.get_last_log_idx(), installed_descriptor);
     }
 
     obj_id = obj_id + 1;

@@ -1430,19 +1430,17 @@ void NuRaftHttpRuntimeService::handle_applied_snapshot(
         return;
     }
 
-    std::thread([this, log_index, descriptor]() {
-        std::string error;
-        if (!reload_live_product_state_from_snapshot(descriptor, error)) {
-            TS_LOG(ERROR) << "NuRaft snapshot apply failed to reload live Typesense state at log_index="
-                          << log_index << ": " << error;
-        } else {
-            TS_LOG(INFO) << "NuRaft snapshot apply reloaded live Typesense state at log_index="
-                         << log_index << ", applied_index=" << descriptor.last_applied_index;
-        }
-        snapshot_reload_in_progress_.store(false, std::memory_order_relaxed);
-        refresh_startup_materialization_state();
-        live_state_progress_cv_.notify_all();
-    }).detach();
+    std::string error;
+    if (!reload_live_product_state_from_snapshot(descriptor, error)) {
+        TS_LOG(ERROR) << "NuRaft snapshot apply failed to reload live Typesense state at log_index="
+                      << log_index << ": " << error;
+    } else {
+        TS_LOG(INFO) << "NuRaft snapshot apply reloaded live Typesense state at log_index="
+                     << log_index << ", applied_index=" << descriptor.last_applied_index;
+    }
+    snapshot_reload_in_progress_.store(false, std::memory_order_relaxed);
+    refresh_startup_materialization_state();
+    live_state_progress_cv_.notify_all();
 }
 
 bool NuRaftHttpRuntimeService::wait_for_applied_index(uint64_t target_index, uint32_t timeout_ms) {
@@ -1890,6 +1888,18 @@ nlohmann::json NuRaftHttpRuntimeService::get_status() {
         status["raft_term"] = raft_server_->get_term();
         status["state_machine_applied_index"] = state_machine_applied_index;
         status["state_machine_caught_up"] = initialized_.load() && state_machine_applied_index >= committed_idx;
+
+        if (raft_server_->is_leader()) {
+            nlohmann::json peer_infos = nlohmann::json::array();
+            for (const auto& peer_info : raft_server_->get_peer_info_all()) {
+                peer_infos.push_back({
+                    {"id", peer_info.id_},
+                    {"last_log_idx", peer_info.last_log_idx_},
+                    {"last_succ_resp_us", peer_info.last_succ_resp_us_},
+                });
+            }
+            status["peer_infos"] = std::move(peer_infos);
+        }
     }
 
     return status;
@@ -1996,7 +2006,14 @@ void NuRaftHttpRuntimeService::do_snapshot(const std::string& snapshot_path,
     NuRaftSnapshotCoordinator coordinator(layout_);
     NuRaftSnapshotDescriptor descriptor;
     if (!snapshot_path.empty()) {
-        if (!coordinator.create_snapshot(snapshot_path, snapshot_sink, descriptor, error)) {
+        const auto last_snapshot = raft_state_machine_->last_snapshot();
+        const uint64_t snapshot_term = last_snapshot != nullptr ? last_snapshot->get_last_log_term() : 0;
+        if (!coordinator.create_snapshot(snapshot_path,
+                                         snapshot_sink,
+                                         descriptor,
+                                         snapshot_index,
+                                         snapshot_term,
+                                         error)) {
             res->set_500(error);
             return;
         }

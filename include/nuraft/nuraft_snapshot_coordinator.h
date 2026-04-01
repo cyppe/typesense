@@ -8,11 +8,12 @@
 class NuRaftKvStateMachineSink;
 
 struct NuRaftSnapshotDescriptor {
-    static constexpr uint32_t kCurrentFormatVersion = 2;
+    static constexpr uint32_t kCurrentFormatVersion = 3;
 
     uint32_t format_version = kCurrentFormatVersion;
     std::string snapshot_id;
     uint64_t last_log_index = 0;
+    uint64_t last_log_term = 0;
     uint64_t last_applied_index = 0;
     bool includes_main_db_checkpoint = false;
 
@@ -26,6 +27,8 @@ public:
     bool create_snapshot(const std::string& export_path,
                          const NuRaftKvStateMachineSink* kv_sink,
                          NuRaftSnapshotDescriptor& descriptor,
+                         uint64_t last_log_index,
+                         uint64_t last_log_term,
                          std::string& error) const;
     bool install_snapshot(const std::string& snapshot_path,
                           NuRaftSnapshotDescriptor& descriptor,

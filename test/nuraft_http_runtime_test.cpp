@@ -1955,6 +1955,214 @@ TEST_F(NuRaftHttpRuntimeTest, ManualSnapshotEnablesSnapshotBasedEmptyFollowerRec
         << "recovery log: " << recovery_node->log_path();
 }
 
+TEST_F(NuRaftHttpRuntimeTest, RestartedLeaderSnapshotEnablesEmptyFollowerRecovery) {
+    ScopedEnvVar reserved_logs("TYPESENSE_RAFT_RESERVED_LOG_ITEMS", "1");
+
+    const uint32_t api_port_1 = pick_free_port();
+    const uint32_t peer_port_1 = pick_free_port();
+    const uint32_t api_port_2 = pick_free_port();
+    const uint32_t peer_port_2 = pick_free_port();
+    const uint32_t api_port_3 = pick_free_port();
+    const uint32_t peer_port_3 = pick_free_port();
+    const std::string nodes_config =
+        "127.0.0.1:" + std::to_string(peer_port_1) + ":" + std::to_string(api_port_1) + "," +
+        "127.0.0.1:" + std::to_string(peer_port_2) + ":" + std::to_string(api_port_2) + "," +
+        "127.0.0.1:" + std::to_string(peer_port_3) + ":" + std::to_string(api_port_3);
+
+    NuRaftHttpServerOptions options_1;
+    options_1.startup_options.data_dir = node_dir("restart-snapshot-node-1");
+    options_1.startup_options.local_host = "127.0.0.1";
+    options_1.startup_options.peer_port = peer_port_1;
+    options_1.startup_options.api_port = api_port_1;
+    options_1.startup_options.nodes_config = nodes_config;
+    options_1.listen_address = "127.0.0.1";
+    options_1.listen_port = api_port_1;
+    options_1.api_key = "xyz";
+
+    NuRaftHttpServerOptions options_2 = options_1;
+    options_2.startup_options.data_dir = node_dir("restart-snapshot-node-2");
+    options_2.startup_options.peer_port = peer_port_2;
+    options_2.startup_options.api_port = api_port_2;
+    options_2.listen_port = api_port_2;
+
+    NuRaftHttpServerOptions options_3 = options_1;
+    options_3.startup_options.data_dir = node_dir("restart-snapshot-node-3");
+    options_3.startup_options.peer_port = peer_port_3;
+    options_3.startup_options.api_port = api_port_3;
+    options_3.listen_port = api_port_3;
+
+    std::string error;
+    ASSERT_TRUE(node1_.start(options_1, error, false)) << error;
+    ASSERT_TRUE(node2_.start(options_2, error, false)) << error;
+    ASSERT_TRUE(node3_.start(options_3, error, false)) << error;
+
+    nlohmann::json status_1;
+    nlohmann::json status_2;
+    nlohmann::json status_3;
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               fetch_json(node3_, "/status", status_3) == 200 &&
+               static_cast<int>(status_1["is_leader"].get<bool>()) +
+                   static_cast<int>(status_2["is_leader"].get<bool>()) +
+                   static_cast<int>(status_3["is_leader"].get<bool>()) == 1;
+    }, std::chrono::milliseconds(15000)))
+        << "node1 log: " << node1_.log_path()
+        << ", node2 log: " << node2_.log_path()
+        << ", node3 log: " << node3_.log_path();
+
+    NuRaftHttpRuntimeHarness* leader = &node1_;
+    if (status_2["is_leader"].get<bool>()) {
+        leader = &node2_;
+    } else if (status_3["is_leader"].get<bool>()) {
+        leader = &node3_;
+    }
+
+    std::string response;
+    std::map<std::string, std::string> headers;
+    ASSERT_EQ(201,
+              HttpClient::post_response(leader->base_url() + "/collections",
+                                        kBooksCollectionSchema,
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true));
+
+    for (size_t i = 0; i < 40; ++i) {
+        response.clear();
+        headers.clear();
+        ASSERT_EQ(201,
+                  HttpClient::post_response(leader->base_url() + "/collections/books/documents",
+                                            nlohmann::json({
+                                                {"id", std::to_string(i + 1)},
+                                                {"title", "title " + std::to_string(i + 1)},
+                                            }).dump(),
+                                            response,
+                                            headers,
+                                            {},
+                                            5000,
+                                            true));
+    }
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(201,
+              HttpClient::post_response(leader->base_url() + "/operations/snapshot",
+                                        "",
+                                        response,
+                                        headers,
+                                        {},
+                                        30000,
+                                        true));
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        nlohmann::json leader_status;
+        return fetch_json(*leader, "/status", leader_status) == 200 &&
+               leader_status["last_snapshot_applied_index"].get<uint64_t>() > 0 &&
+               leader_status["log_store_start_index"].get<uint64_t>() > 1;
+    }, std::chrono::milliseconds(30000)))
+        << "leader log: " << leader->log_path();
+
+    node1_.stop();
+    node2_.stop();
+    node3_.stop();
+
+    ASSERT_TRUE(node1_.start(options_1, error, false)) << error;
+    ASSERT_TRUE(node2_.start(options_2, error, false)) << error;
+    ASSERT_TRUE(node3_.start(options_3, error, false)) << error;
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        return fetch_json(node1_, "/status", status_1) == 200 &&
+               fetch_json(node2_, "/status", status_2) == 200 &&
+               fetch_json(node3_, "/status", status_3) == 200 &&
+               static_cast<int>(status_1["is_leader"].get<bool>()) +
+                   static_cast<int>(status_2["is_leader"].get<bool>()) +
+                   static_cast<int>(status_3["is_leader"].get<bool>()) == 1;
+    }, std::chrono::milliseconds(30000)))
+        << "node1 log: " << node1_.log_path()
+        << ", node2 log: " << node2_.log_path()
+        << ", node3 log: " << node3_.log_path();
+
+    NuRaftHttpRuntimeHarness* recovery_node = &node3_;
+    NuRaftHttpServerOptions recovery_options = options_3;
+    std::string recovery_dir = options_3.startup_options.data_dir;
+    leader = &node1_;
+    if (status_2["is_leader"].get<bool>()) {
+        leader = &node2_;
+        recovery_node = &node3_;
+        recovery_options = options_3;
+        recovery_dir = options_3.startup_options.data_dir;
+    } else if (status_3["is_leader"].get<bool>()) {
+        leader = &node3_;
+        recovery_node = &node2_;
+        recovery_options = options_2;
+        recovery_dir = options_2.startup_options.data_dir;
+    } else {
+        recovery_node = &node2_;
+        recovery_options = options_2;
+        recovery_dir = options_2.startup_options.data_dir;
+    }
+
+    recovery_node->stop();
+    std::filesystem::remove_all(recovery_dir);
+    std::filesystem::create_directories(recovery_dir);
+    ASSERT_TRUE(recovery_node->start(recovery_options, error, false)) << error;
+
+    nlohmann::json recovery_status;
+    ASSERT_TRUE(wait_until_condition([&] {
+        if (!recovery_node->refresh_process_state()) {
+            return false;
+        }
+        return fetch_json(*recovery_node, "/status", recovery_status) == 200 &&
+               recovery_status["last_snapshot_applied_index"].get<uint64_t>() > 0 &&
+               recovery_status["live_product_applied_index"].get<uint64_t>() >=
+                   recovery_status["last_snapshot_applied_index"].get<uint64_t>();
+    }, std::chrono::milliseconds(120000), std::chrono::milliseconds(200)))
+        << "recovery log: " << recovery_node->log_path()
+        << ", exit_status: " << recovery_node->exit_status()
+        << ", runtime_tail:\n" << read_file_tail(recovery_node->log_path());
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        return recovery_node->refresh_process_state() &&
+               fetch_json(*recovery_node, "/status", recovery_status) == 200 &&
+               recovery_status["raft_leader_id"].get<int64_t>() != -1 &&
+               !recovery_status["leader_url"].get<std::string>().empty();
+    }, std::chrono::milliseconds(30000)))
+        << "recovery log: " << recovery_node->log_path()
+        << ", status: " << recovery_status.dump();
+
+    nlohmann::json collection;
+    ASSERT_EQ(200, fetch_json(*recovery_node, "/collections/books", collection))
+        << "recovery log: " << recovery_node->log_path();
+    EXPECT_EQ(40u, collection["num_documents"].get<size_t>());
+
+    response.clear();
+    headers.clear();
+    ASSERT_EQ(201,
+              HttpClient::post_response(recovery_node->base_url() + "/collections/books/documents",
+                                        nlohmann::json({
+                                            {"id", "42"},
+                                            {"title", "title 42"},
+                                        }).dump(),
+                                        response,
+                                        headers,
+                                        {},
+                                        5000,
+                                        true))
+        << "recovery log: " << recovery_node->log_path()
+        << ", status: " << recovery_status.dump();
+
+    ASSERT_TRUE(wait_until_condition([&] {
+        nlohmann::json updated_collection;
+        return recovery_node->refresh_process_state() &&
+               fetch_json(*leader, "/collections/books", updated_collection) == 200 &&
+               updated_collection["num_documents"].get<size_t>() == 41;
+    }, std::chrono::milliseconds(10000)))
+        << "leader log: " << leader->log_path()
+        << ", recovery log: " << recovery_node->log_path();
+}
+
 TEST_F(NuRaftHttpRuntimeTest, LargeDbFilesInSnapshotTransferRecoverEmptyFollowerEndToEnd) {
     ScopedEnvVar reserved_logs("TYPESENSE_RAFT_RESERVED_LOG_ITEMS", "1");
 
